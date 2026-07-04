@@ -3,8 +3,8 @@ name: tests_tune_lock_mom
 output_dir: runs/etf_vanguard_tune
 
 data:
-  source: yf
-  symbols: [{ticker: SPY, ccy: EUR}, {ticker: IWM, ccy: EUR}, {ticker: EEM, ccy: EUR}, {ticker: TLT, ccy: EUR}, {ticker: GLD, ccy: EUR}, {ticker: DBC, ccy: EUR}, {ticker: VNQ, ccy: EUR}, {ticker: UUP, ccy: EUR}, {ticker: XLE, ccy: EUR}, {ticker: XLU, ccy: EUR}]
+  base_currency: EUR
+  instruments: [SPY.XNAS, IWM.XNAS, EEM.XNAS, TLT.XNAS, GLD.XNAS, DBC.XNAS, VNQ.XNAS, UUP.XNAS, XLE.XNAS, XLU.XNAS]
   start: '2018-01-01'
   end: '2025-01-01'
   timeframe: 1D

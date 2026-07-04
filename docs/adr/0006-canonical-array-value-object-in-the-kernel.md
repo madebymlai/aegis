@@ -54,8 +54,8 @@ We collapse the two into one type, **owned by the kernel**:
   — and the name stays in `aegis_research.data.__all__`, so the facade surface is byte-stable.
 - **The export fidelity seam no longer rewraps to cross a type gap.**
   `test_execution_bundle_export.py` drops its `RuntimeMarketDataBundle` alias and constructs the one
-  `MarketDataBundle` directly. The provider-ticker → **InstrumentRef** relabel it still performs is a
-  *label-space* bridge (the Execution Bundle speaks `InstrumentRef`; research's synthetic prices are
+  `MarketDataBundle` directly. The provider-ticker → **InstrumentId** relabel it still performs is a
+  *label-space* bridge (the Execution Bundle speaks `InstrumentId`; research's synthetic prices are
   authored in provider-ticker space), unrelated to the now-dissolved type gap.
 - **The research↔execution kernel seam now has one Array vocabulary.** A Component sees the same
   `MarketDataBundle` whether it runs under a research **Run** or inside an Execution Bundle.

@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.data import MarketDataBundle
 
 
-def _make_data(n_dates: int = 120, symbols: list[str] | None = None) -> MarketDataBundle:
-    symbols = symbols or ["SPY", "QQQ", "IWM"]
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
+
+
+def _make_data(n_dates: int = 120, instruments: list[InstrumentId] | None = None) -> MarketDataBundle:
+    instruments = instruments or [_id("SPY.XNAS"), _id("QQQ.XNAS"), _id("IWM.XNAS")]
     dates = pd.date_range("2023-01-01", periods=n_dates, freq="D")
     rng = np.random.default_rng(7)
-    returns = rng.normal(0.0002, 0.01, size=(n_dates, len(symbols)))
+    returns = rng.normal(0.0002, 0.01, size=(n_dates, len(instruments)))
     prices = 100.0 * np.exp(np.cumsum(returns, axis=0))
-    close = pd.DataFrame(prices, index=dates, columns=pd.Index(symbols, name="symbol"))
+    close = pd.DataFrame(prices, index=dates, columns=pd.Index(instruments, name="instrument_id"))
     return MarketDataBundle(arrays={"Close": close})
 
 

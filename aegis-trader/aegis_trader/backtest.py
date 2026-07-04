@@ -1,84 +1,155 @@
-"""Commingled-book Store Read backtest runner.
+"""Catalog-backed Trader backtest entrypoints.
 
-Composes the pieces into a runnable ``BacktestEngine``: load ``book.toml`` ->
-resolve each sleeve's bundle (registry) -> derive each instrument's baked
-``InstrumentRef`` + native quote currency from the bundle -> read Native Market
-Bars and FX History from ``aegis-data`` -> adapt those frames to Nautilus bars and
-quotes at the Trader boundary -> register the sleeves and run the overlay.
-
-Trader backtests never Pull and never fetch remote history. Missing Covered
-History fails closed before the Nautilus engine runs.
+The runner is intentionally forward-only: Execution Bundles declare native
+Nautilus ``InstrumentId`` values, raw bars come from the Nautilus
+``ParquetDataCatalog`` through the Aegis Data catalog port, and the same
+``RebalanceStrategy`` used by paper/live is run inside Nautilus'
+``BacktestEngine``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol
 
 import pandas as pd
+from aegis_data.distributions import Distribution
+from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
+from nautilus_trader.config import CacheConfig, LoggingConfig
+from nautilus_trader.model.data import Bar, CustomData, DataType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import Currency, Money
+from nautilus_trader.risk.config import RiskEngineConfig
 
-from aegis_data.calendars import TradingCalendar
-from aegis_data.store import CoveredWindow, FxPair, HistoricalStore
-from aegis_runtime import ExecutionBundle, InstrumentRef
-from aegis_runtime.currency import _major_currency_and_scale
+from aegis_data.bar_type import raw_bar_type
+from aegis_data.catalog import (
+    CatalogBackedDataPort,
+    NautilusDataProviderPort,
+    RawBarRequest,
+    parquet_data_catalog,
+)
 
+from aegis_trader.bundles.book_sleeves import (
+    SleeveBundles,
+    load_book_sleeves,
+    union_native_instrument_ids,
+)
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
+from aegis_trader.data import wrangle_bars
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.types import SleeveName
-from aegis_trader.data import (
-    InstrumentSpec,
-    bar_type,
-    build_currency_pair,
-    build_equity,
-    resolve_book_timeframe,
-    wrangle_bars,
-    wrangle_fx_quotes,
-)
+from aegis_trader.domain.book_timeframe import resolve_book_timeframe
+from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.portfolio.performance import (
     BookEquityRecorder,
     BookEquityRecorderConfig,
     return_stats,
 )
 from aegis_trader.trader.costs import build_simulated_cost_models
+from aegis_trader.trader.dividends import build_dividend_modules
 from aegis_trader.trader.financing import build_financing_modules
-from aegis_trader.trader.modes import (
-    DEFAULT_BACKTEST_BAR_CAPACITY,
-    build_backtest_engine_config,
-)
-from aegis_trader.trader.pipeline import FixtureInstrumentResolver
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
-_PRICE_COLS = ("open", "high", "low", "close")
-_STORE_OHLCV_ARRAYS = (*_PRICE_COLS, "volume")
+_PRICE_COLS = ("Open", "High", "Low", "Close")
+_OHLCV_ARRAYS = (*_PRICE_COLS, "Volume")
 
-_SleeveBundles = list[tuple[SleeveName, ExecutionBundle]]
+# The backtest cache holds the rolling bar window the strategy reads each period;
+# at least the deepest sleeve's lookback (+1) must fit, so the runner widens it
+# from this floor when a contract needs more.
+DEFAULT_BACKTEST_BAR_CAPACITY = 10_000
+
+
+class CatalogInstrumentError(ValueError):
+    """Raised when the catalog does not hold a requested instrument definition."""
 
 
 class ContractDataError(ValueError):
-    """Store Read data does not satisfy a sleeve's DataContract — the backtest
-    fails closed rather than running the overlay on data that would not pass the
-    bundle contract."""
+    """Catalog bars do not satisfy an Execution Bundle's ``DataContract``."""
 
-    def __init__(self, sleeve: str, ref: str, detail: str) -> None:
+    def __init__(self, sleeve: str, instrument_id: InstrumentId, detail: str) -> None:
         self.sleeve = sleeve
-        self.ref = ref
-        super().__init__(f"sleeve {sleeve!r} ({ref}): {detail}")
+        self.instrument_id = instrument_id
+        super().__init__(f"sleeve {sleeve!r} ({instrument_id.value}): {detail}")
 
 
-class FxDataError(ValueError):
-    """A required FX cross series does not cover the run window — the backtest
-    fails closed rather than valuing foreign legs on a fabricated rate."""
+@dataclass(frozen=True)
+class BacktestMarketData:
+    """Catalog material the runner feeds into Nautilus' ``BacktestEngine``."""
 
-    def __init__(self, base: str, quote: str, detail: str) -> None:
-        self.base = base
-        self.quote = quote
-        super().__init__(f"FX {base}/{quote}: {detail}")
+    instruments: Mapping[InstrumentId, Instrument]
+    ohlcv: Mapping[InstrumentId, pd.DataFrame]
+    distributions: tuple[Distribution, ...] = ()
+
+
+class BacktestDataSource(Protocol):
+    """Loads native instruments and raw OHLCV frames for a backtest window."""
+
+    def load(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> BacktestMarketData:
+        """Return catalog instruments and OHLCV frames for *instrument_ids*."""
+        ...
+
+
+@dataclass(frozen=True)
+class CatalogBacktestDataSource:
+    """Backtest data source backed by Aegis Data's Nautilus catalog port."""
+
+    catalog_path: Path | None = None
+    provider: NautilusDataProviderPort | None = None
+    port: CatalogBackedDataPort | None = None
+
+    def load(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> BacktestMarketData:
+        data_port = self._data_port()
+        instruments = _catalog_instruments(data_port, instrument_ids)
+        frames = data_port.load_raw_bars(
+            RawBarRequest(
+                instrument_ids=instrument_ids,
+                start=start,
+                end=end,
+                timeframe=timeframe,
+            )
+        )
+        # ADR-0008: Trader backtests consume distributions through the same verified
+        # catalog-port seam as RD, never by querying distribution storage directly.
+        distributions = data_port.distributions(
+            instrument_ids,
+            start=start,
+            end=end,
+        )
+        return BacktestMarketData(
+            instruments=instruments,
+            ohlcv=frames,
+            distributions=distributions,
+        )
+
+    def _data_port(self) -> CatalogBackedDataPort:
+        if self.port is not None:
+            return self.port
+        catalog = parquet_data_catalog(self.catalog_path)
+        return CatalogBackedDataPort(
+            catalog,
+            provider=self.provider,
+            distribution_provider=_distribution_provider(self.provider),
+        )
 
 
 def run_book_backtest(
@@ -86,46 +157,39 @@ def run_book_backtest(
     *,
     start: str,
     end: str,
-    store_dir: Path | None = None,
+    catalog_path: Path | None = None,
     registry: BundleRegistryPort | None = None,
-    venue: str = "SIM",
+    data_source: BacktestDataSource | None = None,
+    provider: NautilusDataProviderPort | None = None,
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
 ) -> BacktestEngine:
-    """Build and run the commingled-book backtest from ``aegis-data`` Store Read.
+    """Build and run a commingled-book backtest from the Nautilus catalog.
 
-    ``store_dir`` is a test/deployment override for the Historical Store root;
-    absent, ``aegis-data`` uses its OS-global store. There is deliberately no
-    remote-fetch, Pull, source, or ``DataConfig`` parameter on this path.
+    There is no Historical Store, symbol map, or provider-specific identity on
+    this path.  The catalog must hold instrument definitions keyed by the same
+    native ``InstrumentId`` values declared by the Execution Bundles.  Raw bars
+    are read through ``CatalogBackedDataPort``, so catalog coverage gaps fail
+    before the Nautilus engine starts.
     """
     book = load_book_config(book_path)
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    sleeves = [(s.name, registry.load(s.wheel_filename)) for s in book.sleeves]
+    sleeves = load_book_sleeves(book, registry)
     book_timeframe = resolve_book_timeframe(
         bundle.contract.timeframe for _name, bundle in sleeves
     )
-    account_currencies = _account_currencies(book.base_currency, sleeves)
-    account_type = AccountType.MARGIN if _requires_margin_account(sleeves) else AccountType.CASH
-    starting_balances, balance_currencies = _starting_balances(
-        book, account_currencies, starting_cash
+    instrument_ids = union_native_instrument_ids(sleeves)
+    source = data_source or CatalogBacktestDataSource(
+        catalog_path=catalog_path,
+        provider=provider,
     )
-
-    instrument_inputs = _read_instrument_inputs(
-        sleeves,
+    market_data = source.load(
+        instrument_ids,
         timeframe=book_timeframe,
         start=start,
         end=end,
-        store_dir=store_dir,
     )
-    fx_inputs = _read_fx_inputs(
-        book,
-        sleeves,
-        timeframe=book_timeframe,
-        start=start,
-        end=end,
-        bar_index=instrument_inputs.bar_index,
-        store_dir=store_dir,
-    )
+    _validate_market_data(sleeves, market_data)
 
     engine = BacktestEngine(
         build_backtest_engine_config(
@@ -133,234 +197,288 @@ def run_book_backtest(
             bar_capacity=_cache_bar_capacity(sleeves),
         )
     )
-    cost_models = build_simulated_cost_models(book)
-    financing_modules = build_financing_modules(book.costs)
-    engine.add_venue(
-        Venue(venue),
-        oms_type=OmsType.NETTING,
-        account_type=account_type,
-        base_currency=None,  # multi-currency account; base-currency returns come from BookEquityRecorder/return_stats
-        starting_balances=starting_balances,
-        modules=financing_modules,
-        fill_model=cost_models.fill_model,
-        fee_model=cost_models.fee_model,
-        book_type=BookType.L1_MBP,
-        allow_cash_borrowing=len(balance_currencies) > 1,
+    _add_venues(
+        engine,
+        book=book,
+        instruments=tuple(market_data.instruments.values()),
+        sleeves=sleeves,
+        distributions=market_data.distributions,
+        starting_cash=starting_cash,
     )
-
-    bimap: dict[object, InstrumentId] = {}
-    for bars in instrument_inputs.bars:
-        instrument = build_equity(
-            InstrumentSpec(
-                figi=bars.ref.value,
-                venue=venue,
-                quote_currency=bars.quote_currency,
-            )
-        )
-        engine.add_instrument(instrument)
-        engine.add_data(wrangle_bars(instrument, bars.ohlcv, book_timeframe))
-        bimap[bars.ref] = instrument.id
-
-    # FX as quote-tick'd CurrencyPair instruments (same path as live): the
-    # overlay's on_quote_tick mirrors these into cache mark xrates for sizing,
-    # and the accounting layer values foreign legs from the same quotes.
-    for ccy, aligned in fx_inputs.items():
-        pair = build_currency_pair(book.base_currency, ccy, venue)
-        engine.add_instrument(pair)
-        engine.add_data(wrangle_fx_quotes(pair, aligned))
-
-    # Reporting-only: sample base-currency NAV per bar so headline return stats
-    # (Sharpe, vol, PnL%) can be computed over a single-currency equity curve —
-    # Nautilus' own analyzer cannot, for a base_currency=None account (aegis-rd-syp).
-    engine.add_actor(
-        BookEquityRecorder(
-            BookEquityRecorderConfig(
-                base_currency=book.base_currency,
-                bar_types=tuple(
-                    str(bar_type(instr_id.value, book_timeframe))
-                    for instr_id in bimap.values()
-                ),
-            )
-        )
+    _add_instruments_and_bars(
+        engine,
+        market_data=market_data,
+        timeframe=book_timeframe,
     )
-
-    strategy = RebalanceStrategy(RebalanceStrategyConfig(book=book, fill_time_in_force=None))
-    for name, bundle in sleeves:
-        strategy.register_sleeve(name, bundle)
-    strategy.set_instrument_resolver(FixtureInstrumentResolver(bimap))
-    engine.add_strategy(strategy)
+    engine.sort_data()
+    _add_equity_recorder(engine, book=book, instrument_ids=instrument_ids, timeframe=book_timeframe)
+    _add_strategy(engine, book=book, sleeves=sleeves)
 
     engine.run()
     return engine
 
 
-def _cache_bar_capacity(sleeves: _SleeveBundles) -> int:
-    required = max(bundle.contract.lookback_bars for _name, bundle in sleeves) + 1
-    return max(DEFAULT_BACKTEST_BAR_CAPACITY, required)
+def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | None:
+    if provider is None or not hasattr(provider, "request_adjusted_last"):
+        return None
+    return provider
 
 
 def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
-    """Base-currency return statistics for a finished book backtest.
-
-    Reads the :class:`BookEquityRecorder` that :func:`run_book_backtest` installs
-    and runs the standard return stats over its base-currency NAV equity curve —
-    the multi-currency-account remedy Nautilus' native ``stats_returns`` omits
-    (aegis-rd-syp).  Returns an empty mapping when no recorder is present (nothing
-    to report), so reporting never fails closed on a stats-only concern.
-    """
+    """Base-currency return statistics for a finished book backtest."""
     for actor in engine.trader.actors():
         if isinstance(actor, BookEquityRecorder):
             return return_stats(actor.equity_curve)
     return {}
 
 
-@dataclass(frozen=True)
-class _InstrumentBars:
-    ref: InstrumentRef
-    quote_currency: str
-    ohlcv: pd.DataFrame
+def build_risk_engine_config(
+    risk_guard_config: RiskGuardConfig | None = None,
+) -> RiskEngineConfig:
+    """The backtest RiskEngine config (``BacktestEngine`` requires the non-live
+    variant).
 
-
-@dataclass(frozen=True)
-class _InstrumentInputs:
-    bars: tuple[_InstrumentBars, ...]
-    bar_index: frozenset[pd.Timestamp]
-
-
-def _read_instrument_inputs(
-    sleeves: _SleeveBundles,
-    *,
-    timeframe: str,
-    start: str,
-    end: str,
-    store_dir: Path | None,
-) -> _InstrumentInputs:
-    loaded: set[InstrumentRef] = set()
-    bars: list[_InstrumentBars] = []
-    bar_index: set[pd.Timestamp] = set()
-    for sleeve_name, bundle in sleeves:
-        for ref, symbol in zip(bundle.contract.refs, bundle.symbols, strict=True):
-            if ref in loaded:
-                continue
-            major, scale = _major_currency_and_scale(bundle.currency_by_symbol[symbol])
-            raw = _read_native_market_bars(
-                ref,
-                required_arrays=bundle.contract.required_arrays,
-                timeframe=timeframe,
-                start=start,
-                end=end,
-                store_dir=store_dir,
-            )
-            _validate_contract_data(
-                raw,
-                sleeve=sleeve_name.value,
-                ref=ref.value,
-                required_arrays=bundle.contract.required_arrays,
-                min_rows=bundle.contract.lookback_bars + 1,
-            )
-            normalized = _normalize(raw, scale)
-            bars.append(_InstrumentBars(ref=ref, quote_currency=major, ohlcv=normalized))
-            bar_index.update(normalized.index)
-            loaded.add(ref)
-    return _InstrumentInputs(bars=tuple(bars), bar_index=frozenset(bar_index))
-
-
-def _read_native_market_bars(
-    ref: InstrumentRef,
-    *,
-    required_arrays: tuple[str, ...],
-    timeframe: str,
-    start: str,
-    end: str,
-    store_dir: Path | None,
-) -> pd.DataFrame:
-    # Trader's book universe is US-listed (yfinance) and CME futures (GLBX); both
-    # expect bars on the XNYS calendar.
-    store = _store(store_dir)
-    window = CoveredWindow(
-        timeframe=timeframe,
-        start=start,
-        end=end,
-        arrays=_store_read_arrays(required_arrays),
-        calendar=TradingCalendar.XNYS,
+    Mirrors the live node's RiskEngine wiring (:func:`aegis_trader.trader.node.
+    build_live_risk_engine_config`) so the overlay validated in backtest is
+    constructed the same way it trades — never bypassed, carrying the RiskGuard's
+    order submit/modify rate limits.
+    """
+    guard = risk_guard_config or RiskGuardConfig()
+    return RiskEngineConfig(
+        bypass=False,
+        max_order_submit_rate=guard.max_order_submit_rate,
+        max_order_modify_rate=guard.max_order_modify_rate,
     )
-    return store.read(ref, window)
 
 
-def _read_fx_inputs(
+def build_backtest_engine_config(
+    *,
+    trader_id: str = "BACKTEST-001",
+    risk_guard_config: RiskGuardConfig | None = None,
+    bar_capacity: int = DEFAULT_BACKTEST_BAR_CAPACITY,
+) -> BacktestEngineConfig:
+    """Build the backtest engine config.
+
+    Mirrors the live node's RiskEngine wiring so the overlay validated in backtest
+    is constructed the same way it trades — "what you backtest is what you trade".
+    The runner adds venues, instruments, data, and the strategy to the resulting
+    ``BacktestEngine`` and pairs it with a plain ``MARKET`` (``fill_time_in_force``
+    ``None``), which fills at the execution bar's close.
+    """
+    return BacktestEngineConfig(
+        trader_id=trader_id,
+        cache=CacheConfig(bar_capacity=bar_capacity),
+        risk_engine=build_risk_engine_config(risk_guard_config),
+        logging=LoggingConfig(),
+    )
+
+
+def _catalog_instruments(
+    data_port: CatalogBackedDataPort,
+    instrument_ids: tuple[InstrumentId, ...],
+) -> dict[InstrumentId, Instrument]:
+    loaded = {
+        instrument.id.value: instrument
+        for instrument in data_port.instruments(instrument_ids)
+    }
+    missing = [
+        instrument_id.value
+        for instrument_id in instrument_ids
+        if instrument_id.value not in loaded
+    ]
+    if missing:
+        raise CatalogInstrumentError(
+            "catalog is missing instrument definitions for native "
+            f"InstrumentIds: {missing}"
+        )
+    return {instrument_id: loaded[instrument_id.value] for instrument_id in instrument_ids}
+
+
+def _validate_market_data(sleeves: SleeveBundles, market_data: BacktestMarketData) -> None:
+    for sleeve_name, bundle in sleeves:
+        contract = bundle.contract
+        for instrument_id in contract.instrument_ids:
+            if instrument_id not in market_data.instruments:
+                raise CatalogInstrumentError(
+                    "data source did not return instrument definition for "
+                    f"{instrument_id.value}"
+                )
+            frame = market_data.ohlcv.get(instrument_id)
+            if frame is None:
+                raise ContractDataError(
+                    sleeve_name.value,
+                    instrument_id,
+                    "data source did not return raw bars",
+                )
+            _validate_contract_frame(
+                frame,
+                sleeve=sleeve_name.value,
+                instrument_id=instrument_id,
+                required_arrays=contract.required_arrays,
+                min_rows=contract.lookback_bars + 1,
+            )
+
+
+def _validate_contract_frame(
+    frame: pd.DataFrame,
+    *,
+    sleeve: str,
+    instrument_id: InstrumentId,
+    required_arrays: tuple[str, ...],
+    min_rows: int,
+) -> None:
+    columns = {str(column).lower() for column in frame.columns}
+    required = tuple(dict.fromkeys((*_OHLCV_ARRAYS, *required_arrays)))
+    missing = [name for name in required if name.lower() not in columns]
+    if missing:
+        raise ContractDataError(
+            sleeve,
+            instrument_id,
+            f"missing required arrays {missing}",
+        )
+    if len(frame.dropna()) < min_rows:
+        raise ContractDataError(
+            sleeve,
+            instrument_id,
+            f"{len(frame.dropna())} rows read, need at least {min_rows} (lookback + 1)",
+        )
+
+
+def _cache_bar_capacity(sleeves: SleeveBundles) -> int:
+    required = max(bundle.contract.lookback_bars for _name, bundle in sleeves) + 1
+    return max(DEFAULT_BACKTEST_BAR_CAPACITY, required)
+
+
+def _add_venues(
+    engine: BacktestEngine,
+    *,
     book: BookConfig,
-    sleeves: _SleeveBundles,
+    instruments: Sequence[Instrument],
+    sleeves: SleeveBundles,
+    distributions: Sequence[Distribution],
+    starting_cash: float,
+) -> None:
+    account_currencies = _account_currencies(book, instruments)
+    native_venues = _instrument_venues(instruments)
+    account_type = (
+        AccountType.MARGIN
+        if len(native_venues) > 1 or _requires_margin_account(sleeves)
+        else AccountType.CASH
+    )
+    starting_balances, balance_currencies = _starting_balances(
+        book,
+        account_currencies,
+        starting_cash,
+    )
+    for index, native_venue in enumerate(native_venues):
+        cost_models = build_simulated_cost_models(book)
+        modules = [
+            *build_financing_modules(book.costs),
+            *build_dividend_modules(distributions),
+        ]
+        engine.add_venue(
+            native_venue,
+            oms_type=OmsType.NETTING,
+            account_type=account_type,
+            base_currency=None,
+            starting_balances=starting_balances
+            if index == 0
+            else _zero_balances(balance_currencies),
+            modules=modules,
+            fill_model=cost_models.fill_model,
+            fee_model=cost_models.fee_model,
+            book_type=BookType.L1_MBP,
+            allow_cash_borrowing=account_type == AccountType.MARGIN
+            or len(balance_currencies) > 1,
+        )
+
+
+def _add_instruments_and_bars(
+    engine: BacktestEngine,
     *,
+    market_data: BacktestMarketData,
     timeframe: str,
-    start: str,
-    end: str,
-    bar_index: frozenset[pd.Timestamp],
-    store_dir: Path | None,
-) -> dict[str, pd.Series]:
-    fx_index = pd.DatetimeIndex(sorted(bar_index))
-    aligned: dict[str, pd.Series] = {}
-    for ccy in sorted(_required_fx_currencies(sleeves)):
-        if ccy == book.base_currency:
-            continue
-        pair = FxPair(book.base_currency, ccy)
-        store = _store(store_dir)
-        window = CoveredWindow(
-            timeframe=timeframe,
-            start=start,
-            end=end,
-            arrays=("rate",),
-            calendar=TradingCalendar.WEEKDAY,
-        )
-        fx_series = store.read(pair, window)["rate"]
-        aligned[ccy] = _align_fx_to_bars(
-            fx_series,
-            fx_index=fx_index,
-            base=book.base_currency,
-            quote=ccy,
-        )
-    return aligned
+) -> None:
+    for instrument_id, instrument in market_data.instruments.items():
+        engine.add_instrument(instrument)
+        bars = _wrangle_external_bars(instrument, market_data.ohlcv[instrument_id], timeframe)
+        engine.add_data(bars, sort=False)
+    _add_distribution_data(engine, market_data.distributions)
 
 
-def _store(store_dir: Path | None) -> HistoricalStore:
-    return HistoricalStore(store_dir) if store_dir is not None else HistoricalStore()
+def _add_distribution_data(
+    engine: BacktestEngine,
+    distributions: Sequence[Distribution],
+) -> None:
+    if not distributions:
+        return
+    data_type = DataType(Distribution)
+    engine.add_data(
+        [
+            CustomData(data_type=data_type, data=distribution)
+            for distribution in distributions
+        ],
+        validate=False,
+        sort=False,
+    )
 
 
-def _align_fx_to_bars(
-    fx_series: pd.Series,
+def _wrangle_external_bars(
+    instrument: Instrument,
+    ohlcv: pd.DataFrame,
+    timeframe: str,
+) -> list[Bar]:
+    frame = _normalize_ohlcv(ohlcv)
+    return wrangle_bars(instrument, frame, timeframe)
+
+
+def _normalize_ohlcv(ohlcv: pd.DataFrame) -> pd.DataFrame:
+    columns = {str(column).lower(): column for column in ohlcv.columns}
+    normalized = pd.DataFrame(index=ohlcv.index)
+    for name in _OHLCV_ARRAYS:
+        normalized[name.lower()] = ohlcv[columns[name.lower()]]
+    normalized = normalized.dropna().copy()
+    normalized["high"] = normalized[[col.lower() for col in _PRICE_COLS]].max(axis=1)
+    normalized["low"] = normalized[[col.lower() for col in _PRICE_COLS]].min(axis=1)
+    return normalized
+
+
+def _add_equity_recorder(
+    engine: BacktestEngine,
     *,
-    fx_index: pd.DatetimeIndex,
-    base: str,
-    quote: str,
-) -> pd.Series:
-    aligned = fx_series.reindex(fx_index).ffill()
-    if aligned.isna().any():
-        first_uncovered = aligned.index[aligned.isna()][0]
-        raise FxDataError(
-            base,
-            quote,
-            f"no rate at/before {first_uncovered.date()}; "
-            f"the series must cover the run window",
+    book: BookConfig,
+    instrument_ids: tuple[InstrumentId, ...],
+    timeframe: str,
+) -> None:
+    engine.add_actor(
+        BookEquityRecorder(
+            BookEquityRecorderConfig(
+                base_currency=book.base_currency,
+                bar_types=tuple(
+                    str(raw_bar_type(instrument_id, timeframe))
+                    for instrument_id in instrument_ids
+                ),
+            )
         )
-    return aligned
+    )
 
 
-def _required_fx_currencies(sleeves: _SleeveBundles) -> set[str]:
-    currencies: set[str] = set()
-    for _name, bundle in sleeves:
-        currencies.update(bundle.contract.required_fx_currencies)
-    return currencies
-
-
-def _store_read_arrays(required_arrays: tuple[str, ...]) -> tuple[str, ...]:
-    arrays: list[str] = []
-    seen: set[str] = set()
-    for array in (*_STORE_OHLCV_ARRAYS, *required_arrays):
-        key = array.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        arrays.append(array)
-    return tuple(arrays)
+def _add_strategy(
+    engine: BacktestEngine,
+    *,
+    book: BookConfig,
+    sleeves: SleeveBundles,
+) -> None:
+    strategy = RebalanceStrategy(
+        RebalanceStrategyConfig(
+            book=book,
+            fill_time_in_force=None,
+            warmup_cache_on_start=False,
+        )
+    )
+    for name, bundle in sleeves:
+        strategy.register_sleeve(name, bundle)
+    engine.add_strategy(strategy)
 
 
 def _starting_balances(
@@ -368,79 +486,43 @@ def _starting_balances(
     account_currencies: tuple[str, ...],
     starting_cash: float,
 ) -> tuple[list[Money], tuple[str, ...]]:
-    """Per-currency venue funding, plus the funded currency set.
-
-    ``book.toml`` ``[starting_balances]`` funds the declared currencies (traded
-    currencies not declared start at zero and are reached via per-currency margin
-    loans); absent, a single ``base_currency`` balance is funded with
-    ``starting_cash``.
-    """
     declared = dict(book.starting_balances)
     if declared:
         currencies = tuple(sorted(set(account_currencies) | set(declared)))
-        balances = [Money(declared.get(ccy, 0.0), Currency.from_str(ccy)) for ccy in currencies]
+        balances = [
+            Money(declared.get(currency, 0.0), Currency.from_str(currency))
+            for currency in currencies
+        ]
     else:
         currencies = account_currencies
         balances = [
-            Money(starting_cash if ccy == book.base_currency else 0.0, Currency.from_str(ccy))
-            for ccy in currencies
+            Money(
+                starting_cash if currency == book.base_currency else 0.0,
+                Currency.from_str(currency),
+            )
+            for currency in currencies
         ]
     return balances, currencies
 
 
-def _requires_margin_account(sleeves: _SleeveBundles) -> bool:
-    return any(_bundle_direction(bundle) in {"both", "shortonly"} for _name, bundle in sleeves)
+def _zero_balances(currencies: tuple[str, ...]) -> list[Money]:
+    return [Money(0.0, Currency.from_str(currency)) for currency in currencies]
 
 
-def _bundle_direction(bundle: object) -> str:
-    plan = getattr(bundle, "plan", None) or getattr(bundle, "_plan", None)
-    return str(getattr(plan, "direction", "longonly"))
+def _requires_margin_account(sleeves: SleeveBundles) -> bool:
+    return any(bundle.direction in {"both", "shortonly"} for _name, bundle in sleeves)
 
 
 def _account_currencies(
-    base_currency: str,
-    sleeves: _SleeveBundles,
+    book: BookConfig,
+    instruments: Sequence[Instrument],
 ) -> tuple[str, ...]:
-    currencies = {base_currency}
-    for _name, bundle in sleeves:
-        currencies |= set(bundle.contract.required_fx_currencies)
-        for currency in bundle.currency_by_symbol.values():
-            major, _scale = _major_currency_and_scale(currency)
-            currencies.add(major)
+    currencies = {book.base_currency}
+    for instrument in instruments:
+        currencies.add(instrument.quote_currency.code)
     return tuple(sorted(currencies))
 
 
-def _validate_contract_data(
-    ohlcv: pd.DataFrame,
-    *,
-    sleeve: str,
-    ref: str,
-    required_arrays: tuple[str, ...],
-    min_rows: int,
-) -> None:
-    """Fail closed unless *ohlcv* satisfies the contract: every required array is
-    present (matched case-insensitively against the Store Read frame's columns)
-    and at least *min_rows* (lookback + 1) rows are available."""
-    columns = {str(c).lower() for c in ohlcv.columns}
-    missing = tuple(a for a in required_arrays if a.lower() not in columns)
-    if missing:
-        raise ContractDataError(sleeve, ref, f"missing required arrays {list(missing)}")
-    if len(ohlcv) < min_rows:
-        raise ContractDataError(
-            sleeve, ref,
-            f"{len(ohlcv)} rows read, need at least {min_rows} (lookback + 1)",
-        )
-
-
-def _normalize(ohlcv: pd.DataFrame, scale: float) -> pd.DataFrame:
-    """OHLCV ready for the wrangler: lower-cased columns, minor-unit prices
-    (pence) divided into majors, and OHLC consistency enforced (adjusted-close
-    data can leave a row's high < close / low > open, which the wrangler rejects).
-    """
-    df = ohlcv.rename(columns=str.lower)[[*_PRICE_COLS, "volume"]].dropna().copy()
-    if scale != 1:
-        for col in _PRICE_COLS:
-            df[col] = df[col] / scale
-    df["high"] = df[list(_PRICE_COLS)].max(axis=1)
-    df["low"] = df[list(_PRICE_COLS)].min(axis=1)
-    return df
+def _instrument_venues(instruments: Sequence[Instrument]) -> tuple[Venue, ...]:
+    venues = {instrument.id.venue.value: instrument.id.venue for instrument in instruments}
+    return tuple(venues[key] for key in sorted(venues))

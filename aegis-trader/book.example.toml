@@ -4,9 +4,11 @@
 # It is *not* where secrets go: the IBKR connection and account come from the
 # environment, never this file.
 #
-#   Run:   aegis-trader --mode {backtest,paper,live} --book book.toml
+#   Run:   aegis-trader backtest --start YYYY-MM-DD --end YYYY-MM-DD [--book book.toml]
+#          aegis-trader trader start|stop [--book book.toml]
 #          (--book is optional: if omitted, book.toml is discovered by walking
-#           up from the current directory)
+#           up from the current directory. Paper vs live is the IB_PORT alone,
+#           not a --mode flag.)
 #
 #   Paper/live also read the broker connection from the environment:
 #     IB_ACCOUNT_ID   (required; e.g. DU1234567 paper, U7654321 live)
@@ -52,9 +54,7 @@ gross_cap = 1.0       # max sum |w_i|
 net_cap = 0.5         # max |sum w_i|
 per_name_cap = 0.1    # max |w_i| per instrument
 
-# Symmetric default drift bands (no-trade region around target weights).
-default_band_up = 0.02
-default_band_down = 0.02
+# Per-instrument drift bands are research-validated inside each sleeve bundle.
 
 # Book-level aggregate fidelity: max sum |w_realized - w_target| before tripping.
 aggregate_drift_threshold = 0.5
@@ -64,8 +64,9 @@ aggregate_drift_threshold = 0.5
 # short borrow); paper and live take broker-reported costs from IBKR instead.
 # Omit this block for zero-cost backtest behavior.
 # [costs]
-# per_share_commission = 0.0035      # commission per share in quote currency
-# min_commission_per_order = 1.0     # per-fill/order floor
+# per_share_commission = 0.0035      # per-share commission (IBKR US); leave 0 for Europe
+# commission_pct = 0.0005            # per-value commission (IBKR Europe, 0.05%); leave 0 for US
+# min_commission_per_order = 1.25    # per-fill/order floor (e.g. IBKR Europe EUR 1.25)
 # max_commission_pct = 0.01          # cap as fraction of trade notional
 # slippage_probability = 0.25        # probability of one-tick adverse slippage
 # slippage_seed = 42                 # pinned RNG seed for deterministic fills
@@ -79,8 +80,8 @@ aggregate_drift_threshold = 0.5
 # USD = 0.055                        # annual rate charged on USD debit balances
 
 # Sleeves — each a risk-budgeted sub-portfolio backed by one content-addressed
-# bundle wheel. Instruments carry their own venue (resolved per FIGI); the book
-# never names a single venue.
+# bundle wheel. Instruments carry their own venue (each is a Nautilus
+# InstrumentId, {symbol}.{venue}); the book never names a single venue.
 [[sleeves]]
 name = "trend_lse"
 wheel_filename = "trend_lse-abc123.whl"
@@ -118,9 +119,3 @@ payoff_at_attachment = 0.20
 annual_carry = 0.08
 crisis_reliability = 0.75
 capacity_risk_share = 0.05
-
-# Per-FIGI asymmetric band overrides (optional).
-[[band_overrides]]
-figi = "BBG000B9XRY4"
-band_up = 0.05
-band_down = 0.02

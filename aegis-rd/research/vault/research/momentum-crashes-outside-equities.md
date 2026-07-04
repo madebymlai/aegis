@@ -1,6 +1,6 @@
 ---
 title: Momentum Crashes Outside Equities
-date: "2026-06-11"
+date: 2026-06-11
 topic: momentum-crashes
 distilled-into:
 tags:

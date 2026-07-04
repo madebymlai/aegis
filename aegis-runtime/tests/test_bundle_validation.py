@@ -1,69 +1,68 @@
 import numpy as np
 import pandas as pd
 import pytest
+from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime import FuturesRef, ListedRef
 from aegis_runtime.bundle import (
+    ComponentSpec,
     DataContract,
+    LockedExecutionPlan,
+    MarketDataMissingIndexError,
     MarketDataBundle,
+    MissingIndexPolicy,
     _assert_latest_row_not_nan,
-    _validate_fx_series_contract,
     _validate_market_data,
-    validate_exposure,
 )
+from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.exposure_validation import InvalidExposureLimits
 
 
 def _index(n: int) -> pd.DatetimeIndex:
     return pd.date_range("2024-01-01", periods=n, freq="D")
 
 
-def _contract(refs=(ListedRef("A"), ListedRef("B")), required_arrays=("Close",)):
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
+
+
+def _contract(
+    instrument_ids: tuple[InstrumentId, ...] = (_id("A.XNAS"), _id("B.XNAS")),
+    required_arrays=("Close",),
+    missing_index=MissingIndexPolicy.DROP,
+):
     return DataContract(
-        refs=refs,
+        instrument_ids=instrument_ids,
         required_arrays=required_arrays,
         base_currency="EUR",
-        required_fx_currencies=(),
         timeframe="1D",
+        missing_index=missing_index,
     )
 
 
-def _close(refs=(ListedRef("A"), ListedRef("B")), n=3) -> MarketDataBundle:
+def _close(instrument_ids: tuple[InstrumentId, ...] = (_id("A.XNAS"), _id("B.XNAS")), n=3) -> MarketDataBundle:
     idx = _index(n)
-    return MarketDataBundle({"Close": pd.DataFrame({ref: [1.0] * n for ref in refs}, index=idx)})
+    return MarketDataBundle(
+        {"Close": pd.DataFrame({item: [1.0] * n for item in instrument_ids}, index=idx)}
+    )
 
 
-# --- validate_exposure -------------------------------------------------------
+# --- LockedExecutionPlan caps validation ---------------------------------------
 
-def test_validate_exposure_accepts_compliant_longonly_book() -> None:
-    weights = pd.DataFrame({"A": [0.5], "B": [0.5]})
-    validate_exposure(weights, gross_cap=1.0, net_cap=1.0, direction="longonly")
-
-
-def test_validate_exposure_rejects_negative_weight_in_longonly() -> None:
-    weights = pd.DataFrame({"A": [0.6], "B": [-0.1]})
-    with pytest.raises(ValueError, match="violating direction 'longonly'"):
-        validate_exposure(weights, gross_cap=1.0, direction="longonly")
-
-
-def test_validate_exposure_rejects_gross_over_cap() -> None:
-    weights = pd.DataFrame({"A": [0.8], "B": [0.8]})  # gross 1.6
-    with pytest.raises(ValueError, match="gross exposure"):
-        validate_exposure(weights, gross_cap=1.0, direction="longonly")
-
-
-def test_validate_exposure_rejects_net_over_cap() -> None:
-    weights = pd.DataFrame({"A": [0.6], "B": [0.6]})  # gross 1.2, net 1.2
-    with pytest.raises(ValueError, match="net exposure"):
-        validate_exposure(weights, gross_cap=2.0, net_cap=1.0, direction="both")
-
-
-def test_validate_exposure_rejects_nonpositive_gross_cap() -> None:
-    with pytest.raises(ValueError, match="gross_cap must be > 0"):
-        validate_exposure(pd.DataFrame({"A": [0.5]}), gross_cap=0.0)
-
-
-def test_validate_exposure_empty_book_is_noop() -> None:
-    validate_exposure(pd.DataFrame(), gross_cap=1.0)  # no raise
+def test_locked_execution_plan_rejects_illegal_caps_at_construction() -> None:
+    # An illegal triple must fail when the plan is built (bundle load), not on the
+    # first weight computation.
+    with pytest.raises(InvalidExposureLimits, match="gross_cap must be > 0"):
+        LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy", component_id="s", module="m",
+                input_names=(), output_names=(), params={},
+            ),
+            indicators=(),
+            instrument_bands={_id("A.XNAS"): DriftBand.symmetric(0.0)},
+            gross_cap=0.0,
+            net_cap=None,
+            direction="both",
+        )
 
 
 # --- _validate_market_data ---------------------------------------------------
@@ -72,24 +71,26 @@ def test_validate_market_data_accepts_matching_contract() -> None:
     _validate_market_data(_close(), _contract())  # no raise
 
 
-def test_validate_market_data_accepts_futures_ref_contract() -> None:
-    ref = FuturesRef(root="ES", dataset="cme", roll_rule="calendar", adjustment="unadjusted")
-    prices = MarketDataBundle({"Close": pd.DataFrame({ref: [1.0]}, index=_index(1))})
+def test_validate_market_data_accepts_native_futures_leg_id_contract() -> None:
+    instrument_id = _id("ESZ6.XCME")
+    prices = MarketDataBundle({"Close": pd.DataFrame({instrument_id: [1.0]}, index=_index(1))})
 
-    _validate_market_data(prices, _contract(refs=(ref,)))
+    _validate_market_data(prices, _contract(instrument_ids=(instrument_id,)))
 
 
 def test_validate_market_data_rejects_array_column_symbol_mismatch() -> None:
-    prices = MarketDataBundle({"Close": pd.DataFrame({ListedRef("A"): [1.0], ListedRef("X"): [1.0]}, index=_index(1))})
+    prices = MarketDataBundle(
+        {"Close": pd.DataFrame({_id("A.XNAS"): [1.0], _id("X.XNAS"): [1.0]}, index=_index(1))}
+    )
     with pytest.raises(ValueError, match="do not match"):
         _validate_market_data(prices, _contract())
 
 
 def test_validate_market_data_rejects_missing_or_extra_arrays() -> None:
-    refs = (ListedRef("A"), ListedRef("B"))
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
     prices = MarketDataBundle(
-        {"Close": pd.DataFrame({refs[0]: [1.0], refs[1]: [1.0]}, index=_index(1)),
-         "Open": pd.DataFrame({refs[0]: [1.0], refs[1]: [1.0]}, index=_index(1))}
+        {"Close": pd.DataFrame({instrument_ids[0]: [1.0], instrument_ids[1]: [1.0]}, index=_index(1)),
+         "Open": pd.DataFrame({instrument_ids[0]: [1.0], instrument_ids[1]: [1.0]}, index=_index(1))}
     )
     with pytest.raises(ValueError, match=r"extra=\['Open'\]"):
         _validate_market_data(prices, _contract(required_arrays=("Close",)))
@@ -97,32 +98,75 @@ def test_validate_market_data_rejects_missing_or_extra_arrays() -> None:
 
 def test_validate_market_data_rejects_nonunique_index() -> None:
     dup = pd.DatetimeIndex(["2024-01-01", "2024-01-01"])
-    refs = (ListedRef("A"), ListedRef("B"))
-    prices = MarketDataBundle({"Close": pd.DataFrame({refs[0]: [1.0, 1.0], refs[1]: [1.0, 1.0]}, index=dup)})
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
+    prices = MarketDataBundle(
+        {"Close": pd.DataFrame({instrument_ids[0]: [1.0, 1.0], instrument_ids[1]: [1.0, 1.0]}, index=dup)}
+    )
     with pytest.raises(ValueError, match="index must be unique"):
         _validate_market_data(prices, _contract())
 
 
 def test_validate_market_data_rejects_mismatched_indices_across_arrays() -> None:
-    refs = (ListedRef("A"), ListedRef("B"))
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
     prices = MarketDataBundle({
-        "Close": pd.DataFrame({refs[0]: [1.0], refs[1]: [1.0]}, index=_index(1)),
-        "Open": pd.DataFrame({refs[0]: [1.0], refs[1]: [1.0]}, index=pd.DatetimeIndex(["2024-02-01"])),
+        "Close": pd.DataFrame({instrument_ids[0]: [1.0], instrument_ids[1]: [1.0]}, index=_index(1)),
+        "Open": pd.DataFrame({instrument_ids[0]: [1.0], instrument_ids[1]: [1.0]}, index=pd.DatetimeIndex(["2024-02-01"])),
     })
     with pytest.raises(ValueError, match="must share one index"):
         _validate_market_data(prices, _contract(required_arrays=("Close", "Open")))
 
 
-# --- _validate_fx_series_contract --------------------------------------------
+def test_validate_market_data_rejects_nan_values_under_drop_policy() -> None:
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
+    prices = MarketDataBundle(
+        {
+            "Close": pd.DataFrame(
+                {instrument_ids[0]: [1.0], instrument_ids[1]: [np.nan]},
+                index=_index(1),
+            )
+        }
+    )
 
-def test_fx_series_contract_rejects_missing_required_currency() -> None:
-    with pytest.raises(ValueError, match=r"missing=\['USD'\]"):
-        _validate_fx_series_contract({}, ("USD",))
+    with pytest.raises(MarketDataMissingIndexError, match="missing_index='drop'"):
+        _validate_market_data(prices, _contract(instrument_ids=instrument_ids))
 
 
-def test_fx_series_contract_rejects_extra_currency() -> None:
-    with pytest.raises(ValueError, match=r"extra=\['JPY'\]"):
-        _validate_fx_series_contract({"JPY": pd.Series(dtype=float)}, ())
+def test_validate_market_data_rejects_nan_values_under_raise_policy() -> None:
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
+    prices = MarketDataBundle(
+        {
+            "Close": pd.DataFrame(
+                {instrument_ids[0]: [1.0], instrument_ids[1]: [np.nan]},
+                index=_index(1),
+            )
+        }
+    )
+
+    with pytest.raises(MarketDataMissingIndexError, match="missing_index='raise'"):
+        _validate_market_data(
+            prices,
+            _contract(
+                instrument_ids=instrument_ids,
+                missing_index=MissingIndexPolicy.RAISE,
+            ),
+        )
+
+
+def test_validate_market_data_allows_nan_values_under_nan_policy() -> None:
+    instrument_ids = (_id("A.XNAS"), _id("B.XNAS"))
+    prices = MarketDataBundle(
+        {
+            "Close": pd.DataFrame(
+                {instrument_ids[0]: [1.0], instrument_ids[1]: [np.nan]},
+                index=_index(1),
+            )
+        }
+    )
+
+    _validate_market_data(
+        prices,
+        _contract(instrument_ids=instrument_ids, missing_index=MissingIndexPolicy.NAN),
+    )
 
 
 # --- _assert_latest_row_not_nan ----------------------------------------------

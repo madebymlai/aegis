@@ -21,26 +21,17 @@ dependencies = [
 # IBKR adapter (ibapi) — required only for paper/live runs and the IBKR
 # verification script (scripts/verify_paper_ibkr.py); backtests don't need it.
 [project.optional-dependencies]
-ib = ["nautilus_trader[ib]"]
+ib = ["nautilus_trader[ib,docker]"]
 
 [project.scripts]
-# Operator entrypoint: `aegis-trader --mode {backtest,paper,live} --book book.toml`.
-# The book spec is declarative (book.toml); IBKR connection + account come from
-# the environment (IB_* / TRADER_ID), never the committed spec.
+# Operator entrypoint: `aegis-trader backtest --start --end` (offline) and
+# `aegis-trader trader start|stop` (live; paper vs live = IB_PORT). The book spec
+# is declarative (book.toml); the IBKR connection + account come from the
+# environment (IB_* / TRADER_ID), never the committed spec.
 aegis-trader = "aegis_trader.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["aegis_trader*"]
-
-[tool.pytest.ini_options]
-# pytest-forked isolates each e2e test in its own process (see tests/e2e/conftest.py).
-# nautilus_trader's Rust runtime makes the process multi-threaded on import, so every
-# os.fork() trips Python 3.12+'s "fork() in a multi-threaded process" DeprecationWarning.
-# The child only runs the already-collected test body and exits, so the deadlock the
-# warning guards against cannot occur here.
-filterwarnings = [
-    "ignore:.*multi-threaded, use of fork.*:DeprecationWarning",
-]
 
 [tool.mypy]
 python_version = "3.12"
@@ -69,8 +60,8 @@ aegis-data = { path = "../aegis-data", editable = true }
 dev = [
     "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
-    # NautilusTrader's BacktestEngine initialises process-global state (logger,
-    # Rust runtime) that aborts when a second engine is built in the same
-    # process.  e2e tests are marked `forked` so each runs in its own process.
+    # tests/e2e/conftest.py marks each engine test `forked` so Nautilus's
+    # process-global Rust runtime (logger/clock) can't poison later tests;
+    # the marker is a silent no-op without this plugin (second engine aborts).
     "pytest-forked>=1.6.0",
 ]

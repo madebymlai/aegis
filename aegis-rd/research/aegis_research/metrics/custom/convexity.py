@@ -75,6 +75,11 @@ _QUARTER = "QE"
 # differently-sized horizons on one per-year scale before they are averaged.
 _HORIZON_BAND = (42, 63, 84, 126)
 _ANNUALIZATION_DAYS = 252.0
+# Benchmark-free convexity payoff: the net decile tail of overlapping multi-month own-returns — the
+# right tail the sleeve is hired to grow vs the left tail it must keep shallow. A window floor keeps the
+# decile means stable on a held-out split.
+_TAIL_QUANTILE = 0.10
+_MIN_TAIL_WINDOWS = 30
 
 # Metric ids name the behaviour each measures, not the estimator that computes it
 # (a Treynor-Mazuy regression yields market_convexity + market_beta; the regression
@@ -85,6 +90,7 @@ MARKET_BETA_ID = "market_beta"
 CRASH_DAY_RETURN_ID = "crash_day_return"
 CRISIS_QUARTER_RETURN_ID = "crisis_quarter_return"
 BEAR_MARKET_BETA_ID = "bear_market_beta"
+TREND_CONVEXITY_PAYOFF_ID = "trend_convexity_payoff"
 
 
 # ── Shared read of (stream returns, benchmark returns) per group ──────────────
@@ -304,6 +310,72 @@ def _crisis_quarter_return(stream: np.ndarray, bench: np.ndarray) -> float:
     return float(np.mean(finite)) if finite else np.nan
 
 
+# ── Benchmark-free convexity payoff (the trend-sleeve ranker) ─────────────────
+
+def _net_tail_payoff(stream: np.ndarray, horizon: int) -> float:
+    """Annualized (right-decile mean + left-decile mean) of overlapping ``horizon``-day own returns.
+
+    The realized convex signature without a benchmark: a trend sleeve is hired to grow the right tail
+    (dislocation gains) while keeping the left tail shallow (calm bleed), so the sum of the two decile
+    means is positive exactly when "infrequent large gains compensate frequent small losses" (Sepp 2018;
+    [[what-makes-a-trend-sleeve-convex]]). Magnitude-aware (unlike a normalized skew coefficient), so it
+    cannot prefer a sharply-skewed but barely-trading book - the failure mode the roster note flags when
+    a pole is ranked on skew without crisis capture. Annualized so the horizon band shares one scale.
+    """
+    windows = _rolling_compound(stream, horizon)
+    if windows.size < _MIN_TAIL_WINDOWS:
+        return np.nan
+    lo, hi = np.quantile(windows, [_TAIL_QUANTILE, 1.0 - _TAIL_QUANTILE])
+    right, left = windows[windows >= hi], windows[windows <= lo]
+    if right.size == 0 or left.size == 0:
+        return np.nan
+    payoff = float(right.mean() + left.mean())
+    return (1.0 + payoff) ** (_ANNUALIZATION_DAYS / horizon) - 1.0
+
+
+def _trend_convexity_payoff(stream: np.ndarray) -> float:
+    """Horizon-band-averaged net tail payoff — the benchmark-free convexity ranker.
+
+    Mirrors ``crisis_quarter_return``'s two stabilizers (overlapping daily windows for a dense return
+    distribution; a band-average over ~2-6 months to drop the single-horizon knob) but on the *intrinsic*
+    skew axis, which needs no benchmark - so it ranks the convex shape on a catalog-only book where SPY
+    cannot be sourced. Measured at the multi-month horizon the trend payoff develops over, never daily
+    (the convexity is invisible below the trend half-life - Sepp 2018).
+    """
+    vals = [_net_tail_payoff(stream, h) for h in _HORIZON_BAND]
+    finite = [v for v in vals if np.isfinite(v)]
+    return float(np.mean(finite)) if finite else np.nan
+
+
+def _make_trend_convexity_payoff_read() -> Callable[[Any, ReportConfig], pd.Series]:
+    def _read(pf: Any, config: ReportConfig) -> pd.Series:
+        returns = EquityCurve.from_portfolio(pf).returns()
+        return pd.Series(
+            {col: _trend_convexity_payoff(returns[col].dropna().to_numpy()) for col in returns.columns}
+        )
+
+    return _read
+
+
+TREND_CONVEXITY_PAYOFF_DEFINITION = MetricDefinition(
+    id=TREND_CONVEXITY_PAYOFF_ID,
+    title="Trend Convexity Payoff (net multi-month tail return, 2-6mo band)",
+    source_type=SOURCE_TYPE_CUSTOM,
+    unit="return",
+    value_semantics=(
+        "right-tail gain net of left-tail loss over overlapping 2-6 month windows; "
+        "benchmark-free convexity (higher = lose-small / pay-big)"
+    ),
+    provider="aegis",
+    target="portfolio",
+    source_method="get_value",
+    required_report_output=False,
+    required_gate_input=False,
+    metadata={"horizon_band_days": list(_HORIZON_BAND), "tail_quantile": _TAIL_QUANTILE},
+)
+TREND_CONVEXITY_PAYOFF_EXTRACTOR = ExtractorSpec(_make_trend_convexity_payoff_read())
+
+
 # ── Per-benchmark read factories ──────────────────────────────────────────────
 
 def _make_quarterly_skew_read(benchmark: str) -> Callable[[Any, ReportConfig], pd.Series]:
@@ -415,6 +487,9 @@ __all__ = [
     "MARKET_BETA_ID",
     "MARKET_CONVEXITY_ID",
     "QUARTERLY_RETURN_SKEW_ID",
+    "TREND_CONVEXITY_PAYOFF_DEFINITION",
+    "TREND_CONVEXITY_PAYOFF_EXTRACTOR",
+    "TREND_CONVEXITY_PAYOFF_ID",
     "convexity_metrics",
     "crisis_payoff_bootstrap_ci_from_curve",
 ]

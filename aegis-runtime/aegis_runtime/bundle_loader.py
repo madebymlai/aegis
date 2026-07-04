@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from importlib import resources
 from typing import Any
 
+from nautilus_trader.model.identifiers import InstrumentId
+
 from aegis_runtime.bundle import (
     BundleManifest,
     ComponentSpec,
@@ -12,7 +14,21 @@ from aegis_runtime.bundle import (
     ExecutionBundle,
     LockedExecutionPlan,
 )
-from aegis_runtime.instruments import FuturesRef, InstrumentRef, ListedRef
+from aegis_runtime.drift_band import DriftBand
+
+BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v2"
+
+
+class BundlePayloadError(ValueError):
+    """A serialized Execution Bundle payload is malformed."""
+
+
+class BundlePayloadSchemaError(BundlePayloadError):
+    """The serialized bundle payload has an unsupported schema."""
+
+
+class BundlePayloadFieldError(BundlePayloadError):
+    """The serialized bundle payload is missing a required field."""
 
 
 def dump_bundle_payload(
@@ -22,51 +38,57 @@ def dump_bundle_payload(
     plan: LockedExecutionPlan,
 ) -> dict[str, Any]:
     return {
+        "schema_version": BUNDLE_PAYLOAD_SCHEMA_VERSION,
         "contract": {
-            "refs": [_dump_instrument_ref(ref) for ref in contract.refs],
+            "instrument_ids": [_dump_instrument_id(item) for item in contract.instrument_ids],
             "required_arrays": list(contract.required_arrays),
             "base_currency": contract.base_currency,
-            "required_fx_currencies": list(contract.required_fx_currencies),
             "timeframe": contract.timeframe,
+            "missing_index": contract.missing_index.value,
             "lookback_bars": contract.lookback_bars,
+            "futures": list(contract.futures),
         },
         "manifest": {
             "run_id": manifest.run_id,
             "role": manifest.role,
             "candidate_key": manifest.candidate_key,
             "component_source_hashes": dict(manifest.component_source_hashes),
-            "refs": [_dump_instrument_ref(ref) for ref in manifest.refs],
+            "instrument_ids": [_dump_instrument_id(item) for item in manifest.instrument_ids],
         },
         "plan": {
             "strategy": _dump_component_spec(plan.strategy),
             "indicators": [_dump_component_spec(spec) for spec in plan.indicators],
+            "instrument_bands": _dump_instrument_bands(plan.instrument_bands),
             "gross_cap": plan.gross_cap,
             "net_cap": plan.net_cap,
             "direction": plan.direction,
-            "symbols": list(plan.symbols),
-            "currency_by_symbol": dict(plan.currency_by_symbol),
         },
     }
 
 
 def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
+    schema_version = _required_schema_version(payload)
+    if schema_version != BUNDLE_PAYLOAD_SCHEMA_VERSION:
+        raise BundlePayloadSchemaError(
+            "bundle payload schema_version must be "
+            f"{BUNDLE_PAYLOAD_SCHEMA_VERSION!r}; got {schema_version!r}"
+        )
     contract_payload = _required_mapping(payload, "contract", "bundle payload")
     manifest_payload = _required_mapping(payload, "manifest", "bundle payload")
     plan_payload = _required_mapping(payload, "plan", "bundle payload")
     contract = DataContract(
-        refs=tuple(
-            _load_instrument_ref(item)
-            for item in _required_sequence(contract_payload, "refs", "DataContract")
+        instrument_ids=tuple(
+            _load_instrument_id(item)
+            for item in _required_sequence(contract_payload, "instrument_ids", "DataContract")
         ),
         required_arrays=tuple(
             _required_sequence(contract_payload, "required_arrays", "DataContract")
         ),
         base_currency=_required_value(contract_payload, "base_currency", "DataContract"),
-        required_fx_currencies=tuple(
-            _required_sequence(contract_payload, "required_fx_currencies", "DataContract")
-        ),
         timeframe=_required_value(contract_payload, "timeframe", "DataContract"),
+        missing_index=_required_value(contract_payload, "missing_index", "DataContract"),
         lookback_bars=_required_value(contract_payload, "lookback_bars", "DataContract"),
+        futures=tuple(_required_sequence(contract_payload, "futures", "DataContract")),
     )
     manifest = BundleManifest(
         run_id=_required_value(manifest_payload, "run_id", "BundleManifest"),
@@ -75,9 +97,9 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         component_source_hashes=_required_mapping(
             manifest_payload, "component_source_hashes", "BundleManifest"
         ),
-        refs=tuple(
-            _load_instrument_ref(item)
-            for item in _required_sequence(manifest_payload, "refs", "BundleManifest")
+        instrument_ids=tuple(
+            _load_instrument_id(item)
+            for item in _required_sequence(manifest_payload, "instrument_ids", "BundleManifest")
         ),
     )
     plan = LockedExecutionPlan(
@@ -86,13 +108,12 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
             _load_component_spec(_ensure_mapping(item, "LockedExecutionPlan.indicators item"))
             for item in _required_sequence(plan_payload, "indicators", "LockedExecutionPlan")
         ),
+        instrument_bands=_load_instrument_bands(
+            _required_mapping(plan_payload, "instrument_bands", "LockedExecutionPlan")
+        ),
         gross_cap=_required_value(plan_payload, "gross_cap", "LockedExecutionPlan"),
         net_cap=plan_payload.get("net_cap"),
         direction=_required_value(plan_payload, "direction", "LockedExecutionPlan"),
-        symbols=tuple(_required_sequence(plan_payload, "symbols", "LockedExecutionPlan")),
-        currency_by_symbol=_required_mapping(
-            plan_payload, "currency_by_symbol", "LockedExecutionPlan"
-        ),
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
 
@@ -124,35 +145,48 @@ def _load_component_spec(payload: Mapping[str, Any]) -> ComponentSpec:
     )
 
 
-def _dump_instrument_ref(ref: InstrumentRef) -> dict[str, str]:
-    if isinstance(ref, ListedRef):
-        return {"kind": "listed", "figi": ref.figi}
-    if isinstance(ref, FuturesRef):
-        return {
-            "kind": "futures",
-            "root": ref.root,
-            "dataset": ref.dataset,
-            "roll_rule": ref.roll_rule,
-            "adjustment": ref.adjustment,
-        }
-    raise ValueError(f"InstrumentRef must be ListedRef or FuturesRef; got {ref!r}")
+def _dump_instrument_bands(bands: Mapping[InstrumentId, DriftBand]) -> dict[str, dict[str, float]]:
+    return {
+        instrument_id.value: _dump_drift_band(bands[instrument_id])
+        for instrument_id in sorted(bands, key=lambda item: item.value)
+    }
 
 
-def _load_instrument_ref(value: Any) -> InstrumentRef:
-    payload = _ensure_mapping(value, "InstrumentRef")
-    kind = payload.get("kind")
-    if kind is None:
-        raise ValueError("InstrumentRef payload is missing kind")
-    if kind == "listed":
-        return ListedRef(figi=_required_value(payload, "figi", "ListedRef"))
-    if kind == "futures":
-        return FuturesRef(
-            root=_required_value(payload, "root", "FuturesRef"),
-            dataset=_required_value(payload, "dataset", "FuturesRef"),
-            roll_rule=_required_value(payload, "roll_rule", "FuturesRef"),
-            adjustment=_required_value(payload, "adjustment", "FuturesRef"),
+def _load_instrument_bands(payload: Mapping[str, Any]) -> dict[InstrumentId, DriftBand]:
+    return {
+        _load_instrument_id(instrument_id): _load_drift_band(
+            _ensure_mapping(value, "LockedExecutionPlan.instrument_bands item")
         )
-    raise ValueError(f"unknown InstrumentRef kind {kind!r}")
+        for instrument_id, value in payload.items()
+    }
+
+
+def _dump_drift_band(band: DriftBand) -> dict[str, float]:
+    return {
+        "up": band.up,
+        "down": band.down,
+        "destination_fraction": band.destination_fraction,
+    }
+
+
+def _load_drift_band(payload: Mapping[str, Any]) -> DriftBand:
+    return DriftBand(
+        up=_required_value(payload, "up", "DriftBand"),
+        down=_required_value(payload, "down", "DriftBand"),
+        # Optional: older bundles carry no destination; 1.0 is their exact
+        # trade-to-target behaviour (forward-safe default).
+        destination_fraction=payload.get("destination_fraction", 1.0),
+    )
+
+
+def _dump_instrument_id(instrument_id: InstrumentId) -> str:
+    return instrument_id.value
+
+
+def _load_instrument_id(value: Any) -> InstrumentId:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"InstrumentId must be a non-empty string; got {value!r}")
+    return InstrumentId.from_str(value)
 
 
 def _required_mapping(
@@ -172,7 +206,18 @@ def _required_value(payload: Mapping[str, Any], field: str, owner: str) -> Any:
     try:
         return payload[field]
     except KeyError:
-        raise ValueError(f"{owner} is missing required field {field!r}") from None
+        raise BundlePayloadFieldError(
+            f"{owner} is missing required field {field!r}"
+        ) from None
+
+
+def _required_schema_version(payload: Mapping[str, Any]) -> Any:
+    try:
+        return payload["schema_version"]
+    except KeyError:
+        raise BundlePayloadSchemaError(
+            "bundle payload is missing required field 'schema_version'"
+        ) from None
 
 
 def _ensure_mapping(value: Any, label: str) -> Mapping[str, Any]:

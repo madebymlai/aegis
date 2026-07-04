@@ -1,17 +1,38 @@
 import numpy as np
 import pandas as pd
 import pytest
+from aegis_data.distributions import Distribution
+from aegis_runtime import DriftBand, gate
+from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.configuration import PortfolioConfig
+from research.aegis_research.market_data.currency import CurrencyConversion
 from research.aegis_research.portfolios import (
     _SINGLE_CANDIDATE_ID,
+    distribution_cash_dividends,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
     simulate_single_book,
 )
 from tests.support.research.aegis_research.factories import make_portfolio_config
+
+
+def _order_time_column(orders: pd.DataFrame) -> str:
+    return "Index" if "Index" in orders.columns else "Fill Index"
+
+
+def _order_dates(orders: pd.DataFrame) -> list[str]:
+    return sorted(set(orders[_order_time_column(orders)].astype(str)))
+
+
+def _orders_on(orders: pd.DataFrame, date: str) -> pd.DataFrame:
+    return orders[orders[_order_time_column(orders)].astype(str) == date]
+
+
+def _first_order(orders: pd.DataFrame) -> pd.Series:
+    return orders.sort_values(_order_time_column(orders)).iloc[0]
 
 
 def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
@@ -30,8 +51,7 @@ def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
     # Only the first bar and terminal-liquidation last bar produce orders;
     # the NaN rows in between do not rebalance.
     orders = pf.orders.records_readable
-    order_dates = sorted(set(orders["Index"].astype(str)))
-    assert order_dates == ["2024-01-01", "2024-01-04"]
+    assert _order_dates(orders) == ["2024-01-01", "2024-01-04"]
     # Positions persist through NaN rows.
     holdings_before_terminal = pf.assets.iloc[-2]
     assert holdings_before_terminal[(_SINGLE_CANDIDATE_ID, "A")] > 0
@@ -54,7 +74,7 @@ def test_all_zero_allocations_row_in_non_terminal_location_closes_positions_at_c
     assets = pf.assets
     assert assets.iloc[1].to_dict() == pytest.approx({(_SINGLE_CANDIDATE_ID, "A"): 0.0, (_SINGLE_CANDIDATE_ID, "B"): 0.0})
     orders = pf.orders.records_readable
-    second_bar_orders = orders[orders["Index"].astype(str) == "2024-01-02"]
+    second_bar_orders = _orders_on(orders, "2024-01-02")
     assert set(second_bar_orders["Side"]) == {"Sell"}
     assert (second_bar_orders["Price"] == 10.0).any()
     assert (second_bar_orders["Price"] == 20.0).any()
@@ -74,11 +94,253 @@ def test_full_a_to_full_b_switch_under_shared_cash_executes_single_rebalance() -
     pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     orders = pf.orders.records_readable
-    third_bar = orders[orders["Index"].astype(str) == "2024-01-03"]
+    third_bar = _orders_on(orders, "2024-01-03")
     sides_by_symbol = {row["Column"]: row["Side"] for _, row in third_bar.iterrows()}
     assert sides_by_symbol == {(_SINGLE_CANDIDATE_ID, "A"): "Sell", (_SINGLE_CANDIDATE_ID, "B"): "Buy"}
     assert pf.assets.iloc[2][(_SINGLE_CANDIDATE_ID, "A")] == pytest.approx(0.0)
     assert pf.assets.iloc[2][(_SINGLE_CANDIDATE_ID, "B")] > 0
+
+
+def test_symmetric_directional_band_holds_drift_inside_shared_gate() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [100.0, 110.0, 110.0, 110.0]}, index=index)
+    allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        fixed_fee=0,
+        direction="longonly",
+        band_up=0.03,
+        band_down=0.03,
+    )
+
+    pf = simulate_single_book(close, allocations, config)
+
+    assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
+    realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
+    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.03, 0.03))
+
+
+def test_symmetric_directional_band_trades_drift_outside_shared_gate() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [100.0, 110.0, 110.0, 110.0]}, index=index)
+    allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        fixed_fee=0,
+        direction="longonly",
+        band_up=0.01,
+        band_down=0.01,
+    )
+
+    pf = simulate_single_book(close, allocations, config)
+
+    assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-02", "2024-01-04"]
+    realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
+    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.01, 0.01))
+
+
+def test_band_breach_trades_to_interior_destination_fraction() -> None:
+    """destination_fraction=0.5 stops the breach trade halfway between band edge
+    and target (0.505 here) — distinct from both hold (~0.524) and target (0.5),
+    so this pins the destination array reaching the compiled gate."""
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [100.0, 110.0, 110.0, 110.0]}, index=index)
+    allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        fixed_fee=0,
+        direction="longonly",
+        band_up=0.01,
+        band_down=0.01,
+        band_destination_fraction=0.5,
+    )
+
+    pf = simulate_single_book(close, allocations, config)
+
+    realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
+    expected = gate(realized_before_gate, 0.5, 0.01, 0.01, 0.5)
+    assert expected == pytest.approx(0.505)
+    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    assert realized == pytest.approx(expected)
+
+
+def test_symmetric_directional_band_holds_at_inclusive_boundary() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    boundary_price = 2600.0 / 24.0
+    close = pd.DataFrame({"A": [100.0, boundary_price, boundary_price, boundary_price]}, index=index)
+    allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        fixed_fee=0,
+        direction="longonly",
+        band_up=0.02,
+        band_down=0.02,
+    )
+
+    pf = simulate_single_book(close, allocations, config)
+
+    assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
+    realized_before_gate = (50.0 * boundary_price) / (50.0 * boundary_price + 5_000.0)
+    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.02, 0.02))
+
+
+def test_asymmetric_band_down_gates_adds_more_than_trims() -> None:
+    add_pf = _simulate_drift_rebalance(second_price=90.0, band_up=0.01, band_down=0.03)
+    trim_pf = _simulate_drift_rebalance(second_price=110.0, band_up=0.01, band_down=0.03)
+
+    assert _order_dates(add_pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
+    add_realized_before_gate = (50.0 * 90.0) / (50.0 * 90.0 + 5_000.0)
+    add_realized = add_pf.get_allocations(group_by=None).loc[
+        pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
+    ]
+    assert add_realized == pytest.approx(gate(add_realized_before_gate, 0.5, 0.01, 0.03))
+
+    assert _order_dates(trim_pf.orders.records_readable) == [
+        "2024-01-01",
+        "2024-01-02",
+        "2024-01-04",
+    ]
+    trim_realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
+    trim_realized = trim_pf.get_allocations(group_by=None).loc[
+        pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
+    ]
+    assert trim_realized == pytest.approx(gate(trim_realized_before_gate, 0.5, 0.01, 0.03))
+
+
+def test_asymmetric_band_up_gates_trims_more_than_adds() -> None:
+    add_pf = _simulate_drift_rebalance(second_price=90.0, band_up=0.03, band_down=0.01)
+    trim_pf = _simulate_drift_rebalance(second_price=110.0, band_up=0.03, band_down=0.01)
+
+    assert _order_dates(add_pf.orders.records_readable) == [
+        "2024-01-01",
+        "2024-01-02",
+        "2024-01-04",
+    ]
+    add_realized_before_gate = (50.0 * 90.0) / (50.0 * 90.0 + 5_000.0)
+    add_realized = add_pf.get_allocations(group_by=None).loc[
+        pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
+    ]
+    assert add_realized == pytest.approx(gate(add_realized_before_gate, 0.5, 0.03, 0.01))
+
+    assert _order_dates(trim_pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
+    trim_realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
+    trim_realized = trim_pf.get_allocations(group_by=None).loc[
+        pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
+    ]
+    assert trim_realized == pytest.approx(gate(trim_realized_before_gate, 0.5, 0.03, 0.01))
+
+
+def test_instrument_bands_gate_each_symbol_independently() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    es = InstrumentId.from_str("ES.XCME")
+    spy = InstrumentId.from_str("SPY.ARCA")
+    close = pd.DataFrame(
+        {
+            es: [100.0, 110.0, 110.0, 110.0],
+            spy: [100.0, 100.0, 100.0, 100.0],
+        },
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {es: [0.5, 0.5, np.nan, np.nan], spy: [0.0, 0.5, np.nan, np.nan]},
+        index=index,
+    )
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        fixed_fee=0,
+        direction="longonly",
+        band_up=0.01,
+        band_down=0.01,
+    )
+    # ES carries a wide override band; SPY is absent from the map, so it gates at the
+    # sleeve-wide default (0.01) and trades the same drift ES holds.
+    instrument_bands = {es: DriftBand(up=0.03, down=0.03)}
+
+    pf = simulate_single_book(close, allocations, config, instrument_bands=instrument_bands)
+
+    second_bar = _orders_on(pf.orders.records_readable, "2024-01-02")
+    assert set(second_bar["Column"]) == {(_SINGLE_CANDIDATE_ID, spy)}
+    assert set(second_bar["Side"]) == {"Buy"}
+    realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
+    realized = pf.get_allocations(group_by=None).loc[
+        index[1], (_SINGLE_CANDIDATE_ID, es)
+    ]
+    assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.03, 0.03))
+
+
+def _simulate_drift_rebalance(
+    *,
+    second_price: float,
+    band_up: float,
+    band_down: float,
+) -> vbt.Portfolio:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [100.0, second_price, second_price, second_price]}, index=index)
+    allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        fixed_fee=0,
+        direction="longonly",
+        band_up=band_up,
+        band_down=band_down,
+    )
+    return simulate_single_book(close, allocations, config)
+
+
+def test_shortonly_drift_resizes_short_to_target_through_shared_gate() -> None:
+    """A short leg traverses the gate's trade (resize) branch correctly.
+
+    The resize branch rewrites the order as a signed target-percent with direction
+    Both; a short must therefore rebalance back to its negative target, not collapse
+    to zero. Price rises, so the short drifts more negative than its -0.5 target: a
+    wide band holds that drift (and proves the short *entered*), a narrow band trades
+    it back to -0.5.
+    """
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({"A": [100.0, 110.0, 110.0, 110.0]}, index=index)
+    allocations = pd.DataFrame({"A": [-0.5, -0.5, np.nan, np.nan]}, index=index)
+
+    def realized_at_drift(band: float) -> tuple[float, list[str]]:
+        pf = simulate_single_book(
+            close,
+            allocations,
+            make_portfolio_config(
+                fees=0,
+                slippage=0,
+                fixed_fee=0,
+                direction="shortonly",
+                band_up=band,
+                band_down=band,
+            ),
+        )
+        realized = pf.get_allocations(group_by=None).loc[
+            index[1], (_SINGLE_CANDIDATE_ID, "A")
+        ]
+        return realized, _order_dates(pf.orders.records_readable)
+
+    # Wide band: enters the short at bar 0, then holds bar 1's drift. The held
+    # weight is the undisturbed drift, and being < -0.5 proves the short entry
+    # (a resize from flat) filled to target rather than to zero.
+    drifted, held_dates = realized_at_drift(0.20)
+    assert held_dates == ["2024-01-01", "2024-01-04"]
+    assert drifted < -0.5
+
+    # Narrow band: the drift is outside it, so the short resizes back to target.
+    realized, traded_dates = realized_at_drift(0.01)
+    assert "2024-01-02" in traded_dates
+    # The resized short lands on its -0.5 target (not 0.0, the pre-fix bug, nor the
+    # held drift); abs tolerance covers the engine's short-rebalance residual.
+    assert realized == pytest.approx(gate(drifted, -0.5, 0.01, 0.01), abs=1e-4)
+    assert realized == pytest.approx(-0.5, abs=1e-4)
 
 
 def test_terminal_liquidation_sells_all_held_positions_at_last_close() -> None:
@@ -100,7 +362,7 @@ def test_terminal_liquidation_sells_all_held_positions_at_last_close() -> None:
     assert final_assets.to_dict() == pytest.approx({(_SINGLE_CANDIDATE_ID, "A"): 0.0, (_SINGLE_CANDIDATE_ID, "B"): 0.0})
     assert final_cash == pytest.approx(final_equity)
     orders = pf.orders.records_readable
-    last_bar = orders[orders["Index"].astype(str) == "2024-01-04"]
+    last_bar = _orders_on(orders, "2024-01-04")
     assert set(last_bar["Side"]) == {"Sell"}
     assert set(last_bar["Column"]) == {(_SINGLE_CANDIDATE_ID, "A"), (_SINGLE_CANDIDATE_ID, "B")}
 
@@ -307,7 +569,7 @@ def test_split_gap_row_is_masked_before_pfo_and_no_orders_land_on_gap_affected_r
     # (2024-01-03) and is masked as non-executable — no orders land on that date.
     # Terminal liquidation still fills on the last bar (2024-01-05).
     orders = pf.orders.records_readable
-    order_dates = sorted(set(orders["Index"].astype(str)))
+    order_dates = _order_dates(orders)
     assert "2024-01-04" not in order_dates
     assert "2024-01-05" in order_dates
 
@@ -414,6 +676,94 @@ def test_short_leg_carry_drops_return_and_long_leg_is_never_charged() -> None:
     assert short_off == pytest.approx(0.0, abs=1e-9)
     # The long-only flat book is unaffected by carry — long legs are never charged.
     assert long_on == pytest.approx(0.0, abs=1e-9)
+
+
+def test_distribution_cash_dividends_places_unmasked_cash_on_ex_date() -> None:
+    instrument_id = InstrumentId.from_str("DIV.SIM")
+    index = pd.date_range("2024-01-01", periods=4)
+    columns = pd.MultiIndex.from_tuples(
+        [("candidate-a", instrument_id), ("candidate-b", instrument_id)],
+        names=["candidate_id", "symbol"],
+    )
+    close = pd.DataFrame(100.0, index=index, columns=columns)
+    distribution = Distribution.from_ex_date(
+        instrument_id,
+        "2024-01-03",
+        amount=1.25,
+        currency="USD",
+    )
+
+    cash = distribution_cash_dividends(close, [distribution])
+
+    assert cash.loc[pd.Timestamp("2024-01-01")].tolist() == [0.0, 0.0]
+    assert cash.loc[pd.Timestamp("2024-01-03")].tolist() == [1.25, 1.25]
+
+
+def test_distribution_cash_dividends_converts_non_base_cash() -> None:
+    instrument_id = InstrumentId.from_str("DIV.SIM")
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame({instrument_id: np.full(4, 100.0)}, index=index)
+    distribution = Distribution.from_ex_date(
+        instrument_id,
+        "2024-01-03",
+        amount=2.00,
+        currency="USD",
+    )
+    conversion = CurrencyConversion(
+        {instrument_id: pd.Series([0.90, 0.95], index=index[[0, 2]])}
+    )
+
+    cash = distribution_cash_dividends(
+        close,
+        [distribution],
+        currency_conversion=conversion,
+    )
+
+    assert cash.loc[pd.Timestamp("2024-01-03"), instrument_id] == pytest.approx(1.90)
+
+
+def test_distribution_cash_increases_long_total_return() -> None:
+    instrument_id = InstrumentId.from_str("DIV.SIM")
+    index = pd.date_range("2024-01-01", periods=5)
+    close = pd.DataFrame({instrument_id: np.full(5, 100.0)}, index=index)
+    columns = pd.MultiIndex.from_tuples(
+        [("candidate-a", instrument_id)],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(
+        [[1.0], [np.nan], [np.nan], [np.nan], [np.nan]],
+        index=index,
+        columns=columns,
+    )
+    config = make_portfolio_config(
+        fees=0,
+        slippage=0,
+        direction="longonly",
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+    distribution = Distribution.from_ex_date(
+        instrument_id,
+        "2024-01-03",
+        amount=1.0,
+        currency="USD",
+    )
+
+    without = _total_return(
+        simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+    )
+    with_distribution = _total_return(
+        simulate_portfolio_batch(
+            close,
+            allocations,
+            config,
+            periods_per_year=252,
+            distributions=[distribution],
+        )
+    )
+
+    assert without == pytest.approx(0.0, abs=1e-9)
+    assert with_distribution == pytest.approx(0.01, abs=1e-9)
 
 
 def _total_return(pf: vbt.Portfolio) -> float:
@@ -678,7 +1028,7 @@ def test_next_close_fill_timing_fills_at_next_bar_close() -> None:
         open_=open_,
     )
 
-    first_order = pf.orders.records_readable.sort_values("Index").iloc[0]
+    first_order = _first_order(pf.orders.records_readable)
     assert first_order["Price"] == pytest.approx(11.0)  # bar 1 close, not bar 0 close or bar 1 open
 
 
@@ -692,7 +1042,7 @@ def test_next_open_fill_timing_fills_at_next_bar_open() -> None:
         open_=open_,
     )
 
-    first_order = pf.orders.records_readable.sort_values("Index").iloc[0]
+    first_order = _first_order(pf.orders.records_readable)
     assert first_order["Price"] == pytest.approx(11.5)  # bar 1 open, not bar 1 close
 
 
@@ -705,8 +1055,8 @@ def test_same_close_fill_timing_fills_at_current_bar_close() -> None:
         make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="same_close"),
     )
 
-    first_order = pf.orders.records_readable.sort_values("Index").iloc[0]
-    assert first_order["Index"] == pd.Timestamp("2024-01-01")  # bar 0, no shift
+    first_order = _first_order(pf.orders.records_readable)
+    assert first_order[_order_time_column(pf.orders.records_readable)] == pd.Timestamp("2024-01-01")  # bar 0, no shift
     assert first_order["Price"] == pytest.approx(10.0)  # bar 0's own close
 
 
@@ -723,4 +1073,26 @@ def test_next_open_fill_timing_without_open_prices_raises() -> None:
             allocations,
             make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_open"),
             # open_ omitted -> next_open cannot resolve a fill price
+        )
+
+
+def test_batch_exposure_gate_names_the_breaching_candidate() -> None:
+    # Wiring of the kernel Exposure Validation gate: the candidate labels are derived
+    # from the SYMBOL_LEVEL complement and the offender is phrased as a Candidate.
+    # Gate math itself is pinned kernel-side (aegis-runtime test_exposure_validation).
+    index = pd.date_range("2024-01-01", periods=2)
+    close = pd.DataFrame({"A": [10.0, 10.0], "B": [20.0, 20.0]}, index=index)
+    columns = pd.MultiIndex.from_tuples(
+        [(candidate, symbol) for candidate in ("candidate-a", "candidate-b") for symbol in ("A", "B")],
+        names=["candidate_id", "symbol"],
+    )
+    # candidate-a stays at gross 1.0; candidate-b breaches (Σ|wᵢ| = 1.5).
+    allocations = pd.DataFrame([[0.5, 0.5, 1.0, 0.5]] * 2, index=index, columns=columns)
+
+    with pytest.raises(ValueError, match="candidate 'candidate-b' gross exposure"):
+        simulate_portfolio_batch(
+            close,
+            allocations,
+            make_portfolio_config(direction="longonly"),
+            periods_per_year=252,
         )

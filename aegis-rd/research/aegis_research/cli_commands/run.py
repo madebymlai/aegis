@@ -11,9 +11,10 @@ from research.aegis_research.cli_support.errors import (
 )
 from research.aegis_research.cli_support.output import (
     CommandResult,
+    real_path_text,
+    run_refs,
     write_success,
 )
-from research.aegis_research.cli_support.run_output import build_run_payload
 from research.aegis_research.component_registry import (
     ComponentRegistryError,
     discover_component_registry,
@@ -105,7 +106,27 @@ def _handle_strategy_run(
     return write_success(
         CommandResult(
             command="run",
-            payload=build_run_payload(result, selection_evidence=selection_evidence),
+            payload=_run_payload(result, selection_evidence=selection_evidence),
         ),
         **streams,
     )
+
+
+def _run_payload(
+    result: dict[str, Any],
+    *,
+    selection_evidence: ConfigSelectionEvidence,
+) -> dict[str, Any]:
+    return {
+        "selection": selection_evidence.manifest(),
+        "run": run_refs(result),
+        "artifacts": {
+            "strategy_artifact_id": result["strategy_artifact_id"],
+            "strategy_artifact_path": real_path_text(result["strategy_artifact_path"]),
+        },
+        "candidate_store": {
+            "path": real_path_text(result["candidate_store_path"]),
+        },
+        "optimization": result["optimization"],
+        "candidates": result["candidates"],
+    }

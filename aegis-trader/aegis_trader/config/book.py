@@ -1,8 +1,8 @@
 """Load a declarative ``book.toml`` into a domain :class:`BookConfig`.
 
 A *deep* module: the TOML file format — which keys map to which BookConfig
-fields, how the ``[[sleeves]]`` and ``[[band_overrides]]`` arrays-of-tables
-decode — lives only here (information hiding).  The domain ``BookConfig`` stays
+fields and how the ``[[sleeves]]`` arrays-of-tables decode — lives only here
+(information hiding).  The domain ``BookConfig`` stays
 a plain, Nautilus-free dataclass and keeps its own structural invariants
 (``__post_init__``), which this loader simply lets surface.
 
@@ -73,6 +73,8 @@ def load_book_config(path: str | Path) -> BookConfig:
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise BookConfigError(f"malformed book config {str(path)!r}: {exc}") from exc
 
+    _reject_removed_band_keys(data, path)
+
     try:
         sleeves = tuple(
             SleeveConfig(
@@ -85,17 +87,13 @@ def load_book_config(path: str | Path) -> BookConfig:
             )
             for s in data.get("sleeves", [])
         )
-        band_overrides = tuple(
-            (o["figi"], float(o["band_up"]), float(o["band_down"]))
-            for o in data.get("band_overrides", [])
-        )
         drawdown_delever = _drawdown_delever_curve(data.get("drawdown_delever"))
         tail_convexity_budget = _parse_tail_convexity_budget(data)
         costs = _parse_costs(data.get("costs"))
         starting_balances = _parse_starting_balances(data.get("starting_balances"))
     except (KeyError, TypeError, ValueError) as exc:
         raise BookConfigError(
-            f"book config {str(path)!r} has a malformed sleeve/band/tail/cost entry: {exc}"
+            f"book config {str(path)!r} has a malformed sleeve/tail/cost entry: {exc}"
         ) from exc
 
     return BookConfig(
@@ -107,15 +105,22 @@ def load_book_config(path: str | Path) -> BookConfig:
         gross_cap=data.get("gross_cap"),
         net_cap=data.get("net_cap"),
         per_name_cap=data.get("per_name_cap"),
-        default_band_up=float(data.get("default_band_up", 0.02)),
-        default_band_down=float(data.get("default_band_down", 0.02)),
-        band_overrides=band_overrides,
         tail_convexity_budget=tail_convexity_budget,
         costs=costs,
         starting_balances=starting_balances,
         aggregate_drift_threshold=data.get("aggregate_drift_threshold"),
         drawdown_delever=drawdown_delever,
     )
+
+
+def _reject_removed_band_keys(data: Mapping[str, object], path: Path) -> None:
+    removed = ("default_band_up", "default_band_down", "band_overrides")
+    present = [key for key in removed if key in data]
+    if present:
+        raise BookConfigError(
+            f"book config {str(path)!r} declares removed live drift-band keys "
+            f"{present}; instrument drift bands now come from execution bundles"
+        )
 
 
 def _parse_starting_balances(raw: object) -> tuple[tuple[str, float], ...]:
@@ -133,6 +138,7 @@ def _parse_costs(raw: object) -> CostModelConfig:
         raise TypeError("costs must be a TOML table")
     return CostModelConfig(
         per_share_commission=float(raw.get("per_share_commission", 0.0)),
+        commission_pct=float(raw.get("commission_pct", 0.0)),
         min_commission_per_order=float(raw.get("min_commission_per_order", 0.0)),
         max_commission_pct=float(raw.get("max_commission_pct", 0.0)),
         slippage_probability=float(raw.get("slippage_probability", 0.0)),

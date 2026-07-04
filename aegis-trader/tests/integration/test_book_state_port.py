@@ -27,11 +27,10 @@ from nautilus_trader.model.currencies import EUR, GBP
 from nautilus_trader.model.identifiers import AccountId, InstrumentId
 from nautilus_trader.model.objects import Money
 
-from aegis_runtime import ListedRef
 from aegis_trader.portfolio import NautilusBookState
 
-_FIGI_A = "BBG000B9XRY4"
-_IID_A = InstrumentId.from_str(f"{_FIGI_A}.XLON")
+_SYMBOL_A = "VOD"
+_IID_A = InstrumentId.from_str(f"{_SYMBOL_A}.XLON")
 _ACCT_XLON = AccountId("XLON-001")
 _ACCT_XETR = AccountId("XETR-001")
 
@@ -102,14 +101,17 @@ class _FakeCache:
         return self._mark_xrates.get((from_currency, to_currency))
 
 
-def _book_state(*, portfolio: _FakePortfolio, cache: _FakeCache,
-                instr_to_figi: dict[str, str] | None = None) -> NautilusBookState:
-    refs = instr_to_figi if instr_to_figi is not None else {_IID_A.value: _FIGI_A}
+def _book_state(
+    *,
+    portfolio: _FakePortfolio,
+    cache: _FakeCache,
+    covered_instrument_ids: frozenset[InstrumentId] | None = None,
+) -> NautilusBookState:
     return NautilusBookState(
         portfolio=portfolio,
         cache=cache,
         base_currency=EUR,
-        instrument_ref_for_id=refs.get,
+        covered_instrument_ids=covered_instrument_ids or frozenset({_IID_A}),
     )
 
 
@@ -218,7 +220,7 @@ def test_realized_weight_long_is_exposure_over_nav():
         exposures={_IID_A: Money(22_000.0, EUR)},
         positions=[_FakePosition(_IID_A, is_short=False)],
     )
-    assert bs.realized_weights() == {ListedRef(_FIGI_A): 0.22}
+    assert bs.realized_weights() == {_IID_A: 0.22}
 
 
 def test_realized_weight_short_is_negative():
@@ -228,7 +230,7 @@ def test_realized_weight_short_is_negative():
         exposures={_IID_A: Money(10_000.0, EUR)},
         positions=[_FakePosition(_IID_A, is_short=True)],
     )
-    assert bs.realized_weights() == {ListedRef(_FIGI_A): -0.10}
+    assert bs.realized_weights() == {_IID_A: -0.10}
 
 
 def test_realized_weight_non_base_position_converts_via_mark_xrate():
@@ -240,7 +242,7 @@ def test_realized_weight_non_base_position_converts_via_mark_xrate():
         positions=[_FakePosition(_IID_A, is_short=False)],
         mark_xrates={(GBP, EUR): 1.25},
     )
-    assert bs.realized_weights() == {ListedRef(_FIGI_A): 0.5}
+    assert bs.realized_weights() == {_IID_A: 0.5}
 
 
 def test_realized_weight_skips_position_without_mark_rate():
@@ -268,7 +270,7 @@ def test_realized_weight_skips_uncovered_holdings():
             positions=[_FakePosition(other, is_short=False)],
             accounts=[_FakeAccount(_ACCT_XLON, cash=Money(0.0, EUR))],
         ),
-        instr_to_figi={_IID_A.value: _FIGI_A},  # `other` not covered
+        covered_instrument_ids=frozenset({_IID_A}),  # `other` not covered
     )
     assert bs.realized_weights() == {}
 

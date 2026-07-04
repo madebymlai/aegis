@@ -3,23 +3,33 @@
 from __future__ import annotations
 
 import sys
+import subprocess
 
 import pytest
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
+from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.objects import Currency, Price, Quantity
 
-from aegis_trader.data import InstrumentSpec, build_equity
 from aegis_trader.domain.book_config import CostModelConfig
-from aegis_trader.trader.costs import IbkrPerShareFeeModel, build_simulated_fill_model
+from aegis_trader.trader.costs import IbkrEquityFeeModel, build_simulated_fill_model
 
 
 def _equity(currency: str = "EUR"):
-    return build_equity(
-        InstrumentSpec(figi=f"FIGI_{currency}", venue="SIM", quote_currency=currency)
+    instrument_id = InstrumentId.from_str(f"TEST_{currency}.SIM")
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=Symbol(instrument_id.symbol.value),
+        currency=Currency.from_str(currency),
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
     )
 
 
 def _commission_amount(
-    model: IbkrPerShareFeeModel,
+    model: IbkrEquityFeeModel,
     *,
     quantity: int,
     price: str,
@@ -36,7 +46,7 @@ def _commission_amount(
 
 
 def test_base_currency_commission_uses_per_share_floor_and_cap():
-    per_share_model = IbkrPerShareFeeModel(
+    per_share_model = IbkrEquityFeeModel(
         CostModelConfig(
             per_share_commission=0.01,
             min_commission_per_order=1.0,
@@ -46,7 +56,7 @@ def test_base_currency_commission_uses_per_share_floor_and_cap():
     assert _commission_amount(per_share_model, quantity=200, price="50.00") == pytest.approx(2.0)
     assert _commission_amount(per_share_model, quantity=10, price="50.00") == pytest.approx(1.0)
 
-    capped_model = IbkrPerShareFeeModel(
+    capped_model = IbkrEquityFeeModel(
         CostModelConfig(
             per_share_commission=2.0,
             min_commission_per_order=1.0,
@@ -56,13 +66,24 @@ def test_base_currency_commission_uses_per_share_floor_and_cap():
     assert _commission_amount(capped_model, quantity=100, price="50.00") == pytest.approx(50.0)
 
 
+def test_per_value_commission_floors_small_european_orders():
+    model = IbkrEquityFeeModel(
+        CostModelConfig(commission_pct=0.0005, min_commission_per_order=1.25),
+    )
+
+    # 0.05% of EUR 250 = EUR 0.125 -> the EUR 1.25 per-order floor binds.
+    assert _commission_amount(model, quantity=5, price="50.00") == pytest.approx(1.25)
+    # 0.05% of EUR 5,000 = EUR 2.50 -> the percentage charge binds.
+    assert _commission_amount(model, quantity=100, price="50.00") == pytest.approx(2.50)
+
+
 def test_commission_is_currency_agnostic():
     costs = CostModelConfig(
         per_share_commission=0.01,
         min_commission_per_order=1.0,
         max_commission_pct=0.10,
     )
-    model = IbkrPerShareFeeModel(costs)
+    model = IbkrEquityFeeModel(costs)
 
     base = _commission_amount(model, quantity=200, price="50.00", currency="EUR")
     foreign = _commission_amount(model, quantity=200, price="50.00", currency="GBP")
@@ -71,7 +92,7 @@ def test_commission_is_currency_agnostic():
 
 
 def test_zero_cost_config_yields_zero_commission():
-    model = IbkrPerShareFeeModel(CostModelConfig.zero())
+    model = IbkrEquityFeeModel(CostModelConfig.zero())
 
     assert _commission_amount(model, quantity=200, price="50.00", currency="EUR") == 0.0
     assert _commission_amount(model, quantity=200, price="50.00", currency="GBP") == 0.0
@@ -88,4 +109,13 @@ def test_fill_model_carries_configured_probability_and_seed():
 
 
 def test_cost_models_do_not_import_ibapi():
-    assert "ibapi" not in sys.modules
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import aegis_trader.trader.costs, sys; "
+            "sys.exit(1 if any(m == 'ibapi' or m.startswith('ibapi.') for m in sys.modules) else 0)",
+        ],
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr.decode()

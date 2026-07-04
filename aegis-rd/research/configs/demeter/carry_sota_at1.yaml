@@ -1,0 +1,76 @@
+name: demeter_eu_credit_carry_at1
+schema_version: 10
+output_dir: runs/demeter_eu/credit_carry_at1
+
+# THE AT1 LEG SWEEP from [[the-ucits-constrained-carry-sleeve]] (addendum) and
+# [[the-skew-is-the-product]]: does subordinated bank capital — income that is
+# structurally crash-rent — lift the pole's income while DEEPENING its concave
+# signature, where the cash-bond defensive tilt provably could not?
+#
+# Base = the live champion cell (defensive 1.0 / fx 0.15 / cg 2.0) PINNED, under the
+# same live band/fee mechanics as the lock. Single swept axis: at1_weight {0, .10, .20}
+# with the 0-cell as the nested in-grid control. IHYU is dropped from the book because
+# defensive=1.0 zero-weights it. XAT1 = Invesco AT1 EUR-hedged Dist (IE00BFZPF439,
+# IB conId 324057129, EUR-native — no FX leg for it); its inception 2018-06-28 sets the
+# calendar-intersected window start, so judge cells against the IN-GRID control, not the
+# carry_sota lock (different window).
+#
+# DBXM (pure-spread iTraxx Crossover leg) is ABSENT: IB has no security definition for
+# it (by symbol or ISIN, gateway probe 2026-07-03) — the hypothesis is blocked, not
+# tested. Pre-registered criteria: research/vault/runs/demeter/2026-07-03.md (AT1 leg).
+data:
+  base_currency: EUR
+  instruments: [SDHY.LSEETF, LQDH.LSEETF, IEML.LSEETF, XAT1.XBRU]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-06-28'   # XAT1 inception — pre-inception NaNs fail the quality gate
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: demeter_eu.credit_carry
+  params:
+    carry_window: 252
+- id: demeter.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: demeter.carry_mix
+  params:
+    vol_target: 0.10
+    defensive: 1.0
+    fx_weight: 0.15
+    carry_gain: 2.0
+    # at1_weight swept via param_space {0, 0.10, 0.20}; 0 = nested control (live champion)
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: carry_income_utility
+
+report:
+  # Family-membership (robust L-skew) + survivability (tail budget) gates reported next
+  # to the income ranker. Distributions are seeded (GH #76) so the AT1 coupon compounds.
+  metrics: [carry_tail_budget, carry_downside_lskew]
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

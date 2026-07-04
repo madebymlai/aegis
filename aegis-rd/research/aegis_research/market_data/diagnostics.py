@@ -1,11 +1,13 @@
 """Observe: a single pass over loaded data producing typed diagnostics.
 
-The one place market data is observed. ``observe`` shapes the native source
-object into a :class:`MarketDataObservation` (index, arrays, symbols, panels);
-``diagnose`` turns that observation into the typed per-symbol, per-Array
+The one place market data is observed. ``observe_source`` is the pull-outcome
+entry: a failed pull observes nothing and diagnoses every configured
+instrument as provider-failed. ``observe`` shapes the native source
+object into a :class:`MarketDataObservation` (index, arrays, instrument IDs, panels);
+``diagnose`` turns that observation into the typed per-instrument, per-Array
 :class:`DataDiagnostics` records the judge reads. The adapter's index
 evidence is observation-level and goes to the judge and the ``provenance``
-facet directly — it is not threaded through the per-symbol records.
+facet directly; it is not threaded through the per-instrument records.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data import panels as _panels
@@ -21,7 +24,9 @@ from research.aegis_research.market_data.contracts import (
     QUALITY_PROVIDER_FAILED,
     DataArrayDiagnostics,
     DataDiagnostics,
+    MarketDataAdapterResult,
 )
+from research.aegis_research.market_data.identity import as_instrument_id, instrument_ids
 
 _MISSING = object()
 
@@ -30,24 +35,41 @@ _MISSING = object()
 class MarketDataObservation:
     index: pd.Index
     arrays: tuple[str, ...]
-    symbols: tuple[str, ...]
+    instrument_ids: tuple[InstrumentId, ...]
     panels: dict[str, pd.DataFrame]
 
 
 def empty_observation() -> MarketDataObservation:
-    return MarketDataObservation(index=pd.Index([]), arrays=(), symbols=(), panels={})
+    return MarketDataObservation(index=pd.Index([]), arrays=(), instrument_ids=(), panels={})
 
 
 def provider_failed_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ...]:
     return tuple(
         DataDiagnostics(
-            symbol=symbol,
+            instrument_id=instrument_id,
             configured=True,
             arrays={},
             provider_status=QUALITY_PROVIDER_FAILED,
         )
-        for symbol in config.tickers
+        for instrument_id in _config_instrument_ids(config)
     )
+
+
+def observe_source(
+    config: DataConfig,
+    source: MarketDataAdapterResult,
+    *,
+    requested_arrays: tuple[str, ...],
+) -> tuple[MarketDataObservation, tuple[DataDiagnostics, ...]]:
+    """Observe one pull outcome: a failed pull observes nothing and diagnoses
+    every configured instrument as provider-failed; a loaded pull is observed
+    and diagnosed."""
+    if source.failure is not None:
+        return empty_observation(), provider_failed_diagnostics(config)
+    observation = observe(
+        config, native_data=source.native_data, requested_arrays=requested_arrays
+    )
+    return observation, diagnose(config, observation)
 
 
 def observe(
@@ -58,14 +80,20 @@ def observe(
 ) -> MarketDataObservation:
     index = _optional_attr(native_data, "index")
     features = _optional_attr(native_data, "features")
-    symbols = _optional_attr(native_data, "symbols")
+    native_symbols = _optional_attr(native_data, "symbols")
     values = None
-    if index is _MISSING or features is _MISSING or symbols is _MISSING:
+    if index is _MISSING or features is _MISSING or native_symbols is _MISSING:
         values = _native_values(native_data)
     return MarketDataObservation(
         index=_observed_index(index, values),
         arrays=tuple(_observed_arrays(features, values)),
-        symbols=tuple(_observed_symbols(symbols, values, fallback=config.tickers)),
+        instrument_ids=tuple(
+            _observed_instrument_ids(
+                native_symbols,
+                values,
+                fallback=_config_instrument_ids(config),
+            )
+        ),
         panels=_observed_array_panels(native_data, requested_arrays, values=values),
     )
 
@@ -76,25 +104,26 @@ def diagnose(
 ) -> tuple[DataDiagnostics, ...]:
     diagnostics: list[DataDiagnostics] = []
     panels = observation.panels
-    observed_symbols = set(observation.symbols)
-    for symbol in observation.symbols:
+    configured_instrument_ids = set(_config_instrument_ids(config))
+    observed_instrument_ids = set(observation.instrument_ids)
+    for instrument_id in observation.instrument_ids:
         diagnostics.append(
             DataDiagnostics(
-                symbol=str(symbol),
-                configured=symbol in config.tickers,
+                instrument_id=instrument_id,
+                configured=instrument_id in configured_instrument_ids,
                 arrays=_array_diagnostics(
                     panels,
-                    symbol=symbol,
+                    instrument_id=instrument_id,
                     arrays=config.effective_arrays,
                 ),
                 provider_status="loaded",
             )
         )
-    for symbol in config.tickers:
-        if symbol not in observed_symbols:
+    for instrument_id in _config_instrument_ids(config):
+        if instrument_id not in observed_instrument_ids:
             diagnostics.append(
                 DataDiagnostics(
-                    symbol=symbol,
+                    instrument_id=instrument_id,
                     configured=True,
                     arrays={},
                     provider_status="skipped",
@@ -106,16 +135,17 @@ def diagnose(
 def _array_diagnostics(
     panels: dict[str, pd.DataFrame],
     *,
-    symbol: str,
+    instrument_id: InstrumentId,
     arrays: tuple[str, ...],
 ) -> dict[str, DataArrayDiagnostics]:
     diagnostics: dict[str, DataArrayDiagnostics] = {}
     for name in arrays:
         panel = panels.get(name)
-        if panel is None or symbol not in panel.columns:
+        column = None if panel is None else _column_for_instrument_id(panel, instrument_id)
+        if panel is None or column is None:
             diagnostics[name] = DataArrayDiagnostics(available=False)
             continue
-        diagnostics[name] = _available_array_diagnostics(panel[symbol])
+        diagnostics[name] = _available_array_diagnostics(panel[column])
     return diagnostics
 
 
@@ -165,12 +195,23 @@ def _observed_arrays(features: Any, values: Any) -> list[str]:
     return []
 
 
-def _observed_symbols(symbols: Any, values: Any, *, fallback: list[str]) -> list[str]:
-    if symbols is not _MISSING and symbols is not None:
-        return list(map(str, symbols))
+def _observed_instrument_ids(
+    native_symbols: Any,
+    values: Any,
+    *,
+    fallback: tuple[InstrumentId, ...],
+) -> list[InstrumentId]:
+    if native_symbols is not _MISSING and native_symbols is not None:
+        return [_instrument_id(instrument_id) for instrument_id in native_symbols]
     if isinstance(values, pd.DataFrame) and isinstance(values.columns, pd.MultiIndex):
         level = "symbol" if "symbol" in values.columns.names else 0
-        return sorted(set(map(str, values.columns.get_level_values(level))))
+        return sorted(
+            {
+                _instrument_id(instrument_id)
+                for instrument_id in values.columns.get_level_values(level)
+            },
+            key=lambda instrument_id: instrument_id.value,
+        )
     return list(fallback)
 
 
@@ -216,3 +257,18 @@ def _frame_arrays(frame: pd.DataFrame) -> list[str]:
         )
         return sorted(set(map(str, values)))
     return list(map(str, frame.columns))
+
+
+def _column_for_instrument_id(panel: pd.DataFrame, instrument_id: InstrumentId) -> Any | None:
+    for column in panel.columns:
+        if _instrument_id(column) == instrument_id:
+            return column
+    return None
+
+
+def _config_instrument_ids(config: DataConfig) -> tuple[InstrumentId, ...]:
+    return instrument_ids(config.instruments)
+
+
+def _instrument_id(value: Any) -> InstrumentId:
+    return as_instrument_id(value)

@@ -67,7 +67,6 @@ def _evaluator(
     simulate: Any,
     *,
     store: Any = None,
-    invalid_candidate_keys: set | None = None,
 ) -> WindowEvaluator:
     return WindowEvaluator(
         source=_source(simulate),
@@ -76,13 +75,19 @@ def _evaluator(
         close=close,
         open_=close,
         store=store if store is not None else empty_precompute(close, 2, alpha=[0.5, 1.0]),
-        invalid_candidate_keys=invalid_candidate_keys or set(),
         extractors=dict(make_default_metric_registry().extractors),
     )
 
 
 class _RaisingStore:
-    """A store whose window slice must never be reached (proves the short-circuit)."""
+    """A store whose window slice must never be reached (proves the short-circuit).
+
+    Carries its own ``invalid_keys`` — the evaluator reads the Invalid set from the
+    store, not from a separate field, so the fake supplies both behaviours.
+    """
+
+    def __init__(self, invalid_keys: set) -> None:
+        self.invalid_keys = invalid_keys
 
     def window(self, range_: slice, keys: Any) -> dict:
         raise AssertionError("store.window must not be sliced for an all-Invalid chunk")
@@ -95,8 +100,9 @@ def _boom_simulate(*args: Any, **kwargs: Any) -> Any:
 class _RecordingStore:
     """Records each window slice and returns no indicator outputs."""
 
-    def __init__(self) -> None:
+    def __init__(self, invalid_keys: set | None = None) -> None:
         self.calls: list[tuple[slice, list]] = []
+        self.invalid_keys = invalid_keys or set()
 
     def window(self, range_: slice, keys: Any) -> dict:
         self.calls.append((range_, list(keys)))
@@ -122,8 +128,7 @@ def test_evaluate_short_circuits_an_all_invalid_chunk_to_a_nan_frame() -> None:
     evaluator = _evaluator(
         close,
         _boom_simulate,
-        store=_RaisingStore(),
-        invalid_candidate_keys={(0.5,), (1.0,)},
+        store=_RaisingStore(invalid_keys={(0.5,), (1.0,)}),
     )
 
     frame = evaluator.evaluate(slice(0, len(close)), alpha=[0.5, 1.0])
@@ -137,7 +142,7 @@ def test_evaluate_short_circuits_an_all_invalid_chunk_to_a_nan_frame() -> None:
 
 def test_evaluate_slices_windows_and_delegates_for_a_partly_invalid_chunk() -> None:
     close = _uptrend_close()
-    store = _RecordingStore()
+    store = _RecordingStore(invalid_keys={(0.5,)})
     recorded: dict[str, Any] = {}
 
     def _recording_simulate(
@@ -149,9 +154,7 @@ def test_evaluate_slices_windows_and_delegates_for_a_partly_invalid_chunk() -> N
         return vbt.NoResult
 
     # Only one of two Candidates is Invalid ⇒ the chunk is NOT short-circuited.
-    evaluator = _evaluator(
-        close, _recording_simulate, store=store, invalid_candidate_keys={(0.5,)}
-    )
+    evaluator = _evaluator(close, _recording_simulate, store=store)
     range_ = slice(2, 8)
 
     result = evaluator.evaluate(range_, alpha=[0.5, 1.0])

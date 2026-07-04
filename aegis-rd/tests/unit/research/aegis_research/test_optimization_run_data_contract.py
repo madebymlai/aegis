@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from nautilus_trader.model.identifiers import InstrumentId
 
+from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.optimization.run_data_contract import (
     DataArrayContract,
     build_candidate_data_identity,
@@ -73,18 +75,19 @@ def test_build_run_data_evidence_payload_extends_contract_payload(
     assert payload["quality_state"] == "ok"
 
 
-def test_build_candidate_data_identity_captures_source_and_contract(
+def test_build_candidate_data_identity_captures_instrument_ids_and_contract(
     tmp_path: pytest.TempPathFactory,
 ) -> None:
-    """Candidate data identity records source/array metadata from the run."""
+    """Candidate data identity records instrument-id/array metadata from the run."""
     resolved = build_resolved_run_config(tmp_path)
 
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
     identity = build_candidate_data_identity(FakeDataResult(), contract)
 
     assert identity["schema_version"] == "candidate_data_identity.v2"
-    assert identity["source"] == "synthetic"
-    assert identity["symbols"] == ["SYN"]
+    assert identity["requested_instrument_ids"] == [_id("SYN.XNAS")]
+    assert identity["instrument_ids"] == [_id("SYN.XNAS")]
+    assert to_builtin(identity)["requested_instrument_ids"] == ["SYN.XNAS"]
     assert identity["timeframe"] == "1D"
     assert identity["loaded_arrays"] == ["Close", "Open"]
     assert identity["rows"] == 120
@@ -92,3 +95,7 @@ def test_build_candidate_data_identity_captures_source_and_contract(
     assert identity["index_end"] == "2020-06-01"
     assert "array_contract" in identity
     assert "configured_arrays" in identity["array_contract"]
+
+
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)

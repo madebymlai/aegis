@@ -54,4 +54,3 @@ def test_component_readme_placeholders_point_to_examples_and_warn_about_archive_
 
         assert example in readme
         assert "archive/" in readme
-        assert "ignored by git" in readme

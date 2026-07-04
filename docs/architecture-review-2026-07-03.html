@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review — aegis — 2026-07-03</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { border-style: dashed; }
+      .arrow { color: #64748b; text-align: center; line-height: 1; }
+      .deepbox { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .modlabel { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-3">
+        <h1 class="font-serif text-3xl">Architecture review — aegis</h1>
+        <p class="text-sm text-slate-500">develop @ <span class="font-mono">719d4c8</span> (post market-data unification, PR&nbsp;#71) · 2026-07-03</p>
+        <div class="flex flex-wrap gap-3 text-xs text-slate-600">
+          <span class="inline-flex items-center gap-1.5"><span class="inline-block w-4 h-3 border border-slate-400 bg-white"></span> module</span>
+          <span class="inline-flex items-center gap-1.5"><span class="inline-block w-4 h-0 border-t-2 border-dashed border-slate-400"></span> seam</span>
+          <span class="inline-flex items-center gap-1.5"><span class="inline-block w-4 h-0 border-t-2 border-red-600"></span> leakage / duplication</span>
+          <span class="inline-flex items-center gap-1.5"><span class="inline-block w-4 h-3 deepbox rounded-sm"></span> deep module</span>
+        </div>
+      </header>
+
+      <!-- ═══════════════════ ALREADY DEEP ═══════════════════ -->
+      <section id="already-deep" class="space-y-4">
+        <h2 class="font-serif text-2xl">Already deep — patterns to replicate</h2>
+        <p class="text-sm text-slate-600">PR&nbsp;#71 deleted the bespoke store stack (~4,800 lines) and replaced it with the Nautilus Catalog + ContinuousContractModel. Three candidates from the 2026-07-02 review landed with it. The deepening below should extend these existing strengths, not import foreign patterns.</p>
+        <div class="grid md:grid-cols-3 gap-4 text-sm">
+          <div class="rounded-lg border border-emerald-200 bg-white p-4">
+            <p class="modlabel text-emerald-700">aegis-data</p>
+            <p class="font-medium mt-1">roll.py · liquidity.py</p>
+            <p class="text-slate-600 mt-1">Pure roll-calendar and liquidity-leadership math behind 4–5 functions each. Interfaces are data shapes, never ports — the modules cannot know where data came from.</p>
+          </div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4">
+            <p class="modlabel text-emerald-700">aegis-data</p>
+            <p class="font-medium mt-1">continuous_future.py · rebasing.py</p>
+            <p class="text-slate-600 mt-1">Value object + a Rebasing protocol: the spread/ratio choice is made once, then propagated as a value. Byte-exact golden tests pin the whole Roll-Transition Table.</p>
+          </div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4">
+            <p class="modlabel text-emerald-700">aegis-trader</p>
+            <p class="font-medium mt-1">domain core + RebalancePipeline</p>
+            <p class="text-slate-600 mt-1">Allocator, Rebalancer, Sleeve Ledger: zero Nautilus imports, small interfaces, rich implementations. The pipeline is a port-injected orchestrator returning value objects.</p>
+          </div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4">
+            <p class="modlabel text-emerald-700">aegis-trader</p>
+            <p class="font-medium mt-1">MarketDataPort · BookStatePort</p>
+            <p class="text-slate-600 mt-1">Narrow protocols (6 + 4 methods) hiding all Nautilus cache reads. Domain-shaped, not Nautilus-shaped — the kernel stays at the edges (ADR-0003).</p>
+          </div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4">
+            <p class="modlabel text-emerald-700">aegis-rd</p>
+            <p class="font-medium mt-1">Candidate Store · RunRecorder</p>
+            <p class="text-slate-600 mt-1">Six methods hide schema versioning, transactions, and the publication lifecycle; highest earned fan-in in the system. RunRecorder is the single owner of Run state transitions.</p>
+          </div>
+          <div class="rounded-lg border border-emerald-200 bg-white p-4">
+            <p class="modlabel text-emerald-700">cross-context</p>
+            <p class="font-medium mt-1">Execution Bundle seam · InstrumentId</p>
+            <p class="text-slate-600 mt-1">Two adapters (entry-point registry + stub) make the bundle seam real. One identity — the Nautilus InstrumentId — crosses every seam with no translation layer (ADR-0007).</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════ CANDIDATES ═══════════════════ -->
+      <section id="candidates" class="space-y-10">
+        <h2 class="font-serif text-2xl">Deepening candidates</h2>
+
+        <!-- ─────────── 1 · PARITY SUITE ─────────── -->
+        <article id="c1" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">1 · Pin the market-data parity seam with a cross-context suite</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-03 — beads aegis-rd-93ip" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-93ip</span>
+              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">ports &amp; adapters</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-rd/research/aegis_research/market_data/adapters/catalog.py · aegis-trader/aegis_trader/data/backtest_data.py · aegis-trader/aegis_trader/trader/roll_desk.py · aegis-data/aegis_data/continuous_contract_model.py</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="modlabel text-slate-500 mb-2">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  CAT[("Nautilus Catalog")] --> CCM["ContinuousContractModel"]
+  CCM --> RDA["research market_data adapter"]
+  CCM --> TDA["trader backtest data + Roll Desk"]
+  RDA --> WR["research weights"]
+  TDA --> WL["live weights"]
+  WR -. "nothing proves these match" .- WL
+  linkStyle 5 stroke:#dc2626,stroke-width:2px
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="modlabel text-slate-500 mb-2">After</p>
+              <pre class="mermaid">
+flowchart TB
+  CAT2[("Nautilus Catalog")] --> CCM2["ContinuousContractModel"]
+  CCM2 --> RDA2["research adapter"]
+  CCM2 --> TDA2["trader backtest data + Roll Desk"]
+  RDA2 --> PS["parity suite<br/>same window: same OHLCV, same weights<br/>roll mid-window: invariance holds"]
+  TDA2 --> PS
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a;
+  class PS deep
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — research and the Roll Desk are two adapters on the same ContinuousContractModel interface, but no test crosses that seam from both sides: identical windows, identical panels, identical weight frames are asserted nowhere.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — a cross-package parity suite that loads one catalog window through both adapters and asserts equal OHLCV and equal computed weights, including a Roll mid-window with additive invariance held.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-1">
+            <li>Interface becomes the test surface</li>
+            <li>Refactors behind the seam turn safe</li>
+            <li>Locality: parity bugs surface in one suite</li>
+            <li>Two adapters already justify the seam</li>
+          </ul>
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-03</span> — grilling reframed the premise: the bug-catching invariant isn't research-adapter vs trader-adapter OHLCV (near-tautological — both are thin wrappers over the same <span class="font-mono text-xs">ContinuousContractModel</span>) but <em>one-shot <span class="font-mono text-xs">materialize</span> vs incremental <span class="font-mono text-xs">on_bar</span> folding across a roll</em>. <span class="font-mono text-xs">test_continuous_contract_model_live.py</span> already pinned single-append offset-zero recovery; the gap was a full front-leg replay across the ESM6→ESU6 roll. Added <span class="font-mono text-xs">test_incremental_replay_across_the_roll_holds_additive_invariance</span> (opt-in IB-gateway; run live on a gateway, 4 green). The umbrella cross-context suite was <em>rejected</em> — <span class="font-mono text-xs">aegis-rd</span> and <span class="font-mono text-xs">aegis-trader</span> are non-dependent siblings, so the seam is pinned at the shared model in <span class="font-mono text-xs">aegis-data</span>. <span class="font-semibold">The live run surfaced a real divergence:</span> the adjusted series is byte-identical on every shared bar (invariance holds), but the incremental/live path drops exactly the roll-trigger day's bar — it cannot backfill the new front's bar for that day — so research and live differed by one row per roll. Filed as <span class="font-mono text-xs">aegis-rd-y7fd</span> and fixed in <span class="font-mono text-xs">7780911</span> (roll re-materialize bounded by the trigger's bucket close + new-front trigger folded back at offset zero); the live test now asserts full byte-identity and passed against a gateway 2026-07-03. Tracked as <span class="font-mono text-xs">aegis-rd-93ip</span>.</div>
+        </article>
+
+        <!-- ─────────── 2 · CATALOG PORT ─────────── -->
+        <article id="c2" class="rounded-xl border-2 border-emerald-400 bg-white p-6 space-y-4 shadow-sm">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">2 · One interface for the Nautilus Catalog port</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-03 — beads aegis-rd-nbb9" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-nbb9</span>
+              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-data/aegis_data/catalog.py · CatalogBackedDataPort</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-500 mb-3">Before — one seam, three modules</p>
+              <div class="text-center text-xs text-slate-500 mb-1">ContinuousContractModel · chain.py · RD adapter · tests</div>
+              <div class="arrow text-lg">↓ &nbsp; ↓ &nbsp; ↓</div>
+              <div class="space-y-2 mt-1">
+                <div class="border border-slate-300 rounded p-2">
+                  <p class="modlabel">catalog.py</p>
+                  <p class="text-xs text-slate-600">port surface — load_raw_bars · read_native_bars · instruments</p>
+                </div>
+                <div class="border border-slate-300 rounded p-2">
+                  <p class="modlabel">catalog_contracts.py</p>
+                  <p class="text-xs text-slate-600">3 injected adapters that call back into the port</p>
+                </div>
+                <div class="border-2 border-red-400 seam rounded p-2">
+                  <p class="modlabel text-red-600">continuous_catalog.py</p>
+                  <p class="text-xs text-red-600">3 functions, all delegation — fails the deletion test</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-500 mb-3">After — one deep port</p>
+              <div class="text-center text-xs text-slate-500 mb-1">same callers</div>
+              <div class="arrow text-lg">↓</div>
+              <div class="deepbox rounded-lg p-3 mt-1 text-slate-200">
+                <p class="modlabel text-emerald-300">CatalogBackedDataPort</p>
+                <p class="text-xs mt-1">raw + native bar reads · lazy fill</p>
+                <div class="mt-2 space-y-1 opacity-50 text-xs">
+                  <p>contract calendar · fetcher · volume probe</p>
+                  <p>continuous identity: ids · root legs</p>
+                </div>
+              </div>
+              <p class="text-xs text-slate-500 mt-3">Callers learn one interface; the split becomes internal.</p>
+            </div>
+          </div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the catalog seam is split across three modules: the port surface, three injected contract adapters that call back into it, and a pass-through of continuous-identity helpers.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — fold the contract adapters and identity helpers into the port; delete <span class="font-mono">continuous_catalog.py</span>.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-1">
+            <li>Interface: three modules become one</li>
+            <li>Tests build one fake port</li>
+            <li>Leverage: one interface, every consumer</li>
+            <li>Delete one shallow module</li>
+          </ul>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">Aligns with ADR-0008 (the fill is one pure fetch port) — this finishes centralising that seam.</div>
+          <div class="rounded-lg bg-slate-100 border border-slate-300 px-4 py-2 text-sm text-slate-700"><span class="font-semibold">Shipped 2026-07-03</span> — implemented as <span class="font-mono text-xs">aegis-rd-nbb9</span>. Grilling expanded the card: distributions, leg OHLCV fetch, volume probing, and continuous-root identity now live behind <span class="font-mono text-xs">CatalogBackedDataPort</span>; <span class="font-mono text-xs">catalog_contracts.py</span> and <span class="font-mono text-xs">continuous_catalog.py</span> were deleted with no shims. The identity fold added <span class="font-mono text-xs">resolve_continuous(root)</span> returning the synthetic id plus expiry-ordered legs, removed the dead RD start/end identity guard, and left actual bar loading to fail loud at the adapter window gate. Acceptance passed with the raw-catalog reach grep clean and <span class="font-mono text-xs">test_continuous_contract_model_live.py</span> green against an IB Gateway on 2026-07-03 (4 green).</div>
+        </article>
+
+        <!-- ─────────── 3 · RELAYS ─────────── -->
+        <article id="c3" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">3 · Delete the relays that fail the deletion test</h2>
+            <div class="flex gap-2 shrink-0">
+              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium px-3 py-1">Strong</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-rd/research/aegis_research/cli_support/run_output.py · optimization/candidate_publishing.py · aegis-trader/aegis_trader/trader/strategy.py:195 vs bundles/book_sleeves.py</p>
+          <div class="grid md:grid-cols-2 gap-4 text-xs">
+            <div class="rounded-lg border border-slate-200 p-4 space-y-3">
+              <p class="modlabel text-slate-500">Before — three shallow crossings</p>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="border border-slate-300 rounded px-2 py-1">run handler</span><span class="arrow">→</span>
+                <span class="border-2 border-red-400 seam rounded px-2 py-1 text-red-600">run_output.py — 14-line projection</span><span class="arrow">→</span>
+                <span class="border border-slate-300 rounded px-2 py-1">JSON envelope</span>
+              </div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="border border-slate-300 rounded px-2 py-1">pipeline publishing</span><span class="arrow">→</span>
+                <span class="border-2 border-red-400 seam rounded px-2 py-1 text-red-600">candidate_publishing.py — 5 thin delegates</span><span class="arrow">→</span>
+                <span class="border border-slate-300 rounded px-2 py-1">Candidate Store</span>
+              </div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="border border-slate-300 rounded px-2 py-1">Strategy</span><span class="arrow">→</span>
+                <span class="border-2 border-red-400 seam rounded px-2 py-1 text-red-600">own id-union re-implementation</span>
+                <span class="text-red-600">duplicates book_sleeves</span>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 space-y-3">
+              <p class="modlabel text-slate-500">After — callers reach the deep module</p>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="border border-slate-300 rounded px-2 py-1">run handler</span><span class="arrow">→</span>
+                <span class="border border-slate-300 rounded px-2 py-1">JSON envelope (projection inline)</span>
+              </div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="border border-slate-300 rounded px-2 py-1">pipeline publishing</span><span class="arrow">→</span>
+                <span class="deepbox text-slate-200 rounded px-2 py-1">Candidate Store methods</span>
+              </div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="border border-slate-300 rounded px-2 py-1">Strategy</span><span class="arrow">→</span>
+                <span class="border border-slate-300 rounded px-2 py-1">book_sleeves.union_native_instrument_ids</span>
+              </div>
+            </div>
+          </div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — three crossings where the module adds nothing: a one-caller payload projection, a grouping label over Candidate Store calls, and a duplicated instrument-id union.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — inline the projection, move publishing behaviour onto the Candidate Store where it earns depth, and call the one existing union.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-1">
+            <li>Delete two shallow modules</li>
+            <li>Candidate Store interface gains leverage</li>
+            <li>One id-union, one owner</li>
+            <li>Fewer hops for AI navigation</li>
+          </ul>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">ADR-0021 intact: the one-JSON-contract stays owned by <span class="font-mono">cli_support/output.py</span>.</div>
+        </article>
+
+        <!-- ─────────── 4 · DRIFT BANDS ─────────── -->
+        <article id="c4" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">4 · Drift-band resolution has three homes</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Grilled 2026-07-03 — premise stale, no action" class="rounded-full bg-slate-600 text-white text-xs font-semibold px-3 py-1">✗ Closed · no action</span>
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-runtime/aegis_runtime/drift_band.py · aegis-rd/research/aegis_research/drift_bands.py · aegis-trader/aegis_trader/bundles/bands.py</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="modlabel text-slate-500 mb-2">Before</p>
+              <pre class="mermaid">
+flowchart LR
+  R1["aegis-rd drift_bands.py<br/>build band map at export<br/>overkey resolution"] --> K["aegis-runtime DriftBand"]
+  T1["aegis-trader bands.py<br/>merge bundle bands at load<br/>overkey resolution"] --> K
+  R1 -. duplicated lookup .- T1
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class R1,T1 leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="modlabel text-slate-500 mb-2">After</p>
+              <pre class="mermaid">
+flowchart LR
+  R2["aegis-rd export"] --> BR["aegis-runtime<br/>band resolution owns the lookup"]
+  T2["aegis-trader load"] --> BR
+  BR --> K2["DriftBand"]
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a;
+  class BR deep
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — one concept split three ways: research builds the band map at export, the trader re-merges it at load, and the key-resolution knowledge lives on both sides of the Execution Bundle seam — they must change together.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — the band-map resolution moves into the shared kernel once; research and the trader become two adapters calling it at their ends of the seam.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-1">
+            <li>Locality: one lookup, one owner</li>
+            <li>Two callers prove the seam real</li>
+            <li>Test once, in the kernel</li>
+            <li>Export/load provably symmetric</li>
+          </ul>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Closed 2026-07-03 — premise stale, no action</p>
+            <p class="text-sm text-slate-700">Grilling found the duplicated overkey resolution no longer exists. Override-key resolution has exactly one home: <span class="font-mono">aegis-rd drift_bands.py</span> via <span class="font-mono">resolved_band_for</span>, called by both the bundle export and the sim — parity by construction. The trader does no key resolution at all: <span class="font-mono">bundles/bands.py</span> is a sleeve-ownership merge, and the rebalancer does an exact <span class="font-mono">InstrumentId</span> lookup. The kernel already validates the seam contract (<span class="font-mono">bundle.py</span>: bands must exactly cover the contract universe).</p>
+            <p class="text-sm text-slate-700">The narrowed residual — move the sleeve merge into <span class="font-mono">aegis-runtime</span> — was also rejected: the ownership invariant is a book-composition concern, the merge has one caller with no structural second (research never holds multiple bundles), and the kernel has no sleeve vocabulary to receive it. Revisit only if a multi-sleeve composed-book simulation lands in research.</p>
+          </div>
+        </article>
+
+        <!-- ─────────── 5 · STARTUP ─────────── -->
+        <article id="c5" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">5 · One module decides trading may start</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Grilled 2026-07-03 — already built, no action" class="rounded-full bg-slate-600 text-white text-xs font-semibold px-3 py-1">✗ Closed · no action</span>
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-trader/aegis_trader/trader/pipeline.py · trader/roll_desk.py · trader/book_startup.py · trader/strategy.py</p>
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="modlabel text-slate-500 mb-2">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  S["Strategy.on_start"] --> B["bootstrap"]
+  B --> P["pipeline startup_check<br/>band ownership · cap provenance · account integrity"]
+  B --> R["RollDesk.start<br/>continuous identity gate"]
+  B -->|"Halt or BootResult — isinstance check"| S
+  linkStyle 3 stroke:#dc2626,stroke-width:2px
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="modlabel text-slate-500 mb-2">After</p>
+              <pre class="mermaid">
+flowchart TB
+  S2["Strategy.on_start"] --> SEQ["Startup sequencer<br/>owns every gate, in order"]
+  SEQ --> D["one typed StartupDecision"]
+  D --> S2
+  classDef deep fill:#0f172a,color:#e2e8f0,stroke:#0f172a;
+  class SEQ deep
+              </pre>
+            </div>
+          </div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — startup gates live in three owners (pipeline holds three, the Roll Desk one, bootstrap composes them) and the Strategy inspects the result by <span class="font-mono">isinstance</span>; a new gate has no obvious home.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — a startup sequencer owns the gate roster and ordering, returning one typed decision the Strategy is told, not asked to interpret.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-1">
+            <li>Locality: "may we trade" in one module</li>
+            <li>Gate composition unit-testable, no Nautilus</li>
+            <li>New gates get one home</li>
+            <li>Strategy.on_start shrinks</li>
+          </ul>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">Continues the Book Startup funnel extraction — the funnel exists; the gates it composes are still scattered.</div>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Closed 2026-07-03 — the proposed sequencer already exists, no action</p>
+            <p class="text-sm text-slate-700">Grilling found the "After" is already built: <span class="font-mono">book_startup.bootstrap()</span> is the single composition point that runs all five gates in a fixed order and returns one typed decision (<span class="font-mono">BootResult | Halt</span>), and <span class="font-mono">test_book_startup.py</span> already unit-tests every halt ordering against ports with no Nautilus engine. The <span class="font-mono">isinstance(boot, Halt)</span> in the Strategy is standard union narrowing, not interpretation.</p>
+            <p class="text-sm text-slate-700">The residual — gate <em>bodies</em> live in three owners — was judged correct layering, not scattering: each gate lives with the state it validates (band ownership where the band map is built in <span class="font-mono">pipeline.startup_check()</span>, continuous identity where models are materialized in <span class="font-mono">RollDesk.start()</span>). Hoisting the bodies into a sequencer module would force it into pipeline and roll-desk internals — worse information hiding. A new gate's home is obvious: body with its state, wiring in <span class="font-mono">bootstrap</span>. Revisit only if gates ever need dynamic composition (per-book rosters, config-driven ordering).</p>
+          </div>
+        </article>
+
+        <!-- ─────────── 6 · MATERIALIZER ─────────── -->
+        <article id="c6" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">6 · An internal materializer seam inside the ContinuousContractModel</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Grilled 2026-07-03 — narrowed to shared test fakes, shipped; seam deferred — beads aegis-rd-pnli" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Narrowed &amp; shipped · aegis-rd-pnli</span>
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">local-substitutable</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-data/aegis_data/continuous_contract_model.py · continuous_materialize.py · chain.py · continuous_future.py</p>
+          <div class="grid md:grid-cols-2 gap-4 text-xs">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-500 mb-2">Before — state machine and composition entangled</p>
+              <div class="border border-slate-300 rounded p-3 space-y-2">
+                <p class="modlabel">ContinuousContractModel</p>
+                <p class="text-slate-600">state: frame · front leg · last rebasing · on_bar roll</p>
+                <div class="border-2 border-red-400 seam rounded p-2 space-y-1">
+                  <p class="modlabel text-red-600">_materialize_frame — 6-module sequence</p>
+                  <div class="flex flex-wrap gap-1">
+                    <span class="bg-stone-100 rounded px-1.5 py-0.5">root legs</span>
+                    <span class="bg-stone-100 rounded px-1.5 py-0.5">contract chain</span>
+                    <span class="bg-stone-100 rounded px-1.5 py-0.5">continuous future</span>
+                    <span class="bg-stone-100 rounded px-1.5 py-0.5">native bars</span>
+                    <span class="bg-stone-100 rounded px-1.5 py-0.5">engine materialize</span>
+                    <span class="bg-stone-100 rounded px-1.5 py-0.5">to OHLCV</span>
+                  </div>
+                </div>
+                <p class="text-red-600">tests must stand up the whole chain to test state transitions</p>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-500 mb-2">After — state machine tells a materializer</p>
+              <div class="border border-slate-300 rounded p-3 mb-2">
+                <p class="modlabel">ContinuousContractModel</p>
+                <p class="text-slate-600">state machine only — still the continuous series owner</p>
+              </div>
+              <div class="arrow text-lg">↓ internal seam</div>
+              <div class="deepbox rounded-lg p-3 text-slate-200 mt-2">
+                <p class="modlabel text-emerald-300">Materializer</p>
+                <div class="flex flex-wrap gap-1 mt-2 opacity-50">
+                  <span class="bg-slate-700 rounded px-1.5 py-0.5">root legs</span>
+                  <span class="bg-slate-700 rounded px-1.5 py-0.5">chain</span>
+                  <span class="bg-slate-700 rounded px-1.5 py-0.5">future</span>
+                  <span class="bg-slate-700 rounded px-1.5 py-0.5">bars</span>
+                  <span class="bg-slate-700 rounded px-1.5 py-0.5">engine</span>
+                  <span class="bg-slate-700 rounded px-1.5 py-0.5">OHLCV</span>
+                </div>
+              </div>
+              <p class="text-slate-500 mt-2">a fake materializer tests rolls and appends in isolation</p>
+            </div>
+          </div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the model owns both the continuous-series state machine and a fragile six-module composition sequence; changing any collaborator means re-understanding <span class="font-mono">_materialize_frame</span>, and state transitions are only testable through the full chain.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — give the implementation an internal seam: the model is constructed with a materializer and keeps only frame/front-leg/rebasing state and the roll trigger.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-1">
+            <li>State machine tests need no chain</li>
+            <li>Composition tested once, in one place</li>
+            <li>on_bar roll path isolated</li>
+            <li>Interface unchanged for both consumers</li>
+          </ul>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">ADR-0009 intact: the model stays the continuous-series owner — the seam is internal to its implementation.</div>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Grilled 2026-07-03 — narrowed and shipped as shared test fakes (aegis-rd-pnli); the seam itself deferred</p>
+            <p class="text-sm text-slate-700">Grilling reframed the pain: the six-step composition in <span class="font-mono">_materialize_frame</span> is real but the model is only ~200 lines, and the strongest tests (<span class="font-mono">incremental_replay matches one-shot</span>, the oracle test) are properties of the state machine <em>composed with</em> the real materializer — a fake materializer would gut them. The concrete, present cost was elsewhere: the fake catalog/port apparatus was duplicated ~250 lines each in <span class="font-mono">aegis-data</span> and <span class="font-mono">aegis-trader</span>, and again inside the model's own test file.</p>
+            <p class="text-sm text-slate-700">Shipped: one public test-support module <span class="font-mono">aegis_data/testing.py</span> (the <span class="font-mono">pandas.testing</span> pattern) — <span class="font-mono">FakeCatalog</span>, <span class="font-mono">FakePort</span>, frame/bar builders, and the canned ES roll scenarios — now driving <span class="font-mono">test_catalog.py</span>, <span class="font-mono">test_continuous_contract_model.py</span>, and the trader's <span class="font-mono">test_roll_desk.py</span>; both duplicated copies deleted.</p>
+            <p class="text-sm text-slate-700">Deferred: the internal materializer seam. If revisited, it must cover <span class="font-mono">front_leg_as_of</span> as well as <span class="font-mono">_materialize_frame</span> (the roll trigger runs through the former), and the replay/oracle property tests must stay on the real composition. Trigger: the next behavioral change to <span class="font-mono">on_bar</span>/<span class="font-mono">_roll_across</span> (intraday cadences, new roll triggers).</p>
+          </div>
+        </article>
+
+        <!-- ─────────── 7 · IBKR SPLIT ─────────── -->
+        <article id="c7" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">7 · ibkr.py carries two modules in one file</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Grilled &amp; shipped 2026-07-03 — beads aegis-rd-mext" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Done · aegis-rd-mext</span>
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">ports &amp; adapters</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-data/aegis_data/ibkr.py (~750 lines)</p>
+          <div class="grid md:grid-cols-2 gap-4 text-xs">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-500 mb-2">Before — one file, two concerns</p>
+              <div class="border border-slate-300 rounded overflow-hidden">
+                <div class="bg-emerald-50 border-b border-slate-200 p-2" style="min-height:70px">
+                  <p class="modlabel text-emerald-700">IbkrHistoricalProvider — adapter at the DataProvider port</p>
+                  <p class="text-slate-600">3 methods · connection lifecycle · ~170 lines · clean</p>
+                </div>
+                <div class="bg-amber-50 border-b border-slate-200 p-2" style="min-height:60px">
+                  <p class="modlabel text-amber-700">raw-ibapi ADJUSTED_LAST machinery</p>
+                  <p class="text-slate-600">~135 lines</p>
+                </div>
+                <div class="bg-amber-50 p-2" style="min-height:80px">
+                  <p class="modlabel text-amber-700">attach_live_clients + node config factories</p>
+                  <p class="text-slate-600">~250 lines · live-only integration tests</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 space-y-3">
+              <p class="modlabel text-slate-500 mb-2">After — two cohesive modules, same seams</p>
+              <div class="deepbox rounded p-2 text-slate-200" style="min-height:70px">
+                <p class="modlabel text-emerald-300">ibkr historical — the DataProvider adapter</p>
+                <p class="opacity-60">fetch + adjusted-last · unit-testable alone</p>
+              </div>
+              <div class="border border-slate-300 rounded p-2" style="min-height:70px">
+                <p class="modlabel">ibkr live wiring</p>
+                <p class="text-slate-600">client configs · attach to node · quarantined from the port</p>
+              </div>
+            </div>
+          </div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — the clean historic-fetch adapter shares a module with live client wiring and raw-ibapi machinery; reading the DataProvider port seam means wading through node configuration.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — split by concern: the adapter behind the port in one module, live wiring in another. Cohesion, not new seams.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-1">
+            <li>Adapter unit-tests lose live baggage</li>
+            <li>Port seam readable in one file</li>
+            <li>Live wiring failures localise</li>
+          </ul>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Grilled &amp; shipped 2026-07-03 (aegis-rd-mext)</p>
+            <p class="text-sm text-slate-700">Grilling confirmed the premise with the consumer map: the two halves have disjoint importers — the trader touches only the live wiring (<span class="font-mono">attach_live_clients</span>, <span class="font-mono">IB_CLIENT_NAME</span>), research/catalog only the historic fetch (<span class="font-mono">IbkrHistoricalProvider</span>, <span class="font-mono">seed_instrument_definitions</span>). The docstring already documented the one-module choice and the review flagged the file anyway, so "document it" was not a remedy. One genuinely shared piece surfaced: <span class="font-mono">mic_instrument_provider_config</span> — the MIC venue pin — called by both sides.</p>
+            <p class="text-sm text-slate-700">Shipped: <span class="font-mono">ibkr.py</span> became the package <span class="font-mono">aegis_data/ibkr/</span> — <span class="font-mono">historical.py</span> (provider, raw ADJUSTED_LAST machinery, connection singleton, definition seeding), <span class="font-mono">live.py</span> (BrokerConnection, attach_live_clients, gateway trading-mode), <span class="font-mono">symbology.py</span> (the shared venue pin). <span class="font-mono">__init__.py</span> re-exports the same eight public names, so no importer changed and the lazy-<span class="font-mono">ibapi</span> boundary is preserved (the import-for-effect test now pops the submodules too).</p>
+          </div>
+        </article>
+
+        <!-- ─────────── 8 · ALLOCATION CROSSING ─────────── -->
+        <article id="c8" class="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="font-serif text-xl">8 · The Allocation crossing is thinner than the modules it joins</h2>
+            <div class="flex gap-2 shrink-0">
+              <span title="Grilled 2026-07-03 — narrowed to allocator-owned estimator routing, shipped — beads aegis-rd-qbr7" class="rounded-full bg-emerald-600 text-white text-xs font-semibold px-3 py-1">✓ Narrowed &amp; shipped · aegis-rd-qbr7</span>
+              <span class="rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1">Worth exploring</span>
+              <span class="rounded-full bg-slate-100 text-slate-600 text-xs px-3 py-1">in-process</span>
+            </div>
+          </div>
+          <p class="font-mono text-sm text-slate-600">aegis-trader/aegis_trader/domain/allocator.py · domain/rebalancer.py</p>
+          <div class="grid md:grid-cols-2 gap-4 text-xs">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-500 mb-2">Before — deep · thin · deep</p>
+              <div class="flex items-stretch gap-2" style="min-height:230px">
+                <div class="deepbox rounded-lg p-2 text-slate-200 flex-1">
+                  <p class="modlabel text-emerald-300">Allocator</p>
+                  <p class="opacity-60 mt-1">ERC solve · group hierarchy · drawdown de-lever · ~200 lines</p>
+                </div>
+                <div class="flex flex-col justify-center items-center gap-1 w-28">
+                  <div class="border-2 border-red-400 seam rounded p-1.5 text-center text-red-600">Allocation<br/>8-line dataclass</div>
+                  <p class="text-red-600 text-center">rebalancer unpacks + re-transforms (~50 lines)</p>
+                </div>
+                <div class="deepbox rounded-lg p-2 text-slate-200 flex-1">
+                  <p class="modlabel text-emerald-300">Rebalancer</p>
+                  <p class="opacity-60 mt-1">netting · bands · cap gating · breach recovery · ~350 lines</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4">
+              <p class="modlabel text-slate-500 mb-2">After — the crossing carries the handoff</p>
+              <div class="flex items-stretch gap-2" style="min-height:230px">
+                <div class="deepbox rounded-lg p-2 text-slate-200 flex-1">
+                  <p class="modlabel text-emerald-300">Allocator</p>
+                  <p class="opacity-60 mt-1">owns its output shape fully</p>
+                </div>
+                <div class="flex flex-col justify-center items-center w-28">
+                  <div class="border-2 border-slate-500 rounded p-1.5 text-center bg-white">richer crossing object —<br/>what the Rebalancer consumes directly</div>
+                </div>
+                <div class="deepbox rounded-lg p-2 text-slate-200 flex-1">
+                  <p class="modlabel text-emerald-300">Rebalancer</p>
+                  <p class="opacity-60 mt-1">no unpacking, nets and gates</p>
+                </div>
+              </div>
+              <p class="text-slate-500 mt-2">seam tests hit the crossing directly, not the full pipeline</p>
+            </div>
+          </div>
+          <p class="text-sm"><span class="font-semibold">Problem</span> — two deep modules meet across an 8-line dataclass the Rebalancer unpacks and re-transforms; the seam is only exercised at full-pipeline level, so boundary changes surface late.</p>
+          <p class="text-sm"><span class="font-semibold">Solution</span> — deepen the crossing object so the Allocator hands over what the Rebalancer consumes, and test the seam directly.</p>
+          <ul class="text-sm text-slate-700 list-disc list-inside space-y-1">
+            <li>Boundary bugs caught at the seam</li>
+            <li>Allocator owns its output shape</li>
+            <li>Unpack-and-transform code deleted</li>
+          </ul>
+          <div class="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">ADR-0002 / ADR-0004 responsibilities unchanged — only the object crossing between them deepens.</div>
+          <div class="rounded-lg border border-slate-300 bg-slate-50 p-4 space-y-2">
+            <p class="text-sm font-semibold text-slate-700">Grilled 2026-07-03 — narrowed to allocator-owned estimator routing, shipped (aegis-rd-qbr7)</p>
+            <p class="text-sm text-slate-700">The card's premise mostly did not survive contact with the code. The "~50 lines of unpack + re-transform" is really an 8-line netting loop — and netting is the Rebalancer's <em>own</em> ADR-0002 charter (even this card's "After" box keeps "nets and gates" there). "Seam only exercised at full-pipeline level" was also false on the Allocator side: <span class="font-mono">test_allocator.py</span> holds 14 direct tests. And <span class="font-mono">Allocation</span> has exactly one consumer, so deepening the crossing object itself would be YAGNI.</p>
+            <p class="text-sm text-slate-700">The genuine leak the card gestured at: the diagonal-vs-covariance <em>routing</em> lived in <span class="font-mono">rebalancer._allocate_sleeves</span>, with the allocator's docstring confessing "the rebalancer routes there". Which estimator refines the risk budget, and when, is allocation policy — a third path (shrinkage, minimum sample count) would have changed both modules together.</p>
+            <p class="text-sm text-slate-700">Shipped: one public <span class="font-mono">allocate()</span> entry point in <span class="font-mono">allocator.py</span> owning the cold-book → vols → covariance routing; <span class="font-mono">allocate_diagonal_vol_target</span> / <span class="font-mono">allocate_covariance_vol_target</span> made private; <span class="font-mono">_allocate_sleeves</span> collapsed to a <span class="font-mono">BookConfig</span>→kwargs adapter with no branch; the 14 seam tests repointed to <span class="font-mono">allocate()</span> so they now exercise the production entry point, routing included. <span class="font-mono">Allocation</span> and the Rebalancer's netting untouched.</p>
+          </div>
+        </article>
+
+        <!-- ─────────── WATCHED ─────────── -->
+        <div class="rounded-xl border border-slate-200 bg-stone-100 p-6 space-y-3">
+          <h3 class="font-serif text-lg text-slate-700">Watched, not carded</h3>
+          <p class="text-sm text-slate-600"><span class="font-semibold">configuration/ scatter (aegis-rd)</span> — schema, constraints, and resolution across three files, with <span class="font-mono">cross_checks.py</span> holding the repo's highest cognitive-complexity function. The shape is deliberate (ADR-0012, ADR-0014); revisit only if a single config change keeps touching all three files.</p>
+          <p class="text-sm text-slate-600"><span class="font-semibold">run_evidence ambient ledger (aegis-rd pipeline stages)</span> — every stage mutates a shared ledger beside its typed result. ADR-0015's revisit trigger (a stage receiving it unused) is not met. The real smell is tests mocking the ledger as a dict — fold into the deferred ADR-0004 evidence-accumulator work rather than a standalone refactor.</p>
+        </div>
+      </section>
+
+      <!-- ═══════════════════ TOP RECOMMENDATION ═══════════════════ -->
+      <section id="top-recommendation" class="rounded-xl border-2 border-emerald-600 bg-white p-8 space-y-3">
+        <p class="modlabel text-emerald-700">Top recommendation</p>
+        <h2 class="font-serif text-2xl"><a href="#c1" class="hover:underline">1 · Pin the market-data parity seam</a></h2>
+        <p class="text-sm text-slate-700 max-w-3xl">Two adapters already share the ContinuousContractModel interface, and that interface is the test surface — yet nothing crosses it from both sides. Pinning it first is also the enabler: candidates 2, 6, and 7 all refactor behind this seam, and a parity suite makes each of them a safe, behaviour-preserving change instead of a leap.</p>
+      </section>
+
+    </main>
+  </body>
+</html>

@@ -1,11 +1,13 @@
-"""Assemble a dated-contract chain for back-adjustment.
+"""Assemble a dated-contract chain for the continuous-future roll-transition table.
 
 Given a futures root + date range, build the calendar roll schedule
 (:mod:`aegis_data.roll`), fetch each dated contract's OHLCV over its active
 window (extended past the roll dates so consecutive contracts overlap on the
 seam), snap each roll date to the latest common trading day, and return a
-:class:`ContractChain` ready for the back-adjustment transform.  The per-contract
-fetch is injected (``ContractFetcher``) so assembly is testable without I/O.
+:class:`ContractChain` ready for the roll-transition table
+(:mod:`aegis_data.continuous_future`), which Nautilus's engine back-adjusts on
+demand (Path A).  The per-contract fetch is injected (``ContractFetcher``) so
+assembly is testable without I/O.
 """
 
 from __future__ import annotations
@@ -16,8 +18,13 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from aegis_data.liquidity import liquid_cycle
-from aegis_data.roll import DatedContract, roll_lead_days_for_cadence, roll_schedule
+from aegis_data.liquidity import liquid_roll_schedule
+from aegis_data.roll import (
+    DatedContract,
+    FuturesChainSchedule,
+    roll_lead_days_for_cadence,
+    roll_schedule,
+)
 
 # Each contract is fetched a little past its roll dates so that, after a
 # scheduled roll snaps back to the latest common trading day (holiday/weekend),
@@ -76,15 +83,14 @@ def fetch_contract_chain(
     """
     roll_lead_days = roll_lead_days_for_cadence(bar_cadence)
     candidates = list_contracts(root, start, end)
-    eligible = _liquid_candidates(candidates, start, end, probe_volume, roll_lead_days)
-    schedule = roll_schedule(eligible, start, end, roll_lead_days=roll_lead_days)
+    schedule = _roll_schedule(candidates, start, end, probe_volume, roll_lead_days)
     n = len(schedule.symbols)
     frames: list[pd.DataFrame] = []
     for i, symbol in enumerate(schedule.symbols):
         # Reach back past the prior roll for seam overlap, but never before ``start``: the
         # first leg begins at ``start``, so the seam intersection cannot use earlier days,
-        # and a fetch before the dataset's available history aborts the pull (Databento 422
-        # at the window's left edge).  Symmetric to the expiry clamp on the late edge below.
+        # and a fetch before the provider's available history aborts the pull (a 422 at the
+        # window's left edge).  Symmetric to the expiry clamp on the late edge below.
         window_start = max(schedule.roll_dates[i - 1] - _OVERLAP_BUFFER, start) if i > 0 else start
         if i < n - 1:
             # The +overlap buffer past the roll is a best-effort seam fetch, not
@@ -105,37 +111,40 @@ def fetch_contract_chain(
     )
 
 
-def _liquid_candidates(
+def _roll_schedule(
     candidates: Sequence[DatedContract],
     start: date,
     end: date,
     probe_volume: VolumeProbe | None,
     roll_lead_days: int,
-) -> tuple[DatedContract, ...]:
-    """The Liquid Cycle when a volume probe is supplied, else every candidate.
+) -> FuturesChainSchedule:
+    """The Liquid-Cycle, liquidity-timed roll schedule when a volume probe is supplied,
+    else the plain calendar schedule over every listed candidate.
 
-    Probe each candidate's daily volume over its own life and keep only the
-    ever-Liquidity-Leader contracts.  Each probe window ends at ``min(last_trade, end)``,
-    never the full multi-year chain edge, so the per-contract definitions snapshot —
-    anchored at the window's late edge — lands inside the contract's listed life: a
-    contract is only listed a bounded horizon before expiry (ICE lists ~10 months out),
-    so probing every candidate to the full edge left far-dated contracts unresolvable
-    (Databento 422).  Clamping to ``end`` keeps the front-at-end contract's anchor on a
-    day data exists (its last trade may be past the requested window).  With no probe the
-    chain rolls through whatever was listed — a caller that does not rank liquidity.
+    With a probe, each candidate's daily volume is read over its own life and fed to
+    :func:`liquid_roll_schedule`, which narrows to the Liquid Cycle (drops thin serials)
+    and rolls on Liquidity-Leader migration capped by the calendar rule.  Each probe
+    window ends at ``min(last_trade, end)``, never the full multi-year chain edge, so the
+    per-contract definitions snapshot — anchored at the window's late edge — lands inside
+    the contract's listed life: a contract is only listed a bounded horizon before expiry
+    (ICE lists ~10 months out), so probing every candidate to the full edge left far-dated
+    contracts unresolvable (a provider 422).  With no probe the chain rolls on the calendar
+    through whatever was listed — a caller that does not rank liquidity.
     """
     if probe_volume is None:
-        return tuple(candidates)
+        return roll_schedule(candidates, start, end, roll_lead_days=roll_lead_days)
     # A candidate whose last trade falls before the window start is listed only by the
     # calendar's lookback anchor; it expired before the window opens, so its probe window
     # would invert (``start`` > ``min(last_trade, end)``).  It can never be the Liquidity
-    # Leader, so skip the probe — ``liquid_cycle`` then drops it for having no volume.
+    # Leader, so skip the probe — ``liquid_roll_schedule`` then drops it for having no volume.
     volume_by_symbol = {
         contract.symbol: probe_volume(contract.symbol, start, min(contract.last_trade, end))
         for contract in candidates
         if contract.last_trade >= start
     }
-    return liquid_cycle(candidates, volume_by_symbol, roll_lead_days=roll_lead_days)
+    return liquid_roll_schedule(
+        candidates, volume_by_symbol, start, end, roll_lead_days=roll_lead_days
+    )
 
 
 def _snap_roll_dates(

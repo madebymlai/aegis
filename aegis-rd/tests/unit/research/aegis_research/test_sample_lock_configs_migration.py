@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import load_run_config
@@ -53,9 +54,24 @@ def _config_path(name: str) -> Path:
     return _CONFIG_DIR / name
 
 
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
+
+
 def _market_data_bundle() -> MarketDataBundle:
     index = pd.date_range("2020-01-01", periods=400, freq="D")
-    columns = ["SPY", "IWM", "EEM", "TLT", "GLD", "DBC", "VNQ", "UUP", "XLE", "XLU"]
+    columns = [
+        _id("SPY.XNAS"),
+        _id("IWM.XNAS"),
+        _id("EEM.XNAS"),
+        _id("TLT.XNAS"),
+        _id("GLD.XNAS"),
+        _id("DBC.XNAS"),
+        _id("VNQ.XNAS"),
+        _id("UUP.XNAS"),
+        _id("XLE.XNAS"),
+        _id("XLU.XNAS"),
+    ]
     rng = np.random.default_rng(0)
     frame = pd.DataFrame(
         100 + np.cumsum(rng.normal(size=(len(index), len(columns))), axis=0),

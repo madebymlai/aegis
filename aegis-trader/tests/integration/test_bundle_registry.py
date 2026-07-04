@@ -12,15 +12,17 @@ from __future__ import annotations
 
 from importlib.metadata import EntryPoint
 
+from nautilus_trader.model.identifiers import InstrumentId
 import pytest
 
 from aegis_runtime import (
-    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 
 from aegis_trader.bundles.registry import (
@@ -30,22 +32,22 @@ from aegis_trader.bundles.registry import (
 )
 
 _WHEEL = "trend-deadbeef.whl"
-_FIGI = "BBG000B9XRY4"
+_INSTRUMENT_ID = InstrumentId.from_str("BBG000B9XRY4.TEST")
 
 
 def _build_bundle() -> ExecutionBundle:
     """A zero-arg bundle factory — the object an entry point resolves to."""
     contract = DataContract(
-        refs=(ListedRef(_FIGI),),
+        instrument_ids=(_INSTRUMENT_ID,),
         required_arrays=("Close",),
         base_currency="EUR",
-        required_fx_currencies=(),
         timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
         lookback_bars=1,
     )
     manifest = BundleManifest(
         run_id="r", role="x", candidate_key="k",
-        component_source_hashes={}, refs=(ListedRef(_FIGI),),
+        component_source_hashes={}, instrument_ids=(_INSTRUMENT_ID,),
     )
     plan = LockedExecutionPlan(
         strategy=ComponentSpec(
@@ -53,11 +55,10 @@ def _build_bundle() -> ExecutionBundle:
             input_names=(), output_names=(), params={},
         ),
         indicators=(),
+        instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
         gross_cap=1.0,
         net_cap=None,
         direction="both",
-        symbols=(_FIGI,),
-        currency_by_symbol={_FIGI: "EUR"},
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
 
@@ -80,7 +81,7 @@ def test_load_discovers_bundle_from_entry_point():
     bundle = registry.load(_WHEEL)
 
     assert isinstance(bundle, ExecutionBundle)
-    assert bundle.contract.refs == (ListedRef(_FIGI),)
+    assert bundle.contract.instrument_ids == (_INSTRUMENT_ID,)
 
 
 def test_ambiguous_wheel_fails_closed():
@@ -123,7 +124,7 @@ def test_load_contract_returns_the_data_contract():
     contract = registry.load_contract(_WHEEL)
 
     assert isinstance(contract, DataContract)
-    assert contract.refs == (ListedRef(_FIGI),)
+    assert contract.instrument_ids == (_INSTRUMENT_ID,)
     assert contract.lookback_bars == 1
 
 

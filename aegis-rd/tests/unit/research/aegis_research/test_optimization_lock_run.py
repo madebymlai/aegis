@@ -27,6 +27,13 @@ from research.aegis_research.optimization.ranking import (
 )
 from tests.support.research.aegis_research.factories import make_lock
 
+_DATA_IDENTITY = {
+    "schema_version": "candidate_data_identity.v2",
+    "requested_instrument_ids": ["SYN.XNAS"],
+    "instrument_ids": ["SYN.XNAS"],
+    "timeframe": "1D",
+}
+
 
 def test_resolves_per_component_params_for_locked_candidate(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
@@ -139,7 +146,7 @@ def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
     rows = candidate_rows_from_result(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
-        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        data_identity=_DATA_IDENTITY,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
@@ -170,7 +177,7 @@ def _candidate_rows() -> list[dict[str, object]]:
     return candidate_rows_from_result(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
-        data_identity={"source": "synthetic", "symbols": ["SYN"], "timeframe": "1D"},
+        data_identity=_DATA_IDENTITY,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

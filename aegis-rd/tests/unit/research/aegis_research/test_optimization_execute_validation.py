@@ -9,17 +9,20 @@ from research.aegis_research.configuration import (
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import write_strategy_component
+from tests.support.research.aegis_research.market_data_fixtures import (
+    native_data_config_payload,
+)
 
 
 def _base_config(execute: dict[str, object] | None = None) -> dict:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "p10",
-        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 80, "arrays": ["OHLCV"]},
-        "portfolio": {"gross_cap": 1.0},
+        "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-03-21"),
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [],
-        "ranking": {"metric": "total_return", "direction": "desc"},
+        "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
             "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}},

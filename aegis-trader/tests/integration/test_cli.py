@@ -1,11 +1,10 @@
-"""Integration tests for the run entrypoint (Wave D / aegis-rd-bwb.4).
+"""Integration tests for the run entrypoint.
 
-The CLI is the seam that closes the 'no run configuration' gap (finding a5): a
-``book.toml`` + the environment assemble into the real Nautilus config objects —
-the strategy config (with the mode-correct next-close TIF), the backtest engine
-config, or the paper/live node config plus IBKR client dicts whose account comes
-from the environment.  Backtests run from the Historical Store; paper/live still
-leave venue data and ``node.run()`` to the operator.
+The CLI has two surfaces, no ``--mode``: ``aegis-trader backtest --start --end``
+runs an offline catalog-backed backtest of the book; ``aegis-trader trader
+start``/``stop`` runs and signals the live daemon.  ``trader start`` resolves the
+Broker Connection from the environment (paper vs live is only ``IB_PORT``) and
+fails closed when the required env is absent.
 """
 
 from __future__ import annotations
@@ -14,13 +13,9 @@ import logging
 import types
 
 import pytest
-from aegis_runtime import ListedRef
-from nautilus_trader.model.enums import TimeInForce
 
-from aegis_trader.cli import build_ib_client_configs, build_strategy_config, main
-from aegis_trader.config import ConnectionConfigError, IBConnectionSettings
-from aegis_trader.domain.book_config import BookConfig, SleeveConfig
-from aegis_trader.domain.types import SleeveName
+from aegis_trader.cli import main
+from aegis_trader.config import ConnectionConfigError
 
 _BOOK_TOML = """
 base_currency = "EUR"
@@ -31,14 +26,6 @@ wheel_filename = "trend.whl"
 risk_share = 1.0
 group = "Floor"
 """
-
-
-def _book() -> BookConfig:
-    return BookConfig(
-        sleeves=(SleeveConfig(name=SleeveName("trend"),
-                              wheel_filename="trend.whl", risk_share=1.0),),
-        base_currency="EUR",
-    )
 
 
 def _write_book(tmp_path):
@@ -77,64 +64,22 @@ class _FakeEngine:
         self.disposed = True
 
 
-def test_strategy_config_for_backtest_uses_plain_market():
-    """Backtest -> fill_time_in_force None (plain MARKET at the close)."""
-    cfg = build_strategy_config(_book(), "backtest")
-    assert cfg.book.base_currency == "EUR"
-    assert cfg.fill_time_in_force is None
-
-
-def test_strategy_config_for_paper_uses_market_on_close():
-    """Paper/live -> AT_THE_CLOSE (Market-on-Close into the auction)."""
-    cfg = build_strategy_config(_book(), "paper")
-    assert cfg.fill_time_in_force == TimeInForce.AT_THE_CLOSE
-
-
-def test_ib_client_configs_wire_account_from_settings():
-    """The env-driven account flows into the exec config; host/port wired."""
-    settings = IBConnectionSettings(
-        host="10.0.0.5", port=4002, client_id=9,
-        account_id="DU1234567", trader_id="BOOK-EU-01",
-    )
-
-    data, execution = build_ib_client_configs(
-        settings,
-        "paper",
-        listed_refs=(ListedRef("BBG000R20GS9"),),
-    )
-
-    assert data["instrument_provider"]["load_contracts"] == [
-        {
-            "secType": "STK",
-            "secIdType": "FIGI",
-            "secId": "BBG000R20GS9",
-            "exchange": "SMART",
-        }
-    ]
-    assert execution["instrument_provider"] == data["instrument_provider"]
-    assert execution["account_id"] == "DU1234567"
-    assert execution["ibg_host"] == "10.0.0.5"
-    assert execution["ibg_port"] == 4002
-    assert data["ibg_client_id"] == 9
-
-
-def test_main_backtest_assembles_run_from_book(tmp_path):
-    """Backtest mode loads the book.toml and assembles a run (closes a5)."""
-    book_path = _write_book(tmp_path)
-    assert main(["--mode", "backtest", "--book", str(book_path)]) == 0
+# --------------------------------------------------------------------------- #
+# backtest subcommand (offline, catalog-only) — unchanged behaviour
+# --------------------------------------------------------------------------- #
 
 
 def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
     """`aegis-trader backtest --start --end` runs run_book_backtest with the book
-    and window, using Store Read inputs."""
+    and window, using catalog inputs."""
     book_path = _write_book(tmp_path)
     calls: dict = {}
 
-    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
-        calls.update(path=path, start=start, end=end, store_dir=store_dir)
+    def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
+        calls.update(path=path, start=start, end=end, catalog_path=catalog_path)
         return _FakeEngine()
 
-    monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
+    monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
     rc = main(
         ["backtest", "--start", "2020-01-01", "--end", "2020-06-01",
@@ -145,28 +90,28 @@ def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
     assert calls["path"] == str(book_path)
     assert calls["start"] == "2020-01-01"
     assert calls["end"] == "2020-06-01"
-    assert calls["store_dir"] is None
+    assert calls["catalog_path"] is None
 
 
-def test_backtest_subcommand_passes_store_dir_override(tmp_path, monkeypatch):
-    """`--store-dir DIR` passes the Historical Store override to the runner."""
+def test_backtest_subcommand_passes_catalog_path_override(tmp_path, monkeypatch):
+    """`--catalog-path DIR` passes the catalog override to the runner."""
     book_path = _write_book(tmp_path)
-    store_dir = tmp_path / "store"
+    catalog_path = tmp_path / "catalog"
     captured: dict = {}
 
-    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
-        captured["store_dir"] = store_dir
+    def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
+        captured["catalog_path"] = catalog_path
         return _FakeEngine()
 
-    monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
+    monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
     rc = main(
         ["backtest", "--start", "2020-01-01", "--end", "2020-06-01",
-         "--book", str(book_path), "--store-dir", str(store_dir)]
+         "--book", str(book_path), "--catalog-path", str(catalog_path)]
     )
 
     assert rc == 0
-    assert captured["store_dir"] == store_dir
+    assert captured["catalog_path"] == catalog_path
 
 
 def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
@@ -177,11 +122,11 @@ def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
     monkeypatch.chdir(work)
     seen: dict = {}
 
-    def fake_runner(path, *, start, end, store_dir=None, **kwargs):
+    def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
         seen["path"] = path
         return _FakeEngine()
 
-    monkeypatch.setattr("aegis_trader.cli.run_book_backtest", fake_runner)
+    monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
     rc = main(["backtest", "--start", "2020-01-01", "--end", "2020-06-01"])
 
@@ -196,10 +141,10 @@ def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, ca
     account (aegis-rd-syp)."""
     book_path = _write_book(tmp_path)
     monkeypatch.setattr(
-        "aegis_trader.cli.run_book_backtest", lambda path, **kw: _FakeEngine()
+        "aegis_trader.backtest.run_book_backtest", lambda path, **kw: _FakeEngine()
     )
     monkeypatch.setattr(
-        "aegis_trader.cli.book_return_stats",
+        "aegis_trader.backtest.book_return_stats",
         lambda engine: {"Sharpe Ratio (252 days)": 0.87},
     )
 
@@ -217,32 +162,77 @@ def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, ca
     assert "99.99" not in caplog.text  # native stats_returns is NOT used
 
 
-def test_main_discovers_book_from_cwd_when_omitted(tmp_path, monkeypatch):
-    """Omitting --book discovers book.toml by walking up from the cwd."""
-    _write_book(tmp_path)
-    work = tmp_path / "deploy"
-    work.mkdir()
-    monkeypatch.chdir(work)
-    assert main(["--mode", "backtest"]) == 0
+# --------------------------------------------------------------------------- #
+# trader start / stop (live daemon)
+# --------------------------------------------------------------------------- #
 
 
-def test_main_paper_resolves_account_from_env(tmp_path, monkeypatch):
+def test_trader_start_resolves_connection_from_env_and_runs(tmp_path, monkeypatch):
+    """`trader start` resolves the env Broker Connection (port = paper/live) and
+    hands the book path + connection + pidfile to the node lifecycle."""
+    book_path = _write_book(tmp_path)
+    pid_file = tmp_path / "trader.pid"
+    monkeypatch.setenv("IB_ACCOUNT_ID", "DU1234567")
+    monkeypatch.setenv("IB_PORT", "4002")
+    captured: dict = {}
+
+    def fake_start(path, connection, *, pid_file=None, registry=None):
+        captured.update(path=path, connection=connection, pid_file=pid_file)
+        return 0
+
+    monkeypatch.setattr("aegis_trader.trader.node.start_trader", fake_start)
+
+    rc = main(["trader", "start", "--book", str(book_path), "--pid-file", str(pid_file)])
+
+    assert rc == 0
+    assert captured["path"] == str(book_path)
+    assert captured["connection"].account_id == "DU1234567"
+    assert captured["connection"].port == 4002
+    assert captured["pid_file"] == pid_file
+
+
+def test_trader_start_fails_closed_without_account(tmp_path, monkeypatch):
+    """No account in the env -> the live run refuses to start."""
+    book_path = _write_book(tmp_path)
+    monkeypatch.delenv("IB_ACCOUNT_ID", raising=False)
+    monkeypatch.setenv("IB_PORT", "4002")
+    with pytest.raises(ConnectionConfigError, match="IB_ACCOUNT_ID"):
+        main(["trader", "start", "--book", str(book_path)])
+
+
+def test_trader_start_fails_closed_without_port(tmp_path, monkeypatch):
+    """No IB_PORT in the env -> refuse to start (the port is the paper/live switch)."""
     book_path = _write_book(tmp_path)
     monkeypatch.setenv("IB_ACCOUNT_ID", "DU1234567")
-    assert main(["--mode", "paper", "--book", str(book_path)]) == 0
+    monkeypatch.delenv("IB_PORT", raising=False)
+    with pytest.raises(ConnectionConfigError, match="IB_PORT"):
+        main(["trader", "start", "--book", str(book_path)])
 
 
-def test_main_fails_closed_without_mode_or_subcommand(tmp_path, monkeypatch):
-    """Invoked with neither --mode nor the backtest subcommand, the CLI fails
-    closed (parser error) rather than silently no-opping."""
+def test_trader_stop_signals_via_the_node_lifecycle(tmp_path, monkeypatch):
+    pid_file = tmp_path / "trader.pid"
+    captured: dict = {}
+
+    def fake_stop(*, pid_file=None):
+        captured["pid_file"] = pid_file
+        return 0
+
+    monkeypatch.setattr("aegis_trader.trader.node.stop_trader", fake_stop)
+
+    rc = main(["trader", "stop", "--pid-file", str(pid_file)])
+
+    assert rc == 0
+    assert captured["pid_file"] == pid_file
+
+
+def test_trader_without_subcommand_fails_closed():
+    with pytest.raises(SystemExit):
+        main(["trader"])
+
+
+def test_main_fails_closed_without_a_command(tmp_path, monkeypatch):
+    """Invoked with no command, the CLI fails closed (parser error) rather than
+    silently no-opping."""
     monkeypatch.chdir(tmp_path)  # no book.toml here, so any no-op would surface
     with pytest.raises(SystemExit):
         main([])
-
-
-def test_main_paper_fails_closed_without_account(tmp_path, monkeypatch):
-    """No account in the env -> the paper run refuses to assemble."""
-    book_path = _write_book(tmp_path)
-    monkeypatch.delenv("IB_ACCOUNT_ID", raising=False)
-    with pytest.raises(ConnectionConfigError, match="IB_ACCOUNT_ID"):
-        main(["--mode", "paper", "--book", str(book_path)])

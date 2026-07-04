@@ -1,0 +1,82 @@
+name: atalanta_trend_usdhaven
+schema_version: 10
+output_dir: runs/atalanta/trend-usdhaven
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# ADDITIVE LEVER: a 4th orthogonal crisis leg (long-USD haven) on the live champion.
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# The overfit-vs-real test. Every SHAPE lever tried so far (short_cap, memgate, turngate, pyramid) is a
+# multiplicative [0,1] de-risk MASK on the champion's own legs - they can only turn exposure DOWN, so on a
+# book already cleaned of its convex-negative exposure they can only remove convexity. This is the opposite
+# kind of test: an ADDITIVE new return source. If the champion is a real local optimum (just under-tested),
+# a genuinely orthogonal convex leg should be ABLE to lift held-out convexity; if even an additive source
+# cannot, that is a stronger overfit signal than any number of mask kills (the point made to the user).
+#
+# The leg: WisdomTree Long USD Short GBP (GBUS.LSEETF) - the house Tier-0 dollar axis
+# ([[the-orthogonal-non-equity-trend-universe]]), a USD-quoted currency ETP on the SAME LSE calendar as the
+# three champion legs (single-venue is a correctness requirement: cross-calendar legs poison rolling vol).
+# The dollar is the DUAL-REGIME haven ([[the-dollar-as-dual-regime-haven]]): it gains in BOTH global
+# risk-off (2018/2020) AND the US rate shock (2022) - the one quadrant the current 3 names hedge only
+# obliquely (via the IDTL short). A currency ETP is required, not a USD T-bill ETF: the T-bill's USD-quoted
+# price is ~flat so trend_score reads no trend, whereas GBUS's quoted price moves with the USD/GBP cross so
+# the leg reads a real dollar trend. GBUS is NOT in keystone_shortmute's _BORROWABLE set, so it is a
+# LONG-ONLY FORGO leg (long USD on an up-trend, cash otherwise) - we never short the dollar (short-USD is
+# not a haven), which is exactly the right shape. NO new component: keystone_shortmute is universe-agnostic
+# (sizes every close column by inverse-vol, shorts only _BORROWABLE), so the 4th leg flows through as-is.
+#
+# Champion params pinned identically (short_cap 0.10, lb189, vw126, asymmetric band, EUR EUR5k, IDTL
+# borrow-gated). The ONLY change vs trend.yaml is the added GBUS.LSEETF instrument. Comparator: the 3-name
+# champion held-out trend_convexity_payoff 0.4474. Data: IDTL/IGLN/ICOM cached; GBUS.LSEETF is a NEW fetch
+# (first run needs the IB gateway up; if GBUS does not resolve, this blocks at the data gate like the
+# 2026-07-03 inverseshort E572 probe - fall back to EUUS Borsa Italiana, accepting the calendar caveat).
+# See [[runs/atalanta/2026-07-03]] for the pre-registered keep/kill.
+data:
+  base_currency: EUR
+  instruments: [IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF, GBUS.XLON]
+  exchange: [EUR/USD.IDEALPRO, EUR/GBP.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress
+    params:
+      lookback: 189
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+
+strategy:
+  id: atalanta.keystone_shortmute
+  params:
+    enter_band: 0.10
+    exit_band: 0.05
+    short_cap: 0.10
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

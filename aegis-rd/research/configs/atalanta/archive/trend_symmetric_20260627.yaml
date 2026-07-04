@@ -1,0 +1,91 @@
+name: atalanta_trend
+schema_version: 10
+output_dir: runs/atalanta/trend
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# ATALANTA — the definitive convex trend sleeve (the floor's long-gamma "drawdown payer").
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# Role ([[the-tiered-strategy-roster]]): the FLOOR-tier long-gamma pole — bleeds a little in calm,
+# pays out in dislocation, buying the income engine time to recover. Ranked on convexity, never
+# Sharpe. This config is the endpoint of the 2026-06 research arc; every other atalanta config and
+# component has been archived. The journey, in the numbers (held-out trend_convexity_payoff):
+#   old champion (equity-heavy, buffered)            -0.04 .. -0.23   (NEGATIVE convexity, ~400 fills)
+#   hysteretic FORGO + drift band, 4-name incl equity   0.294        (7.5 fills/yr)
+#   DROP EQUITY -> non-equity substrate                 0.365        (5.0 fills/yr)   <- the big lever
+#   + band 0.15                                          0.376        (4.0 fills/yr)
+#   + IDTL short (this config)                           0.372        (~6 fills/yr)   <- drawdown-payer
+# The IDTL short ties the long-only book on average convexity but concentrates payoff into the
+# inflation-crisis dislocation (2022: +30% vs +21%, conv +0.85 vs +0.68) and lands its give-back in
+# the recovery when the hedge is not needed — the purer drawdown-payer shape, so it is the default.
+#
+# WHY EACH CHOICE (all validated, mostly in USD base — conclusions are currency-agnostic):
+#  - UNIVERSE: NON-equity, the minimal orthogonal macro-crisis set. Equity (VWRD) was a convexity
+#    DRAG (drop-one-name +0.052) and violates the roster's non-equity substrate rule (an equity-
+#    collinear book realizes SHORT gamma under a trend label). Gold and broad commodity are the
+#    convexity ENGINES (drop-one-name +0.105 / +0.119), hedging different crisis quadrants:
+#       IDTL.LSEETF  US Treasury 20+yr   deflation/flight-to-safety leg (long) + the SHORT-bond leg
+#       IGLN.LSEETF  gold                generic/deflation/geopolitical crisis hedge (long-only)
+#       ICOM.LSEETF  broad commodity     inflation-crisis hedge (long-only)
+#    Breakout (binary Donchian 0.11, continuous Carver 0.18) and the endpoint score all LOST to the
+#    regression slope on convexity; uranium/leveraged/CTA universes are blocked on data (youth,
+#    null-Close illiquidity, non-existence) — see archived configs.
+#  - SIGNAL: trend_score_regress — annualized OLS slope of log price (smooth sign, few whipsaw
+#    flips). Lookback swept (the ranker picks the slow end, ~252).
+#  - SIZING: realized_vol pinned at a LONG 126-bar window — a long lookback paired with a SHORT vol
+#    window negates positive skew (Research Affiliates); pinned so the skew-preserving choice is
+#    baked, not left to the ranker.
+#  - STRATEGY: trendStraddleHystereticShortable — hysteretic Schmitt-trigger sign (sticky, low
+#    turnover) + continuous magnitude (convex) + FORGO cash-when-flat (gross <= 1). IDTL is shorted
+#    on a confirmed down-trend (borrow-gated, parity-safe); IGLN/ICOM forgo to cash. enter/exit
+#    dead-zone swept.
+#  - HOLDING: portfolio rebalance_band (vbt min_size), NOT a per-bar buffer or NaN-hold — the only
+#    holding mechanism the LIVE rebalancer mirrors (a realized-space per-name drift band). 0.15 is
+#    past the convexity knee (plateau 0.36-0.38) and minimizes fills.
+#
+# EUR base (Italy/IBKR-IE retail, ~EUR 5k): the three USD-quoted legs convert via the EUR/USD FX
+# pair (the FX-fetch fix is required and in place). First run needs the IB gateway up to fetch
+# EUR/USD; warm thereafter.
+data:
+  base_currency: EUR
+  instruments: [IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+
+strategy:
+  id: atalanta.keystone
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  # both: long IGLN/ICOM + borrow-gated IDTL short. Short borrow carry priced by the portfolio (ADR-0008).
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  rebalance_band: 0.15
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

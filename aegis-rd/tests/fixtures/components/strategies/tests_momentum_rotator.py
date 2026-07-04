@@ -6,6 +6,7 @@
 
 # %% imports
 import numpy as np
+from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
 
 # %% define component metadata
@@ -25,10 +26,22 @@ COMPONENT_MANIFEST = {
     "owns_portfolio": False,
 }
 
-# %% symbol sleeves
-_CANARY_SYMBOLS = ("SPY", "TLT")
-_OFFENSIVE_SYMBOLS = ("IWM", "EEM", "GLD", "DBC", "VNQ", "XLE", "XLU")
-_DEFENSIVE_SYMBOLS = ("TLT", "GLD", "UUP")
+# %% instrument sleeves
+def _id(value):
+    return InstrumentId.from_str(value)
+
+
+_CANARY_INSTRUMENT_IDS = (_id("SPY.XNAS"), _id("TLT.XNAS"))
+_OFFENSIVE_INSTRUMENT_IDS = (
+    _id("IWM.XNAS"),
+    _id("EEM.XNAS"),
+    _id("GLD.XNAS"),
+    _id("DBC.XNAS"),
+    _id("VNQ.XNAS"),
+    _id("XLE.XNAS"),
+    _id("XLU.XNAS"),
+)
+_DEFENSIVE_INSTRUMENT_IDS = (_id("TLT.XNAS"), _id("GLD.XNAS"), _id("UUP.XNAS"))
 
 # Regime codes
 _RISK_ON = 2
@@ -48,13 +61,13 @@ def param_space():
 
 
 # %% helpers
-def _find_indices(columns, symbols):
-    """Return array of column indices for the given symbol names."""
+def _find_indices(columns, instrument_ids):
+    """Return array of column indices for the given native instrument IDs."""
 
     col_list = list(columns)
     indices = []
-    for sym in symbols:
-        indices.append(col_list.index(sym))
+    for current_id in instrument_ids:
+        indices.append(col_list.index(current_id))
     return np.array(indices, dtype=int)
 
 
@@ -210,9 +223,9 @@ def run(inputs, *, n_candidates, **param_lists):
     mom_3d = momentum_arr.reshape(T, n_candidates, n_symbols)
     vol_3d = vol_arr.reshape(T, n_candidates, n_symbols)
 
-    canary_idx = _find_indices(columns, _CANARY_SYMBOLS)
-    offensive_idx = _find_indices(columns, _OFFENSIVE_SYMBOLS)
-    defensive_idx = _find_indices(columns, _DEFENSIVE_SYMBOLS)
+    canary_idx = _find_indices(columns, _CANARY_INSTRUMENT_IDS)
+    offensive_idx = _find_indices(columns, _OFFENSIVE_INSTRUMENT_IDS)
+    defensive_idx = _find_indices(columns, _DEFENSIVE_INSTRUMENT_IDS)
 
     result_3d = np.full((T, n_candidates, n_symbols), np.nan)
 

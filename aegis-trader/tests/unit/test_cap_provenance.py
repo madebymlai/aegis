@@ -10,14 +10,16 @@ The manifest-grounded source of the validated caps is each sleeve's
 from __future__ import annotations
 
 import pytest
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import (
-    ListedRef,
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DriftBand,
     ExecutionBundle,
     LockedExecutionPlan,
+    MissingIndexPolicy,
 )
 
 from aegis_trader.bundles.provenance import (
@@ -27,25 +29,32 @@ from aegis_trader.bundles.provenance import (
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
 
-_FIGI = "BBG000B9XRY4"
+_INSTRUMENT_ID = InstrumentId.from_str("BBG000B9XRY4.TEST")
 
 
 def _bundle(*, gross_cap: float, net_cap: float | None = None) -> ExecutionBundle:
     contract = DataContract(
-        refs=(ListedRef(_FIGI),), required_arrays=("Close",), base_currency="EUR",
-        required_fx_currencies=(), timeframe="1D", lookback_bars=1,
+        instrument_ids=(_INSTRUMENT_ID,),
+        required_arrays=("Close",),
+        base_currency="EUR",
+        timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
+        lookback_bars=1,
     )
     manifest = BundleManifest(
         run_id="r", role="x", candidate_key="k",
-        component_source_hashes={}, refs=(ListedRef(_FIGI),),
+        component_source_hashes={}, instrument_ids=(_INSTRUMENT_ID,),
     )
     plan = LockedExecutionPlan(
         strategy=ComponentSpec(
             family="strategy", component_id="s", module="m",
             input_names=(), output_names=(), params={},
         ),
-        indicators=(), gross_cap=gross_cap, net_cap=net_cap, direction="both",
-        symbols=(_FIGI,), currency_by_symbol={_FIGI: "EUR"},
+        indicators=(),
+        instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
+        gross_cap=gross_cap,
+        net_cap=net_cap,
+        direction="both",
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
 

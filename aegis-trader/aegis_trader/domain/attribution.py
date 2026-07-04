@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from aegis_runtime import InstrumentRef
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.types import SleeveName
 
@@ -29,15 +29,16 @@ _EPS = 1e-15
 class AttributionPeriod:
     """One rebalance period's inputs for attribution.
 
-    *realized_weights* — the book's realized weight (position/NAV) per FIGI, held
-      into the next period; *sleeve_targets* — each sleeve's raw target weight per
-      FIGI (pre-budget); *closes* — each FIGI's close; *nav* — book NAV.
+    *realized_weights* — the book's realized weight (position/NAV) per instrument,
+      held into the next period; *sleeve_targets* — each sleeve's raw target
+      weight per instrument (pre-budget); *closes* — each instrument close;
+      *nav* — book NAV.
     """
 
     nav: float
-    realized_weights: Mapping[InstrumentRef, float]
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]]
-    closes: Mapping[InstrumentRef, float]
+    realized_weights: Mapping[InstrumentId, float]
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]]
+    closes: Mapping[InstrumentId, float]
 
 
 def compute_sleeve_attribution(
@@ -53,17 +54,18 @@ def compute_sleeve_attribution(
     total_budget = sum(budgets.values())
 
     for prev, curr in zip(periods, periods[1:], strict=False):
-        for figi, realized_w in prev.realized_weights.items():
+        for instrument_id, realized_w in prev.realized_weights.items():
             if abs(realized_w) < _EPS:
                 continue
-            prev_px = prev.closes.get(figi)
-            curr_px = curr.closes.get(figi)
+            prev_px = prev.closes.get(instrument_id)
+            curr_px = curr.closes.get(instrument_id)
             if prev_px is None or curr_px is None or prev_px <= 0:
                 continue
             book_contrib = realized_w * (curr_px / prev_px - 1.0) * prev.nav
 
             intended = {
-                name: budgets[name] * prev.sleeve_targets.get(name, {}).get(figi, 0.0)
+                name: budgets[name]
+                * prev.sleeve_targets.get(name, {}).get(instrument_id, 0.0)
                 for name in budgets
             }
             total_intended = sum(intended.values())

@@ -4,7 +4,7 @@ Validates that the RiskGuard computes per-instrument max-notional caps relative
 to NAV and rejects invalid configurations.  Caps are keyed by the *resolved*
 InstrumentId (Wave D): each instrument keeps its own venue, so the guard never
 assumes a single book-wide venue and never reconstructs identity by string-
-joining a FIGI to a venue (ADR-0002).
+joining a symbol to a venue (root ADR-0007).
 """
 
 import pytest

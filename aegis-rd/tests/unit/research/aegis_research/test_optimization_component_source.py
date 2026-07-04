@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import pytest
+from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import (
@@ -15,6 +17,10 @@ from research.aegis_research.configuration import (
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
+    _ComponentRuntime,
+    _ComposedSource,
+    _deduplicate_runtime_params,
+    _fixed_params_for_ref,
     build_component_optimization_source,
 )
 from research.aegis_research.optimization.param_namespace import (
@@ -692,3 +698,146 @@ def _write_strategy_template(
         "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
         f"    return {return_expression}\n"
     )
+
+
+# --- Internal seams (candidate 5 / aegis-rd-obx4) --------------------------------
+#
+# These exercise the module's internal stages directly with hand-built runtimes,
+# without a component registry or on-disk component files — the payoff of the
+# _ComposedSource extraction.
+
+
+def _stub_runtime(
+    *,
+    family: str = "indicators",
+    slot: str = "demo",
+    rid: str = "demo",
+    param_keys: dict[str, str] | None = None,
+    param_space: dict[str, vbt.Param] | None = None,
+    fixed_params: dict[str, object] | None = None,
+    output_names: tuple[str, ...] = (),
+    consumes_outputs: tuple[str, ...] = (),
+    input_names: tuple[str, ...] = ("Close",),
+) -> _ComponentRuntime:
+    manifest = SimpleNamespace(
+        output_names=output_names,
+        consumes_outputs=consumes_outputs,
+    )
+    definition = SimpleNamespace(
+        id=rid, family=family, manifest=manifest, input_names=list(input_names)
+    )
+    return _ComponentRuntime(
+        family=family,
+        slot=slot,
+        ref=SimpleNamespace(params={}),
+        definition=definition,
+        callable=None,
+        fixed_params=dict(fixed_params or {}),
+        param_space=dict(param_space or {}),
+        param_keys=dict(param_keys or {}),
+        locked=False,
+    )
+
+
+def test_deduplicate_runtime_params_collapses_duplicate_runtime_keys() -> None:
+    key = encode(ComponentRef("indicators", "demo", "demo"), "window")
+    runtime = _stub_runtime(param_keys={"window": key})
+    param_lists = {key: [10, 10, 20]}
+    full_keys = candidate_keys(param_lists)
+
+    deduped = _deduplicate_runtime_params(
+        runtime, param_lists, full_candidate_keys=full_keys, n_candidates=3
+    )
+
+    assert deduped.n_candidates == 2
+    assert deduped.param_lists == {"window": [10, 20]}
+    assert [deduped.candidate_index[k] for k in full_keys] == [0, 0, 1]
+
+
+def test_compose_rejects_duplicate_param_keys() -> None:
+    dup = encode(ComponentRef("indicators", "demo", "demo"), "window")
+    indicator = _stub_runtime(
+        param_keys={"window": dup},
+        param_space={"window": vbt.Param([1])},
+        output_names=("trend",),
+    )
+    strategy = _stub_runtime(
+        family="strategies",
+        rid="strat",
+        param_keys={"threshold": dup},
+        param_space={"threshold": vbt.Param([2])},
+        consumes_outputs=("trend",),
+    )
+
+    with pytest.raises(ComponentSourceError, match="duplicate component param key"):
+        _ComposedSource.compose(_data_bundle(), strategy, (indicator,))
+
+
+def test_compose_uses_fixed_candidate_param_when_no_swept_params() -> None:
+    indicator = _stub_runtime(output_names=("trend",))
+    strategy = _stub_runtime(family="strategies", rid="strat", consumes_outputs=("trend",))
+
+    composed = _ComposedSource.compose(_data_bundle(), strategy, (indicator,))
+
+    assert list(composed.params) == [FIXED_CANDIDATE_PARAM]
+
+
+def test_fixed_params_for_ref_swept_takes_defaults_minus_space_plus_ref() -> None:
+    definition = SimpleNamespace(
+        id="demo",
+        family="indicators",
+        manifest=SimpleNamespace(defaults={"a": 1, "b": 2}, param_names=("a", "b", "c")),
+    )
+    ref = SimpleNamespace(params={"c": 3})
+
+    fixed = _fixed_params_for_ref(
+        "indicators",
+        "demo",
+        ref,
+        definition,
+        {},
+        param_space={"a": vbt.Param([1])},
+        force_locked=False,
+    )
+
+    assert fixed == {"b": 2, "c": 3}
+
+
+def test_fixed_params_for_ref_locked_uses_resolved_params() -> None:
+    definition = SimpleNamespace(
+        id="demo",
+        family="indicators",
+        manifest=SimpleNamespace(defaults={"a": 1}, param_names=("a", "b")),
+    )
+    key = ComponentRef("indicators", "demo", "demo")
+
+    fixed = _fixed_params_for_ref(
+        "indicators",
+        "demo",
+        SimpleNamespace(params={}),
+        definition,
+        {key: {"a": 9, "b": 8}},
+        param_space={},
+        force_locked=True,
+    )
+
+    assert fixed == {"a": 9, "b": 8}
+
+
+def test_fixed_params_for_ref_locked_without_resolved_raises() -> None:
+    definition = SimpleNamespace(
+        id="demo",
+        family="indicators",
+        manifest=SimpleNamespace(defaults={}, param_names=("a",)),
+    )
+
+    with pytest.raises(ComponentSourceError, match="requires resolved lock params"):
+        _fixed_params_for_ref(
+            "indicators",
+            "demo",
+            SimpleNamespace(params={}),
+            definition,
+            {},
+            param_space={},
+            force_locked=True,
+        )

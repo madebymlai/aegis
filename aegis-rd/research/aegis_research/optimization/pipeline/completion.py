@@ -22,8 +22,8 @@ from research.aegis_research.optimization.candidate_evidence import (
     candidate_held_out_headline,
     held_out_warning,
 )
-from research.aegis_research.optimization.candidate_publishing import (
-    activate_candidate_run,
+from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.candidate_store_identity import (
     candidate_store_namespace,
 )
 from research.aegis_research.optimization.evidence_ledger import (
@@ -82,7 +82,8 @@ def run_pipeline_completion(
         )
         write_strategy_artifact(recorder, artifact_payload)
         recorder.mark_run_completed()
-        activate_candidate_run(setup.store_path, recorder.manifest.run_id)
+        with CandidateStore(setup.store_path) as candidate_store:
+            candidate_store.activate_run(recorder.manifest.run_id)
         return _completion_result(
             config=config,
             recorder=recorder,
@@ -149,5 +150,4 @@ def _candidate_summary(
         "held_out_headline": candidate_held_out_headline(row, metric=ranking_metric),
         "lock": lock_handle(run_id, row["role"]),
     }
-
 

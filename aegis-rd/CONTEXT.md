@@ -120,24 +120,24 @@ _Avoid_: spec, recipe, template
 The **Run Config** choice for how market data enters a **Run**. `store` selects
 the shared **Historical Store** path that may **Ensure Coverage** by filling
 gaps through a configured **Gap-Fill Provider** and requires each symbol to
-declare its canonical **InstrumentRef**. Other source values select RD-owned
+declare its canonical **InstrumentId**. Other source values select RD-owned
 sourcing. It is not the identity under which historical data is stored or
 traded.
-_Avoid_: InstrumentRef, store key, execution source, Trader source mode
+_Avoid_: InstrumentId, store key, execution source, Trader source mode
 
 **RD Symbol Name**:
 The column/display name RD uses for one instrument inside a **Run**. For futures
-on the `store` path, the RD Symbol Name is the `FuturesRef` root; it is not
-authored as a separate label, ticker, or locator.
-_Avoid_: InstrumentRef, provider locator, store identity, execution identity
+on the `store` path, the RD Symbol Name is the bare continuous-future root
+(a `RootSymbol`); it is not authored as a separate label, ticker, or locator.
+_Avoid_: InstrumentId, provider locator, store identity, execution identity
 
 **Preflight**:
 A fail-closed budget gate that runs before optimization begins. Estimates parameter combinations, output cell counts, and memory cost, and rejects the **Run** if any limit is exceeded.
 _Avoid_: dry run, validation, sanity check
 
-**FIGI**:
-The identity of a **ListedRef** — one variant of the cross-boundary **InstrumentRef** (OpenFIGI / Bloomberg Global Identifier). It is the identity for *permanently-listed* instruments (cash equity, ETF/ETC); it is no longer the *sole* cross-boundary identity (root ADR-0002 refined: see [`InstrumentRef`](../aegis-runtime/CONTEXT.md), which futures use instead). The data-provider **ticker** is RD-internal — used only to fetch market data — and never crosses into an Execution Bundle. For a listed instrument `aerd export` **mints** the **InstrumentRef** — mapping its ticker to one **exchange-level** FIGI via OpenFIGI, fail-closed on ambiguous or unmapped — and bakes the resulting ref into the bundle's data contract. Minting (ticker→FIGI, at export) is RD's; *resolving* the ref to a venue contract is the **Security Master**'s — two directions, not one. Currency and venue contract detail are derived downstream from the ref, not carried alongside it.
-_Avoid_: ticker, symbol, ISIN, CUSIP, InstrumentRef (FIGI is only the ListedRef variant); resolve (RD mints the ref — the Security Master resolves it)
+**InstrumentId**:
+The cross-boundary instrument identity — a Nautilus `InstrumentId` (`{symbol}.{venue}`, e.g. `IDTL.LSEETF`). It is what an **Execution Bundle** carries (`DataContract.instrument_ids`) and what crosses the RD→Trader boundary; the data-provider **ticker** is RD-internal — used only to fetch market data — and never crosses into an Execution Bundle. `aerd export` bakes each declared instrument's `InstrumentId` into the bundle's data contract, and live resolution hands those ids to IBKR's `InstrumentProvider` (root ADR-0007). There is no FIGI hub, no `InstrumentRef` variant, and no bespoke Security Master — FIGI is retired as an identity term. Currency and venue detail are carried by the `{symbol}.{venue}` id and resolved IBKR-native, not carried alongside it.
+_Avoid_: FIGI, InstrumentRef, ListedRef, FuturesRef, Security Master, ISIN, CUSIP, ticker, symbol
 
 ## Example dialogue
 

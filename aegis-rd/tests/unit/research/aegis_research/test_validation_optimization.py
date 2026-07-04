@@ -26,6 +26,9 @@ from research.aegis_research.configuration import (
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import write_strategy_component
+from tests.support.research.aegis_research.market_data_fixtures import (
+    native_data_config_payload,
+)
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,7 +49,7 @@ def _resolve(optimization: dict[str, Any] | None, *, tmp_path: Path):
     raw: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "val-test",
-        "data": {"source": "synthetic", "symbols": [{"ticker": "SYN", "ccy": "EUR"}], "rows": 120, "arrays": ["OHLCV"]},
+        "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
         "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [],
@@ -93,6 +96,28 @@ def test_optimization_construction_accepts_random_with_subset_and_seed() -> None
     )
     assert config.random_subset == 100
     assert config.seed == 42
+
+
+def test_optimization_rejects_portfolio_policy_axes() -> None:
+    with pytest.raises(ValidationError) as e:
+        _OPTIMIZATION_ADAPTER.validate_python(
+            {
+                "search": "grid",
+                "split": _SPLIT,
+                "portfolio": {
+                    "band_up": [0.05],
+                    "band_down": [0.20],
+                    "band_overrides": {
+                        "SYN.XNAS": [{"up": 0.05, "down": 0.20}],
+                    },
+                },
+            }
+        )
+
+    assert any(
+        err["loc"] == ("portfolio",) and err["type"] == "unexpected_keyword_argument"
+        for err in e.value.errors()
+    )
 
 
 def test_run_split_construction_accepts_defaults() -> None:

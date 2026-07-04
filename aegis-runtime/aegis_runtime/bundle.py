@@ -2,18 +2,38 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime.currency import assemble_fx_rates, convert_arrays_to_base
-from aegis_runtime.instruments import FuturesRef, InstrumentRef, ListedRef
+from aegis_runtime.additive_invariance import assert_additive_invariance
+from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
+from aegis_runtime.futures_roots import validate_bare_root
 
-INSTRUMENT_REF_LEVEL = "instrument_ref"
-_EXPOSURE_TOLERANCE = 1e-9
-_DIRECTIONS = frozenset({"longonly", "shortonly", "both"})
+INSTRUMENT_ID_LEVEL = "instrument_id"
+
+
+class MissingIndexPolicy(str, Enum):
+    NAN = "nan"
+    DROP = "drop"
+    RAISE = "raise"
+
+
+class DataContractError(ValueError):
+    """The Execution Bundle data contract is malformed or violated."""
+
+
+class InvalidMissingIndexPolicy(DataContractError):
+    """The contract declares an unknown missing-index policy."""
+
+
+class MarketDataMissingIndexError(DataContractError):
+    """Market data contains missing values forbidden by the contract policy."""
 
 
 @dataclass(frozen=True)
@@ -34,18 +54,48 @@ class MarketDataBundle:
 
 @dataclass(frozen=True)
 class DataContract:
-    # InstrumentRef is the sole per-instrument identity that crosses the boundary:
-    # no provider ticker, no native currency. Currency/contract detail is derived
-    # Trader-side from the ref; the consumer keys everything on it.
-    refs: tuple[InstrumentRef, ...]
+    instrument_ids: tuple[InstrumentId, ...]
     required_arrays: tuple[str, ...]
     base_currency: str
-    required_fx_currencies: tuple[str, ...]
     timeframe: str
+    missing_index: MissingIndexPolicy
     lookback_bars: int = 0
+    # Bare continuous-future root symbols (e.g. ``("ES",)``), declared identically to
+    # research's ``DataConfig.futures``. Each root must resolve to exactly one synthetic
+    # continuous id in ``instrument_ids`` (e.g. ``ES.XCME``); dated legs still load
+    # dynamically via the chain, not as static contract columns.
+    futures: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_refs(self.refs, "DataContract.refs")
+        _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
+        object.__setattr__(
+            self,
+            "missing_index",
+            _coerce_missing_index_policy(self.missing_index),
+        )
+        _validate_bare_roots(self.futures, "DataContract.futures")
+        _continuous_instrument_ids(self.instrument_ids, self.futures)
+
+    @property
+    def continuous_instrument_ids(self) -> tuple[InstrumentId, ...]:
+        """The declared synthetic continuous ids, one for each bare root."""
+        return _continuous_instrument_ids(self.instrument_ids, self.futures)
+
+    @property
+    def native_instrument_ids(self) -> tuple[InstrumentId, ...]:
+        """The declared ids that load as static columns — continuous ids excluded.
+
+        A continuous-future root's synthetic id (e.g. ``ES.XCME``) lives in
+        ``instrument_ids`` for band/identity resolution, but its bars arrive
+        dynamically through the leg chain, not as a static native column. Callers that
+        warm, subscribe, or union the loadable natives take this, not ``instrument_ids``.
+        """
+        continuous = set(self.continuous_instrument_ids)
+        return tuple(
+            instrument_id
+            for instrument_id in self.instrument_ids
+            if instrument_id not in continuous
+        )
 
 
 @dataclass(frozen=True)
@@ -54,10 +104,10 @@ class BundleManifest:
     role: str
     candidate_key: str
     component_source_hashes: Mapping[str, str]
-    refs: tuple[InstrumentRef, ...]
+    instrument_ids: tuple[InstrumentId, ...]
 
     def __post_init__(self) -> None:
-        _validate_refs(self.refs, "BundleManifest.refs")
+        _validate_instrument_ids(self.instrument_ids, "BundleManifest.instrument_ids")
 
 
 @dataclass(frozen=True)
@@ -74,15 +124,34 @@ class ComponentSpec:
 class LockedExecutionPlan:
     strategy: ComponentSpec
     indicators: tuple[ComponentSpec, ...]
+    instrument_bands: Mapping[InstrumentId, DriftBand]
     gross_cap: float
     net_cap: float | None
     direction: str
-    # Internal execution detail (never crosses as identity): the per-instrument
-    # labels the baked components were authored against, in FIGI order, and their
-    # native quote currencies. The boundary speaks FIGI; `compute_weights`
-    # relabels FIGI -> label and converts native -> base before running components.
-    symbols: tuple[str, ...]
-    currency_by_symbol: Mapping[str, str]
+    _exposure_limits: ExposureLimits = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        for instrument_id, band in self.instrument_bands.items():
+            if not isinstance(instrument_id, InstrumentId):
+                raise ValueError(
+                    "LockedExecutionPlan.instrument_bands keys must be InstrumentId values"
+                )
+            if not isinstance(band, DriftBand):
+                raise ValueError(
+                    "LockedExecutionPlan.instrument_bands values must be DriftBand values"
+                )
+        # An illegal caps triple fails here — at plan construction (bundle load) —
+        # not on the first weight computation.
+        object.__setattr__(
+            self,
+            "_exposure_limits",
+            ExposureLimits(self.gross_cap, self.net_cap, self.direction),
+        )
+
+    @property
+    def exposure_limits(self) -> ExposureLimits:
+        """This plan's validated Exposure Limits, built once from the locked triple."""
+        return self._exposure_limits
 
 
 @dataclass(frozen=True)
@@ -102,6 +171,7 @@ class ExecutionBundle:
         manifest: BundleManifest,
         plan: LockedExecutionPlan,
     ) -> None:
+        _validate_instrument_band_contract(contract=contract, plan=plan)
         self.contract = contract
         self.manifest = manifest
         self._plan = plan
@@ -119,22 +189,46 @@ class ExecutionBundle:
         return self._plan.net_cap
 
     @property
-    def symbols(self) -> tuple[str, ...]:
-        """The provider tickers, aligned 1:1 with :attr:`contract.refs` — the
-        ref->ticker map a backtest runner needs to fetch each instrument's data."""
-        return tuple(self._plan.symbols)
+    def direction(self) -> str:
+        """The locked plan's allowed exposure direction
+        (``longonly`` / ``shortonly`` / ``both``)."""
+        return self._plan.direction
 
     @property
-    def currency_by_symbol(self) -> Mapping[str, str]:
-        """Each provider ticker's native quote currency (incl. minor units like
-        ``GBp``)."""
-        return self._plan.currency_by_symbol
+    def instrument_bands(self) -> Mapping[InstrumentId, DriftBand]:
+        """Per-instrument drift bands validated by research for this bundle."""
+        return self._plan.instrument_bands
 
     def compute_weights(
         self,
         prices: MarketDataBundle,
-        *,
-        fx_series: Mapping[str, pd.Series] | None = None,
+    ) -> pd.DataFrame:
+        weights = self._decide_weights(prices)
+        # A continuous-future root is re-based at every roll; reject an allocation that
+        # reads its absolute price level (it would silently desync live-vs-research).
+        assert_additive_invariance(
+            weights=weights,
+            recompute=self._decide_weights,
+            window=prices,
+            continuous_ids=self._continuous_ids(),
+        )
+        return weights
+
+    def _continuous_ids(self) -> tuple[InstrumentId, ...]:
+        """The contract's instrument ids that materialise a declared continuous-future root —
+        the columns a roll re-bases.
+
+        Each bare root resolves to the *one* synthetic continuous id whose symbol matches it
+        (``ES`` → ``ES.XCME``). A root that matches more than one instrument id is ambiguous —
+        the contract cannot tell the continuous root from a same-symbol native (a stock ``ES``),
+        and re-basing the native's price column would corrupt the invariance check — so it is
+        rejected loudly rather than silently re-basing the wrong column.
+        """
+        return self.contract.continuous_instrument_ids
+
+    def _decide_weights(
+        self,
+        prices: MarketDataBundle,
     ) -> pd.DataFrame:
         _validate_market_data(prices, self.contract)
         close = prices.array("Close")
@@ -146,18 +240,9 @@ class ExecutionBundle:
                 f"at least {lookback} lookback bars"
             )
         index = close.index
-        component_prices = _relabel_to_symbols(prices, self.contract.refs, self._plan.symbols)
-        base_prices = _convert_to_base_currency(
-            component_prices,
-            currency_by_symbol=self._plan.currency_by_symbol,
-            base_currency=self.contract.base_currency,
-            required_fx_currencies=self.contract.required_fx_currencies,
-            fx_series=fx_series,
-            index=index,
-        )
         n_candidates = 1
-        n_symbols = len(self.contract.refs)
-        data = _slice_data(base_prices, index, self.contract.required_arrays)
+        n_symbols = len(self.contract.instrument_ids)
+        data = _slice_data(prices, index, self.contract.required_arrays)
         indicator_outputs = _compute_indicators(
             self._plan.indicators,
             data=data,
@@ -185,21 +270,83 @@ class ExecutionBundle:
             label=f"strategy {self._plan.strategy.component_id} allocation",
         )
         weights = pd.DataFrame(arr[:, :n_symbols], index=close.index, columns=close.columns)
-        weights.columns.name = INSTRUMENT_REF_LEVEL
+        weights.columns.name = INSTRUMENT_ID_LEVEL
         _assert_latest_row_not_nan(weights)
-        validate_exposure(
-            weights,
-            gross_cap=self._plan.gross_cap,
-            net_cap=self._plan.net_cap,
-            direction=self._plan.direction,
-        )
+        validate_exposure(weights, self._plan.exposure_limits)
         return weights
 
 
-def _validate_refs(refs: Sequence[InstrumentRef], label: str) -> None:
-    for ref in refs:
-        if not isinstance(ref, ListedRef | FuturesRef):
-            raise ValueError(f"{label} must contain InstrumentRef values; got {ref!r}")
+def _validate_instrument_ids(instrument_ids: Sequence[InstrumentId], label: str) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for instrument_id in instrument_ids:
+        if not isinstance(instrument_id, InstrumentId):
+            raise ValueError(f"{label} must contain Nautilus InstrumentId values")
+        if instrument_id.value in seen:
+            duplicates.add(instrument_id.value)
+        seen.add(instrument_id.value)
+    if duplicates:
+        raise ValueError(f"{label} contains duplicates: {sorted(duplicates)}")
+
+
+def _coerce_missing_index_policy(value: object) -> MissingIndexPolicy:
+    try:
+        return MissingIndexPolicy(value)
+    except ValueError:
+        allowed = [policy.value for policy in MissingIndexPolicy]
+        raise InvalidMissingIndexPolicy(
+            f"DataContract.missing_index must be one of {allowed}; got {value!r}"
+        ) from None
+
+
+def _validate_instrument_band_contract(
+    *, contract: DataContract, plan: LockedExecutionPlan
+) -> None:
+    contract_ids = set(contract.instrument_ids)
+    band_ids = set(plan.instrument_bands)
+    missing = sorted(instrument_id.value for instrument_id in contract_ids - band_ids)
+    extra = sorted(instrument_id.value for instrument_id in band_ids - contract_ids)
+    if missing or extra:
+        raise ValueError(
+            "LockedExecutionPlan.instrument_bands must match DataContract.instrument_ids; "
+            f"missing={missing}, extra={extra}"
+        )
+
+
+def _validate_bare_roots(roots: Sequence[str], label: str) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for root in roots:
+        validate_bare_root(root)
+        if root in seen:
+            duplicates.add(root)
+        seen.add(root)
+    if duplicates:
+        raise ValueError(f"{label} contains duplicate roots: {sorted(duplicates)}")
+
+
+def _continuous_instrument_ids(
+    instrument_ids: Sequence[InstrumentId],
+    roots: Sequence[str],
+) -> tuple[InstrumentId, ...]:
+    continuous: list[InstrumentId] = []
+    for root in roots:
+        matches = [
+            instrument_id for instrument_id in instrument_ids if instrument_id.symbol.value == root
+        ]
+        if not matches:
+            raise ValueError(
+                f"continuous-future root {root!r} has no matching instrument_id; "
+                "expected exactly one synthetic continuous id in DataContract.instrument_ids"
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"continuous-future root {root!r} is ambiguous: it matches instrument ids "
+                f"{[match.value for match in matches]}; a continuous root must resolve to "
+                f"exactly one column so the additive-invariance re-base targets it alone"
+            )
+        continuous.append(matches[0])
+    return tuple(continuous)
 
 
 def _compute_indicators(
@@ -244,48 +391,6 @@ def _slice_data(
     return MarketDataBundle({name: data.array(name).loc[index] for name in required_arrays})
 
 
-def _relabel_to_symbols(
-    data: MarketDataBundle, refs: Sequence[InstrumentRef], symbols: Sequence[str]
-) -> MarketDataBundle:
-    """Re-key InstrumentRef-columned panels into the label space the components expect."""
-    rename = dict(zip(refs, symbols, strict=True))
-    return MarketDataBundle(
-        {name: frame.rename(columns=rename) for name, frame in data.arrays.items()}
-    )
-
-
-def _convert_to_base_currency(
-    prices: MarketDataBundle,
-    *,
-    currency_by_symbol: Mapping[str, str],
-    base_currency: str,
-    required_fx_currencies: Sequence[str],
-    fx_series: Mapping[str, pd.Series] | None,
-    index: pd.Index,
-) -> MarketDataBundle:
-    supplied_fx = {} if fx_series is None else dict(fx_series)
-    _validate_fx_series_contract(supplied_fx, required_fx_currencies)
-    fx_rates = assemble_fx_rates(supplied_fx, index)
-    return MarketDataBundle(
-        convert_arrays_to_base(prices.arrays, currency_by_symbol, base_currency, fx_rates)
-    )
-
-
-def _validate_fx_series_contract(
-    supplied_fx: Mapping[str, pd.Series],
-    required_fx_currencies: Sequence[str],
-) -> None:
-    required = set(required_fx_currencies)
-    supplied = set(supplied_fx)
-    missing = sorted(required - supplied)
-    extra = sorted(supplied - required)
-    if missing or extra:
-        raise ValueError(
-            "FX series mismatch against bundle contract: "
-            f"missing={missing}, extra={extra}"
-        )
-
-
 def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> None:
     required = set(contract.required_arrays)
     supplied = set(prices.arrays)
@@ -299,13 +404,18 @@ def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> N
     for name in contract.required_arrays:
         frame = prices.array(name)
         actual = tuple(frame.columns)
-        if actual != contract.refs:
+        if actual != contract.instrument_ids:
             raise ValueError(
-                f"market data array {name!r} refs {actual} do not match "
-                f"contract refs {contract.refs}"
+                f"market data array {name!r} instrument_ids {actual} do not match "
+                f"contract instrument_ids {contract.instrument_ids}"
             )
         if not frame.index.is_unique:
             raise ValueError(f"market data array {name!r} index must be unique")
+        if contract.missing_index is not MissingIndexPolicy.NAN and frame.isna().any().any():
+            raise MarketDataMissingIndexError(
+                f"market data array {name!r} contains NaN under "
+                f"missing_index={contract.missing_index.value!r}"
+            )
     first_index = prices.array(contract.required_arrays[0]).index
     for name in contract.required_arrays[1:]:
         if not prices.array(name).index.equals(first_index):
@@ -327,48 +437,4 @@ def _assert_latest_row_not_nan(weights: pd.DataFrame) -> None:
         raise ValueError(
             "latest weight row contains NaN; warmup may be insufficient "
             f"(lookback_bars={weights.shape[0]})"
-        )
-
-
-def validate_exposure(
-    allocations: pd.DataFrame,
-    *,
-    gross_cap: float,
-    net_cap: float | None = None,
-    direction: str = "both",
-) -> None:
-    if gross_cap <= 0:
-        raise ValueError(f"gross_cap must be > 0; got {gross_cap!r}")
-    if direction not in _DIRECTIONS:
-        raise ValueError(f"direction must be one of {sorted(_DIRECTIONS)}; got {direction!r}")
-    if net_cap is None:
-        net_cap = gross_cap
-    if allocations.empty or len(allocations.columns) == 0:
-        return
-    decided = allocations.to_numpy(dtype=float, copy=False)
-    _assert_sign_consistent(decided, direction)
-    gross = allocations.abs().sum(axis=1)
-    if (gross > gross_cap + _EXPOSURE_TOLERANCE).any():
-        raise ValueError(
-            f"gross exposure Σ|wᵢ| {float(gross.max())} exceeds gross_cap {gross_cap}"
-        )
-    net = allocations.sum(axis=1).abs()
-    if (net > net_cap + _EXPOSURE_TOLERANCE).any():
-        raise ValueError(f"net exposure |Σwᵢ| {float(net.max())} exceeds net_cap {net_cap}")
-
-
-def _assert_sign_consistent(decided: np.ndarray, direction: str) -> None:
-    if direction == "longonly":
-        offenders = decided < -_EXPOSURE_TOLERANCE
-        guard = "≥ 0"
-    elif direction == "shortonly":
-        offenders = decided > _EXPOSURE_TOLERANCE
-        guard = "≤ 0"
-    else:
-        return
-    if offenders.any():
-        offending = float(decided[offenders][0])
-        raise ValueError(
-            f"target_weights has weight {offending} violating direction {direction!r} "
-            f"(requires wᵢ {guard})"
         )

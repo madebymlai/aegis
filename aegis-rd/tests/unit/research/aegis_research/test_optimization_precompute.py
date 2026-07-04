@@ -139,3 +139,174 @@ def test_precompute_no_lookahead_contract_rejects_future_dependent_outputs() -> 
             n_candidates=1,
             horizon=[2],
         )
+
+
+# ---------------------------------------------------------------------------
+# IndicatorPrecompute.invalid_keys — full-series non-finite detection
+#
+# A candidate is Invalid when at least one indicator output block is entirely
+# non-finite over the full series (its lookback exceeds all available history).
+# The store detects this over its own candidate_index; these tests build stores
+# by hand and assert the Invalid set without a full Run.
+# ---------------------------------------------------------------------------
+
+
+def _invalid_keys_store(
+    outputs: dict[str, np.ndarray],
+    n_symbols: int,
+    param_lists: dict[str, list],
+) -> IndicatorPrecompute:
+    return IndicatorPrecompute(
+        outputs=outputs,
+        candidate_index=build_candidate_index(param_lists),
+        n_symbols=n_symbols,
+    )
+
+
+def test_invalid_keys_empty_store_returns_empty_set() -> None:
+    store = _invalid_keys_store(outputs={}, n_symbols=2, param_lists={"window": [5, 10]})
+    assert store.invalid_keys == set()
+
+
+def test_invalid_keys_zero_symbols_returns_empty_set() -> None:
+    store = _invalid_keys_store(
+        outputs={"sig": np.array([[1.0, 2.0]])},
+        n_symbols=0,
+        param_lists={"window": [5]},
+    )
+    assert store.invalid_keys == set()
+
+
+def test_invalid_keys_non_numeric_output_block_raises_type_error() -> None:
+    """A non-numeric Indicator output block is a broken contract, not a verdict."""
+    store = _invalid_keys_store(
+        outputs={"sig": np.array([[None, 1.0]], dtype=object)},
+        n_symbols=2,
+        param_lists={"window": [5]},
+    )
+
+    with pytest.raises(TypeError):
+        _ = store.invalid_keys
+
+
+def test_invalid_keys_store_with_no_candidates_returns_empty_set() -> None:
+    store = _invalid_keys_store(
+        outputs={"sig": np.array([[1.0, 2.0]])},
+        n_symbols=2,
+        param_lists={"window": []},
+    )
+    assert store.invalid_keys == set()
+
+
+def test_invalid_keys_all_finite_blocks_returns_empty_set() -> None:
+    # 2 rows, 2 candidates x 2 symbols = 4 cols.  Candidate A cols 0:2, B cols 2:4.
+    outputs = np.array([
+        [1.0, 2.0, 3.0, 4.0],
+        [5.0, 6.0, 7.0, 8.0],
+    ])
+    store = _invalid_keys_store(
+        outputs={"mom": outputs},
+        n_symbols=2,
+        param_lists={"window": [5, 10]},
+    )
+    assert store.invalid_keys == set()
+
+
+def test_invalid_keys_one_all_non_finite_block_returns_that_key() -> None:
+    """Candidate B (cols 2:4) is all-NaN; A (cols 0:2) is finite."""
+    outputs = np.array([
+        [1.0, 2.0, np.nan, np.nan],
+        [3.0, 4.0, np.nan, np.nan],
+    ])
+    store = _invalid_keys_store(
+        outputs={"mom": outputs},
+        n_symbols=2,
+        param_lists={"window": [5, 10]},
+    )
+    # Sorted param names -> keys are (window=5) and (window=10):
+    #   window=5 -> position 0 (cols 0:2), window=10 -> position 1 (cols 2:4)
+    assert store.invalid_keys == {(10,)}
+
+
+def test_invalid_keys_any_output_non_finite_makes_candidate_invalid() -> None:
+    """Two outputs; Candidate A is finite in 'mom' but all-NaN in 'vol'."""
+    # Candidate A (position 0, col 0): finite in mom, NaN in vol
+    # Candidate B (position 1, col 1): finite in both
+    mom = np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+    ])
+    vol = np.array([
+        [np.nan, 1.0],
+        [np.nan, 2.0],
+        [np.nan, 3.0],
+    ])
+    store = _invalid_keys_store(
+        outputs={"mom": mom, "vol": vol},
+        n_symbols=1,
+        param_lists={"alpha": [0.5, 1.0]},
+    )
+    # alpha=0.5 -> position 0 has NaN in 'vol' -> invalid
+    assert store.invalid_keys == {(0.5,)}
+
+
+def test_invalid_keys_all_inf_block_is_non_finite() -> None:
+    """An all-inf block should be treated the same as all-NaN."""
+    outputs = np.array([
+        [1.0, np.inf],
+        [2.0, np.inf],
+    ])
+    store = _invalid_keys_store(
+        outputs={"sig": outputs},
+        n_symbols=1,
+        param_lists={"p": [1, 2]},
+    )
+    assert store.invalid_keys == {(2,)}
+
+
+def test_invalid_keys_multiple_candidates_all_invalid() -> None:
+    outputs = np.full((3, 4), np.nan)  # 3 rows, 2 candidates x 2 symbols
+    store = _invalid_keys_store(
+        outputs={"sig": outputs},
+        n_symbols=2,
+        param_lists={"lag": [1, 2]},
+    )
+    assert store.invalid_keys == {(1,), (2,)}
+
+
+def test_invalid_keys_respects_output_candidate_index_dedup() -> None:
+    """When output_candidate_index maps multiple full keys to the same block,
+    the non-finite check still operates correctly on the deduped column block."""
+    outputs = np.array([
+        [np.nan, 1.0],   # position 0 all-NaN, position 1 finite
+        [np.nan, 2.0],
+    ])
+    full_index = build_candidate_index({"x": [1, 2, 3], "y": [10, 10, 10]})
+    # sorted names x, y -> (1,10):0, (2,10):1, (3,10):2 in the full index; the
+    # indicator deduped y (always 10) so (1,10) and (2,10) share block 0.
+    output_index = {"sig": {(1, 10): 0, (2, 10): 0, (3, 10): 1}}
+    store = IndicatorPrecompute(
+        outputs={"sig": outputs},
+        candidate_index=full_index,
+        n_symbols=1,
+        output_candidate_index=output_index,
+    )
+    # Block 0 (shared by (1,10) and (2,10)) is all-NaN, block 1 is finite
+    assert store.invalid_keys == {(1, 10), (2, 10)}
+
+
+def test_invalid_keys_is_cached_across_reads() -> None:
+    """The scan runs once: repeat access returns the identical cached set object."""
+    outputs = np.array([
+        [1.0, np.nan],
+        [2.0, np.nan],
+    ])
+    store = _invalid_keys_store(
+        outputs={"sig": outputs},
+        n_symbols=1,
+        param_lists={"p": [1, 2]},
+    )
+    first = store.invalid_keys
+    assert first == {(2,)}
+    assert store.invalid_keys is first  # cached_property caches on the frozen store

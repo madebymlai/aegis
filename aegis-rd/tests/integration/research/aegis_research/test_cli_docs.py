@@ -129,8 +129,6 @@ def test_component_placeholders_point_to_examples() -> None:
     for path, example_ref in expected.items():
         readme = Path(path).read_text()
         assert example_ref in readme
-        assert "ignored by git" in readme
-        assert "not secret management" in readme
 
     assert not Path("research/playbooks/labels/README.md").exists()
     assert not Path("research/playbooks/indicators/README.md").exists()

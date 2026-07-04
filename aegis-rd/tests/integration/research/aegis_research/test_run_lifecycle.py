@@ -187,12 +187,9 @@ def test_failed_run_diagnostic_is_length_clipped_not_redacted(
     resolved = build_resolved_run_config(
         tmp_path,
         data={
-            "source": "yf",
-            "symbols": [{"ticker": "SYN", "ccy": "EUR"}],
             "start": "2020-01-01",
             "end": "2021-01-01",
             "timeframe": "1D",
-            "provider_kwargs": {"api_token": {"env": "REMOTE_TOKEN"}},
         },
     )
 

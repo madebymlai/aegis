@@ -22,14 +22,12 @@ bundle registry.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 from nautilus_trader.cache.base import CacheFacade
+from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.base import PortfolioFacade
-
-from aegis_runtime import InstrumentRef, ListedRef
 
 
 @runtime_checkable
@@ -48,8 +46,8 @@ class BookStatePort(Protocol):
         """Whether the reconciled cache holds instruments (startup integrity)."""
         ...
 
-    def realized_weights(self) -> dict[InstrumentRef, float]:
-        """Signed realized weight (fraction of NAV) per covered :class:`InstrumentRef`.
+    def realized_weights(self) -> dict[InstrumentId, float]:
+        """Signed realized weight (fraction of NAV) per covered ``InstrumentId``.
 
         The marking and base-currency conversion of each open position's net
         exposure is delegated to Nautilus; the sign comes from the position.
@@ -72,12 +70,12 @@ class NautilusBookState:
         portfolio: PortfolioFacade,
         cache: CacheFacade,
         base_currency: Currency,
-        instrument_ref_for_id: Callable[[str], InstrumentRef | None],
+        covered_instrument_ids: frozenset[InstrumentId],
     ) -> None:
         self._portfolio = portfolio
         self._cache = cache
         self._base = base_currency
-        self._instrument_ref_for_id = instrument_ref_for_id
+        self._covered_instrument_ids = covered_instrument_ids
 
     def nav(self) -> float:
         total = 0.0
@@ -103,17 +101,15 @@ class NautilusBookState:
     def is_cache_healthy(self) -> bool:
         return len(self._cache.instruments()) > 0
 
-    def realized_weights(self) -> dict[InstrumentRef, float]:
+    def realized_weights(self) -> dict[InstrumentId, float]:
         nav = self.nav()
         if nav <= 0:
             return {}
-        weights: dict[InstrumentRef, float] = {}
+        weights: dict[InstrumentId, float] = {}
         for position in self._cache.positions_open():
-            ref = self._instrument_ref_for_id(position.instrument_id.value)
-            if ref is None:
+            instrument_id = position.instrument_id
+            if instrument_id not in self._covered_instrument_ids:
                 continue  # holding not covered by any sleeve
-            if isinstance(ref, str):
-                ref = ListedRef(ref)
             exposure = self._portfolio.net_exposure(position.instrument_id)
             if exposure is None:
                 continue  # unpriced — no mark available
@@ -122,7 +118,7 @@ class NautilusBookState:
                 continue  # no FX rate to base — fail closed, do not fabricate
             if position.is_short:
                 signed = -signed
-            weights[ref] = weights.get(ref, 0.0) + signed / nav
+            weights[instrument_id] = weights.get(instrument_id, 0.0) + signed / nav
         return weights
 
     def _in_base(self, exposure: Money) -> float | None:

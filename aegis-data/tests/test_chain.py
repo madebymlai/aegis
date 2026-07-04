@@ -229,6 +229,62 @@ def test_overlap_fetch_never_reaches_before_the_window_start() -> None:
     assert earliest >= start, f"a leg was fetched from {earliest}, before the window start {start}"
 
 
+def test_chain_keeps_liquid_days_when_liquidity_migrates_before_the_calendar_roll() -> None:
+    """Regression (aegis-rd-ikh): for thin roots (PA/PL/CC/KC/CT) liquidity migrates to the
+    next contract weeks before the front's last trade.  The front leg then stops printing
+    while still 'front' under the calendar rule, yet keeps a few sparse late prints that the
+    snap latches onto — so the seam lands *after* liquidity left, and the stitch (each leg owns
+    only ``[roll[i-1], roll[i])`` from its OWN bars) drops the in-between days even though the
+    already-liquid next leg traded them.  The continuous must keep every day the liquid front
+    trades: roll on the Liquidity-Leader crossover, never later than the calendar roll.
+    """
+    start, end = date(2024, 1, 1), date(2024, 4, 1)
+    # FRONT (M) last trade 2024-02-29 -> calendar roll = 02-22; BACK (U) runs well past ``end``.
+    contracts = [DatedContract("PAM4", date(2024, 2, 29)), DatedContract("PAU4", date(2024, 5, 31))]
+
+    def list_contracts(root: str, s: date, e: date) -> list[DatedContract]:
+        return contracts
+
+    # Liquidity leaves M on ~2024-02-05: M volume collapses, U takes over.
+    crossover = pd.Timestamp("2024-02-05")
+
+    def probe_volume(symbol: str, s: date, e: date) -> pd.Series:
+        idx = pd.bdate_range(s, e)
+        if symbol == "PAM4":
+            vol = [1000.0 if d < crossover else 1.0 for d in idx]
+        else:
+            vol = [10.0 if d < crossover else 5000.0 for d in idx]
+        return pd.Series(vol, index=idx, dtype="float64")
+
+    def fetch(symbol: str, s: date, e: date) -> pd.DataFrame:
+        idx = pd.bdate_range(s, e)
+        if symbol == "PAM4":
+            # liquid through 02-02, then a gap, then only two sparse late prints (the snap bait).
+            keep = idx[idx <= pd.Timestamp("2024-02-02")]
+            late = pd.DatetimeIndex([pd.Timestamp("2024-02-20"), pd.Timestamp("2024-02-29")])
+            idx = keep.union(late[(late >= idx.min()) & (late <= idx.max())])
+        close = [100.0 + i for i in range(len(idx))]
+        return pd.DataFrame(
+            {"Open": close, "High": [c + 1 for c in close], "Low": [c - 1 for c in close],
+             "Close": close, "Volume": [1] * len(idx)},
+            index=idx,
+        )
+
+    chain = fetch_contract_chain(
+        "PA", start, end,
+        list_contracts=list_contracts, fetch=fetch,
+        bar_cadence=timedelta(days=1), probe_volume=probe_volume,
+    )
+    # Liquidity left M on ~02-05, so the chain must roll by then (not the late 02-22
+    # calendar roll); the back leg U then owns the active span [roll, end) and printed
+    # every liquid day in it, so the materialised continuous keeps them (the splice
+    # itself is Nautilus's job under Path A — covered by the spread golden test).
+    liquid_days = pd.bdate_range("2024-02-05", "2024-02-19")
+    assert chain.roll_dates[0] <= pd.Timestamp("2024-02-05")
+    missing = [d.date() for d in liquid_days if d not in chain.frames[1].index]
+    assert not missing, f"the back leg is missing liquid days it traded: {missing}"
+
+
 def test_roll_dates_snap_back_to_the_latest_common_trading_day() -> None:
     def fetch(symbol: str, start: date, end: date) -> pd.DataFrame:
         idx = pd.bdate_range(start, end)

@@ -52,3 +52,6 @@ vbt.toml
 
 # Obsidian vault volatile state (per-machine workspace layout)
 research/vault/.obsidian/workspace*
+
+# vbt benchmark output (machine-specific auto_bench cache; do not commit)
+benchmarks/

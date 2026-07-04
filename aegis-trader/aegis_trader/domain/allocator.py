@@ -2,10 +2,12 @@
 
 The allocator owns the Trader-side risk-budget scaling seam: raw per-sleeve
 weights from Execution Bundles in, risk-budget-scaled per-sleeve weights out.
-It imports no Nautilus types.  The diagonal allocator from the tracer slice is
-kept as the zero-correlation limit; the covariance path uses Equal Risk
-Contribution (ERC) and can split risk top-down by declared risk group before
-allocating within each group.
+It performs no I/O.  :func:`allocate` is the single entry point and owns the
+estimator routing — a realized covariance selects the Equal Risk Contribution
+(ERC) path (top-down by declared risk group before allocating within each
+group); realized vols alone select its zero-correlation diagonal limit (the
+tracer-slice allocator); a cold book with neither runs on the configured risk
+shares.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from typing import TypeVar
 import numpy as np
 
 from aegis_trader.domain.book_config import DrawdownDeleverCurve
-from aegis_runtime import InstrumentRef
+from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.types import SleeveName
 
@@ -34,7 +36,7 @@ class Allocation:
     """Risk-budget-scaled sleeve targets and their scalar multipliers."""
 
     multipliers: Mapping[SleeveName, float]
-    scaled_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]]
+    scaled_targets: Mapping[SleeveName, Mapping[InstrumentId, float]]
 
 
 @dataclass(frozen=True)
@@ -59,9 +61,64 @@ class _GroupComposition:
     weights: np.ndarray
 
 
-def allocate_diagonal_vol_target(
+def allocate(
     *,
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
+    risk_shares: Mapping[SleeveName, float],
+    book_vol_target: float,
+    realized_vols: Mapping[SleeveName, float] | None = None,
+    realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]] | None = None,
+    groups: Mapping[SleeveName, Hashable] | None = None,
+    previous_multipliers: Mapping[SleeveName, float] | None = None,
+    sleeve_weight_bands: Mapping[SleeveName, SleeveWeightBand] | None = None,
+    sleeve_reversion_fraction: float = 1.0,
+    realized_drawdown: float | None = None,
+    drawdown_delever_curve: DrawdownDeleverCurve | None = None,
+) -> Allocation:
+    """Scale per-sleeve target weights to realize the book's risk budget.
+
+    The single allocation entry point: callers hand over the configured risk
+    budget plus whatever risk estimates they have, and the allocator picks the
+    refinement path itself:
+
+    - ``realized_covariance`` supplied → covariance-aware ERC (top-down by
+      ``groups`` when declared — the HRP seam).
+    - only ``realized_vols`` supplied → the diagonal (zero-correlation) limit.
+    - neither → a cold book; the configured ``risk_shares`` stand on their own
+      as the multipliers.
+
+    Which estimator refines the budget, and when, is allocation policy owned
+    here — callers never choose a path.
+    """
+    if realized_covariance is not None:
+        return _covariance_vol_target(
+            sleeve_targets=sleeve_targets,
+            risk_shares=risk_shares,
+            realized_covariance=realized_covariance,
+            book_vol_target=book_vol_target,
+            groups=groups,
+            previous_multipliers=previous_multipliers,
+            sleeve_weight_bands=sleeve_weight_bands,
+            sleeve_reversion_fraction=sleeve_reversion_fraction,
+            realized_drawdown=realized_drawdown,
+            drawdown_delever_curve=drawdown_delever_curve,
+        )
+    return _diagonal_vol_target(
+        sleeve_targets=sleeve_targets,
+        risk_shares=risk_shares,
+        realized_vols=realized_vols,
+        book_vol_target=book_vol_target,
+        previous_multipliers=previous_multipliers,
+        sleeve_weight_bands=sleeve_weight_bands,
+        sleeve_reversion_fraction=sleeve_reversion_fraction,
+        realized_drawdown=realized_drawdown,
+        drawdown_delever_curve=drawdown_delever_curve,
+    )
+
+
+def _diagonal_vol_target(
+    *,
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     risk_shares: Mapping[SleeveName, float],
     realized_vols: Mapping[SleeveName, float] | None,
     book_vol_target: float,
@@ -118,9 +175,9 @@ def allocate_diagonal_vol_target(
     )
 
 
-def allocate_covariance_vol_target(
+def _covariance_vol_target(
     *,
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     risk_shares: Mapping[SleeveName, float],
     realized_covariance: Mapping[SleeveName, Mapping[SleeveName, float]],
     book_vol_target: float,
@@ -137,17 +194,16 @@ def allocate_covariance_vol_target(
     in the zero-correlation case capital multipliers are proportional to
     ``risk_share / volatility``.  Internally, ERC variance budgets are therefore
     the squared risk shares normalized to one, which makes the covariance-aware
-    solver's diagonal limit exactly reproduce ``allocate_diagonal_vol_target``.
+    solver's diagonal limit exactly reproduce ``_diagonal_vol_target``.
 
     When ``groups`` is supplied, risk is allocated top-down: ERC across groups
     using group shares, then ERC within each group.  This is the HRP seam that
     prevents a correlated cluster with many sleeves from dominating the book.
 
     A realized covariance is required: this is the *refinement* path, reached
-    only once enough return history exists.  The cold-book base case (no
-    estimate yet) is the configured risk budget realized by
-    ``allocate_diagonal_vol_target``; the rebalancer routes there instead of
-    calling this with an absent estimate.
+    by :func:`allocate` only once enough return history exists.  The cold-book
+    base case (no estimate yet) is the configured risk budget realized by
+    ``_diagonal_vol_target``.
     """
     _validate_book_vol_target(book_vol_target)
 
@@ -313,7 +369,7 @@ def _validate_book_vol_target(book_vol_target: float) -> None:
 
 
 def _delevered_allocation(
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     multipliers: Mapping[SleeveName, float],
     *,
     realized_drawdown: float | None,
@@ -415,7 +471,7 @@ def _within_sleeve_weight_band(drift: float, band: SleeveWeightBand) -> bool:
 
 
 def _allocation_from_multipliers(
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     multipliers: Mapping[SleeveName, float],
 ) -> Allocation:
     return Allocation(
@@ -425,7 +481,7 @@ def _allocation_from_multipliers(
 
 
 def _active_sleeves(
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     risk_shares: Mapping[SleeveName, float],
 ) -> tuple[SleeveName, ...]:
     active: list[SleeveName] = []
@@ -685,10 +741,10 @@ def _erc_vector(covariance: np.ndarray, variance_budgets: np.ndarray) -> np.ndar
 
 
 def _scale_targets(
-    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentRef, float]],
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
     multipliers: Mapping[SleeveName, float],
-) -> dict[SleeveName, dict[InstrumentRef, float]]:
-    scaled_targets: dict[SleeveName, dict[InstrumentRef, float]] = {}
+) -> dict[SleeveName, dict[InstrumentId, float]]:
+    scaled_targets: dict[SleeveName, dict[InstrumentId, float]] = {}
     for name, targets in sleeve_targets.items():
         if name not in multipliers:
             continue
@@ -700,13 +756,13 @@ def _scale_targets(
 
 
 def _scale_sleeve_targets(
-    targets: Mapping[InstrumentRef, float],
+    targets: Mapping[InstrumentId, float],
     *,
     multiplier: float,
-) -> dict[InstrumentRef, float]:
-    scaled_targets: dict[InstrumentRef, float] = {}
-    for figi, weight in targets.items():
+) -> dict[InstrumentId, float]:
+    scaled_targets: dict[InstrumentId, float] = {}
+    for instrument_id, weight in targets.items():
         scaled = float(weight) * multiplier
         if abs(scaled) > _EPS:
-            scaled_targets[figi] = scaled
+            scaled_targets[instrument_id] = scaled
     return scaled_targets
