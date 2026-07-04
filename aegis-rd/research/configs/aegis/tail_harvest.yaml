@@ -1,0 +1,82 @@
+name: aegis_tail_harvest
+schema_version: 10
+output_dir: runs/aegis/tail_harvest
+
+# H2 KILLED 2026-07-04 (pre-registered criterion: no M cell improves held-out total return).
+# w=0.05: control -1.05%/split; M=2 -1.23 (sells the ~4x COVID spike at 2x); M=3 -1.06
+# (COVID-only, noise); M=5 byte-equal control. The band's trim side already does the
+# constant-mix monetization. Config retained for provenance; do not iterate at sleeve level -
+# re-entry only as a book-level reinvestment rule. See runs/aegis/2026-07-04 + graveyard.
+
+# H2 of [[monetizing-the-tail-sleeve]]: the Bhansali profit-multiple harvest, stacked on the
+# LOCKED H1 base (tail_band B2': aegis.tailOverlay + band 0.01/0.015, lock
+# 20260704T174903854810Z). While the leg marks >= harvest_multiple x its rolling-63d low
+# (aegis.spike_ratio - the ETP's cost-basis proxy; no external VIX level, the Volmageddon
+# guardrail), the target weight drops to floor_frac x hedge_weight - sell the spike toward a
+# floor, NEVER to zero (double-dip guardrail). Ratio decays below the multiple -> target
+# returns to hedge_weight and the band's slow re-fund side paces the re-buy (One River's
+# re-up rule, already in the base). Per One River the multiple is the EXTREME add-on on the
+# band base, not the primary rule - which is exactly this composition.
+#
+# Grid (param_space): hedge_weight {0.02, 0.05} x harvest_multiple {0 = H1 CONTROL (must
+# reproduce the tail_band B2' cells byte-for-byte - parity smoke-tested pre-launch), 2, 3, 5}
+# x floor_frac {0.4, pinned}. On LVO's history M=2 fires Feb-2018 + COVID, M=3 COVID-only
+# (Bhansali's canonical band), M=5 ~never (trigger-tail probe, near-control).
+#
+# PRE-REGISTERED KEEP/KILL (mirrored in runs/aegis/2026-07-04 before launch):
+#   keep: some M > 0 cell at w=0.05 improves held-out mean total return vs its M=0 control
+#         AND retains >= 70% of the control's held-out crash-day capture
+#         AND maxDD not worse than control + 1pp.
+#   kill: no M cell improves total return, or every improving cell cuts capture > 30%.
+#   Expectations on record: the benefit is concentrated in windows containing spike AND
+#   decay (the avoided round-trip); splits with neither should be ~byte-equal to control
+#   (the multiple never fires there). Capture WILL dip on late-crash days after the
+#   harvest fires - the 70% bar prices that in; the CAIA certainty guard (capture no worse
+#   than static) is judged at the 70% bar here, and at book level in the floor harness.
+data:
+  base_currency: EUR
+  instruments: [LVO.XAMS]
+  arrays: [OHLCV]
+  start: '2013-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+- id: aegis.spike_ratio
+  params:
+    ref_window: 63   # the article's '60-day low' cost-basis proxy, pinned
+
+strategy:
+  id: aegis.tailHarvest   # hedge_weight x harvest_multiple swept via param_space; floor 0.4 pinned
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: longonly
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.01    # the H1 champion band (tail_band B2', locked) - NOT loop-edited here;
+  band_down: 0.015 # H2 varies only the harvest lever on top of the locked base
+  band_destination_fraction: 1.0
+
+ranking:
+  metric: crash_day_return   # the tail mandate ranks in-cell; the H2 keep/kill reads
+                             # total-return-vs-control and capture retention from the stats
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

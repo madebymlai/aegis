@@ -47,9 +47,12 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
     "int_valued_caps": _raw("int_caps", {"gross_cap": 1, "net_cap": 1, "direction": "both"}),
 }
 
+# Re-pinned when ReportConfig gained the opt-in ``report.metrics`` field (carry-metric
+# research): the resolved document now carries ``"report": {..., "metrics": []}``, the
+# sole byte delta. The field defaults empty, so schema_version stays put.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "2f08b1f72c299c3cb6fc60a4650157adfd3145433b304945346fad7f5b85cd54",
-    "int_valued_caps": "76dd4748b2227e76f72143919c98af216ec579a6608903ec1f8fb72201940303",
+    "canonical_grid": "f33b7b37c21da80cf4d4de314282c5c41d52322dfdbdaf9eb5e0094d5609a741",
+    "int_valued_caps": "07a00c6a39af1c758096a1bfa72cebada06cf9d6c76c4af7b211049c21975bdd",
 }
 
 

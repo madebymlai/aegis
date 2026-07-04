@@ -28,7 +28,6 @@
 # %% imports
 import numpy as np
 import pandas as pd
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -61,6 +60,8 @@ def param_space():
     hysteresis. The short side uses the same latch, so a name is shorted only after a CONFIRMED
     downside breach, not on near-zero noise.
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "enter_band": vbt.Param([0.0, 0.05, 0.10]),

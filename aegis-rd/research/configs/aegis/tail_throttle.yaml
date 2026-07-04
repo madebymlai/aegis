@@ -1,0 +1,90 @@
+name: aegis_tail_throttle
+schema_version: 10
+output_dir: runs/aegis/tail_throttle
+
+# H3 KILLED 2026-07-04 on every pre-registered bar (T1 calm 0.4 20260704T181531, T2 calm
+# 0.2 20260704T181606): fast lookbacks whipsaw the fee floor (22-35 EUR/split, totret worse
+# than control); mom126 saves 0.36-0.61pp but flips stress 2020-02-28 (post-onset) and
+# surrenders 37-53% of capture; 1-of-3-lookbacks improvement = spec luck. The H1 band
+# already left too little bleed for any signal to save. Config retained for provenance; do
+# not iterate price-only. v2 re-entry: VIX/VIX3M state (data errand), same bars. See
+# runs/aegis/2026-07-04 + graveyard.
+
+# H3 of [[monetizing-the-tail-sleeve]]: the expected-carry throttle on the LOCKED H1 base
+# (tail_band B2': band 0.01/0.015, lock 20260704T174903854810Z, w=0.05 -1.05%/split,
+# crash +0.1247%/day - the control every cell below is judged against). Target weight =
+# hedge_weight in the stress state, calm_frac x hedge_weight in the calm state; the state
+# is the leg's OWN trailing momentum (aegis.trail_momentum): negative = contango grind =
+# pay less bleed; positive = sustained stress = full weight. Floor never zero (SOA
+# late-gate + CalPERS guardrails). Price-only v1 per the exa sweep: the canonical
+# VIX/VIX3M ratio state (SixFigure 0.917 / Barclays XVZ 0.9) needs implied-vol indices the
+# corpus lacks (v2 data errand); Cooper (NAAIM) documents ETP momentum as the robust
+# price-only form and MA-crossovers as fragile. Slow lookbacks only - LVO's wrapper owns
+# the fast spike trigger (VIX > 1.35x 15d MA) and must not be duplicated.
+#
+# EXECUTION MODEL: mom_window {21, 63, 126} sweeps IN-GRID (3 cells = the store's 3
+# persisted roles, all visible); calm_frac is PINNED per launch (loop-edited):
+#   T1: calm_frac 0.4   T2: calm_frac 0.2
+# calm_frac 1.0 (= component control) is NOT launched - it reproduces the locked B2' cell
+# byte-for-byte (parity smoke-tested pre-launch); the lock IS the control.
+#
+# PRE-REGISTERED KEEP/KILL (mirrored in runs/aegis/2026-07-04 before launch):
+#   keep: some (mom_window, calm_frac) cell improves held-out mean total return vs the
+#         locked control by >= 0.30pp/split (>= ~30% of the -1.05 bleed)
+#         AND retains >= 70% of control crash-day capture (>= 0.087 %/day)
+#         AND the improvement's SIGN holds at >= 2 of 3 mom_windows (v28 spec-luck gate)
+#         AND the SOA onset check passes for the kept cell: the throttle read FULL weight
+#         on or before 2020-02-27 (first COVID worst-decile cluster day), verified on the
+#         momentum series itself, not on split means.
+#   kill: no cell clears the bleed bar without breaking the capture bar, or every
+#         bleed-cutting cell was at calm weight through the COVID onset.
+#   Expectations on record: mom 21 flips fastest (whipsaw cost highest, onset earliest);
+#   mom 126 cheapest but likely late at onset; the bleed cut scales with time-in-calm x
+#   (1 - calm_frac). Whipsaw trades cost ~2.8 EUR/flip at the fee floor - visible in fees.
+data:
+  base_currency: EUR
+  instruments: [LVO.XAMS]
+  arrays: [OHLCV]
+  start: '2013-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+- id: aegis.trail_momentum   # mom_window swept {21, 63, 126} via param_space - the
+                             # robustness probe; no params block on purpose
+
+strategy:
+  id: aegis.tailThrottle
+  params:
+    calm_frac: 0.2   # LOOP-EDITED per launch: T1 0.4 (run), T2 0.2 (1.0 = the lock, not launched)
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: longonly
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.01    # the locked H1 champion band - not a lever here
+  band_down: 0.015
+  band_destination_fraction: 1.0
+
+ranking:
+  metric: crash_day_return
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

@@ -14,7 +14,6 @@
 # %% imports
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -36,6 +35,8 @@ def param_space():
     *adds* the fast gate read; it does not re-open the slow lookback search. The fast band spans the
     short ~2-3 month horizon at which a turn becomes visible well before the slow latch flips.
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "lookback": vbt.Param([189]),

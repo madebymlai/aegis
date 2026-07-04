@@ -30,7 +30,6 @@
 # %% imports
 import numpy as np
 import pandas as pd
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -67,6 +66,8 @@ def param_space():
     tail below ~0.8). ``vr_lo`` large (2.0) makes ``vr_hi <= vr_lo`` -> ramp OFF -> reproduces the
     champion exactly (the nested control). So this is a strict nested test of the memory gate.
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "enter_band": vbt.Param([0.10]),

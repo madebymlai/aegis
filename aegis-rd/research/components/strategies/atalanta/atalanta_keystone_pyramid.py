@@ -38,7 +38,6 @@
 # %% imports
 import numpy as np
 import pandas as pd
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -71,6 +70,8 @@ def param_space():
     "only the largest trends reach full" (1.0). ``pyr_floor`` (the fresh-entry tranche) is pinned at 0.0:
     a brand-new trend sits in cash and builds as it extends - the convexity-max shape for a gross<=1 book.
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "enter_band": vbt.Param([0.10]),

@@ -32,7 +32,6 @@
 # %% imports
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -57,6 +56,8 @@ def param_space():
     trades: 126 (~6mo, responsive) to 252 (~1yr, steadier). The product stays small; in the live test
     the pair is PINNED (like lb189 / vw126) and the strategy's gate threshold is the swept lever.
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "vr_horizon": vbt.Param([10, 21, 42]),

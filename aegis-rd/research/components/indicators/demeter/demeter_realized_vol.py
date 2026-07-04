@@ -9,7 +9,6 @@
 
 # %% imports
 import numpy as np
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -26,6 +25,8 @@ COMPONENT_MANIFEST = {
 # %% parameter space
 def param_space():
     """Return VBT-native realized-vol windows (monthly / quarterly)."""
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "vol_window": vbt.Param([21, 63]),

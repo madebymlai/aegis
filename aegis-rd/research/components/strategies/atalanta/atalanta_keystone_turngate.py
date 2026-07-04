@@ -23,7 +23,6 @@
 # %% imports
 import numpy as np
 import pandas as pd
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -52,6 +51,8 @@ def param_space():
     enter_band / exit_band are fixed at the promoted champion so the only thing that moves is the
     gate. ``gate_strength`` 1.0 is the champion (no gate), 0.5 halves a name on a turn, 0.0 flats it.
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "enter_band": vbt.Param([0.10]),

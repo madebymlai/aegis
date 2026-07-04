@@ -22,7 +22,6 @@
 
 # %% imports
 import numpy as np
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -50,6 +49,8 @@ def param_space():
     1.0); ``carry_gain`` is the spread-richness lean exponent (0 = pure vol-target, no carry
     timing; higher = lean harder into rich credit and out of thin credit).
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "vol_target": vbt.Param([0.06, 0.10, 0.15]),

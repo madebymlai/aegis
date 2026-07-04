@@ -1,0 +1,85 @@
+# File renamed tail_vool.yaml -> tail.yaml (2026-07-04). `name` and `output_dir` keep the
+# aegis_tail_vool identity ON PURPOSE: the lock id embeds the config name and the run
+# folders live under runs/aegis/tail_vool - renaming them would orphan the lock.
+name: aegis_tail_vool
+schema_version: 10
+output_dir: runs/aegis/tail_vool
+
+# Lock dropped 2026-07-04: portfolio (init_cash/fixed_fee) and venue (XETR->XAMS) changed, so the
+# 20260615 lock was stale. Re-minted same day on the corrected LVO.XAMS identity (crash-day
+# +2.60% held-out, bleed -22.9%/split; see runs/demeter/2026-07-04) and pinned below for the
+# live-bundle export. The live book applies the H1 drift band (0.01/0.015) at BOOK level on
+# the netted LVO weight - this sleeve stays 100%-held internally by design.
+lock: 20260704T143038842848Z_aegis_tail_vool
+
+# STANDALONE Regime-A tail sleeve (the roster's target tier), built and scored on its own —
+# the overlay onto the atalanta floor is the future allocator's job, not this strategy's.
+# The book is a fixed-weight, continuously-rebalanced 100% hold of VOOL (Lyxor/Amundi S&P 500
+# VIX Futures Enhanced Roll UCITS ETF, EUR, Euronext Amsterdam / AEB) — the UCITS VIXY. This run characterizes the
+# sleeve's spike-versus-bleed PROFILE directly on our harness: the crisis-window capture vs the
+# calm-year drainage, scored by its anti-equity convexity signature.
+#
+# SINGLE-VENUE, LAZY BENCHMARK: LVO.XAMS is the only symbol, so the book is 100% VOOL/LVO held on its
+# own full Xetra calendar — no benchmark leg to carry (n_benchmark defaults to 0) and no
+# cross-venue intersection to realign (hence no calendar-drop warning to silence). The sleeve is
+# ranked by crash-day return — the mean VOOL return on SPY's worst-decile days — which keeps the
+# anti-equity TIMING evidence a tail lives on. SPY is NOT held and NOT in the panel: the
+# convexity metric pulls it lazily over VOOL's span and aligns it to VOOL's own dates
+# (EquityCurve.aligned_benchmark_returns), so the benchmark reference costs nothing in the book
+# and forces no cross-venue calendar. (Down-capture in capture.py, by contrast, reads SPY from
+# the close panel and WOULD need it held-then-excluded — which is why we rank by a convexity-axis
+# metric here.) Window 2013-01..2025-01: VOOL inception (2013-01) binds the start; covers
+# Feb-2018 / Q4-2018 / Mar-2020 / 2022.
+# Inferred from research/vault/research/the-ucits-constrained-tail-sleeve.md (Regime A, h1).
+data:
+  base_currency: EUR
+  instruments: [LVO.XAMS]  # corrected 2026-07-04. Was VOOL.XETR (IBIS/Xetra): the account has NO
+  # Xetra market-data permission (IB error 162). Same ETF (Amundi S&P 500 VIX Futures Enhanced Roll
+  # UCITS, conId 118017908), primary-listed on Euronext Amsterdam, where the LOCAL ticker is LVO
+  # (VOOL is only the Xetra/GETTEX ticker). nautilus resolves by localSymbol, so the id must be
+  # LVO.XAMS: MIC XAMS -> IB AEB, localSymbol LVO resolves, has data permission + history to 2012-12.
+  arrays: [OHLCV]
+  start: '2013-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: atalanta.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: aegis.heldHedge
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  direction: longonly
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003  # 0.03% IBKR auto-conversion, charged per trade on non-EUR legs
+  fixed_fee: 1.25  # EUR per order (IBKR-IE retail, ~EUR 5k book) — matches the atalanta/demeter execution model
+  # NB: no band_up/band_down. Drift bands gate PER-NAME rebalancing toward a target weight; this
+  # sleeve is a single leg held at a constant 100% (heldHedge is deliberately NOT vol-targeted), so
+  # the weight never drifts from target and bands are inert. The tail's monetization band is a
+  # BOOK-LEVEL (allocator) lever (tail-vs-core weight), not a sleeve param. See response 2026-07-04.
+
+# A tail sleeve is judged by crash-time gain: rank by crash-day return — the mean sleeve return
+# on the benchmark's (SPY) worst-decile days. The metric lazy-pulls SPY and aligns it to VOOL's
+# own calendar, so this benchmark-relative score needs no SPY column and triggers no cross-venue
+# warning, while keeping the anti-equity TIMING evidence a tail must prove.
+ranking:
+  metric: crash_day_return
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

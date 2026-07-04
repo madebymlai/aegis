@@ -34,7 +34,6 @@
 # %% imports
 import numpy as np
 import pandas as pd
-from vectorbtpro import vbt
 
 # FRED credit-carry feed (signal-only, pulled inline; never a traded column).
 _FRED_KEY = "6b0bb1a2e9343b395c582035dda1e470"  # personal-use key; configs are gitignored
@@ -86,6 +85,8 @@ def param_space():
     The carry is the spread relative to its own trailing mean over ``carry_window`` days;
     a longer window defines a slower "normal" baseline (6m / 1y / 2y).
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "carry_window": vbt.Param([126, 252, 504]),

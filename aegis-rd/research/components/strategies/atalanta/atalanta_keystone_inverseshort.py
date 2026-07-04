@@ -32,7 +32,6 @@
 # %% imports
 import numpy as np
 import pandas as pd
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -85,6 +84,8 @@ def param_space():
     short_cap so the pair isolates ONLY the short's instrument (borrow-gated IDTL short vs long -1x
     ETF); 1.0 never binds -> the uncapped short realized through the inverse ETF.
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "enter_band": vbt.Param([0.10]),

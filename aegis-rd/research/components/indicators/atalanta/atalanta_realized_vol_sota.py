@@ -29,7 +29,6 @@
 
 # %% imports
 import numpy as np
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -49,6 +48,8 @@ _ANNUAL = np.sqrt(252.0)
 def param_space():
     """The champion window pinned; the estimator is the swept lever (loop-edited in the config, since a
     config rejects a list indicator param). ``ctc`` reproduces the champion exactly - the parity control."""
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "vol_window": vbt.Param([126]),

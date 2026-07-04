@@ -6,7 +6,7 @@ output_dir: runs/aegis/tail_haven_basket
 # 2026-06-14 aegis diary planned this as ucits_aegis_v2_physical_anchor (EURCHF + SGLN, fixed
 # weights) then DROPPED it under the Regime-A-only ruling (a UCITS VIX-futures ETF, VOOL, reaches a
 # genuine immediate-gamma tail, so the weaker physical "anchor, not tail" was judged unnecessary).
-# Revived here as a STANDALONE characterization (parallel to tail_vool.yaml) because the roster's
+# Revived here as a STANDALONE characterization (parallel to tail.yaml) because the roster's
 # "Target earns its bleed" question is still OPEN and the live commingled book showed VOOL's
 # budgeted ~1% coverage did not protect 2020 — so the cheaper-bleed physical anchor is worth
 # measuring on its own stream. The A/B-vs-VOOL bake-off still waits on the allocator; this run only

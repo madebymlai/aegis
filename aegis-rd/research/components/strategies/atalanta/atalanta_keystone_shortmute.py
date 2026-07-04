@@ -25,7 +25,6 @@
 # %% imports
 import numpy as np
 import pandas as pd
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -59,6 +58,8 @@ def param_space():
     mutes the short fully (IDTL long-only, forgoes to cash in downtrends); the interior values locate
     the convexity/drawdown peak (the 2026-06-29 first pass found 0.10 > 0.20, peak not yet bracketed).
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "enter_band": vbt.Param([0.10]),

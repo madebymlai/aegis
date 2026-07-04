@@ -29,7 +29,6 @@
 
 # %% imports
 import numpy as np
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -72,6 +71,8 @@ def param_space():
     of the signal); ``vol_target`` is a single mandate value, present so it is recorded,
     never swept (the ranker A/B lesson).
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "vol_target": vbt.Param([0.10]),
