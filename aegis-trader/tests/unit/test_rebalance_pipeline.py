@@ -271,6 +271,9 @@ class _MarketData:
         self,
         bars_by_instrument_id: dict[InstrumentId, tuple[MarketBar, ...]] | None = None,
         fresh_instrument_ids: frozenset[InstrumentId] | None = None,
+        currencies: dict[InstrumentId, str] | None = None,
+        pairs: dict[InstrumentId, tuple[str, str]] | None = None,
+        fx_rates: dict[str, float] | None = None,
     ) -> None:
         self._bars_by_instrument_id = bars_by_instrument_id or _bars_by_instrument_id()
         self._fresh_instrument_ids = (
@@ -278,9 +281,14 @@ class _MarketData:
             if fresh_instrument_ids is None
             else fresh_instrument_ids
         )
+        self._currencies = currencies or {}
+        self._pairs = pairs or {}
+        self._fx_rates = fx_rates or {}
 
-    def instrument_sizing(self, _instrument_id: InstrumentId) -> InstrumentSizing:
-        return InstrumentSizing(currency="EUR", size_increment=1.0)
+    def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing:
+        return InstrumentSizing(
+            currency=self._currencies.get(instrument_id, "EUR"), size_increment=1.0
+        )
 
     def make_quantity(self, _instrument_id: InstrumentId, raw_shares: float) -> float:
         return raw_shares
@@ -288,10 +296,13 @@ class _MarketData:
     def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
         return instrument_id
 
+    def currency_pair(self, instrument_id: InstrumentId) -> tuple[str, str] | None:
+        return self._pairs.get(instrument_id)
+
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         if base_currency == quote_currency:
             return 1.0
-        return None
+        return self._fx_rates.get(quote_currency)
 
     def lookback_window(
         self,
@@ -755,3 +766,118 @@ def test_rebalance_pipeline_surfaces_failures_when_every_sleeve_fails() -> None:
         SleeveName("poison"),
         SleeveName("trend"),
     }
+
+
+# ---------------------------------------------------------------------------
+# FX conversion legs (aegis-rd-reyj): compute on base-currency panels
+# ---------------------------------------------------------------------------
+
+_EURUSD = InstrumentId.from_str("EUR/USD.IDEALPRO")
+
+
+class _SpyConversionBundle(ExecutionBundle):
+    """Fixed-weight bundle over a USD-quoted instrument that records the Close
+    panel its compute received, so a test can pin the research-parity fact:
+    the trader computes on base-currency-converted prices."""
+
+    def __init__(self, weight: float) -> None:
+        self._weight = weight
+        self.seen_close: pd.DataFrame | None = None
+        contract = DataContract(
+            instrument_ids=(_INSTRUMENT_ID,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+            exchange=(_EURUSD,),
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-fx-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(_INSTRUMENT_ID,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+        close = prices.array("Close")
+        self.seen_close = close
+        target = pd.DataFrame(
+            {_INSTRUMENT_ID: [self._weight] * len(close)},
+            index=close.index,
+        )
+        target.columns.name = "instrument_id"
+        return target
+
+
+def _fx_market_data() -> _MarketData:
+    return _MarketData(
+        bars_by_instrument_id={
+            _INSTRUMENT_ID: (
+                MarketBar(0, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+                MarketBar(_DAY_NS, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+            ),
+            # EUR/USD at 1.25: a USD close of 100 is 80 EUR.
+            _EURUSD: (
+                MarketBar(0, 1.25, 1.25, 1.25, 1.25, 0.0),
+                MarketBar(_DAY_NS, 1.25, 1.25, 1.25, 1.25, 0.0),
+            ),
+        },
+        currencies={_INSTRUMENT_ID: "USD"},
+        pairs={_EURUSD: ("EUR", "USD")},
+        fx_rates={"USD": 1.25},
+    )
+
+
+def test_sleeve_panel_is_converted_to_base_currency_before_compute() -> None:
+    """Regression (aegis-rd-reyj): research validated the sleeve on EUR-converted
+    panels; the trader must compute on the same converted prices, not native USD."""
+    bundle = _SpyConversionBundle(0.5)
+    pipeline = _started_pipeline(market_data=_fx_market_data(), bundle=bundle)
+
+    result = pipeline.rebalance_period(_period())
+
+    assert result.sleeve_failures == ()
+    assert bundle.seen_close is not None
+    assert bundle.seen_close[_INSTRUMENT_ID].tolist() == pytest.approx([80.0, 80.0])
+    assert [order.instrument_id for order in result.orders] == [_INSTRUMENT_ID]
+
+
+def test_missing_fx_bars_fail_the_sleeve_closed_not_the_book() -> None:
+    """A conversion leg with no bars must surface as a sleeve failure (hold),
+    never a silent native-priced compute."""
+    market_data = _MarketData(
+        bars_by_instrument_id={
+            _INSTRUMENT_ID: (
+                MarketBar(0, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+                MarketBar(_DAY_NS, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+            ),
+        },
+        currencies={_INSTRUMENT_ID: "USD"},
+        pairs={_EURUSD: ("EUR", "USD")},
+    )
+    bundle = _SpyConversionBundle(0.5)
+    pipeline = _started_pipeline(market_data=market_data, bundle=bundle)
+
+    result = pipeline.rebalance_period(_period())
+
+    assert bundle.seen_close is None
+    assert [failure.sleeve for failure in result.sleeve_failures] == [_SLEEVE]
+    assert result.orders == ()

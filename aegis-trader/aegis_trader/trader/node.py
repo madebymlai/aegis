@@ -48,7 +48,7 @@ from aegis_data.ibkr import attach_live_clients
 from aegis_trader.bundles.book_sleeves import (
     SleeveBundles,
     load_book_sleeves,
-    union_native_instrument_ids,
+    union_loadable_instrument_ids,
 )
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
@@ -146,7 +146,7 @@ def build_live_node(
     """
     registry = registry if registry is not None else EntryPointBundleRegistry()
     sleeves = load_book_sleeves(book, registry)
-    instrument_ids = union_native_instrument_ids(sleeves)
+    instrument_ids = union_loadable_instrument_ids(sleeves)
 
     node = TradingNode(config=build_live_node_config(trader_id=connection.trader_id))
     attach_live_clients(node, connection, instrument_ids)

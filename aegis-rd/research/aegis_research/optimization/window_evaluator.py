@@ -27,7 +27,7 @@ from aegis_runtime import DriftBand, InstrumentId
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import PortfolioConfig, ReportConfig
-from research.aegis_research.market_data.currency import CurrencyConversion
+from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )

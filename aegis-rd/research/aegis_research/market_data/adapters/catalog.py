@@ -22,7 +22,7 @@ from research.aegis_research.market_data.adapters._support import (
     native_index,
 )
 from research.aegis_research.market_data.contracts import MarketDataAdapterResult
-from research.aegis_research.market_data.currency import (
+from aegis_runtime.currency import (
     CurrencyConversion,
     MissingInstrumentDefinitionError,
     build_currency_conversion,

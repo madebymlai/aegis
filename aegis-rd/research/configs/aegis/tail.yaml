@@ -8,8 +8,10 @@ output_dir: runs/aegis/tail_vool
 # Lock dropped 2026-07-04: portfolio (init_cash/fixed_fee) and venue (XETR->XAMS) changed, so the
 # 20260615 lock was stale. Re-minted same day on the corrected LVO.XAMS identity (crash-day
 # +2.60% held-out, bleed -22.9%/split; see runs/demeter/2026-07-04) and pinned below for the
-# live-bundle export. The live book applies the H1 drift band (0.01/0.015) at BOOK level on
-# the netted LVO weight - this sleeve stays 100%-held internally by design.
+# live-bundle export. The H1 monetization band rides THIS config's portfolio as a ratio of
+# target (0.2/0.3 at sleeve scale 1.0, see the band comment below) and the commingled book
+# scales it by the sleeve's allocator multiplier (aegis-rd-reyj) - the sleeve stays
+# 100%-held internally by design, so the band is inert in the research sim itself.
 lock: 20260704T143038842848Z_aegis_tail_vool
 
 # STANDALONE Regime-A tail sleeve (the roster's target tier), built and scored on its own —
@@ -61,10 +63,17 @@ portfolio:
   slippage: 0.0005
   fx_conversion_cost: 0.0003  # 0.03% IBKR auto-conversion, charged per trade on non-EUR legs
   fixed_fee: 1.25  # EUR per order (IBKR-IE retail, ~EUR 5k book) — matches the atalanta/demeter execution model
-  # NB: no band_up/band_down. Drift bands gate PER-NAME rebalancing toward a target weight; this
-  # sleeve is a single leg held at a constant 100% (heldHedge is deliberately NOT vol-targeted), so
-  # the weight never drifts from target and bands are inert. The tail's monetization band is a
-  # BOOK-LEVEL (allocator) lever (tail-vs-core weight), not a sleeve param. See response 2026-07-04.
+  # H1 monetization band, expressed at THIS sleeve's scale (aegis-rd-reyj). In research the
+  # 100%-held weight never drifts, so the band is inert here — but the commingled book scales
+  # every bundle band by the sleeve's allocator multiplier, so the band's job is live-side:
+  # gate the netted LVO weight's daily price drift (pre-fix: ~1750 dust fills/window).
+  # Value transfers H1's calibration as a RATIO of target: tail_band lock 20260704T174903854810Z
+  # validated 0.01 up / 0.015 down per 0.05 target = 0.2/0.3 per unit held. At heldHedge's
+  # sleeve-scale weight 1.0 that is 0.2/0.3; at a ~1% book multiplier it gates at 0.2pp/0.3pp —
+  # the same trim-the-spike-fast / re-fund-slow shape, and band_down/target = 0.3 < 1 keeps the
+  # add gate structurally openable at any multiplier (the c80s never-opens edge).
+  band_up: 0.2
+  band_down: 0.3
 
 # A tail sleeve is judged by crash-time gain: rank by crash-day return — the mean sleeve return
 # on the benchmark's (SPY) worst-decile days. The metric lazy-pulls SPY and aligns it to VOOL's

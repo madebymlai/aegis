@@ -18,13 +18,16 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import (
     DataContract,
-    DriftBand,
     ExecutionBundle,
     MarketDataBundle,
     MissingIndexPolicy,
 )
+from aegis_runtime.currency import (
+    CurrencyConversion,
+    build_currency_conversion_from_codes,
+)
 
-from aegis_trader.bundles.bands import InstrumentBandError, build_instrument_bands
+from aegis_trader.bundles.bands import BundleBands, InstrumentBandError, build_instrument_bands
 from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig
@@ -116,7 +119,7 @@ class RebalancePipeline:
         self._book = book
         self._sleeve_to_bundle = sleeve_to_bundle
         self._ledger = ledger
-        self._instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
+        self._bundle_bands: BundleBands | None = None
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         timeframe_by_instrument_id: dict[InstrumentId, str] = {}
         for bundle in self._sleeve_to_bundle.values():
@@ -165,7 +168,7 @@ class RebalancePipeline:
 
     def _band_ownership_startup_result(self) -> _startup.StartupResult | None:
         try:
-            self._instrument_bands = build_instrument_bands(self._sleeve_to_bundle)
+            self._bundle_bands = build_instrument_bands(self._sleeve_to_bundle)
         except InstrumentBandError as exc:
             return _startup.StartupResult(
                 trading_enabled=False,
@@ -293,7 +296,61 @@ class RebalancePipeline:
             name: _combine_array_series(sleeve_bars, name)
             for name in contract.required_arrays
         }
+        conversion = self._currency_conversion(contract, period)
+        if conversion is not None:
+            arrays = conversion.apply(arrays)
         return bundle.compute_weights(MarketDataBundle(arrays))
+
+    def _currency_conversion(
+        self, contract: DataContract, period: CompletedRebalancePeriod
+    ) -> CurrencyConversion | None:
+        """The contract's ``exchange:``-leg conversion to its base currency.
+
+        Research validated the sleeve on base-currency-converted panels; the
+        trader computes on the same view (aegis-rd-reyj). Any gap — a leg that
+        is not a cached FX pair, missing FX bars, an unresolvable tradeable
+        currency — raises, so the sleeve fails closed instead of silently
+        computing on native prices.
+        """
+        if not contract.exchange:
+            return None
+        needed = contract.lookback_bars + 1
+        fx_close: dict[InstrumentId, pd.Series] = {}
+        pair_currencies: dict[InstrumentId, tuple[str, str]] = {}
+        for fx_id in contract.exchange:
+            pair = self._market_data.currency_pair(fx_id)
+            if pair is None:
+                raise ValueError(
+                    f"conversion leg {fx_id.value} is not a cash FX pair in the cache"
+                )
+            bars = self._lookback_window(
+                fx_id,
+                contract.timeframe,
+                period,
+                limit=needed + DROP_POLICY_LOOKBACK_SLACK,
+            )
+            if not bars:
+                raise ValueError(f"no FX bars for conversion leg {fx_id.value}")
+            pair_currencies[fx_id] = pair
+            fx_close[fx_id] = pd.Series(
+                [bar.close for bar in bars],
+                index=pd.DatetimeIndex([bar.ts_event for bar in bars]),
+            )
+        currency_by_instrument_id: dict[InstrumentId, str] = {}
+        for instrument_id in self._contract_target_ids(contract):
+            sizing = self._market_data.instrument_sizing(instrument_id)
+            if sizing is None:
+                raise ValueError(
+                    f"no cached instrument for {instrument_id.value}; its quote "
+                    "currency is required for base-currency conversion"
+                )
+            currency_by_instrument_id[instrument_id] = sizing.currency
+        return build_currency_conversion_from_codes(
+            currency_by_instrument_id=currency_by_instrument_id,
+            pair_currencies=pair_currencies,
+            fx_close=fx_close,
+            base_currency=contract.base_currency,
+        )
 
     def _build_rebalance_plan(
         self,
@@ -301,12 +358,13 @@ class RebalancePipeline:
         _nav: float,
         realized_weights: dict[InstrumentId, float],
     ) -> RebalancePlan:
-        instrument_bands = self._require_instrument_bands()
+        bundle_bands = self._require_bundle_bands()
         return rebalance_plan(
             pending,
             self._book,
             realized_weights=realized_weights,
-            instrument_bands=instrument_bands,
+            instrument_bands=bundle_bands.bands,
+            band_owners=bundle_bands.owner_by_instrument,
             realized_covariance=self._ledger.realized_covariance(
                 self._positive_risk_sleeve_names()
             ),
@@ -314,10 +372,10 @@ class RebalancePipeline:
             realized_drawdown=self._ledger.current_drawdown(_nav),
         )
 
-    def _require_instrument_bands(self) -> Mapping[InstrumentId, DriftBand]:
-        if self._instrument_bands is None:
+    def _require_bundle_bands(self) -> BundleBands:
+        if self._bundle_bands is None:
             raise RuntimeError("instrument bands queried before startup_check built them")
-        return self._instrument_bands
+        return self._bundle_bands
 
     def _size_plan(
         self,

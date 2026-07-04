@@ -451,6 +451,59 @@ class TestRebalanceSlice4:
         assert len(result) == 1
         assert result[0].delta == pytest.approx(0.03)
 
+    def test_bundle_band_scales_with_the_owning_sleeves_multiplier(self):
+        """Regression (aegis-rd-reyj defect 2): bundle bands are calibrated at
+        standalone-sleeve scale; the allocator shrinks the sleeve's targets by
+        its multiplier, so the band must shrink with them or the inclusive add
+        gate blocks the initial open and the sleeve NEVER trades (the c80s
+        never-opens edge at book level)."""
+        book = make_book([
+            ("floor", "floor-abc.whl", 0.25),
+            ("rest", "rest-abc.whl", 0.75),
+        ])
+        floor, rest = book.sleeves[0].name, book.sleeves[1].name
+        # Research-scale target 0.20 with band 0.10 opened fine standalone; the
+        # cold-book multiplier 0.25 scales the target to 0.05 — inside the
+        # UNSCALED band, so pre-fix the position never opens.
+        result = rebalance(
+            {floor: _target({"AAA": 0.20}), rest: _target({"BBB": 0.20})},
+            book,
+            instrument_bands=_bands(_iid("AAA"), _iid("BBB"), up=0.10, down=0.10),
+            band_owners={_iid("AAA"): floor, _iid("BBB"): rest},
+            realized_weights={},
+        )
+
+        by_symbol = {delta.instrument_id.symbol.value: delta for delta in result}
+        assert by_symbol["AAA"].delta == pytest.approx(0.05)
+        assert by_symbol["BBB"].delta == pytest.approx(0.15)
+
+    def test_scaled_band_still_suppresses_within_band_drift(self):
+        """The scaled band keeps its no-churn role at the sleeve's book scale:
+        a drift inside multiplier x band holds, one outside it trades."""
+        book = make_book([
+            ("floor", "floor-abc.whl", 0.25),
+            ("rest", "rest-abc.whl", 0.75),
+        ])
+        floor, rest = book.sleeves[0].name, book.sleeves[1].name
+        targets = {floor: _target({"AAA": 0.20}), rest: _target({"BBB": 0.20})}
+        bands = _bands(_iid("AAA"), _iid("BBB"), up=0.10, down=0.10)
+        owners = {_iid("AAA"): floor, _iid("BBB"): rest}
+        # Scaled targets: AAA 0.05 (band 0.025), BBB 0.15 (band 0.075).
+        inside = rebalance(
+            targets, book,
+            instrument_bands=bands, band_owners=owners,
+            realized_weights={_iid("AAA"): 0.04, _iid("BBB"): 0.15},
+        )
+        assert inside == ()
+
+        outside = rebalance(
+            targets, book,
+            instrument_bands=bands, band_owners=owners,
+            realized_weights={_iid("AAA"): 0.02, _iid("BBB"): 0.15},
+        )
+        assert [d.instrument_id for d in outside] == [_iid("AAA")]
+        assert outside[0].delta == pytest.approx(0.03)
+
     def test_unowned_realized_position_trades_straight_to_flat(self):
         book = self._book()
         result = rebalance(

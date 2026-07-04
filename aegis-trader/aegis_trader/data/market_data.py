@@ -19,6 +19,7 @@ import pandas as pd
 from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Currency, Quantity
 from aegis_data.bar_type import raw_bar_type
 from aegis_trader.domain.sizing import InstrumentSizing
@@ -59,6 +60,12 @@ class MarketDataPort(Protocol):
         """FX rate as quote units per 1 base (base→quote, e.g. EUR→GBP = 0.85),
         or ``None`` when no rate is available — the overlay fails closed rather
         than fabricating a rate."""
+        ...
+
+    def currency_pair(self, instrument_id: InstrumentId) -> tuple[str, str] | None:
+        """``(base, quote)`` currency codes when the id resolves to a cash FX
+        pair in the cache, or ``None`` for anything else — the panel conversion
+        derives each ``exchange:`` leg's rate orientation from this."""
         ...
 
     def lookback_window(
@@ -149,6 +156,12 @@ class NautilusMarketData:
         if rate is None or rate <= 0.0:
             return None
         return float(rate)
+
+    def currency_pair(self, instrument_id: InstrumentId) -> tuple[str, str] | None:
+        instrument = self._cache.instrument(instrument_id)
+        if not isinstance(instrument, CurrencyPair):
+            return None
+        return (instrument.base_currency.code, instrument.quote_currency.code)
 
     def lookback_window(
         self,

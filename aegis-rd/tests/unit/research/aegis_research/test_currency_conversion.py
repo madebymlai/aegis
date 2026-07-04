@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
-from research.aegis_research.market_data.currency import CurrencyConversion
+from aegis_runtime.currency import CurrencyConversion
 
 _USD_LEG = InstrumentId.from_str("AAPL.XNAS")
 _BASE_LEG = InstrumentId.from_str("BMW.XETR")

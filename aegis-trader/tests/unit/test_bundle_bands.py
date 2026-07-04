@@ -59,15 +59,19 @@ def test_build_instrument_bands_merges_disjoint_sleeves() -> None:
     aapl = _id("AAPL.NASDAQ")
     msft = _id("MSFT.NASDAQ")
 
-    bands = build_instrument_bands(
+    bundle_bands = build_instrument_bands(
         {
             SleeveName("trend"): _bundle(aapl, DriftBand(up=0.10, down=0.20)),
             SleeveName("carry"): _bundle(msft, DriftBand(up=0.0, down=0.0)),
         }
     )
 
-    assert bands[aapl] == DriftBand(up=0.10, down=0.20)
-    assert bands[msft] == DriftBand(up=0.0, down=0.0)
+    assert bundle_bands.bands[aapl] == DriftBand(up=0.10, down=0.20)
+    assert bundle_bands.bands[msft] == DriftBand(up=0.0, down=0.0)
+    # Ownership feeds the rebalancer's sleeve-scale band scaling (aegis-rd-reyj):
+    # each band gates at its owning sleeve's allocator multiplier.
+    assert bundle_bands.owner_by_instrument[aapl] == SleeveName("trend")
+    assert bundle_bands.owner_by_instrument[msft] == SleeveName("carry")
 
 
 def test_build_instrument_bands_rejects_overlapping_sleeves() -> None:

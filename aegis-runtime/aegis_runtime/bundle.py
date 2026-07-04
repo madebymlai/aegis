@@ -65,6 +65,12 @@ class DataContract:
     # continuous id in ``instrument_ids`` (e.g. ``ES.XCME``); dated legs still load
     # dynamically via the chain, not as static contract columns.
     futures: tuple[str, ...] = ()
+    # Data-only FX conversion legs (e.g. ``EUR/USD.IDEALPRO``), declared identically to
+    # research's ``DataConfig.exchange``. They load like any native bar stream but are
+    # never compute columns or rebalance targets — their bars convert non-base-quoted
+    # tradeables to the book's base currency (research parity) and mark the FX rate
+    # sizing reads.
+    exchange: tuple[InstrumentId, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
@@ -75,6 +81,16 @@ class DataContract:
         )
         _validate_bare_roots(self.futures, "DataContract.futures")
         _continuous_instrument_ids(self.instrument_ids, self.futures)
+        _validate_instrument_ids(self.exchange, "DataContract.exchange")
+        overlap = sorted(
+            instrument_id.value
+            for instrument_id in set(self.exchange) & set(self.instrument_ids)
+        )
+        if overlap:
+            raise ValueError(
+                "DataContract.exchange legs must be data-only, not tradeable "
+                f"instrument_ids: {overlap}"
+            )
 
     @property
     def continuous_instrument_ids(self) -> tuple[InstrumentId, ...]:
@@ -96,6 +112,14 @@ class DataContract:
             for instrument_id in self.instrument_ids
             if instrument_id not in continuous
         )
+
+    @property
+    def loadable_instrument_ids(self) -> tuple[InstrumentId, ...]:
+        """Every id that loads as a static bar stream: the native tradeables plus
+        the data-only FX conversion legs. Callers that warm, subscribe, or union
+        what a backtest/live node must load take this; compute columns stay
+        ``instrument_ids``."""
+        return (*self.native_instrument_ids, *self.exchange)
 
 
 @dataclass(frozen=True)

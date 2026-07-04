@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 
 from aegis_runtime import DriftBand, ExecutionBundle, InstrumentId
@@ -14,10 +15,23 @@ class InstrumentBandError(ValueError):
     """A bundle band map cannot be converted to one unambiguous book-wide map."""
 
 
+@dataclass(frozen=True)
+class BundleBands:
+    """Book-wide bundle bands plus each band's owning sleeve.
+
+    Bands are research-calibrated at standalone-sleeve scale; ownership lets the
+    rebalancer re-scale each band by its sleeve's allocator multiplier
+    (aegis-rd-reyj), so the calibration transfers to book scale exactly.
+    """
+
+    bands: Mapping[InstrumentId, DriftBand]
+    owner_by_instrument: Mapping[InstrumentId, SleeveName]
+
+
 def build_instrument_bands(
     bundles: Mapping[SleeveName, ExecutionBundle],
-) -> Mapping[InstrumentId, DriftBand]:
-    """Merge loaded sleeve bundle bands into one flat instrument map.
+) -> BundleBands:
+    """Merge loaded sleeve bundle bands into one flat, ownership-tagged map.
 
     Each live instrument must be owned by exactly one sleeve bundle. A held
     instrument absent from this map is no longer in any current bundle and the
@@ -40,4 +54,7 @@ def build_instrument_bands(
             owners[instrument_id] = sleeve_name
             bands[instrument_id] = band
 
-    return MappingProxyType(bands)
+    return BundleBands(
+        bands=MappingProxyType(bands),
+        owner_by_instrument=MappingProxyType(owners),
+    )

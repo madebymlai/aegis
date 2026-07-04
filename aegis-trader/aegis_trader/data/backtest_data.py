@@ -59,7 +59,10 @@ def wrangle_fx_quotes(pair: CurrencyPair, fx_series: pd.Series) -> list[QuoteTic
     backtest tracks historical FX instead of one flat rate across the window.
     """
     precision = pair.price_precision
-    size = Quantity.from_int(_FX_SIZE)
+    # Size must carry the pair's own size precision — the catalog's real FX
+    # instruments are not integer-sized, and the matching engine rejects a
+    # tick whose size precision differs from the instrument's.
+    size = Quantity(_FX_SIZE, pair.size_precision)
     return [
         QuoteTick(
             instrument_id=pair.id,

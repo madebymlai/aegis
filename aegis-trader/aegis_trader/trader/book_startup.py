@@ -142,10 +142,12 @@ def startup_history_start(
 def _native_instrument_ids(
     sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle]
 ) -> tuple[InstrumentId, ...]:
+    # Loadable ids: tradeable natives plus the FX conversion legs — the panel
+    # conversion reads the legs' bars over the same lookback (aegis-rd-reyj).
     instrument_ids = {
         instrument_id
         for bundle in sleeve_to_bundle.values()
-        for instrument_id in bundle.contract.native_instrument_ids
+        for instrument_id in bundle.contract.loadable_instrument_ids
     }
     return tuple(sorted(instrument_ids, key=lambda instrument_id: instrument_id.value))
 

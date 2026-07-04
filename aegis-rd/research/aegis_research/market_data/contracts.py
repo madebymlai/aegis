@@ -9,7 +9,7 @@ from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration import DataConfig
-from research.aegis_research.market_data.currency import CurrencyConversion
+from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.market_data.native_metadata import supports_update
 
 LOGICAL_ARRAYS = {

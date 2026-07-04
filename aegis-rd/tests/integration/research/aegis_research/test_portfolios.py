@@ -8,7 +8,7 @@ from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.market_data.currency import CurrencyConversion
+from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.portfolios import (
     _SINGLE_CANDIDATE_ID,
     distribution_cash_dividends,

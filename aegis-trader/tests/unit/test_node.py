@@ -32,7 +32,7 @@ from aegis_runtime import DataContract, MissingIndexPolicy
 
 from aegis_trader.bundles.book_sleeves import (
     load_book_sleeves,
-    union_native_instrument_ids,
+    union_loadable_instrument_ids,
 )
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.config import IBConnectionSettings
@@ -170,24 +170,30 @@ def test_importing_the_node_module_does_not_import_ibapi():
 # --------------------------------------------------------------------------- #
 
 
-def test_union_native_instrument_ids_unions_and_sorts_declared_natives():
-    """``load_ids`` is the sorted union of the bundles' declared natives — the
-    data-only FX ``exchange:`` natives ride in alongside the tradeable ones, with
-    no construction or currency derivation."""
+def test_union_loadable_instrument_ids_unions_and_sorts_declared_natives():
+    """``load_ids`` is the sorted union of the bundles' loadable ids — the
+    data-only FX ``exchange:`` conversion legs ride in alongside the tradeable
+    natives (aegis-rd-reyj), with no construction or currency derivation."""
+    fx_contract = DataContract(
+        instrument_ids=(InstrumentId.from_str("VUSA.XLON"),),
+        required_arrays=("Close",),
+        base_currency="EUR",
+        timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
+        lookback_bars=1,
+        exchange=(InstrumentId.from_str("EUR/USD.IDEALPRO"),),
+    )
     sleeves = (
         (SleeveName("equity"), SimpleNamespace(contract=_contract("VUSA.XLON"))),
-        (
-            SleeveName("fx_overlay"),
-            SimpleNamespace(contract=_contract("EUR/USD.IDEALPRO", "VUSA.XLON")),
-        ),
+        (SleeveName("fx_overlay"), SimpleNamespace(contract=fx_contract)),
     )
 
-    ids = union_native_instrument_ids(sleeves)
+    ids = union_loadable_instrument_ids(sleeves)
 
     assert [i.value for i in ids] == ["EUR/USD.IDEALPRO", "VUSA.XLON"]
 
 
-def test_union_native_instrument_ids_excludes_continuous_future_roots():
+def test_union_loadable_instrument_ids_excludes_continuous_future_roots():
     """A continuous-future root is declared on ``DataContract.futures``, not loaded as a
     static native: its legs arrive dynamically via the chain.  The union (the node's
     ``load_ids``) must carry only the declared native ids, never the bare roots."""
@@ -205,7 +211,7 @@ def test_union_native_instrument_ids_excludes_continuous_future_roots():
     )
     sleeves = ((SleeveName("equity"), SimpleNamespace(contract=contract)),)
 
-    ids = union_native_instrument_ids(sleeves)
+    ids = union_loadable_instrument_ids(sleeves)
 
     # The continuous id ES.XCME (matching root ES) is excluded; only the true native rides.
     assert [i.value for i in ids] == ["VUSA.XLON"]
@@ -257,7 +263,7 @@ def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves(
         InstrumentId.from_str("EUR/USD.IDEALPRO"),
         InstrumentId.from_str("VUSA.XLON"),
     )
-    assert registered_ids == union_native_instrument_ids(sleeves)
+    assert registered_ids == union_loadable_instrument_ids(sleeves)
 
 
 # --------------------------------------------------------------------------- #

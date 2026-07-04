@@ -33,6 +33,48 @@ requires-dist = [
 dev = [{ name = "pytest", specifier = ">=9.1.0" }]
 
 [[package]]
+name = "aegis-exec-aegis-heldhedge-cand-b60"
+version = "1.0.0"
+source = { path = "../bundles/aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl" }
+dependencies = [
+    { name = "aegis-runtime" },
+]
+wheels = [
+    { filename = "aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl", hash = "sha256:4c8f2bfec2f5b35a160258fb66ec2bdac08f66bd1c2e632dd5408a4763e60ce0" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "aegis-runtime" }]
+
+[[package]]
+name = "aegis-exec-atalanta-keystone-shortmute-cand-30c"
+version = "1.0.0"
+source = { path = "../bundles/aegis_exec_atalanta_keystone_shortmute_cand_30c-1.0.0-py3-none-any.whl" }
+dependencies = [
+    { name = "aegis-runtime" },
+]
+wheels = [
+    { filename = "aegis_exec_atalanta_keystone_shortmute_cand_30c-1.0.0-py3-none-any.whl", hash = "sha256:6adfb617b4ae180ed996bed64dff715bddb1a99d5dfb9800e7fe1b43c2d0dfc8" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "aegis-runtime" }]
+
+[[package]]
+name = "aegis-exec-demeter-carry-mix-cand-ff2"
+version = "1.1.0"
+source = { path = "../bundles/aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl" }
+dependencies = [
+    { name = "aegis-runtime" },
+]
+wheels = [
+    { filename = "aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl", hash = "sha256:1dac0c5eed540da13a3e9a1035589f2adc066b75f03080289bfeffce2db7a2da" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "aegis-runtime" }]
+
+[[package]]
 name = "aegis-runtime"
 version = "0.1.0"
 source = { editable = "../aegis-runtime" }
@@ -58,9 +100,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aegis-data" },
+    { name = "aegis-exec-aegis-heldhedge-cand-b60" },
+    { name = "aegis-exec-atalanta-keystone-shortmute-cand-30c" },
+    { name = "aegis-exec-demeter-carry-mix-cand-ff2" },
     { name = "aegis-runtime" },
     { name = "nautilus-trader" },
     { name = "pydantic" },
+    { name = "requests" },
 ]
 
 [package.optional-dependencies]
@@ -78,10 +124,14 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aegis-data", editable = "../aegis-data" },
+    { name = "aegis-exec-aegis-heldhedge-cand-b60", path = "../bundles/aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl" },
+    { name = "aegis-exec-atalanta-keystone-shortmute-cand-30c", path = "../bundles/aegis_exec_atalanta_keystone_shortmute_cand_30c-1.0.0-py3-none-any.whl" },
+    { name = "aegis-exec-demeter-carry-mix-cand-ff2", path = "../bundles/aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl" },
     { name = "aegis-runtime", editable = "../aegis-runtime" },
     { name = "nautilus-trader" },
     { name = "nautilus-trader", extras = ["ib", "docker"], marker = "extra == 'ib'" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "requests", specifier = ">=2.34.2" },
 ]
 provides-extras = ["ib"]
 

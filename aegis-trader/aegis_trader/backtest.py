@@ -22,7 +22,7 @@ from nautilus_trader.config import CacheConfig, LoggingConfig
 from nautilus_trader.model.data import Bar, CustomData, DataType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
-from nautilus_trader.model.instruments import Instrument
+from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.risk.config import RiskEngineConfig
 
@@ -37,12 +37,12 @@ from aegis_data.catalog import (
 from aegis_trader.bundles.book_sleeves import (
     SleeveBundles,
     load_book_sleeves,
-    union_native_instrument_ids,
+    union_loadable_instrument_ids,
 )
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
-from aegis_trader.data import wrangle_bars
+from aegis_trader.data import wrangle_bars, wrangle_fx_quotes
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.book_timeframe import resolve_book_timeframe
 from aegis_trader.domain.risk_guard import RiskGuardConfig
@@ -130,8 +130,15 @@ class CatalogBacktestDataSource:
         )
         # ADR-0008: Trader backtests consume distributions through the same verified
         # catalog-port seam as RD, never by querying distribution storage directly.
+        # A cash FX pair pays no distributions — the verified store carries no
+        # coverage record for conversion legs, so they are excluded from the request.
+        distribution_ids = tuple(
+            instrument_id
+            for instrument_id in instrument_ids
+            if not isinstance(instruments[instrument_id], CurrencyPair)
+        )
         distributions = data_port.distributions(
-            instrument_ids,
+            distribution_ids,
             start=start,
             end=end,
         )
@@ -178,7 +185,7 @@ def run_book_backtest(
     book_timeframe = resolve_book_timeframe(
         bundle.contract.timeframe for _name, bundle in sleeves
     )
-    instrument_ids = union_native_instrument_ids(sleeves)
+    instrument_ids = union_loadable_instrument_ids(sleeves)
     source = data_source or CatalogBacktestDataSource(
         catalog_path=catalog_path,
         provider=provider,
@@ -297,6 +304,20 @@ def _catalog_instruments(
 def _validate_market_data(sleeves: SleeveBundles, market_data: BacktestMarketData) -> None:
     for sleeve_name, bundle in sleeves:
         contract = bundle.contract
+        for instrument_id in contract.exchange:
+            # A conversion leg with no data means every non-base-quoted delta is
+            # silently dropped in sizing — fail before the engine starts.
+            if instrument_id not in market_data.instruments:
+                raise CatalogInstrumentError(
+                    "data source did not return the FX conversion pair "
+                    f"{instrument_id.value} declared by sleeve {sleeve_name.value!r}"
+                )
+            if market_data.ohlcv.get(instrument_id) is None:
+                raise ContractDataError(
+                    sleeve_name.value,
+                    instrument_id,
+                    "data source did not return raw bars for the FX conversion leg",
+                )
         for instrument_id in contract.instrument_ids:
             if instrument_id not in market_data.instruments:
                 raise CatalogInstrumentError(
@@ -401,8 +422,14 @@ def _add_instruments_and_bars(
 ) -> None:
     for instrument_id, instrument in market_data.instruments.items():
         engine.add_instrument(instrument)
-        bars = _wrangle_external_bars(instrument, market_data.ohlcv[instrument_id], timeframe)
+        frame = market_data.ohlcv[instrument_id]
+        bars = _wrangle_external_bars(instrument, frame, timeframe)
         engine.add_data(bars, sort=False)
+        if isinstance(instrument, CurrencyPair):
+            # An FX conversion leg feeds the cache mark xrate the same way live
+            # does: one quote per bar close (strategy.on_quote_tick), so sizing's
+            # fx_rate read works from the same series the panel conversion uses.
+            engine.add_data(_fx_quotes(instrument, frame), sort=False)
     _add_distribution_data(engine, market_data.distributions)
 
 
@@ -421,6 +448,14 @@ def _add_distribution_data(
         validate=False,
         sort=False,
     )
+
+
+def _fx_quotes(pair: CurrencyPair, ohlcv: pd.DataFrame) -> list[Any]:
+    frame = _normalize_ohlcv(ohlcv)
+    closes = frame["close"]
+    if closes.index.tz is None:
+        closes = closes.tz_localize("UTC")
+    return wrangle_fx_quotes(pair, closes)
 
 
 def _wrangle_external_bars(

@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
-from research.aegis_research.market_data.currency import (
+from aegis_runtime.currency import (
     MissingFxPairError,
     build_currency_conversion,
 )

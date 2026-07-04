@@ -38,7 +38,7 @@ from research.aegis_research.configuration import (
     RankingConfig,
     ReportConfig,
 )
-from research.aegis_research.market_data.currency import CurrencyConversion
+from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (

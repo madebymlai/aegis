@@ -127,6 +127,31 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
     )
 
 
+# Payloads ship VERBATIM (the wheel is provenance, not a transform target), so a component
+# that imports a research-only dependency at module level would break the deployable at
+# import time - aegis-trader excludes vectorbtpro by design, and the failure mode is the
+# worst kind: "Sleeve compute FAILED ... Sleeve holds this period" on every bar, silently.
+# The convention is a LAZY import inside ``param_space`` (the trader never calls it); this
+# guard makes a regression loud at export instead of silent at trading time.
+_TOP_LEVEL_RESEARCH_IMPORT = re.compile(
+    r"^(?:from vectorbtpro\b[^\n]*|import vectorbtpro\b[^\n]*)$",
+    re.MULTILINE,
+)
+
+
+def _assert_payload_imports_clean(filename: str, source: str) -> str:
+    """Fail loud if a payload module would import research-only deps at module level."""
+    match = _TOP_LEVEL_RESEARCH_IMPORT.search(source)
+    if match:
+        raise ValueError(
+            f"execution payload {filename!r} imports a research-only dependency at module "
+            f"level ({match.group(0)!r}); deployables exclude vectorbtpro, so the bundle "
+            f"could not even be imported there. Move the import inside param_space() "
+            f"(the research-only surface) and re-export."
+        )
+    return source
+
+
 def _assemble_components(
     *,
     package_name: str,
@@ -160,7 +185,7 @@ def _assemble_components(
             )
         )
         hashes[f"indicators/{definition.id}"] = definition.identity.source_hash
-        sources[filename] = definition.file_path.read_text(encoding="utf-8")
+        sources[filename] = _assert_payload_imports_clean(filename, definition.file_path.read_text(encoding="utf-8"))
 
     definition = component_registry.get(ComponentSelection("strategies", config.strategy.id))
     if not definition.has_lookback:
@@ -178,7 +203,7 @@ def _assemble_components(
         params=params,
     )
     hashes[f"strategies/{definition.id}"] = definition.identity.source_hash
-    sources["strategy.py"] = definition.file_path.read_text(encoding="utf-8")
+    sources["strategy.py"] = _assert_payload_imports_clean("strategy.py", definition.file_path.read_text(encoding="utf-8"))
     return AssembledComponents(
         strategy=strategy_spec,
         indicators=tuple(indicator_specs),
@@ -229,6 +254,9 @@ def _bundle_contract(
         missing_index=MissingIndexPolicy(config.data.missing_index),
         lookback_bars=components.lookback_bars,
         futures=tuple(config.data.futures),
+        exchange=tuple(
+            InstrumentId.from_str(value) for value in config.data.exchange
+        ),
     )
 
 

@@ -66,6 +66,33 @@ def test_bundle_contract_carries_the_continuous_future_roots() -> None:
     assert contract.missing_index is MissingIndexPolicy.DROP
 
 
+def test_bundle_contract_carries_the_fx_conversion_legs() -> None:
+    """Regression (aegis-rd-reyj): ``data.exchange`` FX pairs must ship in the
+    contract, or the trader loads no FX data and every non-base-quoted leg's
+    orders are silently dropped in sizing (the book runs tail-only)."""
+    data = _DATA.validate_python(
+        {
+            "arrays": ["OHLCV"],
+            "base_currency": "EUR",
+            "instruments": ["LQDH.LSEETF"],
+            "exchange": ["EUR/USD.IDEALPRO"],
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+            "timeframe": "1D",
+            "missing_index": "drop",
+        }
+    )
+
+    contract = _bundle_contract(
+        SimpleNamespace(data=data),
+        _components(),
+        (InstrumentId.from_str("LQDH.LSEETF"),),
+    )
+
+    assert contract.exchange == (InstrumentId.from_str("EUR/USD.IDEALPRO"),)
+    assert contract.instrument_ids == (InstrumentId.from_str("LQDH.LSEETF"),)
+
+
 def test_bundle_contract_has_no_roots_when_none_declared() -> None:
     data = _DATA.validate_python(
         {

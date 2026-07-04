@@ -50,6 +50,7 @@ def rebalance(
     book: BookConfig,
     *,
     instrument_bands: Mapping[InstrumentId, DriftBand],
+    band_owners: Mapping[InstrumentId, SleeveName] | None = None,
     realized_weights: dict[InstrumentId, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
@@ -61,6 +62,7 @@ def rebalance(
         sleeve_targets,
         book,
         instrument_bands=instrument_bands,
+        band_owners=band_owners,
         realized_weights=realized_weights,
         realized_vols=realized_vols,
         realized_covariance=realized_covariance,
@@ -74,6 +76,7 @@ def rebalance_plan(
     book: BookConfig,
     *,
     instrument_bands: Mapping[InstrumentId, DriftBand],
+    band_owners: Mapping[InstrumentId, SleeveName] | None = None,
     realized_weights: dict[InstrumentId, float] | None = None,
     realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
@@ -93,6 +96,13 @@ def rebalance_plan(
     *instrument_bands* maps each current bundle-owned :class:`InstrumentId` to the
     research-validated drift band.  A realised instrument absent from this map is no
     longer in any current bundle and trades straight to its target.
+
+    *band_owners* maps each banded instrument to the sleeve whose bundle carries
+    its band.  Bundle bands are calibrated at standalone-sleeve scale (weight
+    points of the research book); the allocator scales the owning sleeve's targets
+    by its multiplier, so the band is scaled by the same factor before gating —
+    research calibration transfers exactly.  Without an owner (or owner map) the
+    band applies unscaled.
 
     *realized_weights* maps each covered :class:`InstrumentId` -> current realized
     weight (signed fraction of NAV).  When supplied, the realised book is gated against
@@ -177,7 +187,12 @@ def rebalance_plan(
             continue
 
         # -- band gate (skipped on a forced full cleanup) --
-        band = instrument_bands.get(instrument_id)
+        band = _sleeve_scaled_band(
+            instrument_bands.get(instrument_id),
+            owner=(band_owners or {}).get(instrument_id),
+            multipliers=allocation.multipliers,
+            previous_sleeve_weights=previous_sleeve_weights or {},
+        )
         resolved_w = (
             target_w
             if force_cleanup or band is None
@@ -225,6 +240,34 @@ def rebalance_plan(
     return RebalancePlan(
         deltas=tuple(deltas),
         applied_sleeve_weights=MappingProxyType(dict(allocation.multipliers)),
+    )
+
+
+def _sleeve_scaled_band(
+    band: DriftBand | None,
+    *,
+    owner: SleeveName | None,
+    multipliers: Mapping[SleeveName, float],
+    previous_sleeve_weights: Mapping[SleeveName, float],
+) -> DriftBand | None:
+    """The bundle band at the owning sleeve's current book scale.
+
+    A bundle band is absolute weight points of the *standalone research book*;
+    the allocator scales the sleeve's targets by its multiplier, so gating with
+    the unscaled band blocks every open once the sleeve runs severalfold
+    smaller (aegis-rd-reyj).  A sleeve absent from this period's allocation
+    falls back to its previously applied weight; with no owner at all the band
+    applies unscaled.
+    """
+    if band is None or owner is None:
+        return band
+    scale = multipliers.get(owner)
+    if scale is None:
+        scale = previous_sleeve_weights.get(owner, 1.0)
+    return DriftBand(
+        up=band.up * scale,
+        down=band.down * scale,
+        destination_fraction=band.destination_fraction,
     )
 
 

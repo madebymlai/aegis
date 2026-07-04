@@ -18,7 +18,7 @@ from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.market_data.currency import CurrencyConversion
+from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.market_data.identity import as_instrument_id
 
 _SINGLE_CANDIDATE_ID = "single"

@@ -161,6 +161,52 @@ def test_bundle_payload_round_trips_continuous_future_roots() -> None:
     assert bundle.contract.futures == ("ES",)
 
 
+def test_bundle_payload_round_trips_exchange_conversion_legs() -> None:
+    """The contract's FX conversion legs (aegis-rd-reyj) survive dump→load."""
+    contract = DataContract(
+        instrument_ids=(_id("AAPL.NASDAQ"),),
+        required_arrays=("Close",),
+        base_currency="EUR",
+        timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
+        lookback_bars=20,
+        exchange=(_id("EUR/USD.IDEALPRO"),),
+    )
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
+
+    assert payload["contract"]["exchange"] == ["EUR/USD.IDEALPRO"]
+    assert bundle.contract.exchange == (_id("EUR/USD.IDEALPRO"),)
+
+
+def test_bundle_payload_rejects_contract_without_exchange() -> None:
+    """Pre-v3 wheels omit the conversion legs; they must fail loud, not load
+    as a silently FX-less book (the aegis-rd-reyj tail-only failure mode)."""
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    del payload["contract"]["exchange"]
+
+    with pytest.raises(BundlePayloadFieldError, match="exchange"):
+        load_bundle_payload(payload)
+
+
+def test_data_contract_rejects_exchange_overlapping_tradeables() -> None:
+    """An id cannot be both a compute column and a conversion-only leg."""
+    with pytest.raises(ValueError, match="exchange"):
+        DataContract(
+            instrument_ids=(_id("AAPL.NASDAQ"),),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            exchange=(_id("AAPL.NASDAQ"),),
+        )
+
+
 def test_bundle_payload_rejects_pre_v2_payload_without_schema_version() -> None:
     contract = _contract()
     payload = dump_bundle_payload(

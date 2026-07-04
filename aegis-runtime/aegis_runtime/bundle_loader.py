@@ -16,7 +16,7 @@ from aegis_runtime.bundle import (
 )
 from aegis_runtime.drift_band import DriftBand
 
-BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v2"
+BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v3"
 
 
 class BundlePayloadError(ValueError):
@@ -47,6 +47,7 @@ def dump_bundle_payload(
             "missing_index": contract.missing_index.value,
             "lookback_bars": contract.lookback_bars,
             "futures": list(contract.futures),
+            "exchange": [_dump_instrument_id(item) for item in contract.exchange],
         },
         "manifest": {
             "run_id": manifest.run_id,
@@ -89,6 +90,10 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         missing_index=_required_value(contract_payload, "missing_index", "DataContract"),
         lookback_bars=_required_value(contract_payload, "lookback_bars", "DataContract"),
         futures=tuple(_required_sequence(contract_payload, "futures", "DataContract")),
+        exchange=tuple(
+            _load_instrument_id(item)
+            for item in _required_sequence(contract_payload, "exchange", "DataContract")
+        ),
     )
     manifest = BundleManifest(
         run_id=_required_value(manifest_payload, "run_id", "BundleManifest"),

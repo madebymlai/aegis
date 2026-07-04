@@ -5,9 +5,9 @@
 # runtime.  Base currency is EUR; each instrument carries its own venue (the
 # book is venue-agnostic).
 #
-#   Run:   aegis-trader --mode {backtest,paper,live} --book book.toml
-#          (paper/live also read IB_ACCOUNT_ID / IB_HOST / IB_PORT /
-#           IB_CLIENT_ID / TRADER_ID from the environment)
+#   Run:   aegis-trader backtest --start YYYY-MM-DD --end YYYY-MM-DD [--book book.toml]
+#          aegis-trader trader   (live daemon; paper vs live selected by IB_PORT,
+#          reads IB_ACCOUNT_ID / IB_HOST / IB_PORT / IB_CLIENT_ID / TRADER_ID)
 
 base_currency = "EUR"
 book_vol_target = 0.09
@@ -40,33 +40,47 @@ min_commission_per_order = 1.25
 # atalanta — trend floor pole (IDTL/IGLN/ICOM non-equity crisis substrate).
 # Hysteretic buy-hold-spread sleeve: long gold/commodities, borrow-gated IDTL short,
 # with research-validated asymmetric drift bands carried by the bundle.
+# Re-exported 2026-07-04 (same lock; old cand_726 wheel predates the bundle-payload
+# schema_version requirement and no longer loads).
 [[sleeves]]
 name = "atalanta_trend"
-wheel_filename = "aegis_exec_atalanta_keystone_cand_726-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_atalanta_keystone_shortmute_cand_30c-1.0.0-py3-none-any.whl"
 risk_share = 0.42
 group = "Floor"
 weight_band_down = 0.02
 weight_band_up = 0.02
 
-# demeter — EU credit-carry pole (IHYU + LQDH, USD legs converted to EUR).
+# demeter — EU credit-carry pole (SDHY + LQDH, USD legs converted to EUR).
+# Re-exported 2026-07-04 from the P2 re-lock (20260704T170256351625Z, cell def1/fx0/cg0
+# - strictly dominates the old fx0.15/cg2 champion the stale c94 wheel carried).
 [[sleeves]]
 name = "demeter_carry"
-wheel_filename = "aegis_exec_demeter_carry_cand_c94-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl"
 risk_share = 0.28
 group = "Floor"
 weight_band_down = 0.02
 weight_band_up = 0.02
 
-# aegis — UCITS tail hedge (VOOL, native EUR, held 100% within the sleeve).
+# aegis — UCITS tail hedge (LVO.XAMS, native EUR, held 100% within the sleeve).
 # The declared risk_share is intentionally zero: Target risk is set by the
 # convexity-premium budget below, not by an ad-hoc sleeve weight or live timer.
+# Re-pinned 2026-07-04: bundle re-exported from the corrected-identity lock
+# (20260704T143038842848Z, LVO.XAMS - the old cand_fa6 wheel carried the stale
+# VOOL.XETR sleeve). The H1 MONETIZATION band (trim the spike fast, re-fund
+# slowly; the band IS the monetization rule - profit-multiple and carry-throttle
+# overlays both killed pre-registered, runs/aegis/2026-07-04) rides the BUNDLE as
+# a ratio of target (0.2/0.3, tail_band lock 20260704T174903854810Z) and the
+# rebalancer scales it by this sleeve's allocator multiplier (aegis-rd-reyj), so
+# it stays openable at any budget-derived notional - the old "keep tail notional
+# above the band" constraint is gone. weight_band_* below is the SLEEVE
+# allocation no-churn band (a different knob), verified in the reyj book run.
 [[sleeves]]
 name = "aegis_tail"
-wheel_filename = "aegis_exec_aegis_heldhedge_cand_fa6-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl"
 risk_share = 0.0
 group = "Target"
-weight_band_down = 0.02
-weight_band_up = 0.02
+weight_band_down = 0.015
+weight_band_up = 0.01
 
 [tail_convexity_budget]
 # Tail protection is a fixed convexity premium, not a timed bet.  Coverage is
@@ -82,6 +96,14 @@ annual_carry_budget = 0.0075  # spend <= 0.75% of NAV/yr in premium
 # Per unit of the sleeve's risk share: NAV delivered at the attachment, and
 # NAV/yr of carry.  Operator-supplied (calibrated at re-validation); never
 # measured live in Trader.
+# Re-validation anchors (2026-07-04, real pipeline, runs/aegis/2026-07-04 p3):
+# per unit of LVO NOTIONAL the BANDED overlay delivered 0.95 NAV in the March-2020
+# month (drift-let-run through the spike ~doubles the static w x 47% capture) at
+# ~0.21 NAV/yr carry (banded bleed; the un-banded sleeve bleeds ~0.23-0.29/yr and
+# its 100%-held book is ruin at retail scale). Book frontier at the measured cells:
+# full crash-month coverage ~0.13 Sharpe (5% notional), quarter ~0.04 (2%).
+# Values below stay in the operator's risk-share convention; recalibrate against
+# these anchors when the risk-share -> notional scaling is pinned.
 sleeve = "aegis_tail"
 payoff_at_attachment = 0.20
 annual_carry = 0.08

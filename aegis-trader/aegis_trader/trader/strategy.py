@@ -46,7 +46,7 @@ from aegis_data.bar_type import raw_bar_type, timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, catalog_root, parquet_data_catalog
 from aegis_runtime import DataContract, ExecutionBundle
 
-from aegis_trader.bundles.book_sleeves import union_native_instrument_ids
+from aegis_trader.bundles.book_sleeves import union_loadable_instrument_ids
 from aegis_trader.data import (
     MarketDataPort,
     NautilusMarketData,
@@ -194,7 +194,7 @@ class RebalanceStrategy(Strategy):
         return self._book_timeframe
 
     def _registered_instrument_ids(self) -> tuple[InstrumentId, ...]:
-        return union_native_instrument_ids(tuple(self._sleeve_to_bundle.items()))
+        return union_loadable_instrument_ids(tuple(self._sleeve_to_bundle.items()))
 
     def _declared_continuous_ids_by_root(self) -> dict[str, InstrumentId]:
         """Continuous-root declarations keyed by bare root."""

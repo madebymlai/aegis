@@ -125,26 +125,54 @@ def build_currency_conversion(
     """Derive each tradeable leg's ``native → base`` FX rate from resolved instruments.
 
     Each leg's currency is read from its resolved ``Instrument.quote_currency`` (never
-    configured). Each declared FX pair contributes both directions of its rate from its
-    Nautilus ``CurrencyPair`` (base/quote): a pair ``X/Y`` priced ``p`` (Y per 1 X)
-    gives ``X→Y = p`` and ``Y→X = 1/p`` — the same auto-inverse Nautilus' mark xrate
-    uses. A non-base leg with no matching pair fails loud (:class:`MissingFxPairError`);
-    a base-currency leg needs no conversion and is omitted.
+    configured); the currency-code composition itself lives in
+    :func:`build_currency_conversion_from_codes` — the trader builds the same view
+    from its cache-backed ports without materialising ``Instrument`` objects.
+    """
+    return build_currency_conversion_from_codes(
+        currency_by_instrument_id={
+            instrument_id: instrument.quote_currency.code
+            for instrument_id, instrument in instruments.items()
+        },
+        pair_currencies={
+            pair_id: (pair.base_currency.code, pair.quote_currency.code)
+            for pair_id, pair in fx_pairs.items()
+        },
+        fx_close=fx_close,
+        base_currency=base_currency,
+    )
+
+
+def build_currency_conversion_from_codes(
+    *,
+    currency_by_instrument_id: Mapping[InstrumentId, str],
+    pair_currencies: Mapping[InstrumentId, tuple[str, str]],
+    fx_close: Mapping[InstrumentId, pd.Series],
+    base_currency: str,
+) -> CurrencyConversion:
+    """Derive each tradeable leg's ``native → base`` FX rate from currency codes.
+
+    Each declared FX pair contributes both directions of its rate from its
+    ``(base, quote)`` codes: a pair ``X/Y`` priced ``p`` (Y per 1 X) gives
+    ``X→Y = p`` and ``Y→X = 1/p`` — the same auto-inverse Nautilus' mark xrate
+    uses. A non-base leg with no matching pair fails loud
+    (:class:`MissingFxPairError`); a base-currency leg needs no conversion and
+    is omitted.
     """
     base = base_currency.upper()
     rates: dict[tuple[str, str], pd.Series] = {}
-    for pair_id, pair in fx_pairs.items():
+    for pair_id, (left_code, right_code) in pair_currencies.items():
         price = fx_close[pair_id]
-        left = pair.base_currency.code.upper()
-        right = pair.quote_currency.code.upper()
+        left = left_code.upper()
+        right = right_code.upper()
         rates[(left, right)] = price
         rates[(right, left)] = 1.0 / price
 
     rate_by_instrument: dict[InstrumentId, pd.Series] = {}
-    currency_by_instrument_id: dict[InstrumentId, str] = {}
-    for instrument_id, instrument in instruments.items():
-        quote = instrument.quote_currency.code.upper()
-        currency_by_instrument_id[instrument_id] = quote
+    normalized_currency_by_instrument_id: dict[InstrumentId, str] = {}
+    for instrument_id, currency in currency_by_instrument_id.items():
+        quote = currency.upper()
+        normalized_currency_by_instrument_id[instrument_id] = quote
         if quote == base:
             continue
         try:
@@ -157,5 +185,5 @@ def build_currency_conversion(
             ) from None
     return CurrencyConversion(
         rate_by_instrument=rate_by_instrument,
-        currency_by_instrument_id=currency_by_instrument_id,
+        currency_by_instrument_id=normalized_currency_by_instrument_id,
     )
