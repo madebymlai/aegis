@@ -56,11 +56,11 @@ _CREDIT_LONG = frozenset({
     # The same London UCITS names as venue-qualified Nautilus instrument ids — the column
     # labels the pipeline delivers since the instrument-id rename (matched via str(col)).
     "IHYU.LSEETF", "LQDE.LSEETF", "IEMB.LSEETF", "SEMB.LSEETF", "LQDH.LSEETF",
-    # SOTA-pole legs (carry_sota.yaml): short-duration HY (defensive tilt; iShares SDHY /
+    # SOTA-pole legs (carry.yaml): short-duration HY (defensive tilt; iShares SDHY /
     # PIMCO STHY) and EM local-currency sovereigns (IEML — the FX-carry skew source). All
     # held LONG to harvest their carry; the common spread richness sizes the whole book.
     "SDHY.L", "SDHY.LSEETF", "STHY.L", "STHY.LSEETF", "IEML.L", "IEML.LSEETF",
-    # Subordinated bank capital (carry_sota_at1.yaml): Invesco AT1 EUR-hedged Dist —
+    # Subordinated bank capital (archive/carry_sota_at1.yaml): Invesco AT1 EUR-hedged Dist —
     # crash-rent income the defensive axis cannot dilute ([[the-skew-is-the-product]]).
     # XBRU is the MIC the gateway mints for IB primary exchange EBS.
     "XAT1.XBRU", "XAT1.EBS", "XAT1.IBIS2",

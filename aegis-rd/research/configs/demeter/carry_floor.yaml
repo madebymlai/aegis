@@ -58,7 +58,7 @@ indicators:
 strategy:
   id: demeter.carry_mix   # param_space grid COLLAPSED to the pinned floor-partner cell (below); vol_target pinned 0.10
   params:
-    at1_weight: 0.0       # v1.1.0 axis pinned OFF here - swept separately in carry_sota_at1.yaml
+    at1_weight: 0.0       # v1.1.0 axis pinned OFF here - swept separately in archive/carry_sota_at1.yaml
     defensive: 1.0        # short-duration HY bucket (SDHY replaces broad IHYU)
     fx_weight: 0.0        # EM local-currency leg DROPPED - net-negative for the pairing (P2, 2026-07-04)
     carry_gain: 0.0       # spread-richness lean DROPPED - lowers income AND hurts the book (P2, 2026-07-04)
