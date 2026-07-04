@@ -42,6 +42,34 @@ existing draft conflated several concerns:
   `--force --start --end`. Routine and operator writes cannot drift into two merge
   semantics.
 
+- **Distribution reads are verified catalog-port reads.** The corpus is
+  self-describing for distributions as well as bars: for any distribution-capable
+  `InstrumentId`, `CatalogBackedDataPort.distributions(...)` must prove the bounded
+  request window has been checked against an adjusted-last source before it returns
+  stored `Distribution` rows. A direct `query_distribution_data(...)` is a low-level
+  storage primitive, not a research or trader read path.
+
+- **Distribution coverage uses a marker-row ledger.** Verification writes a
+  `DistributionCoverageMarker` interval through the same catalog interval machinery
+  used by bar coverage, including the zero-event case where the adjusted-last series
+  proves that no distributions occurred. The marker carries the instrument, whether
+  the instrument was applicable, the checked-at timestamp, and the event count for
+  the verified interval. Routine reads are warm once marked; a bounded
+  force-reverify is the explicit operator path for IBKR restatements, and rewrites
+  only that requested distribution window before stamping a fresh marker.
+
+- **Applicability has exclusion polarity.** Stored catalog definitions decide whether
+  distribution verification applies. Known exclusions, such as futures contracts and
+  synthetic continuous-future roots resolved from dated legs, are marked
+  not-applicable. Unknown instruments fail loud instead of being treated as
+  not-applicable, so a missing definition cannot silently bypass verification.
+
+- **Research and trader cross one enforcement seam.** Aegis RD and Aegis Trader both
+  obtain distributions through `CatalogBackedDataPort.distributions(...)`. RD records
+  the coverage report in provider metadata for quality evidence; Trader feeds the
+  same verified distributions into the backtest engine. Neither context owns a
+  parallel distribution reader.
+
 ## Considered and rejected
 
 - **Widen the port with `request_instruments`.** Rejected (ISP): it grows a port
@@ -52,6 +80,12 @@ existing draft conflated several concerns:
   catalog's write format, identity, and merge knowledge into *every* adapter (DRY /
   Information Hiding), and it is a command fused into a query (CQS). The provider
   returns data; aegis-data writes it.
+- **Use an empty distribution write as the coverage ledger.** Rejected: empty writes
+  are exactly the zero-event proof case, and the storage writer has no file to extend
+  when no `Distribution` rows exist. That would silently leave no interval for
+  `get_missing_intervals_for_request(...)`, so zero-event verified windows would look
+  unverified forever. A marker row makes "checked and empty" first-class catalog
+  data instead of a filename side channel.
 
 ## Consequences
 

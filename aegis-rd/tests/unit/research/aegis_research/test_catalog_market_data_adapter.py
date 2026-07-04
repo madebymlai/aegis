@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
+from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
 from aegis_data.distributions import Distribution
+from aegis_data.testing import bars
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
+from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.data import load_market_data_result
@@ -77,6 +82,15 @@ class _RecordingCatalogPort:
     ) -> tuple[Distribution, ...]:
         self.distribution_requests.append((tuple(instrument_ids), start, end))
         return self.distribution_events
+
+    def distribution_coverage_report(
+        self,
+        instrument_ids: Sequence[InstrumentId],
+        *,
+        start: str,
+        end: str,
+    ) -> tuple[dict[str, object], ...]:
+        return ()
 
 
 def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_columns() -> None:
@@ -250,6 +264,98 @@ def test_catalog_adapter_accepts_declared_empty_distributions() -> None:
     assert port.distribution_requests == [((aapl,), "2024-01-01", "2024-01-03")]
 
 
+class _AdjustedLastProvider:
+    def __init__(self, adjusted_last: pd.Series) -> None:
+        self.adjusted_last = adjusted_last
+
+    def request_adjusted_last(self, **_kwargs: Any) -> pd.Series:
+        return self.adjusted_last
+
+
+def test_catalog_adapter_reads_distributions_after_catalog_port_verification(
+    tmp_path: Path,
+) -> None:
+    instrument_id = _id("SPY.ARCA")
+    catalog_path = tmp_path / "catalog"
+    catalog = _warm_catalog(catalog_path, instrument_id)
+    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    port = CatalogBackedDataPort(
+        catalog,
+        distribution_provider=_AdjustedLastProvider(
+            pd.Series([100.0, 100.0 / (1.0 - 0.01), 100.0], index=dates)
+        ),
+    )
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="USD",
+        instruments=["SPY.ARCA"],
+        start="2024-01-01",
+        end="2024-01-04",
+        path=str(catalog_path),
+    )
+
+    result = load_catalog_source(config, port=port)
+
+    assert [(event.ex_date, event.amount) for event in result.distributions] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
+    ]
+
+
+def test_catalog_adapter_records_distribution_coverage_in_quality_metadata(
+    tmp_path: Path,
+) -> None:
+    instrument_id = _id("SPY.ARCA")
+    catalog_path = tmp_path / "catalog"
+    catalog = _warm_catalog(catalog_path, instrument_id)
+    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    port = CatalogBackedDataPort(
+        catalog,
+        distribution_provider=_AdjustedLastProvider(
+            pd.Series([100.0, 100.0 / (1.0 - 0.01), 100.0], index=dates)
+        ),
+    )
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="USD",
+        instruments=["SPY.ARCA"],
+        start="2024-01-01",
+        end="2024-01-04",
+        path=str(catalog_path),
+    )
+
+    result = load_market_data_result(
+        config,
+        adapter=lambda current: load_catalog_source(current, port=port),
+    )
+
+    coverage = result.metadata.provenance.provider_metadata["distribution_coverage"]
+    assert coverage[0]["instrument_id"] == "SPY.ARCA"
+    assert coverage[0]["applicable"] is True
+    assert coverage[0]["verified_start"] == "2024-01-01T00:00:00+00:00"
+    assert coverage[0]["verified_end"] == "2024-01-04T00:00:00+00:00"
+    assert coverage[0]["event_count"] == 1
+    assert result.quality.warnings == ()
+
+
+def test_catalog_adapter_fails_loud_without_distribution_provider(
+    tmp_path: Path,
+) -> None:
+    instrument_id = _id("SPY.ARCA")
+    catalog_path = tmp_path / "catalog"
+    catalog = _warm_catalog(catalog_path, instrument_id)
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="USD",
+        instruments=["SPY.ARCA"],
+        start="2024-01-01",
+        end="2024-01-04",
+        path=str(catalog_path),
+    )
+
+    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
+        load_catalog_source(config, port=CatalogBackedDataPort(catalog))
+
+
 def _id(value: str) -> InstrumentId:
     return InstrumentId.from_str(value)
 
@@ -270,6 +376,22 @@ def _frame(
         },
         index=index,
     )
+
+
+def _warm_catalog(path: Path, instrument_id: InstrumentId) -> ParquetDataCatalog:
+    catalog = ParquetDataCatalog(path)
+    catalog.write_data([_definition(instrument_id)])
+    frame = _frame(
+        pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-03"]),
+        close=[100.0, 100.0, 100.0],
+        volume=[100.0, 100.0, 100.0],
+    )
+    catalog.write_data(
+        bars(instrument_id, frame),
+        start=pd.Timestamp("2024-01-01", tz="UTC").value,
+        end=pd.Timestamp("2024-01-04", tz="UTC").value,
+    )
+    return catalog
 
 
 def test_catalog_adapter_drop_policy_intersects_mixed_exchange_calendars() -> None:

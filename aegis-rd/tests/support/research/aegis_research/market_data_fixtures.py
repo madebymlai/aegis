@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from aegis_data.catalog import raw_bar_type
+from aegis_data.distribution_coverage import DistributionCoverageService
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity
@@ -164,7 +165,42 @@ def seed_catalog_ohlcv(
             start=start_ts.value,
             end=end_ts.value,
         )
+        _write_zero_distribution_coverage(
+            catalog,
+            current_id,
+            panels=panels,
+            start=start_ts,
+            end=end_ts,
+        )
     return start_ts.date().isoformat(), end_ts.date().isoformat()
+
+
+def _write_zero_distribution_coverage(
+    catalog: ParquetDataCatalog,
+    instrument_id: InstrumentId,
+    *,
+    panels: dict[str, pd.DataFrame],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> None:
+    # ADR-0008: seeded synthetic catalogs must be self-describing for distributions
+    # too, so RD integration tests stay warm and never query IBKR for fake symbols.
+    DistributionCoverageService(
+        catalog,
+        _ZeroDistributionProvider(panels),
+        clock_ns=lambda: start.value,
+    ).ensure_covered((instrument_id,), start=start, end=end)
+
+
+class _ZeroDistributionProvider:
+    def __init__(self, panels: dict[str, pd.DataFrame]) -> None:
+        self.panels = panels
+
+    def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
+        close = self.panels["Close"][kwargs["instrument_id"]]
+        adjusted_last = close.map(lambda value: float(_price(value)))
+        adjusted_last.index = adjusted_last.index.tz_localize("UTC")
+        return adjusted_last
 
 
 def seed_catalog_fx(

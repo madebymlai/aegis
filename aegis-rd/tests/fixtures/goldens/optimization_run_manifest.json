@@ -1,7 +1,7 @@
 {
   "artifacts": [
     {
-      "hash": "5af512015926ee032bb7d46f57d0bc156d346847babc61f2593a81dd131e7928",
+      "hash": "a1037a3d10d2fd2280158df22c7e78da9b0b9a1f1da42f6815af14ad74b85e3c",
       "hash_algorithm": "sha256",
       "id": "data.metadata",
       "metadata": {},
@@ -10,7 +10,7 @@
       "role": "data_metadata",
       "schema_version": "data_metadata.v3",
       "shape": {},
-      "size": 18223,
+      "size": 21084,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",

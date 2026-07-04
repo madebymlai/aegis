@@ -80,6 +80,15 @@ def load_catalog_source(
         start=start,
         end=end,
     )
+    provider_metadata: dict[str, object] = {"source": "nautilus_data_provider_port"}
+    distribution_coverage = _distribution_coverage_report(
+        data_port,
+        tradeable_instrument_ids,
+        start=start,
+        end=end,
+    )
+    if distribution_coverage:
+        provider_metadata["distribution_coverage"] = distribution_coverage
     return MarketDataAdapterResult(
         native_data=native_data,
         source_metadata={
@@ -90,7 +99,7 @@ def load_catalog_source(
             "continuous_root_ids": [root_id.value for root_id in continuous_frames],
         },
         evidence=index_evidence(native_index(native_data), source="nautilus_catalog"),
-        provider_metadata={"source": "nautilus_data_provider_port"},
+        provider_metadata=provider_metadata,
         currency_conversion=currency_conversion,
         distributions=distributions,
     )
@@ -103,7 +112,18 @@ def _distribution_data(
     start: str,
     end: str,
 ) -> tuple[Distribution, ...]:
+    # ADR-0008: RD receives distributions only through the verified catalog port.
     return data_port.distributions(instrument_ids, start=start, end=end)
+
+
+def _distribution_coverage_report(
+    data_port: CatalogBackedDataPort,
+    instrument_ids: tuple[InstrumentId, ...],
+    *,
+    start: str,
+    end: str,
+) -> tuple[dict[str, object], ...]:
+    return data_port.distribution_coverage_report(instrument_ids, start=start, end=end)
 
 
 def _continuous_frames(

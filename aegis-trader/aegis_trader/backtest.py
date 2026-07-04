@@ -12,10 +12,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import pandas as pd
-from aegis_data.distributions import Distribution, query_distribution_data
+from aegis_data.distributions import Distribution
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.config import CacheConfig, LoggingConfig
@@ -108,6 +108,7 @@ class CatalogBacktestDataSource:
 
     catalog_path: Path | None = None
     provider: NautilusDataProviderPort | None = None
+    port: CatalogBackedDataPort | None = None
 
     def load(
         self,
@@ -117,9 +118,9 @@ class CatalogBacktestDataSource:
         start: str,
         end: str,
     ) -> BacktestMarketData:
-        catalog = parquet_data_catalog(self.catalog_path)
-        instruments = _catalog_instruments(catalog, instrument_ids)
-        frames = CatalogBackedDataPort(catalog, provider=self.provider).load_raw_bars(
+        data_port = self._data_port()
+        instruments = _catalog_instruments(data_port, instrument_ids)
+        frames = data_port.load_raw_bars(
             RawBarRequest(
                 instrument_ids=instrument_ids,
                 start=start,
@@ -127,8 +128,9 @@ class CatalogBacktestDataSource:
                 timeframe=timeframe,
             )
         )
-        distributions = query_distribution_data(
-            catalog,
+        # ADR-0008: Trader backtests consume distributions through the same verified
+        # catalog-port seam as RD, never by querying distribution storage directly.
+        distributions = data_port.distributions(
             instrument_ids,
             start=start,
             end=end,
@@ -137,6 +139,16 @@ class CatalogBacktestDataSource:
             instruments=instruments,
             ohlcv=frames,
             distributions=distributions,
+        )
+
+    def _data_port(self) -> CatalogBackedDataPort:
+        if self.port is not None:
+            return self.port
+        catalog = parquet_data_catalog(self.catalog_path)
+        return CatalogBackedDataPort(
+            catalog,
+            provider=self.provider,
+            distribution_provider=_distribution_provider(self.provider),
         )
 
 
@@ -206,6 +218,12 @@ def run_book_backtest(
     return engine
 
 
+def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | None:
+    if provider is None or not hasattr(provider, "request_adjusted_last"):
+        return None
+    return provider
+
+
 def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
     """Base-currency return statistics for a finished book backtest."""
     for actor in engine.trader.actors():
@@ -255,19 +273,13 @@ def build_backtest_engine_config(
     )
 
 
-class _InstrumentCatalog(Protocol):
-    def instruments(self, *, instrument_ids: list[str]) -> Sequence[Instrument]: ...
-
-
 def _catalog_instruments(
-    catalog: _InstrumentCatalog,
+    data_port: CatalogBackedDataPort,
     instrument_ids: tuple[InstrumentId, ...],
 ) -> dict[InstrumentId, Instrument]:
     loaded = {
         instrument.id.value: instrument
-        for instrument in catalog.instruments(
-            instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
-        )
+        for instrument in data_port.instruments(instrument_ids)
     }
     missing = [
         instrument_id.value

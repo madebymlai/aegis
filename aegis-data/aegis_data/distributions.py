@@ -145,31 +145,18 @@ def query_distribution_data(
 def write_distribution_data(
     catalog: Any,
     distributions: Sequence[Distribution],
-    *,
-    force_start: str | int | pd.Timestamp | None = None,
-    force_end: str | int | pd.Timestamp | None = None,
 ) -> int:
     """Write only distributions beyond each instrument's stored ex-date frontier.
 
-    Passing a bounded force window deletes that range first, then writes the given
-    events in the window.  The normal path is append-only-new so repeating a decode
-    over the same historical window is idempotent without relying on byte-dedup.
+    Repeating a decode over the same historical window is idempotent without relying
+    on byte-dedup; bounded replacement lives in ``replace_distribution_data``.
     """
     grouped = sorted(distributions, key=lambda item: (item.instrument_id.value, item.ts_event))
     written = 0
     for instrument_value, group in groupby(grouped, key=lambda item: item.instrument_id.value):
         items = list(group)
-        if force_start is not None or force_end is not None:
-            selected = _force_window_items(items, force_start=force_start, force_end=force_end)
-            catalog.delete_data_range(
-                Distribution,
-                identifier=instrument_value,
-                start=force_start,
-                end=force_end,
-            )
-        else:
-            frontier = _stored_frontier(catalog, instrument_value)
-            selected = [item for item in items if item.ts_event > frontier]
+        frontier = _stored_frontier(catalog, instrument_value)
+        selected = [item for item in items if item.ts_event > frontier]
         if not selected:
             continue
         catalog.write_data(
@@ -181,6 +168,36 @@ def write_distribution_data(
         )
         written += len(selected)
     return written
+
+
+def replace_distribution_data(
+    catalog: Any,
+    instrument_id: InstrumentId,
+    distributions: Sequence[Distribution],
+    *,
+    start: str | int | pd.Timestamp,
+    end: str | int | pd.Timestamp,
+) -> int:
+    """Replace one instrument's bounded distribution window, even when empty."""
+    start_ns = _optional_ns(start)
+    end_ns = _optional_ns(end)
+    selected = _force_window_items(distributions, force_start=start, force_end=end)
+    catalog.delete_data_range(
+        Distribution,
+        identifier=instrument_id.value,
+        start=start_ns,
+        end=end_ns,
+    )
+    if not selected:
+        return 0
+    catalog.write_data(
+        selected,
+        data_cls=Distribution,
+        identifier=instrument_id.value,
+        start=start_ns,
+        end=end_ns,
+    )
+    return len(selected)
 
 
 def _stored_frontier(catalog: Any, instrument_value: str) -> int:
@@ -209,7 +226,7 @@ def _force_window_items(
     for item in items:
         if start_ns is not None and item.ts_event < start_ns:
             continue
-        if end_ns is not None and item.ts_event >= end_ns:
+        if end_ns is not None and item.ts_event > end_ns:
             continue
         selected.append(item)
     return selected

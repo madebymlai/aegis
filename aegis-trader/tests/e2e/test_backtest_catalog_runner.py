@@ -18,7 +18,7 @@ from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-from aegis_data.catalog import CatalogCoverageGapError, raw_bar_type
+from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError, raw_bar_type
 from aegis_data.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
@@ -120,6 +120,25 @@ class _FixedWeightBundle(ExecutionBundle):
         )
         weights.columns.name = "instrument_id"
         return weights
+
+
+class _AdjustedLastProvider:
+    def __init__(self, adjusted_last: dict[InstrumentId, pd.Series]) -> None:
+        self.adjusted_last = adjusted_last
+
+    def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
+        return self.adjusted_last[kwargs["instrument_id"]]
+
+
+class _BarOnlyProvider:
+    def request_bars(
+        self,
+        _bar_type: BarType,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> list[Bar]:
+        return []
 
 
 class _TwoVenueBundle(ExecutionBundle):
@@ -350,6 +369,7 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
 
     fills = _closed_orders(engine)
@@ -371,6 +391,7 @@ def test_run_book_backtest_halts_bad_cap_book_and_idles(tmp_path) -> None:
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
     strategy = _strategy(engine)
 
@@ -456,6 +477,10 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
+        data_source=_verified_zero_distribution_source(
+            catalog_path,
+            (_INSTRUMENT_ID, _SECOND_INSTRUMENT_ID),
+        ),
     )
 
     nav = NautilusBookState(
@@ -472,6 +497,28 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path
 def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> None:
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
+    data_port = CatalogBackedDataPort(
+        ParquetDataCatalog(catalog_path),
+        distribution_provider=_AdjustedLastProvider(
+            {_INSTRUMENT_ID: _adjusted_last_for_distribution("2020-01-03", amount=0.75)}
+        ),
+    )
+
+    data = CatalogBacktestDataSource(port=data_port).load(
+        (_INSTRUMENT_ID,),
+        timeframe="1D",
+        start="2020-01-01",
+        end="2020-01-05",
+    )
+
+    assert [(item.instrument_id, item.ex_date, item.amount) for item in data.distributions] == [
+        (_INSTRUMENT_ID, pd.Timestamp("2020-01-03", tz="UTC"), pytest.approx(0.75))
+    ]
+
+
+def test_catalog_backtest_data_source_rejects_unverified_distribution_store(tmp_path) -> None:
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
     distribution = Distribution.from_ex_date(
         _INSTRUMENT_ID,
         "2020-01-03",
@@ -480,16 +527,31 @@ def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> Non
     )
     write_distribution_data(ParquetDataCatalog(catalog_path), [distribution])
 
-    data = CatalogBacktestDataSource(catalog_path=catalog_path).load(
-        (_INSTRUMENT_ID,),
-        timeframe="1D",
-        start="2020-01-01",
-        end="2020-01-05",
-    )
+    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
+        CatalogBacktestDataSource(catalog_path=catalog_path).load(
+            (_INSTRUMENT_ID,),
+            timeframe="1D",
+            start="2020-01-01",
+            end="2020-01-05",
+        )
 
-    assert [(item.instrument_id, item.ex_date, item.amount) for item in data.distributions] == [
-        (_INSTRUMENT_ID, distribution.ex_date, pytest.approx(0.75))
-    ]
+
+def test_catalog_backtest_data_source_rejects_unverified_store_with_bar_only_provider(
+    tmp_path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
+
+    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
+        CatalogBacktestDataSource(
+            catalog_path=catalog_path,
+            provider=_BarOnlyProvider(),
+        ).load(
+            (_INSTRUMENT_ID,),
+            timeframe="1D",
+            start="2020-01-01",
+            end="2020-01-05",
+        )
 
 
 def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
@@ -497,21 +559,20 @@ def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0, 100.0])
-    distribution = Distribution.from_ex_date(
-        _INSTRUMENT_ID,
-        "2020-01-04",
-        amount=1.0,
-        currency="EUR",
+    data_port = CatalogBackedDataPort(
+        ParquetDataCatalog(catalog_path),
+        distribution_provider=_AdjustedLastProvider(
+            {_INSTRUMENT_ID: _adjusted_last_for_distribution("2020-01-04", amount=1.0)}
+        ),
     )
-    write_distribution_data(ParquetDataCatalog(catalog_path), [distribution])
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     engine = run_book_backtest(
         book_path,
         start="2020-01-01",
         end="2020-01-06",
-        catalog_path=catalog_path,
         registry=registry,
+        data_source=CatalogBacktestDataSource(port=data_port),
     )
 
     nav = NautilusBookState(
@@ -575,6 +636,32 @@ def _seed_catalog(
         start=pd.Timestamp("2020-01-01", tz="UTC").value,
         end=pd.Timestamp("2020-01-01", tz="UTC").value
         + len(closes) * 86_400_000_000_000,
+    )
+
+
+def _adjusted_last_for_distribution(ex_date: str, *, amount: float) -> pd.Series:
+    dates = pd.date_range("2020-01-01", periods=5, freq="D", tz="UTC")
+    values = pd.Series([100.0] * len(dates), index=dates)
+    values.loc[pd.Timestamp(ex_date, tz="UTC")] = 100.0 / (1.0 - amount / 100.0)
+    return values
+
+
+def _verified_zero_distribution_source(
+    catalog_path,
+    instrument_ids: tuple[InstrumentId, ...],
+) -> CatalogBacktestDataSource:
+    adjusted_last = {
+        instrument_id: pd.Series(
+            [100.0] * 5,
+            index=pd.date_range("2020-01-01", periods=5, freq="D", tz="UTC"),
+        )
+        for instrument_id in instrument_ids
+    }
+    return CatalogBacktestDataSource(
+        port=CatalogBackedDataPort(
+            ParquetDataCatalog(catalog_path),
+            distribution_provider=_AdjustedLastProvider(adjusted_last),
+        )
     )
 
 

@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from nautilus_trader.model.data import Bar, BarType
     from nautilus_trader.model.instruments import Instrument
 
+    from aegis_data.distribution_coverage import DistributionDataProviderPort
+
 AEGIS_DATA_DIR_ENV = "AEGIS_DATA_DIR"
 CATALOG_DIRNAME = "catalog"
 
@@ -68,10 +70,24 @@ class ResolvedContinuousRoot:
     legs: tuple[DatedContract, ...]
 
 
+def continuous_root_legs(catalog: Any, root: str) -> tuple[DatedContract, ...]:
+    """List a root's expiry-ordered dated legs from catalog definitions."""
+    legs = [
+        DatedContract(
+            symbol=instrument.id.value,
+            last_trade=instrument.expiration_utc.date(),
+        )
+        for instrument in catalog.instruments(instrument_type=FuturesContract)
+        if instrument.underlying == root
+    ]
+    return tuple(sorted(legs, key=lambda leg: leg.last_trade))
+
+
 @dataclass(frozen=True)
 class CatalogBackedDataPort:
     catalog: Any
     provider: NautilusDataProviderPort | None = None
+    distribution_provider: DistributionDataProviderPort | None = None
     # Optional Step-1 definition write, fired only when a fill actually serves an
     # instrument (ADR-0008): the bar port stays pure-fetch — definitions are a
     # separate, idempotent lifecycle wired in by the caller, not a port method.
@@ -131,7 +147,40 @@ class CatalogBackedDataPort:
         The port owns the raw catalog query so consumers and fakes declare distribution
         behavior on the same interface they use for bars and definitions.
         """
+        from aegis_data.distribution_coverage import DistributionCoverageService
+
+        # ADR-0008: distributions cross the verified catalog port; direct catalog
+        # reads are storage primitives, not research/trader data paths.
+        DistributionCoverageService(self.catalog, self.distribution_provider).ensure_covered(
+            tuple(instrument_ids), start=start, end=end
+        )
         return query_distribution_data(self.catalog, instrument_ids, start=start, end=end)
+
+    def distribution_coverage_report(
+        self,
+        instrument_ids: Sequence[InstrumentId],
+        *,
+        start: str | int | pd.Timestamp | None = None,
+        end: str | int | pd.Timestamp | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        from aegis_data.distribution_coverage import DistributionCoverageService
+
+        return DistributionCoverageService(self.catalog).coverage_report(
+            tuple(instrument_ids), start=start, end=end
+        )
+
+    def force_reverify_distribution_coverage(
+        self,
+        instrument_ids: Sequence[InstrumentId],
+        *,
+        start: str | int | pd.Timestamp,
+        end: str | int | pd.Timestamp,
+    ) -> None:
+        from aegis_data.distribution_coverage import DistributionCoverageService
+
+        DistributionCoverageService(self.catalog, self.distribution_provider).force_reverify(
+            tuple(instrument_ids), start=start, end=end
+        )
 
     def fetch_contract_ohlcv(
         self,
@@ -163,7 +212,7 @@ class CatalogBackedDataPort:
 
     def resolve_continuous(self, root: str) -> ResolvedContinuousRoot:
         """Resolve a bare continuous root to its synthetic id and dated legs."""
-        legs = self._continuous_root_legs(root)
+        legs = continuous_root_legs(self.catalog, root)
         if not legs:
             raise ContinuousRootLegsNotFoundError(
                 f"no dated legs in the catalog for continuous-future root {root!r}"
@@ -175,18 +224,6 @@ class CatalogBackedDataPort:
                 f"{sorted(venue.value for venue in venues)}; expected one"
             )
         return ResolvedContinuousRoot(InstrumentId(Symbol(root), next(iter(venues))), legs)
-
-    def _continuous_root_legs(self, root: str) -> tuple[DatedContract, ...]:
-        """List a root's expiry-ordered dated legs from catalog definitions."""
-        legs = [
-            DatedContract(
-                symbol=instrument.id.value,
-                last_trade=instrument.expiration_utc.date(),
-            )
-            for instrument in self.catalog.instruments(instrument_type=FuturesContract)
-            if instrument.underlying == root
-        ]
-        return tuple(sorted(legs, key=lambda leg: leg.last_trade))
 
     def _ensure_covered(self, bar_type: BarType, request: RawBarRequest) -> None:
         missing = self._missing_intervals(bar_type, request)
@@ -260,6 +297,7 @@ def catalog_data_port(path: str | Path | None = None) -> CatalogBackedDataPort:
     return CatalogBackedDataPort(
         catalog,
         provider=provider,
+        distribution_provider=provider,
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
+from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
+from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
@@ -18,9 +21,15 @@ from aegis_data.catalog import (
     RawBarRequest,
     catalog_data_port,
     catalog_root,
+    continuous_root_legs,
     raw_bar_type,
 )
-from aegis_data.distributions import Distribution, write_distribution_data
+from aegis_data.distributions import (
+    Distribution,
+    query_distribution_data,
+    write_distribution_data,
+)
+from aegis_data.distribution_coverage import DistributionCoverageService
 from aegis_data.roll import DatedContract
 from aegis_data.testing import FakeCatalog, bars, future
 
@@ -71,6 +80,29 @@ class _ProviderPort:
     ) -> list[Bar]:
         self.requests.append(bar_type)
         return self.bars
+
+
+class _AdjustedLastProvider:
+    def __init__(self, adjusted_last: dict[InstrumentId, pd.Series]) -> None:
+        self.adjusted_last = adjusted_last
+        self.requests: list[dict[str, Any]] = []
+
+    def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
+        self.requests.append(kwargs)
+        return self.adjusted_last[kwargs["instrument_id"]]
+
+
+def _equity(instrument_id: InstrumentId) -> Equity:
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=Symbol(instrument_id.symbol.value),
+        currency=USD,
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
 
 
 def test_catalog_root_uses_aegis_data_dir_catalog_subpath(tmp_path: Path) -> None:
@@ -307,11 +339,12 @@ def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Pa
         )
 
 
-def test_catalog_port_reads_distribution_events_from_catalog(tmp_path: Path) -> None:
+def test_catalog_port_rejects_unverified_distribution_events(tmp_path: Path) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = ParquetDataCatalog(catalog_path)
     instrument_id = _id("AAPL.NASDAQ")
+    catalog.write_data([_equity(instrument_id)])
     distribution = Distribution.from_ex_date(
         instrument_id,
         "2024-01-15",
@@ -321,15 +354,798 @@ def test_catalog_port_reads_distribution_events_from_catalog(tmp_path: Path) -> 
     write_distribution_data(catalog, [distribution])
     port = CatalogBackedDataPort(catalog)
 
+    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
+        port.distributions(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-31",
+        )
+
+
+def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 100.0),
+            _bar(bar_type, "2024-01-02", 100.0),
+            _bar(bar_type, "2024-01-03", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [100.0, 100.0 / (1.0 - 0.01), 100.0],
+                index=dates,
+            )
+        }
+    )
+    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+
+    first = port.distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    warm = CatalogBackedDataPort(ParquetDataCatalog(catalog_path)).distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    assert [(event.ex_date, event.amount, event.currency) for event in first] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0), "USD")
+    ]
+    assert [(event.ex_date, event.amount, event.currency) for event in warm] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0), "USD")
+    ]
+    assert provider.requests == [
+        {
+            "instrument_id": instrument_id,
+            "start": pd.Timestamp("2024-01-01", tz="UTC"),
+            "end": pd.Timestamp("2024-01-04", tz="UTC"),
+            "primary_exchange": "ARCA",
+            "currency": "USD",
+        }
+    ]
+
+
+def test_catalog_port_reports_verified_distribution_coverage(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 100.0),
+            _bar(bar_type, "2024-01-02", 100.0),
+            _bar(bar_type, "2024-01-03", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [100.0, 100.0 / (1.0 - 0.01), 100.0],
+                index=pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC"),
+            )
+        }
+    )
+    DistributionCoverageService(
+        catalog,
+        provider,
+        clock_ns=lambda: pd.Timestamp("2026-01-01", tz="UTC").value,
+    ).ensure_covered((instrument_id,), start="2024-01-01", end="2024-01-04")
+    port = CatalogBackedDataPort(catalog)
+
+    report = port.distribution_coverage_report(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    assert report == (
+        {
+            "instrument_id": "SPY.ARCA",
+            "applicable": True,
+            "verified_start": "2024-01-01T00:00:00+00:00",
+            "verified_end": "2024-01-04T00:00:00+00:00",
+            "event_count": 1,
+            "checked_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+
+
+def test_catalog_port_verifies_accumulating_distribution_window_as_empty(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("GLD.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 200.0),
+            _bar(bar_type, "2024-01-02", 201.0),
+            _bar(bar_type, "2024-01-03", 202.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [200.0, 201.0, 202.0],
+                index=dates,
+            )
+        }
+    )
+    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+
+    first = port.distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    warm = CatalogBackedDataPort(ParquetDataCatalog(catalog_path)).distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    assert first == ()
+    assert warm == ()
+    assert len(provider.requests) == 1
+
+
+def test_catalog_port_skips_distribution_verification_for_futures_and_roots(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    dated_leg = _id("ESH4.XCME")
+    continuous_root = _id("ES.XCME")
+    catalog.write_data(
+        [
+            future("ESH4.XCME", "2024-03-15"),
+            future("ESM4.XCME", "2024-06-21"),
+        ]
+    )
+
+    dated_events = CatalogBackedDataPort(catalog).distributions(
+        (dated_leg,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    root_events = CatalogBackedDataPort(catalog).distributions(
+        (continuous_root,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    assert dated_events == ()
+    assert root_events == ()
+
+
+def test_catalog_port_reports_continuous_root_distribution_coverage_not_applicable(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    continuous_root = _id("ES.XCME")
+    catalog.write_data(
+        [
+            future("ESH4.XCME", "2024-03-15"),
+            future("ESM4.XCME", "2024-06-21"),
+        ]
+    )
+    port = CatalogBackedDataPort(catalog)
+    port.distributions(
+        (continuous_root,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    report = port.distribution_coverage_report(
+        (continuous_root,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    assert report[0]["instrument_id"] == "ES.XCME"
+    assert report[0]["applicable"] is False
+    assert report[0]["event_count"] == 0
+    assert report[0]["checked_at"] is not None
+
+
+def test_catalog_port_rejects_distribution_read_for_unresolved_instrument(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+
+    with pytest.raises(CatalogCoverageGapError, match="cannot resolve"):
+        CatalogBackedDataPort(catalog).distributions(
+            (_id("TYPO.ARCA"),),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+
+
+def test_catalog_port_reports_all_uncovered_distribution_instruments_without_provider(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    spy = _id("SPY.ARCA")
+    hyg = _id("HYG.ARCA")
+    catalog.write_data([_equity(spy), _equity(hyg)])
+
+    with pytest.raises(CatalogCoverageGapError) as error:
+        CatalogBackedDataPort(catalog).distributions(
+            (spy, hyg),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+
+    assert "SPY.ARCA" in str(error.value)
+    assert "HYG.ARCA" in str(error.value)
+
+
+def test_catalog_port_rejects_uncovered_distributions_with_bar_only_provider(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    catalog.write_data([_equity(instrument_id)])
+
+    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
+        CatalogBackedDataPort(
+            catalog,
+            distribution_provider=_ProviderPort([]),
+        ).distributions(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+
+
+def test_catalog_port_reverifies_seeded_distribution_store_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 100.0),
+            _bar(bar_type, "2024-01-02", 100.0),
+            _bar(bar_type, "2024-01-03", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    write_distribution_data(
+        catalog,
+        [
+            Distribution.from_ex_date(
+                instrument_id,
+                "2024-01-02",
+                amount=1.0,
+                currency="USD",
+            )
+        ],
+    )
+    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [100.0, 100.0 / (1.0 - 0.01), 100.0],
+                index=dates,
+            )
+        }
+    )
+
+    events = CatalogBackedDataPort(
+        catalog,
+        distribution_provider=provider,
+    ).distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    assert [(event.ex_date, event.amount) for event in events] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
+    ]
+    assert len(provider.requests) == 1
+
+
+def test_catalog_port_backward_extension_persists_early_distribution_events(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 100.0),
+            _bar(bar_type, "2024-01-02", 100.0),
+            _bar(bar_type, "2024-01-03", 100.0),
+            _bar(bar_type, "2024-01-04", 100.0),
+            _bar(bar_type, "2024-01-05", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-06",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    dates = pd.date_range("2024-01-01", periods=5, freq="D", tz="UTC")
+    first_factor = 1.0 / (1.0 - 0.01)
+    second_factor = first_factor / (1.0 - 0.02)
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [100.0, 100.0 * first_factor, 100.0 * first_factor, 100.0 * second_factor, 100.0],
+                index=dates,
+            )
+        }
+    )
+    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+
+    later = port.distributions(
+        (instrument_id,),
+        start="2024-01-03",
+        end="2024-01-06",
+    )
+    extended = port.distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-06",
+    )
+
+    assert [(event.ex_date, event.amount) for event in later] == [
+        (pd.Timestamp("2024-01-04", tz="UTC"), pytest.approx(2.0))
+    ]
+    assert [(event.ex_date, event.amount) for event in extended] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0)),
+        (pd.Timestamp("2024-01-04", tz="UTC"), pytest.approx(2.0)),
+    ]
+
+
+def test_catalog_port_forward_request_clamps_to_stored_bar_frontier(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 100.0),
+            _bar(bar_type, "2024-01-02", 100.0),
+            _bar(bar_type, "2024-01-03", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [100.0, 100.0 / (1.0 - 0.01), 100.0],
+                index=dates,
+            )
+        }
+    )
+    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+
+    covered = port.distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    extended = port.distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-08",
+    )
+
+    assert [(event.ex_date, event.amount) for event in covered] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
+    ]
+    assert [(event.ex_date, event.amount) for event in extended] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
+    ]
+    assert len(provider.requests) == 1
+
+
+def test_catalog_port_rejects_distribution_gap_with_too_few_trade_closes(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [_bar(bar_type, "2024-01-01", 100.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [100.0],
+                index=pd.DatetimeIndex([pd.Timestamp("2024-01-01", tz="UTC")]),
+            )
+        }
+    )
+
+    with pytest.raises(CatalogCoverageGapError, match="fewer than two TRADES closes"):
+        CatalogBackedDataPort(catalog, distribution_provider=provider).distributions(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+
+
+def test_catalog_port_fetches_only_missing_distribution_gap_between_verified_ranges(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 100.0),
+            _bar(bar_type, "2024-01-02", 100.0),
+            _bar(bar_type, "2024-01-03", 100.0),
+            _bar(bar_type, "2024-01-04", 100.0),
+            _bar(bar_type, "2024-01-05", 100.0),
+            _bar(bar_type, "2024-01-06", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-07",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+                index=pd.date_range("2024-01-01", periods=6, freq="D", tz="UTC"),
+            )
+        }
+    )
+    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port.distributions((instrument_id,), start="2024-01-01", end="2024-01-03")
+    port.distributions((instrument_id,), start="2024-01-05", end="2024-01-07")
+    provider.requests.clear()
+
     events = port.distributions(
         (instrument_id,),
         start="2024-01-01",
-        end="2024-01-31",
+        end="2024-01-07",
     )
 
-    assert [(event.instrument_id, event.ex_date, event.amount) for event in events] == [
-        (instrument_id, distribution.ex_date, pytest.approx(0.42))
+    assert events == ()
+    assert len(provider.requests) == 1
+    assert provider.requests[0]["start"].date() == date(2024, 1, 3)
+    assert provider.requests[0]["end"] < pd.Timestamp("2024-01-05", tz="UTC")
+
+
+def test_distribution_force_reverify_replaces_bounded_window_events(
+    tmp_path: Path,
+) -> None:
+    catalog, instrument_id, provider, dates = _force_reverify_catalog(tmp_path)
+    _verify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-01",
+    )
+    provider.adjusted_last[instrument_id] = _restated_adjusted_last(dates)
+
+    _force_reverify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-02",
+    )
+    all_stored = query_distribution_data(
+        catalog,
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-06",
+    )
+
+    assert [(event.ex_date, event.amount) for event in all_stored] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(0.5)),
+        (pd.Timestamp("2024-01-04", tz="UTC"), pytest.approx(2.0)),
     ]
+
+
+def test_distribution_force_reverify_removes_stale_events_when_restated_empty(
+    tmp_path: Path,
+) -> None:
+    catalog, instrument_id, provider, dates = _force_reverify_catalog(tmp_path)
+    _verify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-01",
+    )
+    provider.adjusted_last[instrument_id] = pd.Series([100.0] * len(dates), index=dates)
+
+    _force_reverify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-02",
+    )
+    all_stored = query_distribution_data(
+        catalog,
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-06",
+    )
+
+    assert [(event.ex_date, event.amount) for event in all_stored] == [
+        (pd.Timestamp("2024-01-04", tz="UTC"), pytest.approx(2.0)),
+    ]
+
+
+def test_distribution_force_reverify_rewrites_event_on_window_end_boundary(
+    tmp_path: Path,
+) -> None:
+    catalog, instrument_id, provider, dates = _force_reverify_catalog(tmp_path)
+    _verify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-01",
+    )
+    provider.adjusted_last[instrument_id] = _boundary_adjusted_last(dates)
+
+    _force_reverify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-02",
+    )
+    all_stored = query_distribution_data(
+        catalog,
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-06",
+    )
+
+    assert [(event.ex_date, event.amount) for event in all_stored] == [
+        (pd.Timestamp("2024-01-03", tz="UTC"), pytest.approx(0.5)),
+        (pd.Timestamp("2024-01-04", tz="UTC"), pytest.approx(2.0)),
+    ]
+
+
+def test_distribution_force_reverify_marks_window_with_fresh_checked_at(
+    tmp_path: Path,
+) -> None:
+    catalog, instrument_id, provider, dates = _force_reverify_catalog(tmp_path)
+    _verify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-01",
+    )
+    provider.adjusted_last[instrument_id] = _restated_adjusted_last(dates)
+
+    _force_reverify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-02",
+    )
+    refreshed_report = CatalogBackedDataPort(catalog).distribution_coverage_report(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-03",
+    )
+
+    assert refreshed_report[0]["checked_at"] == "2026-01-02T00:00:00+00:00"
+
+
+def test_distribution_coverage_report_uses_oldest_checked_at_in_window(
+    tmp_path: Path,
+) -> None:
+    catalog, instrument_id, provider, dates = _force_reverify_catalog(tmp_path)
+    _verify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-01",
+    )
+    provider.adjusted_last[instrument_id] = _restated_adjusted_last(dates)
+    _force_reverify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-02",
+    )
+
+    report = CatalogBackedDataPort(catalog).distribution_coverage_report(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-06",
+    )
+
+    assert report[0]["checked_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_distribution_force_reverify_preserves_warm_read_over_original_window(
+    tmp_path: Path,
+) -> None:
+    catalog, instrument_id, provider, dates = _force_reverify_catalog(tmp_path)
+    _verify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-01",
+    )
+    provider.adjusted_last[instrument_id] = _restated_adjusted_last(dates)
+    _force_reverify_distribution_window(
+        catalog,
+        provider,
+        instrument_id,
+        checked_at="2026-01-02",
+    )
+    provider.requests.clear()
+
+    warm_full = CatalogBackedDataPort(
+        catalog,
+        distribution_provider=provider,
+    ).distributions(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-06",
+    )
+
+    assert [(event.ex_date, event.amount) for event in warm_full] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(0.5)),
+        (pd.Timestamp("2024-01-04", tz="UTC"), pytest.approx(2.0)),
+    ]
+    assert provider.requests == []
+
+
+def _force_reverify_catalog(
+    tmp_path: Path,
+) -> tuple[ParquetDataCatalog, InstrumentId, _AdjustedLastProvider, pd.DatetimeIndex]:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 100.0),
+            _bar(bar_type, "2024-01-02", 100.0),
+            _bar(bar_type, "2024-01-03", 100.0),
+            _bar(bar_type, "2024-01-04", 100.0),
+            _bar(bar_type, "2024-01-05", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-06",
+    )
+    catalog.write_data([_equity(instrument_id)])
+    dates = pd.date_range("2024-01-01", periods=5, freq="D", tz="UTC")
+    provider = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [
+                    100.0,
+                    100.0 / (1.0 - 0.01),
+                    100.0,
+                    100.0 / (1.0 - 0.02),
+                    100.0,
+                ],
+                index=dates,
+            )
+        }
+    )
+    return catalog, instrument_id, provider, dates
+
+
+def _verify_distribution_window(
+    catalog: ParquetDataCatalog,
+    provider: _AdjustedLastProvider,
+    instrument_id: InstrumentId,
+    *,
+    checked_at: str,
+) -> None:
+    DistributionCoverageService(
+        catalog,
+        provider,
+        clock_ns=lambda: pd.Timestamp(checked_at, tz="UTC").value,
+    ).ensure_covered((instrument_id,), start="2024-01-01", end="2024-01-06")
+
+
+def _force_reverify_distribution_window(
+    catalog: ParquetDataCatalog,
+    provider: _AdjustedLastProvider,
+    instrument_id: InstrumentId,
+    *,
+    checked_at: str,
+) -> None:
+    DistributionCoverageService(
+        catalog,
+        provider,
+        clock_ns=lambda: pd.Timestamp(checked_at, tz="UTC").value,
+    ).force_reverify((instrument_id,), start="2024-01-01", end="2024-01-03")
+
+
+def _restated_adjusted_last(dates: pd.DatetimeIndex) -> pd.Series:
+    return pd.Series(
+        [
+            100.0,
+            100.0 / (1.0 - 0.005),
+            100.0,
+            100.0 / (1.0 - 0.02),
+            100.0,
+        ],
+        index=dates,
+    )
+
+
+def _boundary_adjusted_last(dates: pd.DatetimeIndex) -> pd.Series:
+    return pd.Series(
+        [
+            100.0,
+            100.0,
+            100.0 / (1.0 - 0.005),
+            100.0 / ((1.0 - 0.005) * (1.0 - 0.02)),
+            100.0,
+        ],
+        index=dates,
+    )
 
 
 def test_catalog_port_lists_a_roots_dated_legs_from_catalog_definitions() -> None:
@@ -344,6 +1160,24 @@ def test_catalog_port_lists_a_roots_dated_legs_from_catalog_definitions() -> Non
     port = CatalogBackedDataPort(catalog)
 
     legs = port.resolve_continuous("ES").legs
+
+    assert legs == (
+        DatedContract("ESH4.XCME", date(2024, 3, 15)),
+        DatedContract("ESM4.XCME", date(2024, 6, 21)),
+    )
+
+
+def test_continuous_root_legs_reads_dated_legs_without_a_port_instance() -> None:
+    catalog = FakeCatalog(
+        [
+            future("ESM4.XCME", "2024-06-21"),
+            future("ESH4.XCME", "2024-03-15"),
+            future("CLF4.NYMEX", "2024-01-22", underlying="CL"),
+        ],
+        bars={},
+    )
+
+    legs = continuous_root_legs(catalog, "ES")
 
     assert legs == (
         DatedContract("ESH4.XCME", date(2024, 3, 15)),
