@@ -97,6 +97,32 @@ def test_classify_non_trading_candidate_all_nan_metric() -> None:
     assert verdict.excluded_degenerate == 1
 
 
+def test_classify_zero_trade_flat_stream_is_non_trading() -> None:
+    """Regression (aegis-rd-c80s): a candidate whose position never opens
+    produces a finite all-zero stream (crash_day_return 0.0, total_trades 0.0
+    on every split — the tail_band B2/B3 rows). The finite score dodges the
+    metric-None rule and min_trades=0 disables the floor, so pre-fix it ranked
+    as valid. Zero trades on every split means it never traded: non_trading."""
+    grid = make_candidate_grid({
+        ("live",): {
+            "s0": {"crash_day_return": 0.11, "total_trades": 116.0},
+            "s1": {"crash_day_return": 0.13, "total_trades": 116.0},
+        },
+        ("never_opened",): {
+            "s0": {"crash_day_return": 0.0, "total_trades": 0.0},
+            "s1": {"crash_day_return": 0.0, "total_trades": 0.0},
+        },
+    })
+    verdict = classify_candidates(
+        grid, invalid_keys=set(), min_trades=0, metric="crash_day_return"
+    )
+
+    assert verdict.valid == {("live",)}
+    assert verdict.non_trading == {("never_opened",)}
+    assert verdict.under_traded == set()
+    assert verdict.excluded_degenerate == 1
+
+
 def test_classify_under_traded_candidate() -> None:
     """A Candidate below the min_trades floor is under_traded."""
     grid = make_candidate_grid({

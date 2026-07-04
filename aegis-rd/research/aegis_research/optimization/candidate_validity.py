@@ -7,7 +7,9 @@ verdict value object.
   precompute store (``IndicatorPrecompute.invalid_keys``), which owns the
   full-series non-finite scan because the outputs are its own data; this module
   classifies the verdict from the set the store detected.
-- Non-trading rule (post-score): no finite ranking score across splits.
+- Non-trading rule (post-score): no finite ranking score across splits, or zero
+  closed trades on every split (a flat never-opened stream scores a finite 0.0,
+  so the score alone cannot detect it).
 - Under-traded rule (post-score): fewer than min_trades closed trades on the
   thinnest scored split.
 
@@ -81,7 +83,9 @@ def classify_candidates(
     * **invalid** — the Candidate key appears in ``invalid_keys`` (pre-score
       Invalid rule: indicator output entirely non-finite over full history).
     * **non_trading** — the Candidate has no finite ranking score across any
-      split (the ``metric`` is None on every split in ``grid``).
+      split (the ``metric`` is None on every split in ``grid``), or it closed
+      zero trades on every split (never-opened flat streams score a finite 0.0
+      on return-style metrics, so the score rule alone cannot catch them).
     * **under_traded** — when ``min_trades > 0``, the Candidate's closed-trade
       count (``total_trades`` metric) falls below ``min_trades`` on the
       thinnest split it scored.
@@ -104,7 +108,9 @@ def classify_candidates(
         if key_tuple in invalid_keys:
             invalid.add(key_tuple)
         else:
-            if all(m[metric] is None for m in split_metrics.values()):
+            if all(m[metric] is None for m in split_metrics.values()) or _never_traded(
+                split_metrics, metric_ids
+            ):
                 non_trading.add(key_tuple)
             elif not _meets_trade_floor(split_metrics, min_trades, metric_ids):
                 under_traded.add(key_tuple)
@@ -116,6 +122,22 @@ def classify_candidates(
         non_trading=non_trading,
         under_traded=under_traded,
         valid=valid,
+    )
+
+
+def _never_traded(split_metrics: SplitMetrics, metric_ids: list[str]) -> bool:
+    """Whether the candidate closed zero trades on every split.
+
+    Zero exit trades means the position never opened (an open-and-held position
+    still counts one exit-trade record), so an all-zero count identifies a
+    degenerate flat stream — not a legitimate holder. Undetectable when the
+    trade-count column is absent from the grid.
+    """
+    if TRADES_METRIC not in metric_ids:
+        return False
+    return all(
+        (v := metrics.get(TRADES_METRIC)) is None or v == 0
+        for metrics in split_metrics.values()
     )
 
 
