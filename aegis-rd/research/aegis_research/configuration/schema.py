@@ -336,6 +336,12 @@ class ReportConfig:
     min_oos_trades: NonNegativeInt = 5
     freq: TimedeltaStr = "1D"
     year_freq: TimedeltaStr = "252D"
+    # Extra opt-in custom metrics to compute and report per candidate alongside the
+    # ranker (the ranking metric is pulled automatically). Named ids are cross-checked
+    # against the metric registry; each becomes a reported column and can serve as a
+    # promotion gate read post-hoc. This is how the carry pole reports its
+    # family-membership and tail gates next to its income ranker without re-running.
+    metrics: list[str] = field(default_factory=list)
 
     @property
     def periods_per_year(self) -> int:

@@ -176,3 +176,56 @@ def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:
         _resolve({"metric": "total_return", "min_weight": 1.5}, tmp_path=tmp_path)
     mw_issues = [i for i in e.value.issues if i.path == "ranking.min_weight"]
     assert len(mw_issues) == 1, f"expected 1 issue for min_weight, got {len(mw_issues)}"
+
+
+# ── report.metrics: opt-in extra reported metrics beside the ranker ────────────
+
+def test_requested_metric_ids_unions_ranking_and_report_metrics() -> None:
+    from research.aegis_research.configuration.resolution import _requested_metric_ids
+
+    raw = {
+        "ranking": {"metric": "carry_income_utility"},
+        "report": {"metrics": ["carry_tail_budget", "carry_downside_lskew", "carry_income_utility"]},
+    }
+    ids = _requested_metric_ids(raw)
+    # Ranker first, then report extras, de-duplicated (income appears once).
+    assert ids == ("carry_income_utility", "carry_tail_budget", "carry_downside_lskew")
+
+
+def _resolve_with_report(ranking: dict[str, Any], report: dict[str, Any], *, tmp_path: Path):
+    raw: dict[str, Any] = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "name": "report-metrics-test",
+        "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
+        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "strategy": {"id": "demo.strategy"},
+        "indicators": [{"id": "demo.returns"}],
+        "ranking": ranking,
+        "report": report,
+        "optimization": {
+            "search": "grid",
+            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
+        },
+    }
+    return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
+
+
+def test_report_metrics_pull_custom_metrics_into_the_effective_registry(tmp_path: Path) -> None:
+    resolved = _resolve_with_report(
+        {"metric": "carry_income_utility"},
+        {"metrics": ["carry_tail_budget", "carry_downside_lskew"]},
+        tmp_path=tmp_path,
+    )
+    ids = set(resolved.metric_registry.ids())
+    assert {"carry_income_utility", "carry_tail_budget", "carry_downside_lskew"} <= ids
+    assert list(resolved.config.report.metrics) == ["carry_tail_budget", "carry_downside_lskew"]
+
+
+def test_unknown_report_metric_fails_closed_at_its_path(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve_with_report(
+            {"metric": "carry_income_utility"},
+            {"metrics": ["not_a_metric"]},
+            tmp_path=tmp_path,
+        )
+    assert any(i.path == "report.metrics[0]" for i in e.value.issues)

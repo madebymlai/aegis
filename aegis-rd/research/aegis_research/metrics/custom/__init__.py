@@ -52,6 +52,8 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
     )
     from research.aegis_research.metrics.custom.capture import capture_metrics
     from research.aegis_research.metrics.custom.carry import (
+        CARRY_DOWNSIDE_LSKEW_DEFINITION,
+        CARRY_DOWNSIDE_LSKEW_EXTRACTOR,
         CARRY_INCOME_UTILITY_DEFINITION,
         CARRY_INCOME_UTILITY_EXTRACTOR,
         CARRY_TAIL_BUDGET_DEFINITION,
@@ -81,6 +83,8 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         # for the carry pole (what-makes-a-carry-sleeve-an-income-engine).
         (CARRY_INCOME_UTILITY_DEFINITION, CARRY_INCOME_UTILITY_EXTRACTOR),
         (CARRY_TAIL_BUDGET_DEFINITION, CARRY_TAIL_BUDGET_EXTRACTOR),
+        # Robust (L-moment) skew: the concave family-membership gate, outlier-resistant.
+        (CARRY_DOWNSIDE_LSKEW_DEFINITION, CARRY_DOWNSIDE_LSKEW_EXTRACTOR),
         # Benchmark-relative metrics vs the universe's macro benchmark (SPY default).
         *capture_metrics(),
         *convexity_metrics(),

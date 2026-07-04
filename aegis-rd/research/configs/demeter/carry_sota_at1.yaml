@@ -59,6 +59,11 @@ portfolio:
 ranking:
   metric: carry_income_utility
 
+report:
+  # Family-membership (robust L-skew) + survivability (tail budget) gates reported next
+  # to the income ranker. Distributions are seeded (GH #76) so the AT1 coupon compounds.
+  metrics: [carry_tail_budget, carry_downside_lskew]
+
 optimization:
   search: grid
   seed: 42

@@ -133,3 +133,115 @@ def test_short_stream_degrades_to_nan() -> None:
     from research.aegis_research.metrics.custom.carry import _carry_income_utility
 
     assert np.isnan(_carry_income_utility(np.array([0.001, 0.002])))
+
+
+# ── Robust L-moment skew (the family-membership gate) ──────────────────────────
+
+def test_lskew_is_far_more_outlier_robust_than_moment_skew() -> None:
+    """A single injected crash barely moves L-skew but swings moment skew.
+
+    Kim-White's whole point: the third-moment skew is an average of cubed
+    deviations, so one outlier dominates it; the L-moment tau_3 moves only
+    linearly. The robust gate must not be flipped by a lone print.
+    """
+    from scipy.stats import skew as moment_skew
+
+    from research.aegis_research.metrics.custom.carry import _l_skewness
+
+    rng = np.random.default_rng(7)
+    base = rng.normal(0.0, 0.01, 500)  # symmetric
+    contaminated = base.copy()
+    contaminated[250] = -0.40  # one crash print
+
+    lskew_shift = abs(_l_skewness(contaminated) - _l_skewness(base))
+    moment_shift = abs(moment_skew(contaminated) - moment_skew(base))
+    # One 40-sigma print swings the cubed-deviation moment skew by >15 (0 -> ~-15.5);
+    # the linear L-moment tau_3 barely moves and stays bounded in (-1, 1).
+    assert lskew_shift < 0.20
+    assert moment_shift > 20.0 * lskew_shift
+
+
+def test_lskew_orders_left_skewed_below_symmetric() -> None:
+    from research.aegis_research.metrics.custom.carry import _l_skewness
+
+    rng = np.random.default_rng(11)
+    symmetric = rng.normal(0.0, 0.01, 2000)
+    # Left-skewed: a light-tailed positive body with occasional deep losses.
+    left = np.where(rng.random(2000) < 0.05, rng.normal(-0.05, 0.01, 2000),
+                    rng.normal(0.003, 0.004, 2000))
+    assert _l_skewness(left) < -0.05
+    assert abs(_l_skewness(symmetric)) < 0.03
+    assert _l_skewness(left) < _l_skewness(symmetric)
+
+
+def test_carry_downside_lskew_reads_negative_for_smooth_crash() -> None:
+    from research.aegis_research.metrics.custom.carry import _carry_downside_lskew
+
+    assert _carry_downside_lskew(_smooth_crash_returns()) < 0.0
+
+
+def test_downside_lskew_registered_opt_in() -> None:
+    from research.aegis_research.metrics.custom.carry import CARRY_DOWNSIDE_LSKEW_ID
+
+    assert CARRY_DOWNSIDE_LSKEW_ID in optional_custom_metrics()
+
+
+# ── Allocator: role fidelity (the property no single-book metric can see) ──────
+
+def _matched_carry_pair(seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A trend stream and two carry candidates with identical standalone stats.
+
+    Both carry candidates are the SAME multiset of daily returns (so identical
+    mean, vol, skew, tail, MPPM standalone) - they differ only in WHERE their
+    losses land relative to trend: ``independent`` leaves them on their original
+    (trend-decoupled) days, while ``cocrashing`` permutes them so the worst carry
+    days coincide with trend's worst days. Only a portfolio-aware metric can tell
+    them apart. (A perfect anti-sort is deliberately NOT the diversifying ideal: a
+    short-gamma pole has no large gains to offset a crash, so anti-sorting only
+    relocates its losses onto trend's up-days and, at fixed book vol, buys nothing
+    - the realistic, robust contrast is co-crashing vs decoupled.)
+    """
+    rng = np.random.default_rng(seed)
+    n = 1500
+    trend = rng.normal(0.0004, 0.011, n)  # convex-ish pole proxy
+    # A short-gamma carry stream: steady premium, occasional multi-day losses.
+    independent = np.full(n, 0.0004)
+    loss_days = rng.choice(n, size=90, replace=False)
+    independent[loss_days] = rng.normal(-0.03, 0.01, 90)
+
+    cocrashing = np.empty(n)
+    cocrashing[np.argsort(trend)] = np.sort(independent)  # worst carry on worst trend
+    return trend, independent, cocrashing
+
+
+def test_allocator_utility_penalizes_co_crashing_at_matched_standalone_stats() -> None:
+    from research.aegis_research.metrics.custom.carry import (
+        _carry_income_utility,
+        composite_allocator_utility,
+        downside_correlation,
+    )
+
+    trend, independent, cocrashing = _matched_carry_pair(3)
+
+    # Standalone the two candidates are identical (same multiset of returns), so no
+    # single-book metric - MPPM, tail budget, skew - can separate them.
+    np.testing.assert_allclose(np.sort(independent), np.sort(cocrashing))
+    assert _carry_income_utility(independent) == pytest.approx(_carry_income_utility(cocrashing))
+
+    # In the book, the decoupled pole contributes strictly more certainty-equivalent
+    # growth: co-crashing deepens the book's joint tail, which the MPPM prices.
+    assert composite_allocator_utility(independent, trend) > composite_allocator_utility(
+        cocrashing, trend
+    )
+    # And the relational guard reads it directly: co-crashing's downside correlation
+    # to trend is strongly positive, the decoupled pole's is ~zero.
+    assert downside_correlation(cocrashing, trend) > 0.5
+    assert downside_correlation(independent, trend) < 0.2
+
+
+def test_allocator_utility_nan_on_length_mismatch_or_degenerate() -> None:
+    from research.aegis_research.metrics.custom.carry import composite_allocator_utility
+
+    trend = np.random.default_rng(1).normal(0.0, 0.01, 500)
+    assert np.isnan(composite_allocator_utility(np.zeros(400), trend))  # length mismatch
+    assert np.isnan(composite_allocator_utility(np.zeros(500), trend))  # zero-vol carry

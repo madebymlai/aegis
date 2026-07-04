@@ -156,14 +156,18 @@ def _requested_metric_ids(raw: dict[str, Any]) -> tuple[str, ...]:
     """Metric ids the raw config asks for, before validation has run.
 
     Custom metrics are opt-in per run: only a requested id can pull its record
-    into the effective registry. Malformed shapes return empty — validation
-    reports them properly later.
+    into the effective registry. The ranking metric plus any extra reported
+    metrics under ``report.metrics`` are requested. Malformed shapes are ignored
+    here — validation reports them properly later.
     """
+    ids: list[str] = []
     ranking = raw.get("ranking")
-    if not isinstance(ranking, dict):
-        return ()
-    metric = ranking.get("metric")
-    return (metric,) if isinstance(metric, str) else ()
+    if isinstance(ranking, dict) and isinstance(ranking.get("metric"), str):
+        ids.append(ranking["metric"])
+    report = raw.get("report")
+    if isinstance(report, dict) and isinstance(report.get("metrics"), list):
+        ids.extend(m for m in report["metrics"] if isinstance(m, str))
+    return tuple(dict.fromkeys(ids))
 
 
 def _build_resolved_run_config(

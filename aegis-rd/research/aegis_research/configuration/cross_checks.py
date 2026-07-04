@@ -72,6 +72,10 @@ def _full_cross_checks(
     _check_metric_membership(
         config.ranking.metric, issues, metric_registry=metric_registry
     )
+    for i, metric in enumerate(config.report.metrics):
+        _check_metric_membership(
+            metric, issues, metric_registry=metric_registry, path=f"report.metrics[{i}]"
+        )
 
     return issues
 
@@ -236,11 +240,12 @@ def _check_metric_membership(
     issues: list[ConfigValidationIssue],
     *,
     metric_registry: FrozenMetricRegistry,
+    path: str = "ranking.metric",
 ) -> None:
     if metric not in metric_registry:
         issues.append(
             ConfigValidationIssue(
-                "ranking.metric",
+                path,
                 f"must be one of {sorted(metric_registry.ids())}",
             )
         )
