@@ -414,7 +414,6 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
             "instrument_id": instrument_id,
             "start": pd.Timestamp("2024-01-01", tz="UTC"),
             "end": pd.Timestamp("2024-01-04", tz="UTC"),
-            "primary_exchange": "ARCA",
             "currency": "USD",
         }
     ]

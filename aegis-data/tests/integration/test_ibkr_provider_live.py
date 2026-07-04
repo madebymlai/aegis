@@ -173,7 +173,6 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
         trades=spy_trades,
         start=start,
         end=end,
-        primary_exchange="ARCA",
         currency="USD",
     )
     gld = request_distribution_data(
@@ -182,7 +181,6 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
         trades=gld_trades,
         start=start,
         end=end,
-        primary_exchange="ARCA",
         currency="USD",
     )
 

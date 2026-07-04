@@ -36,7 +36,6 @@ class DistributionDataProviderPort(Protocol):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        primary_exchange: str | None = None,
         currency: str = "USD",
     ) -> pd.Series: ...
 
@@ -266,7 +265,6 @@ class DistributionCoverageService:
             start=pd.Timestamp(decode_start_ns, tz="UTC"),
             end=pd.Timestamp(end_ns, tz="UTC"),
             currency=_definition_currency(definition),
-            primary_exchange=instrument_id.venue.value,
         )
         replace_distribution_data(
             self.catalog,

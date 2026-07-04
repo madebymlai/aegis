@@ -146,7 +146,6 @@ class IbkrHistoricalProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        primary_exchange: str | None = None,
         currency: str = "USD",
     ) -> pd.Series:
         """The raw-``ibapi`` daily ``ADJUSTED_LAST`` close series.
@@ -154,7 +153,10 @@ class IbkrHistoricalProvider:
         Nautilus' historic bar path cannot express IBKR's ``ADJUSTED_LAST``
         ``whatToShow`` value, so this one derivation source uses a deliberately
         narrow raw-IB seam.  Normal production ``TRADES`` bars still ride
-        :meth:`request_bars` through the generic data-provider port.
+        :meth:`request_bars` through the generic data-provider port.  The IB
+        ``primaryExchange`` is derived here from the instrument's corpus venue
+        (vendor symbology is the provider's secret, ADR-0005): callers name the
+        instrument, never an exchange.
         """
         subject = f"ADJUSTED_LAST closes {instrument_id.value}"
         try:
@@ -163,7 +165,7 @@ class IbkrHistoricalProvider:
                 what_to_show="ADJUSTED_LAST",
                 start=start,
                 end=end,
-                primary_exchange=primary_exchange,
+                primary_exchange=_ib_primary_exchange(instrument_id),
                 currency=currency,
                 timeout=self.timeout,
             )
@@ -277,6 +279,21 @@ async def _request_instrument_parts(
     return instruments
 
 
+def _ib_primary_exchange(instrument_id: InstrumentId) -> str:
+    """The IB exchange code for an instrument's corpus (MIC) venue.
+
+    The corpus pins MIC venues (``XAMS``), but IB contracts only accept IB's own
+    exchange codes (``AEB``) — a MIC as ``primaryExchange`` is rejected with IB
+    error 200 "exchange invalid".  A venue with no MIC mapping (``ARCA``) is
+    already an IB code and passes through unchanged.
+    """
+    from nautilus_trader.adapters.interactive_brokers.parsing.instruments import (
+        possible_exchanges_for_venue,
+    )
+
+    return possible_exchanges_for_venue(instrument_id.venue.value)[0]
+
+
 def _expired_future_contract(instrument_id: InstrumentId) -> Any | None:
     from nautilus_trader.adapters.interactive_brokers.parsing.instruments import (
         instrument_id_to_ib_contract,
@@ -338,7 +355,7 @@ class _IbapiDailyCloseClient:
         what_to_show: str,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        primary_exchange: str | None,
+        primary_exchange: str,
         currency: str,
         timeout: int,
     ) -> list[tuple[pd.Timestamp, float]]:
@@ -412,7 +429,7 @@ def _build_raw_historical_app() -> Any:
 def _stock_contract(
     instrument_id: InstrumentId,
     *,
-    primary_exchange: str | None,
+    primary_exchange: str,
     currency: str,
 ) -> Any:
     from ibapi.contract import Contract
@@ -421,7 +438,7 @@ def _stock_contract(
     contract.symbol = instrument_id.symbol.value
     contract.secType = "STK"
     contract.exchange = "SMART"
-    contract.primaryExchange = primary_exchange or instrument_id.venue.value
+    contract.primaryExchange = primary_exchange
     contract.currency = currency.upper()
     return contract
 
