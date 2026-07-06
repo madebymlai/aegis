@@ -64,7 +64,8 @@ strategy:
     carry_gain: 0.0       # spread-richness lean DROPPED - lowers income AND hurts the book (P2, 2026-07-04)
 
 portfolio:
-  gross_cap: 1.0
+  gross_cap: 2.0  # raised 2026-07-05 (B1): ceiling only - sleeve weights unchanged; lets the book allocator re-lever the diversification dividend (GH #79 B1, #80)
+  net_cap: 2.0    # raised with gross (B1): ceiling only
   direction: both
   init_cash: 5000.0
   fees: 0.0005

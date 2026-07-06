@@ -13,14 +13,23 @@ base_currency = "EUR"
 book_vol_target = 0.09
 sleeve_reversion_fraction = 0.5
 
-# Gross cap after risk-budget scaling; raise max_book_gross to run levered.
-max_book_gross = 1.0
+# Gross cap after risk-budget scaling.  B1 DECISION 2026-07-05 (GH #79): run levered
+# at 1.75 so the vol-targeting can recycle the diversification dividend instead of
+# discarding it.  Measured 2018-2024 vs gross 1.0: vol 5.0% -> 8.4% (93% of target),
+# Sharpe 1.21 -> 1.74 gross-of-funding (the cap had been clipping exposure hardest in
+# calm regimes - unclipping adds a vol-managed timing gain, not just scale), return
+# +6.2% -> +15.3%/yr gross.  Margin funding is NOT modeled by the engine: ~67% of NAV
+# borrowed. Full IBKR EUR rate (ESTR ~1.9% + 1.0-1.5% tier spread ~= 3.0-3.4%) applies to
+# the RETURN correction: ~ -2.0 to -2.6%/yr of NAV => ~+13%/yr net. Only the SPREAD prices
+# into Sharpe (excess-return basis): ~ -0.1 => Sharpe ~1.6 net.  maxDD re-baselined
+# -7.5% -> -10.2% at this gross (operator-accepted with the 1.75).
+max_book_gross = 1.75
 
 # Book caps as fractions of NAV.  Provenance is checked at load against each
-# sleeve's bundle (all three carry gross_cap = net_cap = 1.0), so these must not
-# exceed those ceilings.
-gross_cap = 1.0
-net_cap = 1.0
+# sleeve's bundle (all three re-exported 2026-07-05 with gross_cap = net_cap = 2.0,
+# ceilings only - sleeve weights unchanged), so these must not exceed those ceilings.
+gross_cap = 2.0
+net_cap = 2.0
 
 # Backtest funding: 1,000,000 EUR only (foreign legs reached via per-currency margin loans).
 [starting_balances]
@@ -88,24 +97,46 @@ weight_band_up = 0.01
 # are filled highest-efficiency-first to coverage_target, capped per-candidate
 # by capacity and collectively by the annual carry (premium) budget — so either
 # the coverage target or the premium budget can bind first.
+#
+# CALIBRATED 2026-07-05 from aegis-trader backtests of THIS book, 2018-2024,
+# at four budget sizes (risk share 0.0065/0.0125/0.025/0.05) plus tail-off
+# (runs/aegis/2026-07-05 in the research vault).  Two structural findings:
+#   1. The hierarchical-ERC allocator holds a negatively-correlated Target
+#      sleeve at its minimum-hedge weight, so realized LVO notional is FLAT in
+#      risk share: ~2.2% of NAV calm (2.5% at rs=0.05), ~6% in 2022, and only
+#      ~0.6% entering the COVID crash (vol-targeting shrinks it as LVO vol
+#      rises).  The dial is effectively on/off; these knobs pick the honest
+#      declared point, they do not fine-tune the size.
+#   2. The measured menu while ON: ~+1.9% NAV delivered over the 2020 crash
+#      window (Feb 19 - Mar 31), ~1.0-1.6% NAV/yr sleeve-own cost in the
+#      vol-crush years (2019/2021/2023/2024; LVO bled ~29-53%/yr there, harsher
+#      than its -23%/yr 13-year average).  A former mandate of "1% coverage for
+#      <= 0.75%/yr" is not buyable: the instrument has no smaller package.
+# Values below are that measured menu, anchored at risk share 0.025 so the
+# declared arithmetic reproduces the measurement exactly (fill lands at 0.025;
+# the realized book there is measured, not extrapolated).
 attachment = -0.20            # protect against a -20% book move
-coverage_target = 0.01        # deliver >= 1% of book NAV at the attachment
-annual_carry_budget = 0.0075  # spend <= 0.75% of NAV/yr in premium
+coverage_target = 0.019       # measured 2020-crash delivery at the landing point
+annual_carry_budget = 0.012   # measured vol-crush-year cost at the landing point
 
 [[tail_convexity_budget.candidates]]
 # Per unit of the sleeve's risk share: NAV delivered at the attachment, and
 # NAV/yr of carry.  Operator-supplied (calibrated at re-validation); never
 # measured live in Trader.
-# Re-validation anchors (2026-07-04, real pipeline, runs/aegis/2026-07-04 p3):
-# per unit of LVO NOTIONAL the BANDED overlay delivered 0.95 NAV in the March-2020
-# month (drift-let-run through the spike ~doubles the static w x 47% capture) at
-# ~0.21 NAV/yr carry (banded bleed; the un-banded sleeve bleeds ~0.23-0.29/yr and
-# its 100%-held book is ruin at retail scale). Book frontier at the measured cells:
-# full crash-month coverage ~0.13 Sharpe (5% notional), quarter ~0.04 (2%).
-# Values below stay in the operator's risk-share convention; recalibrate against
-# these anchors when the risk-share -> notional scaling is pinned.
+# Measured 2026-07-05 at rs=0.025 on this book (see budget comment above):
+# crash delivery +1.9% NAV -> payoff 0.76/unit rs; vol-crush-year cost
+# ~1.19% NAV/yr -> carry 0.48/unit rs.  Valid for rs in [0.0065, 0.05] only —
+# per-rs values are ~1/rs outside the landing point because the realized
+# notional is flat (finding 1 above), so do NOT scale these linearly.
+# Per unit of LVO NOTIONAL (size-invariant form): crash delivery +2.9 to +3.7,
+# calm-year bleed -0.45 to -0.63/yr.  Not counted in payoff: the hedged book
+# also avoided the drawdown-governor delever in 2020 (+4.1 to +4.8pp book-level
+# displacement vs tail-off) — real but path-specific, kept out of the budget.
+# crisis_reliability stays operator-judged at 0.75 (n=1 crash; the 2020
+# delivery rode a ~3x LVO spike from a 0.6% entry weight — a milder crash
+# pays proportionally less).
 sleeve = "aegis_tail"
-payoff_at_attachment = 0.20
-annual_carry = 0.08
+payoff_at_attachment = 0.76
+annual_carry = 0.48
 crisis_reliability = 0.75
 capacity_risk_share = 0.05
