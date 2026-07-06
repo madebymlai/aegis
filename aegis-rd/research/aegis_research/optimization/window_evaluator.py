@@ -67,6 +67,7 @@ class WindowEvaluator:
     # Resolved instrument → DriftBand map (the same one the bundle carries); None gates
     # every instrument at the sleeve-wide default.
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
+    futures_roots: tuple[str, ...] = ()
     distributions: tuple[Distribution, ...] = ()
     currency_conversion: CurrencyConversion | None = None
 
@@ -114,6 +115,7 @@ class WindowEvaluator:
             periods_per_year=self.report.periods_per_year,
             fees_by_symbol=self.fees_by_symbol,
             instrument_bands=self.instrument_bands,
+            futures_roots=self.futures_roots,
             distributions=self.distributions,
             currency_conversion=self.currency_conversion,
         )

@@ -47,12 +47,12 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
     "int_valued_caps": _raw("int_caps", {"gross_cap": 1, "net_cap": 1, "direction": "both"}),
 }
 
-# Re-pinned when ReportConfig gained the opt-in ``report.metrics`` field (carry-metric
-# research): the resolved document now carries ``"report": {..., "metrics": []}``, the
-# sole byte delta. The field defaults empty, so schema_version stays put.
+# Re-pinned when PortfolioConfig gained ``margin_interest_rate`` (default 0.0324):
+# the resolved document now prices levered research configs by default. The field
+# rides resolved_config.v1 deliberately, so schema_version stays put while hashes move.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "f33b7b37c21da80cf4d4de314282c5c41d52322dfdbdaf9eb5e0094d5609a741",
-    "int_valued_caps": "07a00c6a39af1c758096a1bfa72cebada06cf9d6c76c4af7b211049c21975bdd",
+    "canonical_grid": "f5494cf1bf8b6806eb0bd8e9f0c49b6ab708cafa6d1e3f2e62800db7935c93b7",
+    "int_valued_caps": "28ab200569bd19c9a9f5209247fd359fe89f4e92071ccbe6342e179d99c15d82",
 }
 
 

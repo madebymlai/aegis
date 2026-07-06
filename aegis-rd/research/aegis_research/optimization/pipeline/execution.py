@@ -112,6 +112,7 @@ def run_pipeline_execution(
             split_result=setup.split_result,
             fees_by_symbol=_fx_fees(config, currency_conversion),
             instrument_bands=resolve_instrument_bands(config),
+            futures_roots=tuple(config.data.futures),
             distributions=distributions,
             currency_conversion=currency_conversion,
         )

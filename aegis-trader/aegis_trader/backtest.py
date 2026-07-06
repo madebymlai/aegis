@@ -53,7 +53,7 @@ from aegis_trader.portfolio.performance import (
 )
 from aegis_trader.trader.costs import build_simulated_cost_models
 from aegis_trader.trader.dividends import build_dividend_modules
-from aegis_trader.trader.financing import build_financing_modules
+from aegis_trader.trader.financing import FinancingModule, build_financing_module
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _PRICE_COLS = ("Open", "High", "Low", "Close")
@@ -85,6 +85,14 @@ class BacktestMarketData:
     instruments: Mapping[InstrumentId, Instrument]
     ohlcv: Mapping[InstrumentId, pd.DataFrame]
     distributions: tuple[Distribution, ...] = ()
+
+
+@dataclass(frozen=True)
+class BookBacktestResult:
+    """Finished book backtest plus book-level financing diagnostics."""
+
+    engine: BacktestEngine
+    financing_totals: dict[str, float]
 
 
 class BacktestDataSource(Protocol):
@@ -170,7 +178,7 @@ def run_book_backtest(
     provider: NautilusDataProviderPort | None = None,
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
-) -> BacktestEngine:
+) -> BookBacktestResult:
     """Build and run a commingled-book backtest from the Nautilus catalog.
 
     There is no Historical Store, symbol map, or provider-specific identity on
@@ -204,7 +212,7 @@ def run_book_backtest(
             bar_capacity=_cache_bar_capacity(sleeves),
         )
     )
-    _add_venues(
+    financing_module = _add_venues(
         engine,
         book=book,
         instruments=tuple(market_data.instruments.values()),
@@ -222,7 +230,10 @@ def run_book_backtest(
     _add_strategy(engine, book=book, sleeves=sleeves)
 
     engine.run()
-    return engine
+    financing_totals = (
+        financing_module.totals.by_currency if financing_module is not None else {}
+    )
+    return BookBacktestResult(engine=engine, financing_totals=financing_totals)
 
 
 def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | None:
@@ -378,12 +389,16 @@ def _add_venues(
     sleeves: SleeveBundles,
     distributions: Sequence[Distribution],
     starting_cash: float,
-) -> None:
+) -> FinancingModule | None:
     account_currencies = _account_currencies(book, instruments)
     native_venues = _instrument_venues(instruments)
     account_type = (
         AccountType.MARGIN
-        if len(native_venues) > 1 or _requires_margin_account(sleeves)
+        if (
+            len(native_venues) > 1
+            or _requires_margin_account(sleeves)
+            or book.costs.margin_interest.annual_debit_rates
+        )
         else AccountType.CASH
     )
     starting_balances, balance_currencies = _starting_balances(
@@ -391,12 +406,15 @@ def _add_venues(
         account_currencies,
         starting_cash,
     )
+    financing_module = build_financing_module(book.costs)
     for index, native_venue in enumerate(native_venues):
         cost_models = build_simulated_cost_models(book)
         modules = [
-            *build_financing_modules(book.costs),
+            *([financing_module] if index == 0 and financing_module is not None else []),
             *build_dividend_modules(distributions),
         ]
+        # Financing is book-level: it nets the shared cache across all venue
+        # accounts and must live only on the starting-balance venue.
         engine.add_venue(
             native_venue,
             oms_type=OmsType.NETTING,
@@ -412,6 +430,7 @@ def _add_venues(
             allow_cash_borrowing=account_type == AccountType.MARGIN
             or len(balance_currencies) > 1,
         )
+    return financing_module
 
 
 def _add_instruments_and_bars(
@@ -555,6 +574,8 @@ def _account_currencies(
     currencies = {book.base_currency}
     for instrument in instruments:
         currencies.add(instrument.quote_currency.code)
+    for currency, _rate in book.costs.margin_interest.annual_debit_rates:
+        currencies.add(currency)
     return tuple(sorted(currencies))
 
 

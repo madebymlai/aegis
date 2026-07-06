@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from aegis_data.distributions import Distribution
-from aegis_runtime import DriftBand, gate, validate_exposure
+from aegis_runtime import DriftBand, debit_interest, gate, validate_exposure
 from nautilus_trader.model.identifiers import InstrumentId
 from numba import njit
 from vectorbtpro import vbt
@@ -26,8 +26,13 @@ _SINGLE_CANDIDATE_ID = "single"
 # of ``(net_rate / periods_per_year) * close``. ``* live position`` gives drifted notional,
 # only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
 # mask (a positive per-share value would otherwise *credit* a long position).
-# Margin interest (``int_rate x borrowed_cash``) needs ``vbt.pf_nb.get_debt_nb(c)``;
-# the from-signals substrate exposes the callback context needed for that future work.
+# Margin interest is separate: it charges broker-visible negative group cash through
+# ``cash_earnings``. VBT ``pf.debt`` is eager-mode bookkeeping, not a broker loan, so
+# it must never be the charge base. Futures ids are spot-simmed by VBT; their signed
+# marked position value is added back to raw group cash before charging, because a broker
+# sees daily variation margin rather than a full-notional cash loan. Locked initial
+# margin is still not modeled as consumed cash, so levered mixed futures/spot books
+# undercharge rate x margin requirement; that is the only documented futures residual.
 VBT_PF_METHOD = "from_signals"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
 VBT_LEVERAGE_MODE = "eager"
@@ -43,9 +48,10 @@ VBT_STATICIZED_CACHE_ENV = "AERD_VBT_STATICIZED_CACHE_DIR"
 # k = 2 is the floor, not the value: under drawdown drift a compliant transition can
 # transiently need ~3x cap (book at cap + equity halves -> drifted gross ~2x cap relative
 # to current equity, co-held with the new at-cap book when sequencing fails). k = 5 keeps
-# legitimate Runs clear of the tripwire; unused headroom costs nothing (margin interest is
-# unmodeled, ADR-0008). If the tripwire ever fires on a legitimate Run, raise k — never
-# reintroduce a tolerance (ADR-0011 amendment).
+# legitimate Runs clear of the tripwire. Margin interest is priced on negative group cash,
+# which decrements by full order notional under eager leverage; ``pf.debt`` is bookkeeping
+# and must not be interpreted as the loan. If the tripwire ever fires on a legitimate Run,
+# raise k — never reintroduce a tolerance (ADR-0011 amendment).
 _GROSS_CAP_LEVERAGE_MULTIPLIER = 5
 # VBT ``price`` strings: both ``nextopen``/``nextclose`` set ``from_ago=1`` (shift one
 # bar -> no same-bar look-ahead); they differ only in which price of bar t+1 they fill at.
@@ -72,6 +78,7 @@ def _vbt_staticized_source_paths() -> tuple[Path, ...]:
         _vbt_staticized_callback_path(),
         Path(__file__).resolve(),
         Path(gate.__code__.co_filename).resolve(),
+        Path(debit_interest.__code__.co_filename).resolve(),
     )
 
 
@@ -154,7 +161,19 @@ def _realized_weight_nb(c, price, val_price, order_i, col, group_value):
 
 @njit
 def _band_pre_order_segment_nb(
-    c, target_alloc, price, val_price, from_ago, up_arr, down_arr, dest_arr
+    c,
+    target_alloc,
+    price,
+    val_price,
+    from_ago,
+    up_arr,
+    down_arr,
+    dest_arr,
+    cash_earnings,
+    margin_day_offsets,
+    last_margin_accrual_i,
+    futures_mask,
+    margin_interest_rate,
 ):
     """Apply the shared DriftBand no-trade gate to each pending order in the segment.
 
@@ -179,6 +198,17 @@ def _band_pre_order_segment_nb(
     # ``c.from_col`` indexes every column's row correctly. A per-column ``from_ago``
     # would need ``order_i`` recomputed inside the loop.
     order_i = c.i - abs(int(flex_select_nb(from_ago, c.i, c.from_col)))
+    _accrue_margin_interest_nb(
+        c,
+        price,
+        val_price,
+        order_i,
+        cash_earnings,
+        margin_day_offsets,
+        last_margin_accrual_i,
+        futures_mask,
+        margin_interest_rate,
+    )
     if order_i < 0:
         return ()
     group_value = _group_value_nb(c, price, val_price, order_i)
@@ -217,6 +247,35 @@ def _band_pre_order_segment_nb(
             c.order_info[col]["size_type"] = _SIZE_TYPE_TARGET_PERCENT
             c.order_info[col]["direction"] = _DIRECTION_BOTH
     return ()
+
+
+@njit
+def _accrue_margin_interest_nb(
+    c,
+    price,
+    val_price,
+    order_i,
+    cash_earnings,
+    margin_day_offsets,
+    last_margin_accrual_i,
+    futures_mask,
+    margin_interest_rate,
+):
+    if margin_interest_rate <= 0.0:
+        return
+    last_i = int(last_margin_accrual_i[c.group])
+    elapsed_days = margin_day_offsets[c.i] - margin_day_offsets[last_i]
+    if elapsed_days <= 0.0:
+        return
+    adjusted_cash = c.last_cash[c.group]
+    if order_i >= 0:
+        for col in range(c.from_col, c.to_col):
+            if futures_mask[col]:
+                adjusted_cash += _position_value_nb(c, price, val_price, order_i, col)
+    charge = debit_interest(adjusted_cash, margin_interest_rate, elapsed_days)
+    if charge > 0.0:
+        cash_earnings[c.i, c.from_col] -= charge
+    last_margin_accrual_i[c.group] = c.i
 
 
 def _execution_settings(
@@ -263,6 +322,23 @@ def _resolve_fees(
     return fees.reindex(symbols).to_numpy().reshape(1, -1)
 
 
+def _futures_mask(columns: pd.Index, futures_roots: Sequence[str]) -> np.ndarray:
+    roots = frozenset(str(root) for root in futures_roots)
+    if not roots:
+        return np.zeros(len(columns), dtype=np.bool_)
+    symbols = columns.get_level_values(SYMBOL_LEVEL)
+    return np.array([_instrument_root(symbol) in roots for symbol in symbols], dtype=np.bool_)
+
+
+def _instrument_root(value: object) -> str:
+    if isinstance(value, InstrumentId):
+        return value.symbol.value
+    text = str(value)
+    if "." not in text:
+        return text
+    return InstrumentId.from_str(text).symbol.value
+
+
 def _build_portfolio(
     price_frame: pd.DataFrame,
     allocations: pd.DataFrame,
@@ -274,6 +350,7 @@ def _build_portfolio(
     periods_per_year: int,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    futures_roots: Sequence[str] = (),
     distributions: Sequence[Distribution] | None = None,
     currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
@@ -299,6 +376,9 @@ def _build_portfolio(
     # overwrites its internal ``size`` array with resolved order amounts before the
     # pre-order-segment callback runs.
     target_alloc = np.ascontiguousarray(masked.to_numpy(), dtype=np.float64)
+    margin_day_offsets = _margin_day_offsets(price_frame.index)
+    last_margin_accrual_i = np.zeros(_candidate_group_count(masked.columns), dtype=np.int64)
+    futures_mask = _futures_mask(masked.columns, futures_roots)
     cash_dividends = short_masked_cash_dividends(
         price_frame, allocations, config, periods_per_year=periods_per_year
     ) + distribution_cash_dividends(
@@ -321,6 +401,11 @@ def _build_portfolio(
             band_up,
             band_down,
             band_destination,
+            vbt.Rep("cash_earnings"),
+            margin_day_offsets,
+            last_margin_accrual_i,
+            futures_mask,
+            config.margin_interest_rate,
         ),
         staticized={"path": _vbt_staticized_cache_dir()},
         direction=config.direction,
@@ -333,12 +418,30 @@ def _build_portfolio(
         init_cash=config.init_cash,
         leverage=config.gross_cap * _GROSS_CAP_LEVERAGE_MULTIPLIER,
         leverage_mode=VBT_LEVERAGE_MODE,
+        cash_earnings=vbt.RepEval("np.full(wrapper.shape_2d, 0.0)"),
+        arg_config={"cash_earnings": {"full_shape": True}},
         cash_dividends=cash_dividends,
         log=True,
         **exec_kwargs,
     )
     _assert_no_nocash_rejection(pf)
     return pf
+
+
+def _margin_day_offsets(index: pd.Index) -> np.ndarray:
+    """Cumulative elapsed calendar days from the first row for margin accrual."""
+    if isinstance(index, pd.DatetimeIndex):
+        normalized = index.normalize()
+        days = normalized.asi8 // (24 * 60 * 60 * 1_000_000_000)
+        return (days - days[0]).astype(np.float64)
+    return np.arange(len(index), dtype=np.float64)
+
+
+def _candidate_group_count(columns: pd.Index) -> int:
+    if isinstance(columns, pd.MultiIndex):
+        group_labels = columns.droplevel(SYMBOL_LEVEL)
+        return len(group_labels.unique())
+    return len(columns)
 
 
 def _band_arrays(
@@ -521,6 +624,7 @@ def simulate_single_book(
     periods_per_year: int = 252,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    futures_roots: Sequence[str] = (),
     distributions: Sequence[Distribution] | None = None,
     currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
@@ -546,6 +650,7 @@ def simulate_single_book(
         periods_per_year=periods_per_year,
         fees_by_symbol=fees_by_symbol,
         instrument_bands=instrument_bands,
+        futures_roots=futures_roots,
         distributions=distributions,
         currency_conversion=currency_conversion,
     )
@@ -561,6 +666,7 @@ def simulate_portfolio_batch(
     periods_per_year: int,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    futures_roots: Sequence[str] = (),
     distributions: Sequence[Distribution] | None = None,
     currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
@@ -598,6 +704,7 @@ def simulate_portfolio_batch(
         periods_per_year=periods_per_year,
         fees_by_symbol=fees_by_symbol,
         instrument_bands=instrument_bands,
+        futures_roots=futures_roots,
         distributions=distributions,
         currency_conversion=currency_conversion,
     )

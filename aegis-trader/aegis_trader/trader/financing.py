@@ -13,9 +13,10 @@ from dataclasses import dataclass
 import pandas as pd
 from nautilus_trader.backtest.config import SimulationModuleConfig
 from nautilus_trader.backtest.modules import SimulationModule
-from nautilus_trader.model.enums import PositionSide
+from nautilus_trader.model.enums import AccountType, PositionSide
 from nautilus_trader.model.objects import Currency, Money
 
+from aegis_runtime import debit_interest
 from aegis_trader.domain.book_config import CostModelConfig
 
 _DAYS_PER_YEAR = 360.0
@@ -73,15 +74,49 @@ class FinancingModule(SimulationModule):
         return FinancingCostTotals(dict(self._totals))
 
     def _charge_debit_interest(self, days: int) -> None:
-        account = self.exchange.get_account()
-        if account is None:
-            return
-        for balance in account.balances_total().values():
-            cash = balance.as_double()
-            if cash >= 0.0:
+        net_cash_by_currency: dict[str, float] = {}
+        currency_by_code: dict[str, Currency] = {}
+        accounts = tuple(self.exchange.cache.accounts())
+        for account in accounts:
+            for balance in account.balances_total().values():
+                currency = balance.currency
+                currency_code = str(currency)
+                net_cash_by_currency[currency_code] = (
+                    net_cash_by_currency.get(currency_code, 0.0) + balance.as_double()
+                )
+                currency_by_code[currency_code] = currency
+        if any(_account_type(account) == AccountType.MARGIN for account in accounts):
+            # Nautilus margin balances exclude open-position principal; add it back so the
+            # netted balance matches the broker-visible cash loan before debit interest.
+            self._apply_margin_position_cash_impact(
+                net_cash_by_currency,
+                currency_by_code,
+            )
+
+        for currency_code, cash in net_cash_by_currency.items():
+            rate = self._costs.margin_interest.annual_rate_for(currency_code)
+            self._charge(debit_interest(cash, rate, float(days)), currency_by_code[currency_code])
+
+    def _apply_margin_position_cash_impact(
+        self,
+        net_cash_by_currency: dict[str, float],
+        currency_by_code: dict[str, Currency],
+    ) -> None:
+        for position in self.exchange.cache.positions_open():
+            instrument = self.exchange.cache.instrument(position.instrument_id)
+            currency = instrument.quote_currency
+            currency_code = str(currency)
+            principal = self._position_principal(position)
+            if position.side == PositionSide.LONG:
+                cash_impact = -principal
+            elif position.side == PositionSide.SHORT:
+                cash_impact = principal
+            else:
                 continue
-            rate = self._costs.margin_interest.annual_rate_for(str(balance.currency))
-            self._charge(-cash * rate * days / _DAYS_PER_YEAR, balance.currency)
+            net_cash_by_currency[currency_code] = (
+                net_cash_by_currency.get(currency_code, 0.0) + cash_impact
+            )
+            currency_by_code[currency_code] = currency
 
     def _charge_short_borrow(self, days: int) -> None:
         borrow_rate = self._costs.borrow.annual_rate
@@ -90,14 +125,26 @@ class FinancingModule(SimulationModule):
         for position in self.exchange.cache.positions_open():
             if position.side != PositionSide.SHORT:
                 continue
-            instrument = self.exchange.instruments[position.instrument_id]
-            mark = self._mark_price(position.instrument_id)
-            short_market_value = position.quantity.as_double() * mark
+            instrument = self.exchange.cache.instrument(position.instrument_id)
+            short_market_value = self._position_market_value(position)
             self._charge(short_market_value * borrow_rate * days / _DAYS_PER_YEAR, instrument.quote_currency)
+
+    def _position_principal(self, position) -> float:
+        avg_px_open = getattr(position, "avg_px_open", None)
+        if avg_px_open is not None:
+            price = _as_float(avg_px_open)
+            if price > 0.0:
+                return position.quantity.as_double() * price
+        return self._position_market_value(position)
+
+    def _position_market_value(self, position) -> float:
+        return position.quantity.as_double() * self._mark_price(position.instrument_id)
 
     def _mark_price(self, instrument_id) -> float:
         book = self.exchange.get_book(instrument_id)
-        price = book.midpoint() or book.best_bid_price() or book.best_ask_price()
+        price = None
+        if book is not None:
+            price = book.midpoint() or book.best_bid_price() or book.best_ask_price()
         if price is None:  # pragma: no cover - backtest bars should leave an EOD mark
             raise RuntimeError(f"cannot accrue financing without mark for {instrument_id}")
         return float(price)
@@ -109,10 +156,23 @@ class FinancingModule(SimulationModule):
         self.exchange.adjust_account(Money(-amount, currency))
 
 
-def build_financing_modules(costs: CostModelConfig) -> list[SimulationModule]:
-    """Return simulation modules required by the configured financing costs."""
+def build_financing_module(costs: CostModelConfig) -> FinancingModule | None:
+    """Return the book-level financing module required by configured costs."""
     has_debit_interest = bool(costs.margin_interest.annual_debit_rates)
     has_borrow = costs.borrow.annual_rate > 0.0
     if not has_debit_interest and not has_borrow:
-        return []
-    return [FinancingModule(costs)]
+        return None
+    return FinancingModule(costs)
+
+
+def _account_type(account) -> AccountType | None:
+    account_type = getattr(account, "type", None)
+    if callable(account_type):
+        return account_type()
+    return account_type
+
+
+def _as_float(value) -> float:
+    if hasattr(value, "as_double"):
+        return float(value.as_double())
+    return float(value)

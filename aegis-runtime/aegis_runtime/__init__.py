@@ -24,6 +24,7 @@ from aegis_runtime.exposure_validation import (
     ExposureValidationError,
     validate_exposure,
 )
+from aegis_runtime.financing import debit_interest
 from aegis_runtime.futures_roots import validate_bare_root
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "ComponentStrategyInputs",
     "DataContractError",
     "DataContract",
+    "debit_interest",
     "DriftBand",
     "dump_bundle_payload",
     "ExecutionBundle",

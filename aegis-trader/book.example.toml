@@ -72,12 +72,12 @@ aggregate_drift_threshold = 0.5
 # slippage_seed = 42                 # pinned RNG seed for deterministic fills
 #
 # [costs.borrow]
-# rate = 0.015                       # annual general-collateral borrow fee on shorts
+# rate = 0.005                       # annual general-collateral borrow fee on shorts
 #
 # [costs.margin_interest]
-# EUR = 0.04                         # annual rate charged on EUR debit balances
-# GBP = 0.06                         # annual rate charged on GBP debit balances
-# USD = 0.055                        # annual rate charged on USD debit balances
+# EUR = 0.0324                       # annual rate charged on net EUR debit balances
+# USD = 0.0513                       # annual rate charged on net USD debit balances
+# Positive cash balances earn no credit interest; currencies are never netted together.
 
 # Sleeves — each a risk-budgeted sub-portfolio backed by one content-addressed
 # bundle wheel. Instruments carry their own venue (each is a Nautilus

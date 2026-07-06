@@ -51,6 +51,7 @@ _ES_OLD = InstrumentId.from_str("ESM4.XCME")
 _ES_NEW = InstrumentId.from_str("ESU4.XCME")
 _WHEEL = "synth-trend.whl"
 _TREND = SleeveName("trend")
+_FINANCING_FIXTURE_EXPECTED_COST = 200.08901085064
 
 _BOOK_TOML = f"""
 base_currency = "EUR"
@@ -73,11 +74,39 @@ risk_share = 1.0
 group = "Floor"
 """
 
+_FINANCING_BOOK_TOML = f"""
+base_currency = "EUR"
+max_book_gross = 2.0
+gross_cap = 2.0
+net_cap = 2.0
+
+[costs.margin_interest]
+EUR = 0.036
+
+[[sleeves]]
+name = "trend"
+wheel_filename = "{_WHEEL}"
+risk_share = 1.0
+group = "Floor"
+"""
+
+_ZERO_RATE_FINANCING_BOOK_TOML = _FINANCING_BOOK_TOML.replace(
+    "EUR = 0.036",
+    "EUR = 0.0",
+)
+
 
 class _FixedWeightBundle(ExecutionBundle):
     """Synthetic bundle that returns one fixed target weight."""
 
-    def __init__(self, instrument_id: InstrumentId, weight: float) -> None:
+    def __init__(
+        self,
+        instrument_id: InstrumentId,
+        weight: float,
+        *,
+        gross_cap: float = 1.0,
+        net_cap: float | None = None,
+    ) -> None:
         self._instrument_id = instrument_id
         self._weight = weight
         contract = DataContract(
@@ -106,8 +135,8 @@ class _FixedWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={instrument_id: DriftBand.symmetric(0.02)},
-            gross_cap=1.0,
-            net_cap=None,
+            gross_cap=gross_cap,
+            net_cap=net_cap,
             direction="longonly",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -363,7 +392,7 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
-    engine = run_book_backtest(
+    result = run_book_backtest(
         book_path,
         start="2020-01-01",
         end="2020-01-05",
@@ -371,6 +400,7 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
         registry=registry,
         data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
+    engine = result.engine
 
     fills = _closed_orders(engine)
     assert len(fills) == 1
@@ -385,7 +415,7 @@ def test_run_book_backtest_halts_bad_cap_book_and_idles(tmp_path) -> None:
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
-    engine = run_book_backtest(
+    result = run_book_backtest(
         book_path,
         start="2020-01-01",
         end="2020-01-05",
@@ -393,6 +423,7 @@ def test_run_book_backtest_halts_bad_cap_book_and_idles(tmp_path) -> None:
         registry=registry,
         data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
+    engine = result.engine
     strategy = _strategy(engine)
 
     assert _closed_orders(engine) == []
@@ -416,13 +447,14 @@ def test_run_book_backtest_trades_a_declared_continuous_root(
     monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_static_desk)
     registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
 
-    engine = run_book_backtest(
+    result = run_book_backtest(
         book_path,
         start="2020-01-01",
         end="2020-01-05",
         data_source=_ContinuousRootDataSource(frame),
         registry=registry,
     )
+    engine = result.engine
 
     assert _closed_order_instrument_ids(engine) == {_ES}
     engine.dispose()
@@ -448,13 +480,14 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
     monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_rolling_desk)
     registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
 
-    engine = run_book_backtest(
+    result = run_book_backtest(
         book_path,
         start="2020-01-01",
         end="2020-01-06",
         data_source=_RollingContinuousRootDataSource(frame),
         registry=registry,
     )
+    engine = result.engine
     strategy = _strategy(engine)
 
     assert desk.rolled is True
@@ -471,7 +504,7 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path
     _seed_catalog(catalog_path, _SECOND_INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
     registry = StubBundleRegistry({_WHEEL: _TwoVenueBundle()})
 
-    engine = run_book_backtest(
+    result = run_book_backtest(
         book_path,
         start="2020-01-01",
         end="2020-01-05",
@@ -482,6 +515,7 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path
             (_INSTRUMENT_ID, _SECOND_INSTRUMENT_ID),
         ),
     )
+    engine = result.engine
 
     nav = NautilusBookState(
         portfolio=engine.portfolio,
@@ -492,6 +526,115 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path
     assert len(_closed_orders(engine)) == 2
     assert nav == pytest.approx(1_000_000.0, abs=100.0)
     engine.dispose()
+
+
+def test_run_book_backtest_reports_margin_interest_totals(tmp_path) -> None:
+    financed, zero_rate = _run_margin_interest_fixture(tmp_path)
+
+    try:
+        assert financed.financing_totals["EUR"] == pytest.approx(
+            _FINANCING_FIXTURE_EXPECTED_COST
+        )
+    finally:
+        financed.engine.dispose()
+        zero_rate.engine.dispose()
+
+
+def test_run_book_backtest_reports_no_totals_for_zero_rate_book(tmp_path) -> None:
+    financed, zero_rate = _run_margin_interest_fixture(tmp_path)
+
+    try:
+        assert zero_rate.financing_totals == {}
+    finally:
+        financed.engine.dispose()
+        zero_rate.engine.dispose()
+
+
+def test_run_book_backtest_equity_drag_matches_margin_interest_totals(tmp_path) -> None:
+    financed, zero_rate = _run_margin_interest_fixture(tmp_path)
+
+    financed_nav = _book_nav(financed.engine, (_INSTRUMENT_ID,))
+    zero_rate_nav = _book_nav(zero_rate.engine, (_INSTRUMENT_ID,))
+    try:
+        assert zero_rate_nav - financed_nav == pytest.approx(
+            _FINANCING_FIXTURE_EXPECTED_COST, abs=0.02
+        )
+    finally:
+        financed.engine.dispose()
+        zero_rate.engine.dispose()
+
+
+def _run_margin_interest_fixture(tmp_path):
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_FINANCING_BOOK_TOML)
+    zero_book_path = tmp_path / "zero_book.toml"
+    zero_book_path.write_text(_ZERO_RATE_FINANCING_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(
+        catalog_path,
+        _INSTRUMENT_ID,
+        [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+    )
+    registry = StubBundleRegistry(
+        {
+            _WHEEL: _FixedWeightBundle(
+                _INSTRUMENT_ID,
+                1.5,
+                gross_cap=2.0,
+                net_cap=2.0,
+            )
+        }
+    )
+
+    financed = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-07",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+    )
+    zero_rate = run_book_backtest(
+        zero_book_path,
+        start="2020-01-01",
+        end="2020-01-07",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+    )
+
+    return financed, zero_rate
+
+
+def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_FINANCING_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
+    registry = StubBundleRegistry(
+        {
+            _WHEEL: _FixedWeightBundle(
+                _INSTRUMENT_ID,
+                0.5,
+                gross_cap=2.0,
+                net_cap=2.0,
+            )
+        }
+    )
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+    )
+
+    try:
+        assert result.financing_totals == {}
+    finally:
+        result.engine.dispose()
 
 
 def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> None:
@@ -567,13 +710,14 @@ def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
     )
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
-    engine = run_book_backtest(
+    result = run_book_backtest(
         book_path,
         start="2020-01-01",
         end="2020-01-06",
         registry=registry,
         data_source=CatalogBacktestDataSource(port=data_port),
     )
+    engine = result.engine
 
     nav = NautilusBookState(
         portfolio=engine.portfolio,
@@ -652,8 +796,8 @@ def _verified_zero_distribution_source(
 ) -> CatalogBacktestDataSource:
     adjusted_last = {
         instrument_id: pd.Series(
-            [100.0] * 5,
-            index=pd.date_range("2020-01-01", periods=5, freq="D", tz="UTC"),
+            [100.0] * 10,
+            index=pd.date_range("2020-01-01", periods=10, freq="D", tz="UTC"),
         )
         for instrument_id in instrument_ids
     }
@@ -663,6 +807,15 @@ def _verified_zero_distribution_source(
             distribution_provider=_AdjustedLastProvider(adjusted_last),
         )
     )
+
+
+def _book_nav(engine, instrument_ids: tuple[InstrumentId, ...]) -> float:
+    return NautilusBookState(
+        portfolio=engine.portfolio,
+        cache=engine.cache,
+        base_currency=Currency.from_str("EUR"),
+        covered_instrument_ids=frozenset(instrument_ids),
+    ).nav()
 
 
 def _ohlcv_frame(closes: list[float]) -> pd.DataFrame:

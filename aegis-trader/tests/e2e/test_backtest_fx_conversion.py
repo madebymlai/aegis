@@ -104,7 +104,7 @@ def test_usd_quoted_sleeve_trades_in_eur_base_book(tmp_path) -> None:
     _seed_fx_catalog(catalog_path, rates=[1.10, 1.10, 1.10, 1.10])
     registry = StubBundleRegistry({_WHEEL: _UsdFixedWeightBundle(0.5)})
 
-    engine = run_book_backtest(
+    result = run_book_backtest(
         book_path,
         start="2020-01-01",
         end="2020-01-05",
@@ -112,6 +112,7 @@ def test_usd_quoted_sleeve_trades_in_eur_base_book(tmp_path) -> None:
         registry=registry,
         data_source=_zero_distribution_source(catalog_path),
     )
+    engine = result.engine
 
     fills = [order for order in engine.cache.orders() if order.is_closed]
     assert [order.instrument_id for order in fills] == [_USD_INSTRUMENT_ID]

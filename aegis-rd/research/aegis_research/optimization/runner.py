@@ -96,6 +96,7 @@ def execute_optimization(
     split_result: RunSplitsResult,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    futures_roots: tuple[str, ...] = (),
     distributions: tuple[Distribution, ...] = (),
     currency_conversion: CurrencyConversion | None = None,
     pnl_close: pd.DataFrame | None = None,
@@ -147,6 +148,7 @@ def execute_optimization(
         extractors=extractors,
         fees_by_symbol=fees_by_symbol,
         instrument_bands=instrument_bands,
+        futures_roots=futures_roots,
         distributions=distributions,
         currency_conversion=currency_conversion,
     )

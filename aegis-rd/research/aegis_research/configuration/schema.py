@@ -290,6 +290,10 @@ class PortfolioConfig:
     # is ON by default; a long-only book has no short legs and is unaffected.
     short_borrow_rate: NonNegativeRate = 0.005
     short_rebate_rate: NonNegativeRate = 0.0
+    # Margin interest: flat annual debit rate charged on negative group cash.
+    # Positive cash earns nothing, and explicit 0.0 is the sanctioned mechanics-test
+    # opt-out. Default is the pinned IBKR-IE EUR blended debit rate.
+    margin_interest_rate: NonNegativeRate = 0.0324
     # No schema default — required. Keyword-only so a required field can sit among
     # defaulted ones — every construction site splats **raw anyway.
     gross_cap: PositiveCash = field(kw_only=True)

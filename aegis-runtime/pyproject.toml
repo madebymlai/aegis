@@ -9,6 +9,7 @@ description = "Shared locked-execution runtime for Aegis: runs an Execution Bund
 requires-python = ">=3.12"
 dependencies = [
   "nautilus_trader",
+  "numba>=0.66.0",
   "numpy",
   "pandas",
 ]

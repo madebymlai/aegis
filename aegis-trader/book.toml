@@ -13,16 +13,22 @@ base_currency = "EUR"
 book_vol_target = 0.09
 sleeve_reversion_fraction = 0.5
 
-# Gross cap after risk-budget scaling.  B1 DECISION 2026-07-05 (GH #79): run levered
-# at 1.75 so the vol-targeting can recycle the diversification dividend instead of
-# discarding it.  Measured 2018-2024 vs gross 1.0: vol 5.0% -> 8.4% (93% of target),
-# Sharpe 1.21 -> 1.74 gross-of-funding (the cap had been clipping exposure hardest in
-# calm regimes - unclipping adds a vol-managed timing gain, not just scale), return
-# +6.2% -> +15.3%/yr gross.  Margin funding is NOT modeled by the engine: ~67% of NAV
-# borrowed. Full IBKR EUR rate (ESTR ~1.9% + 1.0-1.5% tier spread ~= 3.0-3.4%) applies to
-# the RETURN correction: ~ -2.0 to -2.6%/yr of NAV => ~+13%/yr net. Only the SPREAD prices
-# into Sharpe (excess-return basis): ~ -0.1 => Sharpe ~1.6 net.  maxDD re-baselined
-# -7.5% -> -10.2% at this gross (operator-accepted with the 1.75).
+# Gross cap after risk-budget scaling.  B1 DECISION 2026-07-05 (GH #79):
+# run levered at 1.75 so vol-targeting can recycle the diversification
+# dividend instead of discarding it.  Engine-financed close-out 2026-07-06
+# (2018-01-01..2024-12-31) measured the levered book at 8.3% vol, Sharpe
+# 1.35, total return +119.7% / +11.9% CAGR after financing, versus the
+# zero-rate control at 8.4% vol, Sharpe 1.74, total return +179.4% /
+# +15.8% CAGR.  Measured drag is therefore -3.91pp/yr and -0.39 Sharpe.
+# This is above the original EUR-rate band, but reconciles to USD funding:
+# reported financing is USD 352,177.95, implying ~USD 967.7k average debit
+# at the pinned 5.13% rate on the 360-day convention.  Positive EUR cash
+# does not offset USD debit under IBKR per-currency netting.
+#
+# Gross-1.0 zero-rate vs financed also moved more than bps (+6.35% -> +4.65%
+# CAGR, Sharpe 1.21 -> 0.92) for the same reason: USD 154,444.01 financing,
+# or ~USD 424.4k average debit.  Treat the old "+13% net" analytic overlay as
+# superseded by these measured per-currency engine numbers.
 max_book_gross = 1.75
 
 # Book caps as fractions of NAV.  Provenance is checked at load against each
@@ -44,6 +50,23 @@ EUR = 1_000_000.0
 [costs]
 commission_pct = 0.0005
 min_commission_per_order = 1.25
+
+# Financing rates pinned 2026-07-06 from IBKR-IE published schedules.
+# Margin interest is charged on net negative cash per currency; positive cash
+# earns no credit interest. EUR 0.0324 is the flat blend for an approx. 670k
+# debit: 3.670% on the first 90k and 3.170% from 90k to 900k. USD 0.0513 is
+# the first-tier USD debit rate. IBKR floors negative benchmark rates at zero,
+# so these pinned rates deliberately overstate 2018-mid-2022 historical EUR
+# funding, when the loan was spread-only.
+[costs.margin_interest]
+EUR = 0.0324
+USD = 0.0513
+
+# Flat general-collateral borrow fee for short market value. This is the IDTL
+# short-borrow carry validated in research; proceeds credit is intentionally
+# omitted because IBKR-IE pays zero rebate below the small-balance threshold.
+[costs.borrow]
+rate = 0.005
 
 # Floor risk keeps a fixed 60/40 trend/carry conviction tilt.
 # atalanta — trend floor pole (IDTL/IGLN/ICOM non-equity crisis substrate).

@@ -678,6 +678,183 @@ def test_short_leg_carry_drops_return_and_long_leg_is_never_charged() -> None:
     assert long_on == pytest.approx(0.0, abs=1e-9)
 
 
+def test_levered_long_book_pays_margin_interest_on_negative_group_cash() -> None:
+    """Guards VBT's leveraged-buy cash semantics: cash drops by full notional."""
+    rate = 0.36
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
+    )
+    close = pd.DataFrame({"A": [100.0, 100.0]}, index=index)
+    allocations = pd.DataFrame({"A": [1.5, np.nan]}, index=index)
+    config = make_portfolio_config(
+        init_cash=10_000.0,
+        fees=0,
+        slippage=0,
+        gross_cap=2.0,
+        net_cap=2.0,
+        direction="longonly",
+        margin_interest_rate=rate,
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+
+    total_return = _total_return(simulate_single_book(close, allocations, config))
+
+    assert total_return == pytest.approx(-0.0015, abs=1e-9)
+
+
+def test_levered_pure_futures_book_pays_no_margin_interest() -> None:
+    """Futures marked value is added back to raw cash before debit interest."""
+    rate = 0.36
+    es = InstrumentId.from_str("ES.XCME")
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
+    )
+    close = pd.DataFrame({es: [100.0, 100.0]}, index=index)
+    allocations = pd.DataFrame({es: [1.5, np.nan]}, index=index)
+    config = make_portfolio_config(
+        init_cash=10_000.0,
+        fees=0,
+        slippage=0,
+        gross_cap=2.0,
+        net_cap=2.0,
+        direction="longonly",
+        margin_interest_rate=rate,
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+
+    total_return = _total_return(
+        simulate_single_book(close, allocations, config, futures_roots=("ES",))
+    )
+
+    assert total_return == pytest.approx(0.0, abs=1e-9)
+
+
+def test_mixed_spot_and_futures_book_charges_only_spot_cash_deficit() -> None:
+    rate = 0.36
+    spy = InstrumentId.from_str("SPY.ARCA")
+    es = InstrumentId.from_str("ES.XCME")
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
+    )
+    close = pd.DataFrame({spy: [100.0, 100.0], es: [100.0, 100.0]}, index=index)
+    allocations = pd.DataFrame({spy: [1.2, np.nan], es: [0.5, np.nan]}, index=index)
+    config = make_portfolio_config(
+        init_cash=10_000.0,
+        fees=0,
+        slippage=0,
+        gross_cap=2.0,
+        net_cap=2.0,
+        direction="longonly",
+        margin_interest_rate=rate,
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+
+    total_return = _total_return(
+        simulate_single_book(close, allocations, config, futures_roots=("ES",))
+    )
+
+    assert total_return == pytest.approx(-0.0006, abs=1e-9)
+
+
+def test_all_false_futures_mask_is_a_margin_interest_noop() -> None:
+    rate = 0.36
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
+    )
+    close = pd.DataFrame({"A": [100.0, 100.0]}, index=index)
+    allocations = pd.DataFrame({"A": [1.5, np.nan]}, index=index)
+    config = make_portfolio_config(
+        init_cash=10_000.0,
+        fees=0,
+        slippage=0,
+        gross_cap=2.0,
+        net_cap=2.0,
+        direction="longonly",
+        margin_interest_rate=rate,
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+
+    mask_free = simulate_single_book(close, allocations, config)
+    all_false_mask = simulate_single_book(
+        close, allocations, config, futures_roots=("ES",)
+    )
+
+    pd.testing.assert_series_equal(mask_free.value, all_false_mask.value)
+
+
+def test_explicit_zero_margin_interest_rate_charges_nothing() -> None:
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
+    )
+    close = pd.DataFrame({"A": [100.0, 100.0]}, index=index)
+    allocations = pd.DataFrame({"A": [1.5, np.nan]}, index=index)
+    config = make_portfolio_config(
+        init_cash=10_000.0,
+        fees=0,
+        slippage=0,
+        gross_cap=2.0,
+        net_cap=2.0,
+        direction="longonly",
+        margin_interest_rate=0.0,
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+
+    pf = simulate_single_book(close, allocations, config)
+    total_return = _total_return(pf)
+
+    assert total_return == pytest.approx(0.0, abs=1e-9)
+
+
+def test_unlevered_champion_shaped_book_is_bit_identical_with_margin_interest_enabled() -> None:
+    index = pd.date_range("2024-01-01", periods=4)
+    close = pd.DataFrame(
+        {
+            "IDTL.LSEETF": [100.0, 101.0, 102.0, 103.0],
+            "IGLN.LSEETF": [100.0, 99.0, 98.0, 97.0],
+            "ICOM.LSEETF": [100.0, 100.5, 101.0, 101.5],
+        },
+        index=index,
+    )
+    allocations = pd.DataFrame(
+        {
+            "IDTL.LSEETF": [0.35, np.nan, np.nan, np.nan],
+            "IGLN.LSEETF": [0.35, np.nan, np.nan, np.nan],
+            "ICOM.LSEETF": [0.20, np.nan, np.nan, np.nan],
+        },
+        index=index,
+    )
+    priced = make_portfolio_config(
+        init_cash=10_000.0,
+        fees=0,
+        slippage=0,
+        gross_cap=1.0,
+        direction="both",
+        margin_interest_rate=0.0324,
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+    zero = make_portfolio_config(
+        init_cash=10_000.0,
+        fees=0,
+        slippage=0,
+        gross_cap=1.0,
+        direction="both",
+        margin_interest_rate=0.0,
+        short_borrow_rate=0.0,
+        short_rebate_rate=0.0,
+    )
+
+    priced_pf = simulate_single_book(close, allocations, priced)
+    zero_pf = simulate_single_book(close, allocations, zero)
+
+    pd.testing.assert_series_equal(priced_pf.value, zero_pf.value)
+
+
 def test_distribution_cash_dividends_places_unmasked_cash_on_ex_date() -> None:
     instrument_id = InstrumentId.from_str("DIV.SIM")
     index = pd.date_range("2024-01-01", periods=4)

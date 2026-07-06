@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from aegis_runtime import gate
+from aegis_runtime import debit_interest, gate
 
 from research.aegis_research import portfolio_callbacks
 from research.aegis_research.portfolios import (
@@ -46,3 +46,9 @@ def test_staticized_cache_key_tracks_shared_gate_source() -> None:
     source_paths = _vbt_staticized_source_paths()
 
     assert Path(gate.__code__.co_filename).resolve() in source_paths
+
+
+def test_staticized_cache_key_tracks_shared_financing_source() -> None:
+    source_paths = _vbt_staticized_source_paths()
+
+    assert Path(debit_interest.__code__.co_filename).resolve() in source_paths
