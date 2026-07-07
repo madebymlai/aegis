@@ -62,8 +62,10 @@ def test_empirical_bayes_ranks_reliable_candidate_over_equal_mean_volatile_one()
     assert result.best.params == {"param": "B"}
     assert result.median.params == {"param": "A"}
     assert result.worst.params == {"param": "C"}
-    assert result.best.score == pytest.approx(0.575)
+    # C (raw 0, shrunk fully toward its own contribution) lands exactly at 0; B
+    # (steady) strictly outscores A (volatile) despite the equal raw mean.
     assert result.worst.score == pytest.approx(0.0)
+    assert result.best.score > result.median.score > result.worst.score
 
 
 def test_three_candidates_pick_best_median_worst_by_rank() -> None:
@@ -294,6 +296,65 @@ def test_two_trading_candidates_with_dead_combos_pick_median_from_trading() -> N
 
 
 # ---------------------------------------------------------------------------
+# Paule-Mandel tau2 and the shrink target
+# ---------------------------------------------------------------------------
+
+
+def test_paule_mandel_reduces_to_homoscedastic_moment() -> None:
+    # With equal within-candidate variances s2, Paule-Mandel reduces to the closed
+    # form tau2 = sample_var - s2. Here Sum (y-ybar)^2 = 10 over 5 points, so
+    # 10/(1+tau2) = k-1 = 4 -> tau2 = 1.5.
+    tau2 = ranking._paule_mandel_tau2([1.0, 2.0, 3.0, 4.0, 5.0], [1.0] * 5)
+
+    assert tau2 == pytest.approx(1.5)
+
+
+def test_paule_mandel_is_zero_when_noise_explains_the_spread() -> None:
+    # Tiny spread, large within-candidate noise: no heterogeneity -> tau2 = 0.
+    tau2 = ranking._paule_mandel_tau2([1.0, 1.1, 0.9], [1.0, 1.0, 1.0])
+
+    assert tau2 == 0.0
+
+
+def test_paule_mandel_solves_its_estimating_equation() -> None:
+    # The defining property: at the returned tau2 the generalised Cochran statistic
+    # Q(tau2) equals its degrees of freedom k-1.
+    raws = [0.2, 0.9, 0.5, 1.4, 0.1]
+    se2 = [0.10, 0.40, 0.05, 0.80, 0.02]
+    tau2 = ranking._paule_mandel_tau2(raws, se2)
+
+    weights = [1.0 / (v + tau2) for v in se2]
+    mu = sum(w * r for w, r in zip(weights, raws)) / sum(weights)
+    q = sum(w * (r - mu) ** 2 for w, r in zip(weights, raws))
+    assert q == pytest.approx(len(raws) - 1, abs=1e-6)
+
+
+def test_shrink_target_zero_pulls_toward_the_no_edge_null() -> None:
+    # Zero target multiplies each raw by its reliability factor (shrunk = a*raw),
+    # so every score keeps the sign of its raw and lies between 0 and the raw.
+    raws = [1.0, 0.6, 0.2]
+    ses = [0.5, 0.1, 0.1]
+
+    scores = ranking._empirical_bayes_scores(raws, ses, target=ranking.ShrinkTarget.ZERO)
+
+    assert all(0.0 <= s <= r for s, r in zip(scores, raws))
+
+
+def test_shrink_target_can_change_the_ranking_order() -> None:
+    # A high-raw high-se candidate vs a lower-raw steady one: shrinking toward the
+    # field mean keeps the high-raw candidate on top, while shrinking toward the
+    # no-edge null lets the steadier candidate win. The target is a real fork.
+    raws = [1.2, 0.7]
+    ses = [0.2**0.5, 0.01**0.5]
+
+    grand = ranking._empirical_bayes_scores(raws, ses, target=ranking.ShrinkTarget.GRAND_MEAN)
+    zero = ranking._empirical_bayes_scores(raws, ses, target=ranking.ShrinkTarget.ZERO)
+
+    assert grand[0] > grand[1]  # field mean -> high-raw candidate leads
+    assert zero[0] < zero[1]  # no-edge null -> steady candidate leads
+
+
+# ---------------------------------------------------------------------------
 # Structure / signature
 # ---------------------------------------------------------------------------
 
@@ -326,11 +387,12 @@ def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
     ]
 
 
-def test_signature_has_no_direction_or_weight_parameter() -> None:
+def test_signature_exposes_shrink_target_and_no_legacy_knobs() -> None:
     params = inspect.signature(select_representative_candidates).parameters
 
-    assert list(params) == ["grid", "verdicts", "metric"]
-    # EB shrinkage is parameter-free: no min_weight knob remains.
+    assert list(params) == ["grid", "verdicts", "metric", "shrink_target"]
+    # The only knob is the explicit shrink target, defaulting to the grand mean.
+    assert params["shrink_target"].default is ranking.ShrinkTarget.GRAND_MEAN
     assert "min_weight" not in params
     assert "min_trades" not in params
     assert "trades_metric" not in params
