@@ -16,6 +16,14 @@ from typing import Any, NamedTuple
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import Verdicts
 
+# Reliability floor for the empirical-Bayes between-candidate variance. When the
+# between-candidate spread does not exceed the estimated noise (a noise-dominated
+# field), ``s2_between`` is held at this small fraction of the median within-
+# candidate noise rather than zero, so ranking still favours reliability instead
+# of collapsing every candidate onto the grand mean. It is a numerical guard, not
+# a tuning knob: any value in a wide range leaves the ranking order unchanged.
+_RELIABILITY_FLOOR = 1e-6
+
 
 @dataclass(frozen=True)
 class EvaluatedCandidate:
@@ -144,13 +152,16 @@ def select_representative_candidates(
             col: _mean([split_metrics[s][col] for s in split_metrics])
             for col in metric_ids
         }
+        # Admissible candidates carry at least one finite ranking score by verdict,
+        # so the None-skipping aggregate of the ranking metric is finite here; reuse
+        # it as the raw score rather than recomputing the same mean.
+        raw = aggregated[metric]
+        assert raw is not None
         ranking_values = [
             value
             for s in split_metrics
             if (value := split_metrics[s][metric]) is not None
         ]
-        # Admissible candidates carry at least one finite ranking score by verdict.
-        raw = sum(ranking_values) / len(ranking_values)
         raw_candidates.append(
             _RawCandidate(params, split_metrics, aggregated, raw, _candidate_se(ranking_values))
         )
@@ -222,11 +233,13 @@ def _empirical_bayes_scores(raws: list[float], ses: list[float | None]) -> list[
     The pull is set by each candidate's across-split reliability: a large ``se``
     (a metric driven by one lucky split) shrinks hard toward the field, undoing
     the winner's curse without penalising a consistently high candidate.
-    ``s2_between`` is the method-of-moments between-candidate variance, computed
-    with the *median* within-candidate variance so a single wildly-varying
-    candidate cannot inflate the noise floor and flatten the whole ranking. When
-    every candidate is perfectly consistent (all ``se`` zero) the shrinkage
-    factor is one and ranking reduces to the raw per-split mean.
+    ``s2_between`` is the method-of-moments between-candidate variance,
+    ``Var(raw) - noise``, where ``noise`` is the *median* squared standard error
+    across candidates — the within-candidate noise on each raw mean. Taking the
+    median rather than the mean keeps a single wildly-varying candidate from
+    inflating the noise term and flattening the whole ranking. When every
+    candidate is perfectly consistent (all ``se`` zero) the shrinkage factor is
+    one and ranking reduces to the raw per-split mean.
     """
     grand = sum(raws) / len(raws)
     known = [s for s in ses if s is not None]
@@ -236,9 +249,7 @@ def _empirical_bayes_scores(raws: list[float], ses: list[float | None]) -> list[
     se2 = [(fallback if s is None else s) ** 2 for s in ses]
     within = median(se2)
     between = pvariance(raws) if len(raws) > 1 else 0.0
-    # Floor keeps a noise-dominated field ranked by reliability-weighted raw
-    # rather than collapsing every candidate onto the grand mean.
-    s2 = max(between - within, 1e-6 * within)
+    s2 = max(between - within, _RELIABILITY_FLOOR * within)
     return [
         grand + (s2 / (s2 + v) if s2 + v > 0.0 else 1.0) * (raw - grand)
         for raw, v in zip(raws, se2, strict=True)

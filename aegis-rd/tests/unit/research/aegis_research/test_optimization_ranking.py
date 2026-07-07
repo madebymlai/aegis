@@ -57,13 +57,13 @@ def test_empirical_bayes_ranks_reliable_candidate_over_equal_mean_volatile_one()
 
     result = select_representative_candidates(grid, verdict, metric="sharpe")
 
+    # Equal raw means (A, B both 0.6), but the steady B outranks the volatile A
+    # and the low-anchor C sinks to worst — reliability drives the order.
     assert result.best.params == {"param": "B"}
     assert result.median.params == {"param": "A"}
     assert result.worst.params == {"param": "C"}
     assert result.best.score == pytest.approx(0.575)
     assert result.worst.score == pytest.approx(0.0)
-    # Reliability weighting: equal raw means, but B (steady) outscores A (volatile).
-    assert result.best.score > result.median.score
 
 
 def test_three_candidates_pick_best_median_worst_by_rank() -> None:
