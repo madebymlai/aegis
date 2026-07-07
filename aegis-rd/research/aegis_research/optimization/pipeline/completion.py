@@ -21,6 +21,7 @@ from research.aegis_research.data import (
 from research.aegis_research.optimization.candidate_evidence import (
     candidate_held_out_headline,
     held_out_warning,
+    separability_warning,
 )
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.candidate_store_identity import (
@@ -122,6 +123,7 @@ def _completion_result(
             "held_out_warning": held_out_warning(
                 candidate_held_out_headline(best_row, metric=ranking_metric)
             ),
+            "separability_warning": separability_warning(execution.get("omnibus")),
             "non_executable_rows": execution.get("non_executable_rows", 0),
             "split_method": config.optimization.split.method if config.optimization else None,
         },

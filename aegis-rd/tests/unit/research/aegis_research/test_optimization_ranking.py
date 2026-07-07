@@ -118,6 +118,31 @@ def test_blocked_ranking_blocks_a_single_lucky_split() -> None:
     assert result.worst.params == {"param": "anchor"}
 
 
+def test_omnibus_summarizes_the_whole_field() -> None:
+    # A clearly separated field: mean ranks 1/2/3 over 2 splits -> chi2 = 4.0.
+    candidates = {"hi": {"s0": 1.0, "s1": 1.0}, "mid": {"s0": 0.5, "s1": 0.5}, "lo": {"s0": 0.1, "s1": 0.1}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+
+    assert result.omnibus is not None
+    assert result.omnibus.n_candidates == 3
+    assert result.omnibus.n_splits == 2
+    assert result.omnibus.chi_square == pytest.approx(4.0)
+
+
+def test_omnibus_is_none_without_a_test() -> None:
+    # A single candidate (or a single split) admits no Friedman omnibus.
+    candidates = {"only": {"s0": 0.3, "s1": 0.9}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+
+    assert result.omnibus is None
+
+
 def test_three_candidates_pick_best_median_worst_by_rank() -> None:
     candidates = {"hi": {"s0": 1.0, "s1": 1.0}, "mid": {"s0": 0.5, "s1": 0.5}, "lo": {"s0": 0.1, "s1": 0.1}}
     grid = _grid(candidates)
@@ -380,6 +405,7 @@ def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
         "excluded_invalid",
         "total_candidates",
         "non_executable_rows",
+        "omnibus",
     ]
 
 

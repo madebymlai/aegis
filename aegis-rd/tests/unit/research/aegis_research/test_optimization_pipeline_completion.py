@@ -112,6 +112,8 @@ def test_completion_returns_result_and_marks_completed(
                 "total": 30,
                 "excluded_invalid": 2,
                 "excluded_degenerate": 3,
+                # tiny chi-square over a wide grid -> field not separable -> warns
+                "omnibus": {"chi_square": 0.5, "n_candidates": 30, "n_splits": 2},
             },
         },
         persist=lambda: None,
@@ -160,6 +162,9 @@ def test_completion_returns_result_and_marks_completed(
     assert opt["excluded_degenerate"] == 3
     # held-out gap 0.01 < threshold 0.10, so no warning
     assert opt["held_out_warning"] is None
+    # the omnibus field is indistinguishable, so the separability warning fires
+    assert opt["separability_warning"] is not None
+    assert "statistically indistinguishable" in opt["separability_warning"]
     # non_executable_rows defaults to 0 when absent from execution evidence
     assert opt["non_executable_rows"] == 0
     # split method flows from config into the report's optimization summary

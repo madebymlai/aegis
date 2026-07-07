@@ -8,18 +8,25 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.stats import f as _f_dist
 
 from research.aegis_research.canonical_json import canonical_json_bytes as _canonical_json_bytes
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
+    FriedmanOmnibus,
     OptimizationResult,
 )
 
 CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v4"
 CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v2"
-OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v3"
+OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v4"
 CANDIDATE_ROLES = ("best", "median", "worst")
 _CANDIDATE_KEY_DIGEST_CHARS = 32
+
+# Omnibus significance level for the separability warning. 0.05 is the field
+# convention (autorank default, Demšar 2006, irace). The p is not gated on for
+# selection and is treated as an optimistic lower bound (few, overlapping folds).
+SEPARABILITY_ALPHA = 0.05
 
 # Selection->held-out gap (ranking-metric units) above which the best candidate is
 # flagged for selection-set optimism. Calibrated for Sharpe-scale ranking metrics
@@ -98,7 +105,63 @@ def result_evidence(result: OptimizationResult) -> dict[str, Any]:
         "excluded_invalid": result.excluded_invalid,
         "excluded_degenerate": result.excluded_degenerate,
         "non_executable_rows": result.non_executable_rows,
+        "omnibus": _omnibus_evidence(result.omnibus),
     }
+
+
+def _omnibus_evidence(omnibus: FriedmanOmnibus | None) -> dict[str, Any] | None:
+    """Serialize the Friedman omnibus statistic (None when no test was possible)."""
+    if omnibus is None:
+        return None
+    return {
+        "chi_square": _optional_float(omnibus.chi_square),
+        "n_candidates": omnibus.n_candidates,
+        "n_splits": omnibus.n_splits,
+    }
+
+
+def separability_warning(
+    omnibus: Mapping[str, Any] | None,
+    *,
+    alpha: float = SEPARABILITY_ALPHA,
+) -> str | None:
+    """Soft warning when the candidate field is not statistically separable, else None.
+
+    Fires only when the Friedman omnibus fails to reject "all candidates equivalent"
+    at ``alpha``. Uses the Iman-Davenport F — ``F = (N-1)chi2 / (N(k-1) - chi2)``,
+    distributed ``F(k-1, (k-1)(N-1))`` — the form practitioners prefer over the
+    over-conservative raw chi-square (Demšar 2006). Returns None when there is no
+    test (fewer than two candidates or splits) or when the field IS separable.
+
+    This is a distinct signal from ``held_out_warning`` (which keys off the *best*
+    candidate's out-of-sample metric): this keys off the *whole field's* separability,
+    so the two can co-fire and read together ("works out-of-sample but not separable
+    from the field"). The p is deliberately not presented as a significance level —
+    with few, overlapping CV folds it is an optimistic lower bound — so the message
+    states the conclusion qualitatively and names the concrete fallback.
+    """
+    if omnibus is None:
+        return None
+    k = int(omnibus["n_candidates"])
+    n = int(omnibus["n_splits"])
+    chi_square = _optional_float(omnibus.get("chi_square"))
+    if k < 2 or n < 2 or chi_square is None:
+        return None
+    denominator = n * (k - 1) - chi_square
+    if denominator <= 0.0:
+        return None  # F -> +inf, p -> 0: the field is unambiguously separable
+    f_stat = (n - 1) * chi_square / denominator
+    p_value = float(_f_dist.sf(f_stat, k - 1, (k - 1) * (n - 1)))
+    if p_value < alpha:
+        return None
+    return (
+        f"the {k} candidates are statistically indistinguishable across the "
+        f"{n} evaluation folds (Friedman test, p~={p_value:.2f}). The rank ordering "
+        "should not drive selection — the top-ranked candidate merely leads a set that "
+        "the data cannot tell apart. Prefer the absolute held-out metric, parsimony, or "
+        "the pinned incumbent when choosing. If the folds are few or overlapping, the "
+        "p-value is optimistic; treat it as a lower bound rather than a significance level."
+    )
 
 
 def _candidate_evidence(candidate: EvaluatedCandidate) -> dict[str, Any]:

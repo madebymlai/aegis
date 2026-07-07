@@ -55,6 +55,24 @@ class EvaluatedCandidate:
 
 
 @dataclass(frozen=True)
+class FriedmanOmnibus:
+    """Friedman omnibus statistic over the whole admissible field.
+
+    ``chi_square`` is the Friedman statistic on the candidates' mean ranks; with the
+    candidate count ``n_candidates`` (k) and split count ``n_splits`` (N) it is enough
+    to derive the Iman-Davenport F and its p-value downstream (the module stays
+    distribution-free and stdlib-only; the F-distribution tail is computed in the
+    reporting layer). It answers "are the candidates separable at all?", never
+    changing the selection — a non-significant omnibus means the ranking is a
+    provisional ordering of a statistically indistinguishable field.
+    """
+
+    chi_square: float
+    n_candidates: int
+    n_splits: int
+
+
+@dataclass(frozen=True)
 class OptimizationResult:
     """Exactly three representative candidates selected by global ranking.
 
@@ -95,6 +113,7 @@ class OptimizationResult:
     excluded_invalid: int = 0
     total_candidates: int = 0
     non_executable_rows: int = 0
+    omnibus: FriedmanOmnibus | None = None
 
 
 def select_representative_candidates(
@@ -191,6 +210,7 @@ def select_representative_candidates(
         excluded_degenerate=verdicts.excluded_degenerate,
         excluded_invalid=verdicts.excluded_invalid,
         total_candidates=verdicts.total,
+        omnibus=_friedman_omnibus(rank_sums, n_splits),
     )
 
 
@@ -267,6 +287,24 @@ def _same_rank(a: float | None, b: float | None) -> bool:
     if a is None or b is None:
         return False
     return a == b
+
+
+def _friedman_omnibus(rank_sums: Mapping[Any, float], n_splits: int) -> FriedmanOmnibus | None:
+    """Friedman chi-square over the field's mean ranks (None when no test is possible).
+
+    Needs at least 2 candidates and 2 splits to be a test. On the candidates' mean
+    ranks ``R_j``, ``chi2 = 12N/(k(k+1)) * (sum_j R_j^2 - k(k+1)^2/4)``; under the null
+    (all candidates equivalent) it is small. Clamped at 0 (a perfectly uniform field
+    lands there up to float error). The Iman-Davenport F and its p-value are derived
+    downstream where the F-distribution is available.
+    """
+    k = len(rank_sums)
+    if k < 2 or n_splits < 2:
+        return None
+    mean_ranks = [total / n_splits for total in rank_sums.values()]
+    sum_sq = sum(r * r for r in mean_ranks)
+    chi_square = 12.0 * n_splits / (k * (k + 1)) * (sum_sq - k * (k + 1) ** 2 / 4.0)
+    return FriedmanOmnibus(chi_square=max(0.0, chi_square), n_candidates=k, n_splits=n_splits)
 
 
 def _mean(values: Iterable[float | None]) -> float | None:

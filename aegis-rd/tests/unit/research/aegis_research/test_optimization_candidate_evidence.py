@@ -12,6 +12,7 @@ from research.aegis_research.optimization.candidate_evidence import (
     candidate_rows_from_result,
     held_out_warning,
     result_evidence,
+    separability_warning,
 )
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -284,8 +285,9 @@ def test_result_evidence_serializes_three_candidates() -> None:
         "excluded_invalid",
         "excluded_degenerate",
         "non_executable_rows",
+        "omnibus",
     }
-    assert evidence["schema_version"] == "optimization_result.v3"
+    assert evidence["schema_version"] == "optimization_result.v4"
     assert evidence["total"] == 12
     assert evidence["excluded_invalid"] == 1
     assert evidence["excluded_degenerate"] == 4
@@ -371,3 +373,24 @@ def test_held_out_warning_silent_without_held_out_data() -> None:
     headline = {"metric": "sharpe_ratio", "held_out": None, "selection": 1.6, "gap": None}
 
     assert held_out_warning(headline) is None
+
+
+def test_separability_warning_fires_when_field_is_indistinguishable() -> None:
+    # Tiny chi-square over 12 candidates x 6 folds -> Iman-Davenport p ~ 1 -> not
+    # separable -> warns, qualitatively and with a hedged (not gated) p.
+    warning = separability_warning({"chi_square": 0.5, "n_candidates": 12, "n_splits": 6})
+
+    assert warning is not None
+    assert "statistically indistinguishable" in warning
+    assert "lower bound" in warning
+
+
+def test_separability_warning_silent_when_field_is_separable() -> None:
+    # Large chi-square -> low p -> the field is separable -> no warning.
+    assert separability_warning({"chi_square": 40.0, "n_candidates": 12, "n_splits": 6}) is None
+
+
+def test_separability_warning_none_without_a_test() -> None:
+    assert separability_warning(None) is None
+    assert separability_warning({"chi_square": 5.0, "n_candidates": 1, "n_splits": 6}) is None
+    assert separability_warning({"chi_square": 5.0, "n_candidates": 5, "n_splits": 1}) is None

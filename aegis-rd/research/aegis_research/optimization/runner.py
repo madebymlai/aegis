@@ -29,6 +29,7 @@ from typing import Any
 import pandas as pd
 from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, InstrumentId
+from aegis_runtime.currency import CurrencyConversion
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
 
@@ -38,7 +39,6 @@ from research.aegis_research.configuration import (
     RankingConfig,
     ReportConfig,
 )
-from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
@@ -273,6 +273,7 @@ def _attach_held_out(
         excluded_invalid=result.excluded_invalid,
         total_candidates=result.total_candidates,
         non_executable_rows=non_executable_rows,
+        omnibus=result.omnibus,
     )
 
 
