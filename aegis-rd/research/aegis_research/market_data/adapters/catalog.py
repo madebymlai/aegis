@@ -175,7 +175,7 @@ def _resolve_definitions(
     data_port: CatalogBackedDataPort,
     requested: tuple[InstrumentId, ...],
 ) -> dict[InstrumentId, Instrument]:
-    loaded = {instrument.id: instrument for instrument in data_port.instruments(requested)}
+    loaded = data_port.instruments(requested)
     missing = [instrument_id.value for instrument_id in requested if instrument_id not in loaded]
     if missing:
         raise MissingInstrumentDefinitionError(

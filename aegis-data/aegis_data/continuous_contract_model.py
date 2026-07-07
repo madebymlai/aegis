@@ -174,7 +174,7 @@ class ContinuousContractModel:
         leg_bars = self._port.read_native_bars(
             RawBarRequest(leg_ids, self._start, end, self._timeframe)
         )
-        leg_instruments = self._port.instruments(leg_ids)
+        leg_instruments = tuple(self._port.instruments(leg_ids).values())
         bars = materialize_continuous_bars(
             future,
             leg_instruments=leg_instruments,

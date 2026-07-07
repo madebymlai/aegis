@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from aegis_data.bar_type import mic_canonical_instrument_id
 from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
 from aegis_data.distributions import Distribution
 from aegis_data.testing import bars
@@ -70,8 +71,12 @@ class _RecordingCatalogPort:
         self.requested_ids = tuple(request.instrument_ids)
         return self.frames
 
-    def instruments(self, instrument_ids: Sequence[InstrumentId]) -> list[Instrument]:
-        return [_definition(instrument_id) for instrument_id in instrument_ids]
+    def instruments(
+        self, instrument_ids: Sequence[InstrumentId]
+    ) -> dict[InstrumentId, Instrument]:
+        return {
+            instrument_id: _definition(instrument_id) for instrument_id in instrument_ids
+        }
 
     def distributions(
         self,
@@ -380,7 +385,8 @@ def _frame(
 
 def _warm_catalog(path: Path, instrument_id: InstrumentId) -> ParquetDataCatalog:
     catalog = ParquetDataCatalog(path)
-    catalog.write_data([_definition(instrument_id)])
+    # IBKR stores the definition under the MIC venue, exactly where the bars land.
+    catalog.write_data([_definition(mic_canonical_instrument_id(instrument_id))])
     frame = _frame(
         pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-03"]),
         close=[100.0, 100.0, 100.0],

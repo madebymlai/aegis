@@ -12,6 +12,7 @@ from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
     CatalogCoverageGapError,
     bars_to_ohlcv,
+    catalog_definitions,
     continuous_root_legs,
 )
 from aegis_data.distributions import (
@@ -192,9 +193,8 @@ class DistributionCoverageService:
             )
 
     def _applicability(self, instrument_id: InstrumentId) -> "_Applicability":
-        definitions = self.catalog.instruments(instrument_ids=[instrument_id.value])
-        if definitions:
-            definition = definitions[0]
+        definition = catalog_definitions(self.catalog, [instrument_id]).get(instrument_id)
+        if definition is not None:
             if isinstance(definition, FuturesContract):
                 return _Applicability.not_applicable()
             return _Applicability.applicable_to(definition)

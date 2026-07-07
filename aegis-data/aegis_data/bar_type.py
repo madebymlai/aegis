@@ -76,13 +76,20 @@ def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
     fetched bars. ``LAST`` is used for tradeables, ``MID`` for cash FX (ADR-0007).
     """
     step, unit = _parse(timeframe)
-    corpus_id = _canonical_instrument_id(instrument_id)
+    corpus_id = mic_canonical_instrument_id(instrument_id)
     return BarType.from_str(
         f"{corpus_id.value}-{step}-{unit}-{_price_type(corpus_id)}-EXTERNAL"
     )
 
 
-def _canonical_instrument_id(instrument_id: InstrumentId) -> InstrumentId:
+def mic_canonical_instrument_id(instrument_id: InstrumentId) -> InstrumentId:
+    """Rewrite a raw IBKR-exchange venue to its ISO MIC (``LSE`` -> ``XLON``).
+
+    The IBKR instrument provider stores definitions and bars under the MIC venue, so a
+    config that names the raw IB exchange must be canonicalized to the MIC before its id
+    is used as a catalog key.  A venue that is already a MIC, or has no IB mapping
+    (``LSEETF``, ``IDEALPRO``, ``ARCA``), is returned unchanged.
+    """
     mic_venue = _mic_venue(instrument_id.venue.value)
     if mic_venue is None:
         return instrument_id
@@ -134,6 +141,7 @@ def timeframe_to_ns(timeframe: str) -> int:
 __all__ = [
     "UnsupportedTimeframeError",
     "continuous_bar_type",
+    "mic_canonical_instrument_id",
     "raw_bar_type",
     "timeframe_to_ns",
 ]

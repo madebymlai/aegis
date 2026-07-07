@@ -13,6 +13,7 @@ from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
+from aegis_data.bar_type import mic_canonical_instrument_id
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
@@ -102,6 +103,18 @@ def _equity(instrument_id: InstrumentId) -> Equity:
         lot_size=Quantity.from_int(1),
         ts_event=0,
         ts_init=0,
+    )
+
+
+def _write_definition(catalog: ParquetDataCatalog, *instrument_ids: InstrumentId) -> None:
+    """Write equity definitions as the IBKR provider stores them — under the MIC venue.
+
+    Bars land under the MIC venue (``raw_bar_type``) and so do definitions
+    (``convert_exchange_to_mic_venue``), so a fixture that writes a definition directly
+    must key it the same way a real fill would.
+    """
+    catalog.write_data(
+        [_equity(mic_canonical_instrument_id(instrument_id)) for instrument_id in instrument_ids]
     )
 
 
@@ -323,6 +336,24 @@ def test_read_native_bars_is_a_warm_read_returning_bars_without_the_coverage_gat
     assert provider.requests == []  # warm read: no coverage gate, no backfill
 
 
+def test_instruments_resolves_ib_exchange_name_against_mic_stored_definition(
+    tmp_path: Path,
+) -> None:
+    # IBKR stores LSE main-market listings under their MIC venue (.XLON), but a config
+    # addresses them by the raw IB exchange name (.LSE). The def boundary normalizes the
+    # query like the bar boundary does, and keys the result by the requested id (#81).
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    catalog.write_data([_equity(_id("BRNT.XLON"))])
+    port = CatalogBackedDataPort(catalog)
+
+    resolved = port.instruments((_id("BRNT.LSE"),))
+
+    assert set(resolved) == {_id("BRNT.LSE")}
+    assert resolved[_id("BRNT.LSE")].id == _id("BRNT.XLON")
+
+
 def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Path) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
@@ -344,7 +375,7 @@ def test_catalog_port_rejects_unverified_distribution_events(tmp_path: Path) -> 
     catalog_path.mkdir()
     catalog = ParquetDataCatalog(catalog_path)
     instrument_id = _id("AAPL.NASDAQ")
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     distribution = Distribution.from_ex_date(
         instrument_id,
         "2024-01-15",
@@ -380,7 +411,7 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
         start="2024-01-01",
         end="2024-01-04",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
     provider = _AdjustedLastProvider(
         {
@@ -437,7 +468,7 @@ def test_catalog_port_reports_verified_distribution_coverage(
         start="2024-01-01",
         end="2024-01-04",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     provider = _AdjustedLastProvider(
         {
             instrument_id: pd.Series(
@@ -489,7 +520,7 @@ def test_catalog_port_verifies_accumulating_distribution_window_as_empty(
         start="2024-01-01",
         end="2024-01-04",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
     provider = _AdjustedLastProvider(
         {
@@ -602,7 +633,7 @@ def test_catalog_port_reports_all_uncovered_distribution_instruments_without_pro
     catalog = ParquetDataCatalog(catalog_path)
     spy = _id("SPY.ARCA")
     hyg = _id("HYG.ARCA")
-    catalog.write_data([_equity(spy), _equity(hyg)])
+    _write_definition(catalog, spy, hyg)
 
     with pytest.raises(CatalogCoverageGapError) as error:
         CatalogBackedDataPort(catalog).distributions(
@@ -622,7 +653,7 @@ def test_catalog_port_rejects_uncovered_distributions_with_bar_only_provider(
     catalog_path.mkdir()
     catalog = ParquetDataCatalog(catalog_path)
     instrument_id = _id("SPY.ARCA")
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
 
     with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
         CatalogBackedDataPort(
@@ -653,7 +684,7 @@ def test_catalog_port_reverifies_seeded_distribution_store_without_duplicates(
         start="2024-01-01",
         end="2024-01-04",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     write_distribution_data(
         catalog,
         [
@@ -710,7 +741,7 @@ def test_catalog_port_backward_extension_persists_early_distribution_events(
         start="2024-01-01",
         end="2024-01-06",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     dates = pd.date_range("2024-01-01", periods=5, freq="D", tz="UTC")
     first_factor = 1.0 / (1.0 - 0.01)
     second_factor = first_factor / (1.0 - 0.02)
@@ -762,7 +793,7 @@ def test_catalog_port_forward_request_clamps_to_stored_bar_frontier(
         start="2024-01-01",
         end="2024-01-04",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
     provider = _AdjustedLastProvider(
         {
@@ -808,7 +839,7 @@ def test_catalog_port_rejects_distribution_gap_with_too_few_trade_closes(
         start="2024-01-01",
         end="2024-01-02",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     provider = _AdjustedLastProvider(
         {
             instrument_id: pd.Series(
@@ -847,7 +878,7 @@ def test_catalog_port_fetches_only_missing_distribution_gap_between_verified_ran
         start="2024-01-01",
         end="2024-01-07",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     provider = _AdjustedLastProvider(
         {
             instrument_id: pd.Series(
@@ -1074,7 +1105,7 @@ def _force_reverify_catalog(
         start="2024-01-01",
         end="2024-01-06",
     )
-    catalog.write_data([_equity(instrument_id)])
+    _write_definition(catalog, instrument_id)
     dates = pd.date_range("2024-01-01", periods=5, freq="D", tz="UTC")
     provider = _AdjustedLastProvider(
         {

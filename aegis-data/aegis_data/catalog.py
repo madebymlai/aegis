@@ -12,7 +12,7 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import FuturesContract
 from platformdirs import user_data_dir
 
-from aegis_data.bar_type import raw_bar_type
+from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
 from aegis_data.distributions import Distribution, query_distribution_data
 from aegis_data.roll import DatedContract
 
@@ -83,6 +83,32 @@ def continuous_root_legs(catalog: Any, root: str) -> tuple[DatedContract, ...]:
     return tuple(sorted(legs, key=lambda leg: leg.last_trade))
 
 
+def catalog_definitions(
+    catalog: Any, instrument_ids: Sequence[InstrumentId]
+) -> dict[InstrumentId, "Instrument"]:
+    """Read stored definitions for *instrument_ids*, keyed by the id the caller asked for.
+
+    The single owner of the definition storage-key rule: the IBKR provider stores each
+    definition under its ISO MIC venue (``convert_exchange_to_mic_venue``), so the query
+    is MIC-canonicalized — ``.LSE`` finds the ``.XLON`` definition — exactly as the bar
+    read is (ADR-0005/#81).  Every definition read (the port, currency conversion,
+    distribution coverage) goes through here so the rule lives in one place, and each hit
+    is keyed back to the caller's authored id.
+    """
+    by_storage_key = {
+        mic_canonical_instrument_id(instrument_id): instrument_id
+        for instrument_id in instrument_ids
+    }
+    found = catalog.instruments(
+        instrument_ids=[storage_key.value for storage_key in by_storage_key]
+    )
+    return {
+        by_storage_key[instrument.id]: instrument
+        for instrument in found
+        if instrument.id in by_storage_key
+    }
+
+
 @dataclass(frozen=True)
 class CatalogBackedDataPort:
     catalog: Any
@@ -122,18 +148,17 @@ class CatalogBackedDataPort:
             for instrument_id in request.instrument_ids
         }
 
-    def instruments(self, instrument_ids: Sequence[InstrumentId]) -> list[Instrument]:
+    def instruments(
+        self, instrument_ids: Sequence[InstrumentId]
+    ) -> dict[InstrumentId, Instrument]:
         """Resolve native instrument definitions for *instrument_ids* from the catalog.
 
         A consumer (e.g. the currency-conversion view) derives each leg's quote
         currency from its resolved definition; this exposes that read as a port
-        method instead of reaching past the port into its catalog.
+        method instead of reaching past the port into its catalog.  MIC-canonicalized
+        and keyed back to the caller's authored id — callers stay on their ids (#81).
         """
-        return list(
-            self.catalog.instruments(
-                instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
-            )
-        )
+        return catalog_definitions(self.catalog, instrument_ids)
 
     def distributions(
         self,
