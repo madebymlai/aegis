@@ -174,7 +174,8 @@ def test_runner_ranks_highest_exposure_best_and_lowest_worst() -> None:
     assert result.best.params == {"alpha": 1.0}
     assert result.worst.params == {"alpha": 0.2}
     assert result.median.params == {"alpha": 0.5}
-    assert result.best.score > result.median.score > result.worst.score
+    # score is the Friedman mean rank: lower is better, so best < median < worst.
+    assert result.best.score < result.median.score < result.worst.score
 
 
 def test_runner_selection_and_held_out_windows_differ() -> None:

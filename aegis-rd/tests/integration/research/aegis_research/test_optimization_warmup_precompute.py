@@ -205,7 +205,9 @@ def test_runner_excludes_candidate_whose_lookback_exceeds_full_history() -> None
     assert result.excluded_invalid <= result.excluded_degenerate
     for candidate in (result.best, result.median, result.worst):
         assert candidate.params == {"window": 2}
-        assert candidate.score > 0.0
+        # the surviving valid candidate buys into the uptrend and profits
+        # (score is now the Friedman mean rank, so assert on the metric itself)
+        assert candidate.metrics["total_return"] > 0.0
 
 
 def test_runner_reports_zero_excluded_invalid_when_all_candidates_are_valid() -> None:
@@ -325,9 +327,11 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
             f"Invalid cash-holder {invalid_params!r} must not appear among "
             f"representatives; got score={candidate.score}, params={candidate.params}"
         )
-        assert candidate.score < 0.0, (
+        # score is now the Friedman mean rank (>= 1), not the metric; the
+        # money-losing property lives in the aggregated total_return.
+        assert candidate.metrics["total_return"] < 0.0, (
             f"valid candidate {candidate.params} should lose money in a downtrend; "
-            f"got score={candidate.score}"
+            f"got total_return={candidate.metrics['total_return']}"
         )
 
     # The Invalid Candidate is counted in the result.
