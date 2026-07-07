@@ -172,7 +172,6 @@ def execute_optimization(
         selection_grid,
         verdicts,
         metric=ranking.metric,
-        min_weight=ranking.min_weight,
     )
 
     param_names = selection_grid.param_levels

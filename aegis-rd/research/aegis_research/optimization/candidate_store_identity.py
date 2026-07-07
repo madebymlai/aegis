@@ -43,7 +43,6 @@ def build_candidate_store_provenance(
         "portfolio": to_builtin(config.portfolio),
         "ranking": {
             "metric": config.ranking.metric,
-            "min_weight": config.ranking.min_weight,
         },
         "metric_registry_fingerprint": metric_registry_fingerprint,
     }

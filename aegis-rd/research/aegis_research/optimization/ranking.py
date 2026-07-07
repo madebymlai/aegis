@@ -1,4 +1,4 @@
-"""Global, min-aware ranking of fixed-parameter candidates across splits.
+"""Global, empirical-Bayes ranking of fixed-parameter candidates across splits.
 
 Consumes the Candidate Grid's mapping read surface directly. Exclusion rules
 live in ``candidate_validity``; ranking consumes the verdict without re-deriving
@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from math import ceil, isnan
-from typing import Any
+from math import ceil, isnan, sqrt
+from statistics import median, pvariance, stdev
+from typing import Any, NamedTuple
 
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import Verdicts
@@ -25,6 +26,9 @@ class EvaluatedCandidate:
     metric was missing or NaN on that split. ``held_out_metrics`` is empty here
     and is populated later by the runner's held-out validation phase. ``metrics``
     carries every metric aggregated (mean across splits, skipping missing values).
+
+    ``score`` is the candidate's empirical-Bayes shrunk ranking score (see
+    :func:`select_representative_candidates`), not a raw per-split mean.
     """
 
     params: Mapping[str, Any]
@@ -77,12 +81,21 @@ class OptimizationResult:
     non_executable_rows: int = 0
 
 
+class _RawCandidate(NamedTuple):
+    """A candidate carried through the two-pass ranking with its raw statistics."""
+
+    params: Mapping[str, Any]
+    selection_metrics: Mapping[Any, Mapping[str, float | None]]
+    metrics: Mapping[str, float | None]
+    raw: float
+    se: float | None
+
+
 def select_representative_candidates(
     grid: CandidateGrid,
     verdicts: Verdicts,
     *,
     metric: str,
-    min_weight: float = 0.3,
 ) -> OptimizationResult:
     """Rank admissible (valid) candidates globally and return best/median/worst.
 
@@ -96,10 +109,16 @@ def select_representative_candidates(
     candidates are scored; excluded candidates (invalid, non_trading,
     under_traded) can never occupy a representative role.
 
-    Each candidate is scored across its splits with a min-aware composite
-    (higher is better)::
-
-        score = (1 - min_weight) * mean(values) + min_weight * min(values)
+    Candidates are scored by **empirical-Bayes shrinkage across the grid**
+    (Efron-Morris / James-Stein), higher is better. Each candidate's raw score is
+    the mean of its ranking metric across splits; that raw score is then shrunk
+    toward the grand mean by a factor set by the candidate's *across-split*
+    reliability (see :func:`_empirical_bayes_scores`). A candidate whose metric
+    swings wildly across splits — e.g. one lucky spike carrying the mean — has a
+    large standard error and is pulled hard toward the field, self-deflating the
+    winner's curse; a steady, consistently high (convex) candidate keeps its raw
+    score. When every candidate is perfectly consistent (zero across-split spread)
+    the shrinkage vanishes and ranking reduces to the raw per-split mean.
 
     best/median/worst are ranked among the ``N`` admissible survivors:
     ``best`` is rank 1, ``median`` is rank ``ceil(N/2)``, and ``worst`` is rank N
@@ -116,34 +135,45 @@ def select_representative_candidates(
 
     param_levels = grid.param_levels
     admissible = verdicts.admissible
-    candidates: list[EvaluatedCandidate] = []
+    raw_candidates: list[_RawCandidate] = []
     for key_tuple, split_metrics in grid.by_candidate():
         if key_tuple not in admissible:
             continue
         params = dict(zip(param_levels, key_tuple, strict=True))
-
         aggregated = {
             col: _mean([split_metrics[s][col] for s in split_metrics])
             for col in metric_ids
         }
-        score = _min_aware_score(
-            (split_metrics[s][metric] for s in split_metrics), min_weight
-        )
-        candidates.append(
-            EvaluatedCandidate(
-                params=params,
-                score=score,
-                selection_metrics=split_metrics,
-                metrics=aggregated,
-            )
+        ranking_values = [
+            value
+            for s in split_metrics
+            if (value := split_metrics[s][metric]) is not None
+        ]
+        # Admissible candidates carry at least one finite ranking score by verdict.
+        raw = sum(ranking_values) / len(ranking_values)
+        raw_candidates.append(
+            _RawCandidate(params, split_metrics, aggregated, raw, _candidate_se(ranking_values))
         )
 
-    if not candidates:
+    if not raw_candidates:
         raise ValueError(
             f"no admissible candidate survived; all {verdicts.total} candidates "
             f"were excluded by the validity verdict (invalid={verdicts.excluded_invalid}, "
             f"non_trading={len(verdicts.non_trading)}, under_traded={len(verdicts.under_traded)})"
         )
+
+    scores = _empirical_bayes_scores(
+        [c.raw for c in raw_candidates], [c.se for c in raw_candidates]
+    )
+    candidates = [
+        EvaluatedCandidate(
+            params=c.params,
+            score=score,
+            selection_metrics=c.selection_metrics,
+            metrics=c.metrics,
+        )
+        for c, score in zip(raw_candidates, scores, strict=True)
+    ]
     ranked = sorted(candidates, key=_rank_key)
     n = len(ranked)
     return OptimizationResult(
@@ -161,7 +191,9 @@ def _rank_key(candidate: EvaluatedCandidate) -> tuple[int, float]:
 
     NaN is a defensive safety net — admissible candidates (the only ones scored)
     should never carry a NaN score — but the guard keeps an unexpected NaN from
-    accidentally outranking real values in descending sort.
+    accidentally outranking real values in descending sort. Equal scores keep
+    parameter-sorted order because ``sorted`` is stable and the candidate list is
+    built in the grid's parameter-sorted iteration order.
     """
     score = candidate.score
     if isnan(score):
@@ -169,15 +201,50 @@ def _rank_key(candidate: EvaluatedCandidate) -> tuple[int, float]:
     return (0, -score)
 
 
-def _min_aware_score(values: Iterable[float | None], min_weight: float) -> float:
-    valid = [v for v in values if v is not None]
-    if not valid:
-        return float("nan")
-    mean = sum(valid) / len(valid)
-    return (1.0 - min_weight) * mean + min_weight * min(valid)
+def _candidate_se(values: list[float]) -> float | None:
+    """Across-split standard error of a candidate's ranking metric.
+
+    ``None`` when fewer than two finite splits exist (no measurable spread);
+    those candidates are treated as maximally unreliable during shrinkage.
+    """
+    if len(values) < 2:
+        return None
+    return stdev(values) / sqrt(len(values))
+
+
+def _empirical_bayes_scores(raws: list[float], ses: list[float | None]) -> list[float]:
+    """Empirical-Bayes posterior means shrinking each raw score toward the grand mean.
+
+    ::
+
+        shrunk = grand + [s2_between / (s2_between + se**2)] * (raw - grand)
+
+    The pull is set by each candidate's across-split reliability: a large ``se``
+    (a metric driven by one lucky split) shrinks hard toward the field, undoing
+    the winner's curse without penalising a consistently high candidate.
+    ``s2_between`` is the method-of-moments between-candidate variance, computed
+    with the *median* within-candidate variance so a single wildly-varying
+    candidate cannot inflate the noise floor and flatten the whole ranking. When
+    every candidate is perfectly consistent (all ``se`` zero) the shrinkage
+    factor is one and ranking reduces to the raw per-split mean.
+    """
+    grand = sum(raws) / len(raws)
+    known = [s for s in ses if s is not None]
+    # A single-finite-split candidate has no measurable spread; treat it as
+    # maximally unreliable (the largest observed se) so it shrinks hardest.
+    fallback = max(known) if known else 0.0
+    se2 = [(fallback if s is None else s) ** 2 for s in ses]
+    within = median(se2)
+    between = pvariance(raws) if len(raws) > 1 else 0.0
+    # Floor keeps a noise-dominated field ranked by reliability-weighted raw
+    # rather than collapsing every candidate onto the grand mean.
+    s2 = max(between - within, 1e-6 * within)
+    return [
+        grand + (s2 / (s2 + v) if s2 + v > 0.0 else 1.0) * (raw - grand)
+        for raw, v in zip(raws, se2, strict=True)
+    ]
 
 
 def _mean(values: Iterable[float | None]) -> float | None:
     valid = [v for v in values if v is not None]
     return sum(valid) / len(valid) if valid else None
-

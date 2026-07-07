@@ -110,9 +110,11 @@ def test_short_financing_rate_defaults_carry_on() -> None:
 
 
 def test_margin_interest_rate_defaults_priced_leverage_on() -> None:
-    config = make_portfolio_config(gross_cap=1.0, direction="longonly")
+    # Construct directly: the factory pins margin_interest_rate explicitly, so it
+    # cannot witness the SCHEMA default this test exists to pin.
+    config = PortfolioConfig(gross_cap=1.0, direction="longonly")
 
-    assert config.margin_interest_rate == 0.0324
+    assert config.margin_interest_rate == 0.0367
 
 
 # ── construction validates (pydantic dataclass) ──────────────────────────────
@@ -306,7 +308,7 @@ def test_portfolio_band_override_key_must_be_in_tradeable_universe(tmp_path: Pat
 def test_resolved_config_carries_margin_interest_default(tmp_path: Path) -> None:
     config = _resolve({"gross_cap": 1.0, "direction": "longonly"}, tmp_path=tmp_path)
 
-    assert config.config.portfolio.margin_interest_rate == 0.0324
+    assert config.config.portfolio.margin_interest_rate == 0.0367
 
 
 def test_portfolio_band_override_key_accepts_configured_future_root(tmp_path: Path) -> None:

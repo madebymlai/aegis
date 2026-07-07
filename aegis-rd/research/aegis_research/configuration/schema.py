@@ -292,8 +292,11 @@ class PortfolioConfig:
     short_rebate_rate: NonNegativeRate = 0.0
     # Margin interest: flat annual debit rate charged on negative group cash.
     # Positive cash earns nothing, and explicit 0.0 is the sanctioned mechanics-test
-    # opt-out. Default is the pinned IBKR-IE EUR blended debit rate.
-    margin_interest_rate: NonNegativeRate = 0.0324
+    # opt-out. Default is the pinned IBKR-IE EUR FIRST-TIER debit rate (BM + 1.5%,
+    # re-pinned 2026-07-06): the live account is ~5k EUR, so every debit sits below
+    # the 90k tier break. Keep in sync with aegis-trader/book.toml
+    # [costs.margin_interest] - same pin, two homes.
+    margin_interest_rate: NonNegativeRate = 0.0367
     # No schema default — required. Keyword-only so a required field can sit among
     # defaulted ones — every construction site splats **raw anyway.
     gross_cap: PositiveCash = field(kw_only=True)
@@ -372,7 +375,6 @@ class RunIndicatorSourceConfig:
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class RankingConfig:
     metric: str
-    min_weight: UnitInterval = 0.3
     min_trades: NonNegativeInt = 0
 
 

@@ -43,18 +43,27 @@ def _all_valid_verdict(
 # ---------------------------------------------------------------------------
 
 
-def test_worked_example_min_aware_penalty_ranks_steady_candidate_first() -> None:
-    # Equal means (0.6) but A has a catastrophic split. Min-aware MUST rank B above A.
-    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}}
+def test_empirical_bayes_ranks_reliable_candidate_over_equal_mean_volatile_one() -> None:
+    # A and B share the same raw mean (0.6) but A swings wildly across splits while
+    # B is steady; C anchors the field low. EB shrinks A hard toward the grand mean
+    # (its big across-split se) and B little, so the reliable B ranks above A.
+    candidates = {
+        "A": {"s0": 1.6, "s1": -0.4},  # raw 0.6, high across-split se
+        "B": {"s0": 0.7, "s1": 0.5},   # raw 0.6, low across-split se
+        "C": {"s0": 0.0, "s1": 0.0},   # raw 0.0, anchors the grand mean
+    }
     grid = _grid(candidates)
     verdict = _all_valid_verdict(candidates)
 
-    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=0.3)
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.best.params == {"param": "B"}
-    assert result.worst.params == {"param": "A"}
-    assert result.best.score == pytest.approx(0.57)
-    assert result.worst.score == pytest.approx(0.30)
+    assert result.median.params == {"param": "A"}
+    assert result.worst.params == {"param": "C"}
+    assert result.best.score == pytest.approx(0.575)
+    assert result.worst.score == pytest.approx(0.0)
+    # Reliability weighting: equal raw means, but B (steady) outscores A (volatile).
+    assert result.best.score > result.median.score
 
 
 def test_three_candidates_pick_best_median_worst_by_rank() -> None:
@@ -93,30 +102,18 @@ def test_two_candidates_median_is_one_of_them() -> None:
     assert result.median.params in ({"param": "x"}, {"param": "y"})
 
 
-def test_min_weight_zero_is_pure_mean_ranking() -> None:
-    # A has the higher mean but a catastrophic split; B is steadier.
-    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.5, "s1": 0.5}}
+def test_all_consistent_candidates_reduce_to_mean_ranking() -> None:
+    # Every candidate is perfectly steady across splits (zero across-split se), so
+    # shrinkage vanishes and EB reduces to ranking by the raw per-split mean.
+    candidates = {"A": {"s0": 0.6, "s1": 0.6}, "B": {"s0": 0.5, "s1": 0.5}}
     grid = _grid(candidates)
     verdict = _all_valid_verdict(candidates)
 
-    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=0.0)
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
-    # Pure mean: A (0.6) beats B (0.5), reversing the min-aware order.
     assert result.best.params == {"param": "A"}
     assert result.best.score == pytest.approx(0.6)
-
-
-def test_min_weight_one_is_pure_min_ranking() -> None:
-    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}}
-    grid = _grid(candidates)
-    verdict = _all_valid_verdict(candidates)
-
-    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=1.0)
-
-    # Pure min: B (0.5) beats A (-0.4).
-    assert result.best.params == {"param": "B"}
-    assert result.best.score == pytest.approx(0.5)
-    assert result.worst.score == pytest.approx(-0.4)
+    assert result.worst.score == pytest.approx(0.5)
 
 
 def test_nan_split_is_skipped_in_score_and_aggregate() -> None:
@@ -329,11 +326,12 @@ def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
     ]
 
 
-def test_signature_has_no_direction_parameter() -> None:
+def test_signature_has_no_direction_or_weight_parameter() -> None:
     params = inspect.signature(select_representative_candidates).parameters
 
-    assert list(params) == ["grid", "verdicts", "metric", "min_weight"]
-    assert params["min_weight"].default == 0.3
+    assert list(params) == ["grid", "verdicts", "metric"]
+    # EB shrinkage is parameter-free: no min_weight knob remains.
+    assert "min_weight" not in params
     assert "min_trades" not in params
     assert "trades_metric" not in params
     assert "direction" not in params

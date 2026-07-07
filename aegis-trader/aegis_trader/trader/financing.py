@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import pandas as pd
 from nautilus_trader.backtest.config import SimulationModuleConfig
 from nautilus_trader.backtest.modules import SimulationModule
-from nautilus_trader.model.enums import AccountType, PositionSide
+from nautilus_trader.model.enums import AccountType, PositionSide, PriceType
 from nautilus_trader.model.objects import Currency, Money
 
 from aegis_runtime import debit_interest
@@ -141,10 +141,18 @@ class FinancingModule(SimulationModule):
         return position.quantity.as_double() * self._mark_price(position.instrument_id)
 
     def _mark_price(self, instrument_id) -> float:
+        # This module is registered on ONE venue; positions on other venues have no
+        # book on self.exchange, so the shared cache is the authoritative mark source.
         book = self.exchange.get_book(instrument_id)
         price = None
         if book is not None:
             price = book.midpoint() or book.best_bid_price() or book.best_ask_price()
+        if price is None:
+            for price_type in (PriceType.LAST, PriceType.MID):
+                cached = self.exchange.cache.price(instrument_id, price_type)
+                if cached is not None:
+                    price = cached
+                    break
         if price is None:  # pragma: no cover - backtest bars should leave an EOD mark
             raise RuntimeError(f"cannot accrue financing without mark for {instrument_id}")
         return float(price)

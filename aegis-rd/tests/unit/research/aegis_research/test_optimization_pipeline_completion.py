@@ -153,7 +153,6 @@ def test_completion_returns_result_and_marks_completed(
 
     opt = result["optimization"]
     assert opt["ranking_metric"] == "total_return"
-    assert opt["min_weight"] == 0.3
     assert opt["split_count"] == 2
     assert opt["candidate_count"] == 3
     assert opt["total"] == 30

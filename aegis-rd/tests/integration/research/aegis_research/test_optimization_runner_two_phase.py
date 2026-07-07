@@ -87,7 +87,7 @@ def _optimization() -> OptimizationConfig:
     )
 
 
-def _run(alphas: list[float], *, min_weight: float = 0.3) -> OptimizationResult:
+def _run(alphas: list[float]) -> OptimizationResult:
     optimization = _optimization()
     return execute_optimization(
         close=_uptrend_close(),
@@ -96,7 +96,7 @@ def _run(alphas: list[float], *, min_weight: float = 0.3) -> OptimizationResult:
         optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=min_weight),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
@@ -129,7 +129,7 @@ def test_runner_consumes_the_injected_splitter_and_addresses_sets_by_role() -> N
         optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=dataclasses.replace(split_result, splitter=recorder),
     )
@@ -321,7 +321,7 @@ def _run_warmup(windows: list[int]) -> OptimizationResult:
         optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
@@ -424,7 +424,7 @@ def test_runner_records_exact_non_executable_rows_for_purged_kfold_split() -> No
         optimization=purged_opt,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(close.index, purged_opt.split),
     )

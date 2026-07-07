@@ -38,6 +38,8 @@ If most strategies are short skew, then stacking several of them - however diffe
 
 Real diversification needs both signs of skew on the book. That turns net portfolio skew into the quantity to manage: the short-skew sleeve is the income engine that compounds in quiet markets, and the long-skew sleeve is the drawdown payer that buys the income engine time to recover when the premium it was collecting comes due. Ilmanen's prescription to harvest many low-correlated premia in parallel - value, carry, trend, volatility, defensive - is the same idea written as a shopping list.[^ilm] The sharper statement is that the list collapses to two poles plus one decision: how much net negative skew the portfolio can carry and still survive its worst week.
 
+The two-pole picture is the top-level axis, not the whole construction: the long-gamma pole is itself a sub-budget across several convex sources (slow trend, the fast-gap tail sleeve, an off-axis winter-cover complement), because hedge quality is multi-axis and no single convex mechanism spans it - how to size that sub-budget by left-tail correlation rather than standalone Sharpe is [[budgeting-the-divergent-seat]].
+
 ## The price of convexity, and how to pay less
 
 Convexity is not free. The long-gamma sleeve bleeds in calm markets because that bleed *is* the premium the short-gamma sleeve is collecting; they are the two ledger entries of one transaction. The practical mistake is to buy convexity by renting it from the same market that prices the insurance.

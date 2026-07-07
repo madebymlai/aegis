@@ -231,41 +231,17 @@ def test_run_ranking_accepts_vbt_metric_id(tmp_path: Path) -> None:
     assert len(resolved.manifest()["metric_registry_fingerprint"]) == 64
 
 
-def test_run_ranking_defaults_min_weight_to_canonical_value(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config()
-
-    resolved = resolve_run_config(raw, component_registry=registry)
-
-    assert resolved.config.ranking.min_weight == 0.3
-
-
-def test_run_ranking_accepts_explicit_min_weight(tmp_path: Path) -> None:
+def test_run_ranking_rejects_removed_min_weight(tmp_path: Path) -> None:
+    # EB shrinkage is parameter-free: the retired min_weight knob is an unknown
+    # field and must be rejected rather than silently ignored.
     registry = _component_registry(tmp_path)
     raw = _run_config()
     raw["ranking"] = {"metric": "sharpe_ratio", "min_weight": 0.5}
 
-    resolved = resolve_run_config(raw, component_registry=registry)
-
-    assert resolved.config.ranking.min_weight == 0.5
-
-
-@pytest.mark.parametrize("bad_min_weight", [-0.1, 1.5, "0.3", True])
-def test_run_ranking_rejects_out_of_range_min_weight(
-    tmp_path: Path,
-    bad_min_weight: object,
-) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config()
-    raw["ranking"] = {
-        "metric": "sharpe_ratio",
-        "min_weight": bad_min_weight,
-    }
-
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert "ranking.min_weight" in str(error.value)
+    assert "min_weight" in str(error.value)
 
 
 def test_run_ranking_defaults_min_trades_to_zero(tmp_path: Path) -> None:

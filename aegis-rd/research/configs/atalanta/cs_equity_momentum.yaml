@@ -1,0 +1,80 @@
+name: atalanta_cs_equity_momentum
+schema_version: 10
+output_dir: runs/atalanta/cs-equity-momentum
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# ATALANTA CROSS-SECTIONAL EQUITY MOMENTUM - the convex NON-TREND complement (issue #80, trend-Q1
+# hyp #2, [[where-convexity-still-lives]]). NOT a seat challenger; a candidate leg to COMBINE with
+# the keystone champion to lift the combined trend_convexity_payoff at |corr| < 0.10.
+#
+# THESIS: cross-sectional (relative-strength) momentum on a homogeneous, CORRELATED equity cross-
+# section is convex via DISPERSION and dollar-neutral (~0 net equity beta), so it is near-orthogonal
+# to the champion's rates/gold/commodity time-series trend. The SAME country ETFs run through the
+# champion's time-series engine would just stack directional equity beta from the decayed corner;
+# the convexity lives in the cross-sectional SIGNAL, not the assets.
+#
+# BASKET (locked by direct IBKR gateway probe 2026-07-06, all UCITS stockType=ETF, USD/LSEETF):
+#   v1 (this config): CSPX (US), CJPU (Japan), IEMU (eurozone), CCAU (Canada), IDBZ (Brazil).
+#   FINDING (backfill 2026-07-06): the EM USD lines are YOUNG - CSKR (Korea) starts ~2020, CMXC
+#   (Mexico) ~2021 - because iShares added the USD-quoted line late; the GBP/EUR primary lines are
+#   older. With missing_index: drop the youngest truncates the window, so v1 keeps the 5 full-2018
+#   names (DM + Brazil). A fuller EM basket needs the GBP primary lines (EUR/GBP FX) - the v2 path.
+# The commodity-SECTOR basket first considered is OUT: those products are ETCs (debt securities),
+# not UCITS - they fail the seat's substrate rule (probe confirmed stockType=ETC on the LSE venue).
+#
+# FEE RISK (the pre-registered first kill axis): a dollar-neutral book on EUR 5k with a EUR 1.25/
+# order floor is the destsweep fill-storm hazard. n_side=2 holds only 4 positions and the wide
+# 0.15 drift band damps turnover; the fill count / fee drag is read BEFORE the convexity verdict.
+# EUR base: the 8 USD legs convert via EUR/USD (gateway up for the first fill; warm thereafter).
+data:
+  base_currency: EUR
+  instruments: [CSPX.LSEETF, CJPU.LSEETF, IEMU.LSEETF, CCAU.LSEETF, IDBZ.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress
+    params:
+      lookback: 126
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+
+strategy:
+  id: atalanta.cross_sectional_momentum
+  params:
+    n_side: 2
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 1.0
+  net_cap: 0.5   # dollar-neutral by construction; loose net ceiling absorbs inverse-vol drift
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.15
+  band_down: 0.15
+
+ranking:
+  metric: trend_convexity_payoff
+
+report:
+  metrics: [market_beta, market_convexity, quarterly_return_skew, crash_day_return, crisis_quarter_return, bear_market_beta]
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

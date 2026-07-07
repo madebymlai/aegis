@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "d3b62658fdc0a95b66f411e816a94611dd2f80954f29fddda43b5019cd10cc2b",
+      "hash": "2ecabf7e9187c27fdb62f491ea69585c5ab62a161c621ad3416f4848bd69baf4",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 62766,
+      "size": 62797,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -124,6 +124,7 @@
       "fx_conversion_cost": 0.0,
       "gross_cap": 1.0,
       "init_cash": 10000.0,
+      "margin_interest_rate": 0.0367,
       "net_cap": 1.0,
       "short_borrow_rate": 0.005,
       "short_rebate_rate": 0.0,
@@ -131,12 +132,12 @@
     },
     "ranking": {
       "metric": "sharpe_ratio",
-      "min_trades": 0,
-      "min_weight": 0.3
+      "min_trades": 0
     },
     "report": {
       "freq": "1D",
       "max_oos_drawdown": 0.35,
+      "metrics": [],
       "min_oos_sharpe": 0.5,
       "min_oos_trades": 5,
       "year_freq": "252D"
@@ -154,7 +155,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "b3c4fb7237872eec397041b5d21ab4b7baa6721169939802146b9ec97138f52e",
+      "resolved_config_hash": "dbd34df702cfa263528e8d8c6db3851079d1f00ba00918ccee6e15cc7e4cf878",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",
@@ -187,40 +188,40 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_42d839e5389186682aa4271a0f075906",
+          "candidate_key": "cand_d559d1e896d6a6fd105301547e1c3545",
           "held_out_metrics": {
             "0": {
-              "max_dd": 17.34401245220589,
-              "sharpe_ratio": -0.9377433414033789,
-              "total_fees_paid": 512.2184438987694,
-              "total_return": -9.838460942922067,
-              "total_trades": 325.0,
-              "win_rate": 44.30769230769231
+              "max_dd": 15.157424798610176,
+              "sharpe_ratio": -0.7326579309847735,
+              "total_fees_paid": 499.36091206030403,
+              "total_return": -8.02918769889231,
+              "total_trades": 254.0,
+              "win_rate": 47.63779527559055
             },
             "1": {
-              "max_dd": 8.601433864303099,
-              "sharpe_ratio": 0.4650609577868894,
-              "total_fees_paid": 382.00815212236967,
-              "total_return": 3.8789721500852496,
-              "total_trades": 262.0,
-              "win_rate": 61.45038167938931
+              "max_dd": 12.679237757123108,
+              "sharpe_ratio": -0.3305314919897692,
+              "total_fees_paid": 475.4116959440444,
+              "total_return": -3.5979741995108103,
+              "total_trades": 280.0,
+              "win_rate": 52.5
             },
             "2": {
-              "max_dd": 10.76309426737263,
-              "sharpe_ratio": 0.16934354154441397,
-              "total_fees_paid": 444.32816076415565,
-              "total_return": 1.237171297674147,
-              "total_trades": 270.0,
-              "win_rate": 56.2962962962963
+              "max_dd": 10.73389761727933,
+              "sharpe_ratio": 0.3646952338698732,
+              "total_fees_paid": 441.07266139180354,
+              "total_return": 3.3933085964948324,
+              "total_trades": 231.0,
+              "win_rate": 60.60606060606061
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 12.236180194627208,
-            "sharpe_ratio": -0.1011129473573585,
-            "total_fees_paid": 446.1849189284315,
-            "total_return": -1.57410583172089,
-            "total_trades": 285.6666666666667,
-            "win_rate": 54.01812342779264
+            "max_dd": 12.856853391004206,
+            "sharpe_ratio": -0.23283139636822317,
+            "total_fees_paid": 471.94842313205066,
+            "total_return": -2.744617767302762,
+            "total_trades": 255.0,
+            "win_rate": 53.58128529388372
           },
           "identity": {
             "book_settings": {
@@ -236,6 +237,7 @@
               "fx_conversion_cost": 0.0,
               "gross_cap": 1.0,
               "init_cash": 10000.0,
+              "margin_interest_rate": 0.0367,
               "net_cap": 1.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
@@ -427,9 +429,9 @@
             },
             "hidden_params": {},
             "params": {
-              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
-              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
             },
             "schema_version": "candidate_identity.v4",
             "source_identity": {
@@ -503,46 +505,46 @@
             }
           },
           "metrics": {
-            "max_dd": 10.085390787581789,
-            "sharpe_ratio": -0.14241504307534547,
-            "total_fees_paid": 345.5258397781988,
-            "total_return": -1.9523038960683445,
-            "total_trades": 222.33333333333334,
-            "win_rate": 53.586024662360536
+            "max_dd": 10.697217267501811,
+            "sharpe_ratio": -0.24518800241770558,
+            "total_fees_paid": 374.36520172927203,
+            "total_return": -3.3681656060950282,
+            "total_trades": 202.0,
+            "win_rate": 51.89778361038204
           },
           "params": {
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
           },
           "rank": 1,
           "role": "best",
           "schema_version": "candidate_eval_row.v2",
-          "score": -0.3810135325737555,
+          "score": -0.4447114169762934,
           "selection_metrics": {
             "0": {
-              "max_dd": 4.310726046236379,
-              "sharpe_ratio": 0.0454372543904531,
-              "total_fees_paid": 142.35092331345749,
-              "total_return": 0.1025771046317834,
-              "total_trades": 80.0,
-              "win_rate": 55.00000000000001
+              "max_dd": 4.254989246772145,
+              "sharpe_ratio": 0.32762541572142595,
+              "total_fees_paid": 148.3229971834676,
+              "total_return": 1.5226650801180348,
+              "total_trades": 72.0,
+              "win_rate": 55.55555555555556
             },
             "1": {
-              "max_dd": 17.34401245220589,
-              "sharpe_ratio": -0.9377433414033789,
-              "total_fees_paid": 512.2184438987694,
-              "total_return": -9.838460942922067,
-              "total_trades": 325.0,
-              "win_rate": 44.30769230769231
+              "max_dd": 15.157424798610176,
+              "sharpe_ratio": -0.7326579309847735,
+              "total_fees_paid": 499.36091206030403,
+              "total_return": -8.02918769889231,
+              "total_trades": 254.0,
+              "win_rate": 47.63779527559055
             },
             "2": {
-              "max_dd": 8.601433864303099,
-              "sharpe_ratio": 0.4650609577868894,
-              "total_fees_paid": 382.00815212236967,
-              "total_return": 3.8789721500852496,
-              "total_trades": 262.0,
-              "win_rate": 61.45038167938931
+              "max_dd": 12.679237757123108,
+              "sharpe_ratio": -0.3305314919897692,
+              "total_fees_paid": 475.4116959440444,
+              "total_return": -3.5979741995108103,
+              "total_trades": 280.0,
+              "win_rate": 52.5
             }
           },
           "store_namespace": {
@@ -551,40 +553,40 @@
           }
         },
         {
-          "candidate_key": "cand_334bc9119a1d550e757bc8b1f958a140",
+          "candidate_key": "cand_4dea1fbf167e87fd470ff2197227ddaf",
           "held_out_metrics": {
             "0": {
-              "max_dd": 24.329296546012046,
-              "sharpe_ratio": -1.426237291215558,
-              "total_fees_paid": 525.1667527777109,
-              "total_return": -15.982858522098464,
-              "total_trades": 299.0,
-              "win_rate": 40.802675585284284
+              "max_dd": 13.653152634086062,
+              "sharpe_ratio": -0.6295044391982465,
+              "total_fees_paid": 516.6834068958792,
+              "total_return": -7.446521465686811,
+              "total_trades": 179.0,
+              "win_rate": 46.927374301675975
             },
             "1": {
-              "max_dd": 8.53246369045635,
-              "sharpe_ratio": 0.6077086615831506,
-              "total_fees_paid": 495.12918756269545,
-              "total_return": 5.5108870680653546,
-              "total_trades": 319.0,
-              "win_rate": 63.322884012539184
+              "max_dd": 23.498101903097012,
+              "sharpe_ratio": -1.6685395123938818,
+              "total_fees_paid": 609.3998650532941,
+              "total_return": -17.394373313975102,
+              "total_trades": 231.0,
+              "win_rate": 45.887445887445885
             },
             "2": {
-              "max_dd": 8.651810163535655,
-              "sharpe_ratio": 0.1452173038696819,
-              "total_fees_paid": 573.018617412325,
-              "total_return": 1.0211851600157273,
-              "total_trades": 269.0,
-              "win_rate": 52.78810408921933
+              "max_dd": 10.461633346995058,
+              "sharpe_ratio": 0.8075291148976248,
+              "total_fees_paid": 460.93609434831586,
+              "total_return": 8.76083559960154,
+              "total_trades": 176.0,
+              "win_rate": 53.40909090909091
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 13.837856800001349,
-            "sharpe_ratio": -0.22443710858757518,
-            "total_fees_paid": 531.1048525842438,
-            "total_return": -3.150262098005794,
-            "total_trades": 295.6666666666667,
-            "win_rate": 52.3045545623476
+            "max_dd": 15.87096262805938,
+            "sharpe_ratio": -0.49683827889816784,
+            "total_fees_paid": 529.0064554324964,
+            "total_return": -5.360019726686791,
+            "total_trades": 195.33333333333334,
+            "win_rate": 48.741303699404256
           },
           "identity": {
             "book_settings": {
@@ -600,6 +602,372 @@
               "fx_conversion_cost": 0.0,
               "gross_cap": 1.0,
               "init_cash": 10000.0,
+              "margin_interest_rate": 0.0367,
+              "net_cap": 1.0,
+              "short_borrow_rate": 0.005,
+              "short_rebate_rate": 0.0,
+              "slippage": 0.0005
+            },
+            "data_identity": {
+              "array_contract": {
+                "component_required_arrays": [
+                  "Close"
+                ],
+                "configured_arrays": [
+                  "Open",
+                  "High",
+                  "Low",
+                  "Close",
+                  "Volume"
+                ],
+                "contract_required_arrays": [
+                  "Close",
+                  "Open"
+                ],
+                "missing_required_arrays": [],
+                "pipeline_required_arrays": [
+                  "Close",
+                  "Open"
+                ]
+              },
+              "effective_arrays": [
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume"
+              ],
+              "index_end": "2026-10-04 00:00:00+00:00",
+              "index_evidence": {
+                "raw_index_end": "2026-10-04 00:00:00+00:00",
+                "raw_index_has_duplicates": false,
+                "raw_index_monotonic_increasing": true,
+                "raw_index_start": "2024-01-01 00:00:00+00:00",
+                "raw_index_timezone": "UTC",
+                "raw_rows": 1008,
+                "source": "nautilus_catalog"
+              },
+              "index_start": "2024-01-01 00:00:00+00:00",
+              "instrument_ids": [
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('SPY.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('IWM.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('EEM.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('TLT.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('GLD.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('DBC.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('VNQ.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('UUP.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('XLE.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('XLU.XNAS')"
+                }
+              ],
+              "loaded_arrays": [
+                "Close",
+                "High",
+                "Low",
+                "Open",
+                "Volume"
+              ],
+              "requested_instrument_ids": [
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('SPY.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('IWM.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('EEM.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('TLT.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('GLD.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('DBC.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('VNQ.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('UUP.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('XLE.XNAS')"
+                },
+                {
+                  "kind": "repr",
+                  "type": "nautilus_trader.model.identifiers.InstrumentId",
+                  "value": "InstrumentId('XLU.XNAS')"
+                }
+              ],
+              "rows": 1008,
+              "schema_version": "candidate_data_identity.v2",
+              "source_metadata": {
+                "catalog_path": "catalog",
+                "continuous_root_ids": [],
+                "exchange_instrument_ids": [],
+                "requested_instrument_ids": [
+                  "SPY.XNAS",
+                  "IWM.XNAS",
+                  "EEM.XNAS",
+                  "TLT.XNAS",
+                  "GLD.XNAS",
+                  "DBC.XNAS",
+                  "VNQ.XNAS",
+                  "UUP.XNAS",
+                  "XLE.XNAS",
+                  "XLU.XNAS"
+                ],
+                "tradeable_instrument_ids": [
+                  "SPY.XNAS",
+                  "IWM.XNAS",
+                  "EEM.XNAS",
+                  "TLT.XNAS",
+                  "GLD.XNAS",
+                  "DBC.XNAS",
+                  "VNQ.XNAS",
+                  "UUP.XNAS",
+                  "XLE.XNAS",
+                  "XLU.XNAS"
+                ]
+              },
+              "timeframe": "1D"
+            },
+            "hidden_params": {},
+            "params": {
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+            },
+            "schema_version": "candidate_identity.v4",
+            "source_identity": {
+              "consumed_outputs": [
+                "momentum_score",
+                "realized_vol"
+              ],
+              "fixed_candidate_param": null,
+              "indicators": [
+                {
+                  "family": "indicators",
+                  "fixed_params": {
+                    "h1": 15,
+                    "h2": 42,
+                    "h3": 100,
+                    "h4": 200,
+                    "w1": 8.0,
+                    "w2": 4.0,
+                    "w3": 3.0,
+                    "w4": 2.0
+                  },
+                  "id": "tests.momentum_score",
+                  "param_keys": {},
+                  "param_mode": "fixed",
+                  "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
+                  "slot": "tests.momentum_score",
+                  "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
+                  "version": "1.0.0"
+                },
+                {
+                  "family": "indicators",
+                  "fixed_params": {
+                    "window": 20
+                  },
+                  "id": "tests.realized_vol",
+                  "param_keys": {},
+                  "param_mode": "fixed",
+                  "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
+                  "slot": "tests.realized_vol",
+                  "source_hash": "f1e612ebfa50dfc44dc3714a77d7afbd7b86156804a4e884adfdc87591a929a1",
+                  "version": "1.0.0"
+                }
+              ],
+              "kind": "component_composition",
+              "param_names": [
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e",
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175"
+              ],
+              "produced_outputs": [
+                "momentum_score",
+                "realized_vol"
+              ],
+              "schema_version": "component_optimization_source.v2",
+              "source": "component",
+              "strategy": {
+                "family": "strategies",
+                "fixed_params": {},
+                "id": "tests.momentum_rotator",
+                "param_keys": {
+                  "tau": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175",
+                  "top_k_defensive": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
+                  "top_n": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e"
+                },
+                "param_mode": "parameterized",
+                "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
+                "slot": "strategy",
+                "source_hash": "b12d37eee6cd546791a0c0534278cd92041030d7af3c0477a617a18fd435b6ae",
+                "version": "1.0.0"
+              }
+            }
+          },
+          "metrics": {
+            "max_dd": 13.416645387816727,
+            "sharpe_ratio": -0.4526914711686721,
+            "total_fees_paid": 414.4356778194445,
+            "total_return": -6.570403442497178,
+            "total_trades": 150.0,
+            "win_rate": 48.43827339637395
+          },
+          "params": {
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+          },
+          "rank": 2,
+          "role": "median",
+          "schema_version": "candidate_eval_row.v2",
+          "score": -0.44471189083521234,
+          "selection_metrics": {
+            "0": {
+              "max_dd": 3.098681626267108,
+              "sharpe_ratio": 0.9399695380861119,
+              "total_fees_paid": 117.22376150916017,
+              "total_return": 5.129684452170378,
+              "total_trades": 40.0,
+              "win_rate": 52.5
+            },
+            "1": {
+              "max_dd": 13.653152634086062,
+              "sharpe_ratio": -0.6295044391982465,
+              "total_fees_paid": 516.6834068958792,
+              "total_return": -7.446521465686811,
+              "total_trades": 179.0,
+              "win_rate": 46.927374301675975
+            },
+            "2": {
+              "max_dd": 23.498101903097012,
+              "sharpe_ratio": -1.6685395123938818,
+              "total_fees_paid": 609.3998650532941,
+              "total_return": -17.394373313975102,
+              "total_trades": 231.0,
+              "win_rate": 45.887445887445885
+            }
+          },
+          "store_namespace": {
+            "kind": "local_sqlite",
+            "path": ".candidate_store/candidates.sqlite3"
+          }
+        },
+        {
+          "candidate_key": "cand_8dcf2e1c61df054c856f7a122f9d9f10",
+          "held_out_metrics": {
+            "0": {
+              "max_dd": 22.898667842061005,
+              "sharpe_ratio": -1.22911504626321,
+              "total_fees_paid": 512.7783731132242,
+              "total_return": -14.221398761464338,
+              "total_trades": 234.0,
+              "win_rate": 41.88034188034188
+            },
+            "1": {
+              "max_dd": 11.792850187282156,
+              "sharpe_ratio": -0.16200877524856871,
+              "total_fees_paid": 579.5102603669585,
+              "total_return": -2.1293054042748234,
+              "total_trades": 281.0,
+              "win_rate": 51.60142348754449
+            },
+            "2": {
+              "max_dd": 8.62199748543503,
+              "sharpe_ratio": 0.3394998521167859,
+              "total_fees_paid": 566.6211517092037,
+              "total_return": 3.376578259596031,
+              "total_trades": 232.0,
+              "win_rate": 56.03448275862068
+            }
+          },
+          "held_out_metrics_mean": {
+            "max_dd": 14.437838504926063,
+            "sharpe_ratio": -0.3505413231316643,
+            "total_fees_paid": 552.9699283964621,
+            "total_return": -4.324708635381043,
+            "total_trades": 249.0,
+            "win_rate": 49.838749375502346
+          },
+          "identity": {
+            "book_settings": {
+              "band_destination_fraction": 1.0,
+              "band_down": 0.0,
+              "band_overrides": {},
+              "band_up": 0.0,
+              "base_currency": "EUR",
+              "direction": "longonly",
+              "fees": 0.0005,
+              "fill_timing": "next_close",
+              "fixed_fee": 0.0,
+              "fx_conversion_cost": 0.0,
+              "gross_cap": 1.0,
+              "init_cash": 10000.0,
+              "margin_interest_rate": 0.0367,
               "net_cap": 1.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
@@ -793,7 +1161,7 @@
             "params": {
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
               "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
-              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
             },
             "schema_version": "candidate_identity.v4",
             "source_identity": {
@@ -867,410 +1235,46 @@
             }
           },
           "metrics": {
-            "max_dd": 12.629108018112753,
-            "sharpe_ratio": -0.48689778164367864,
-            "total_fees_paid": 388.502218551843,
-            "total_return": -4.641797154442308,
-            "total_trades": 229.66666666666666,
-            "win_rate": 51.60992831664538
+            "max_dd": 13.041834917687659,
+            "sharpe_ratio": -0.5847793558689774,
+            "total_fees_paid": 413.33962345481945,
+            "total_return": -6.144208343520847,
+            "total_trades": 192.33333333333334,
+            "win_rate": 48.90252393983309
           },
           "params": {
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
-          },
-          "rank": 2,
-          "role": "median",
-          "schema_version": "candidate_eval_row.v2",
-          "score": -0.7686996345152424,
-          "selection_metrics": {
-            "0": {
-              "max_dd": 5.025563817869861,
-              "sharpe_ratio": -0.6421647152986285,
-              "total_fees_paid": 145.21071531512257,
-              "total_return": -3.453420009293816,
-              "total_trades": 71.0,
-              "win_rate": 50.70422535211267
-            },
-            "1": {
-              "max_dd": 24.329296546012046,
-              "sharpe_ratio": -1.426237291215558,
-              "total_fees_paid": 525.1667527777109,
-              "total_return": -15.982858522098464,
-              "total_trades": 299.0,
-              "win_rate": 40.802675585284284
-            },
-            "2": {
-              "max_dd": 8.53246369045635,
-              "sharpe_ratio": 0.6077086615831506,
-              "total_fees_paid": 495.12918756269545,
-              "total_return": 5.5108870680653546,
-              "total_trades": 319.0,
-              "win_rate": 63.322884012539184
-            }
-          },
-          "store_namespace": {
-            "kind": "local_sqlite",
-            "path": ".candidate_store/candidates.sqlite3"
-          }
-        },
-        {
-          "candidate_key": "cand_e6f2baf50eb23075f4580b480728a50c",
-          "held_out_metrics": {
-            "0": {
-              "max_dd": 21.879582100013717,
-              "sharpe_ratio": -1.0981432385490384,
-              "total_fees_paid": 525.8399310143731,
-              "total_return": -13.559462831561081,
-              "total_trades": 157.0,
-              "win_rate": 41.40127388535032
-            },
-            "1": {
-              "max_dd": 23.467150318536678,
-              "sharpe_ratio": -1.4579875045660868,
-              "total_fees_paid": 717.1581945003381,
-              "total_return": -15.973959150408263,
-              "total_trades": 220.0,
-              "win_rate": 45.909090909090914
-            },
-            "2": {
-              "max_dd": 8.34292908726334,
-              "sharpe_ratio": 0.7421943343649329,
-              "total_fees_paid": 585.1851206084048,
-              "total_return": 8.698702755798058,
-              "total_trades": 171.0,
-              "win_rate": 50.877192982456144
-            }
-          },
-          "held_out_metrics_mean": {
-            "max_dd": 17.896553835271245,
-            "sharpe_ratio": -0.6046454695833975,
-            "total_fees_paid": 609.394415374372,
-            "total_return": -6.944906408723763,
-            "total_trades": 182.66666666666666,
-            "win_rate": 46.0625192589658
-          },
-          "identity": {
-            "book_settings": {
-              "band_destination_fraction": 1.0,
-              "band_down": 0.0,
-              "band_overrides": {},
-              "band_up": 0.0,
-              "base_currency": "EUR",
-              "direction": "longonly",
-              "fees": 0.0005,
-              "fill_timing": "next_close",
-              "fixed_fee": 0.0,
-              "fx_conversion_cost": 0.0,
-              "gross_cap": 1.0,
-              "init_cash": 10000.0,
-              "net_cap": 1.0,
-              "short_borrow_rate": 0.005,
-              "short_rebate_rate": 0.0,
-              "slippage": 0.0005
-            },
-            "data_identity": {
-              "array_contract": {
-                "component_required_arrays": [
-                  "Close"
-                ],
-                "configured_arrays": [
-                  "Open",
-                  "High",
-                  "Low",
-                  "Close",
-                  "Volume"
-                ],
-                "contract_required_arrays": [
-                  "Close",
-                  "Open"
-                ],
-                "missing_required_arrays": [],
-                "pipeline_required_arrays": [
-                  "Close",
-                  "Open"
-                ]
-              },
-              "effective_arrays": [
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume"
-              ],
-              "index_end": "2026-10-04 00:00:00+00:00",
-              "index_evidence": {
-                "raw_index_end": "2026-10-04 00:00:00+00:00",
-                "raw_index_has_duplicates": false,
-                "raw_index_monotonic_increasing": true,
-                "raw_index_start": "2024-01-01 00:00:00+00:00",
-                "raw_index_timezone": "UTC",
-                "raw_rows": 1008,
-                "source": "nautilus_catalog"
-              },
-              "index_start": "2024-01-01 00:00:00+00:00",
-              "instrument_ids": [
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('SPY.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('IWM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('EEM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('TLT.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('GLD.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('DBC.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('VNQ.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('UUP.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLE.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLU.XNAS')"
-                }
-              ],
-              "loaded_arrays": [
-                "Close",
-                "High",
-                "Low",
-                "Open",
-                "Volume"
-              ],
-              "requested_instrument_ids": [
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('SPY.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('IWM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('EEM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('TLT.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('GLD.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('DBC.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('VNQ.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('UUP.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLE.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLU.XNAS')"
-                }
-              ],
-              "rows": 1008,
-              "schema_version": "candidate_data_identity.v2",
-              "source_metadata": {
-                "catalog_path": "catalog",
-                "continuous_root_ids": [],
-                "exchange_instrument_ids": [],
-                "requested_instrument_ids": [
-                  "SPY.XNAS",
-                  "IWM.XNAS",
-                  "EEM.XNAS",
-                  "TLT.XNAS",
-                  "GLD.XNAS",
-                  "DBC.XNAS",
-                  "VNQ.XNAS",
-                  "UUP.XNAS",
-                  "XLE.XNAS",
-                  "XLU.XNAS"
-                ],
-                "tradeable_instrument_ids": [
-                  "SPY.XNAS",
-                  "IWM.XNAS",
-                  "EEM.XNAS",
-                  "TLT.XNAS",
-                  "GLD.XNAS",
-                  "DBC.XNAS",
-                  "VNQ.XNAS",
-                  "UUP.XNAS",
-                  "XLE.XNAS",
-                  "XLU.XNAS"
-                ]
-              },
-              "timeframe": "1D"
-            },
-            "hidden_params": {},
-            "params": {
-              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
-              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
-              "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
-            },
-            "schema_version": "candidate_identity.v4",
-            "source_identity": {
-              "consumed_outputs": [
-                "momentum_score",
-                "realized_vol"
-              ],
-              "fixed_candidate_param": null,
-              "indicators": [
-                {
-                  "family": "indicators",
-                  "fixed_params": {
-                    "h1": 15,
-                    "h2": 42,
-                    "h3": 100,
-                    "h4": 200,
-                    "w1": 8.0,
-                    "w2": 4.0,
-                    "w3": 3.0,
-                    "w4": 2.0
-                  },
-                  "id": "tests.momentum_score",
-                  "param_keys": {},
-                  "param_mode": "fixed",
-                  "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
-                  "slot": "tests.momentum_score",
-                  "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
-                  "version": "1.0.0"
-                },
-                {
-                  "family": "indicators",
-                  "fixed_params": {
-                    "window": 20
-                  },
-                  "id": "tests.realized_vol",
-                  "param_keys": {},
-                  "param_mode": "fixed",
-                  "repo_relative_path": "research/components/indicators/tests_realized_vol.py",
-                  "slot": "tests.realized_vol",
-                  "source_hash": "f1e612ebfa50dfc44dc3714a77d7afbd7b86156804a4e884adfdc87591a929a1",
-                  "version": "1.0.0"
-                }
-              ],
-              "kind": "component_composition",
-              "param_names": [
-                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e",
-                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
-                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175"
-              ],
-              "produced_outputs": [
-                "momentum_score",
-                "realized_vol"
-              ],
-              "schema_version": "component_optimization_source.v2",
-              "source": "component",
-              "strategy": {
-                "family": "strategies",
-                "fixed_params": {},
-                "id": "tests.momentum_rotator",
-                "param_keys": {
-                  "tau": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175",
-                  "top_k_defensive": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665",
-                  "top_n": "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e"
-                },
-                "param_mode": "parameterized",
-                "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
-                "slot": "strategy",
-                "source_hash": "b12d37eee6cd546791a0c0534278cd92041030d7af3c0477a617a18fd435b6ae",
-                "version": "1.0.0"
-              }
-            }
-          },
-          "metrics": {
-            "max_dd": 16.277165147143887,
-            "sharpe_ratio": -0.7608370679354649,
-            "total_fees_paid": 453.1442089391766,
-            "total_return": -9.365764672402113,
-            "total_trades": 136.33333333333334,
-            "win_rate": 44.72845493148041
-          },
-          "params": {
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
           },
           "rank": 3,
           "role": "worst",
           "schema_version": "candidate_eval_row.v2",
-          "score": -0.9699821989246513,
+          "score": -0.4447121822053679,
           "selection_metrics": {
             "0": {
-              "max_dd": 3.4847630228812654,
-              "sharpe_ratio": 0.2736195393087304,
-              "total_fees_paid": 116.43450130281852,
-              "total_return": 1.4361279647630045,
-              "total_trades": 32.0,
-              "win_rate": 46.875
+              "max_dd": 4.433986723719818,
+              "sharpe_ratio": -0.3632142460951536,
+              "total_fees_paid": 147.73023688427554,
+              "total_return": -2.0819208648233802,
+              "total_trades": 62.0,
+              "win_rate": 53.2258064516129
             },
             "1": {
-              "max_dd": 21.879582100013717,
-              "sharpe_ratio": -1.0981432385490384,
-              "total_fees_paid": 525.8399310143731,
-              "total_return": -13.559462831561081,
-              "total_trades": 157.0,
-              "win_rate": 41.40127388535032
+              "max_dd": 22.898667842061005,
+              "sharpe_ratio": -1.22911504626321,
+              "total_fees_paid": 512.7783731132242,
+              "total_return": -14.221398761464338,
+              "total_trades": 234.0,
+              "win_rate": 41.88034188034188
             },
             "2": {
-              "max_dd": 23.467150318536678,
-              "sharpe_ratio": -1.4579875045660868,
-              "total_fees_paid": 717.1581945003381,
-              "total_return": -15.973959150408263,
-              "total_trades": 220.0,
-              "win_rate": 45.909090909090914
+              "max_dd": 11.792850187282156,
+              "sharpe_ratio": -0.16200877524856871,
+              "total_fees_paid": 579.5102603669585,
+              "total_return": -2.1293054042748234,
+              "total_trades": 281.0,
+              "win_rate": 51.60142348754449
             }
           },
           "store_namespace": {
@@ -1326,76 +1330,76 @@
         "best": {
           "held_out_metrics": {
             "0": {
-              "max_dd": 17.34401245220589,
-              "sharpe_ratio": -0.9377433414033789,
-              "total_fees_paid": 512.2184438987694,
-              "total_return": -9.838460942922067,
-              "total_trades": 325.0,
-              "win_rate": 44.30769230769231
+              "max_dd": 15.157424798610176,
+              "sharpe_ratio": -0.7326579309847735,
+              "total_fees_paid": 499.36091206030403,
+              "total_return": -8.02918769889231,
+              "total_trades": 254.0,
+              "win_rate": 47.63779527559055
             },
             "1": {
-              "max_dd": 8.601433864303099,
-              "sharpe_ratio": 0.4650609577868894,
-              "total_fees_paid": 382.00815212236967,
-              "total_return": 3.8789721500852496,
-              "total_trades": 262.0,
-              "win_rate": 61.45038167938931
+              "max_dd": 12.679237757123108,
+              "sharpe_ratio": -0.3305314919897692,
+              "total_fees_paid": 475.4116959440444,
+              "total_return": -3.5979741995108103,
+              "total_trades": 280.0,
+              "win_rate": 52.5
             },
             "2": {
-              "max_dd": 10.76309426737263,
-              "sharpe_ratio": 0.16934354154441397,
-              "total_fees_paid": 444.32816076415565,
-              "total_return": 1.237171297674147,
-              "total_trades": 270.0,
-              "win_rate": 56.2962962962963
+              "max_dd": 10.73389761727933,
+              "sharpe_ratio": 0.3646952338698732,
+              "total_fees_paid": 441.07266139180354,
+              "total_return": 3.3933085964948324,
+              "total_trades": 231.0,
+              "win_rate": 60.60606060606061
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 12.236180194627208,
-            "sharpe_ratio": -0.1011129473573585,
-            "total_fees_paid": 446.1849189284315,
-            "total_return": -1.57410583172089,
-            "total_trades": 285.6666666666667,
-            "win_rate": 54.01812342779264
+            "max_dd": 12.856853391004206,
+            "sharpe_ratio": -0.23283139636822317,
+            "total_fees_paid": 471.94842313205066,
+            "total_return": -2.744617767302762,
+            "total_trades": 255.0,
+            "win_rate": 53.58128529388372
           },
           "metrics": {
-            "max_dd": 10.085390787581789,
-            "sharpe_ratio": -0.14241504307534547,
-            "total_fees_paid": 345.5258397781988,
-            "total_return": -1.9523038960683445,
-            "total_trades": 222.33333333333334,
-            "win_rate": 53.586024662360536
+            "max_dd": 10.697217267501811,
+            "sharpe_ratio": -0.24518800241770558,
+            "total_fees_paid": 374.36520172927203,
+            "total_return": -3.3681656060950282,
+            "total_trades": 202.0,
+            "win_rate": 51.89778361038204
           },
           "params": {
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
           },
-          "score": -0.3810135325737555,
+          "score": -0.4447114169762934,
           "selection_metrics": {
             "0": {
-              "max_dd": 4.310726046236379,
-              "sharpe_ratio": 0.0454372543904531,
-              "total_fees_paid": 142.35092331345749,
-              "total_return": 0.1025771046317834,
-              "total_trades": 80.0,
-              "win_rate": 55.00000000000001
+              "max_dd": 4.254989246772145,
+              "sharpe_ratio": 0.32762541572142595,
+              "total_fees_paid": 148.3229971834676,
+              "total_return": 1.5226650801180348,
+              "total_trades": 72.0,
+              "win_rate": 55.55555555555556
             },
             "1": {
-              "max_dd": 17.34401245220589,
-              "sharpe_ratio": -0.9377433414033789,
-              "total_fees_paid": 512.2184438987694,
-              "total_return": -9.838460942922067,
-              "total_trades": 325.0,
-              "win_rate": 44.30769230769231
+              "max_dd": 15.157424798610176,
+              "sharpe_ratio": -0.7326579309847735,
+              "total_fees_paid": 499.36091206030403,
+              "total_return": -8.02918769889231,
+              "total_trades": 254.0,
+              "win_rate": 47.63779527559055
             },
             "2": {
-              "max_dd": 8.601433864303099,
-              "sharpe_ratio": 0.4650609577868894,
-              "total_fees_paid": 382.00815212236967,
-              "total_return": 3.8789721500852496,
-              "total_trades": 262.0,
-              "win_rate": 61.45038167938931
+              "max_dd": 12.679237757123108,
+              "sharpe_ratio": -0.3305314919897692,
+              "total_fees_paid": 475.4116959440444,
+              "total_return": -3.5979741995108103,
+              "total_trades": 280.0,
+              "win_rate": 52.5
             }
           }
         },
@@ -1404,76 +1408,76 @@
         "median": {
           "held_out_metrics": {
             "0": {
-              "max_dd": 24.329296546012046,
-              "sharpe_ratio": -1.426237291215558,
-              "total_fees_paid": 525.1667527777109,
-              "total_return": -15.982858522098464,
-              "total_trades": 299.0,
-              "win_rate": 40.802675585284284
+              "max_dd": 13.653152634086062,
+              "sharpe_ratio": -0.6295044391982465,
+              "total_fees_paid": 516.6834068958792,
+              "total_return": -7.446521465686811,
+              "total_trades": 179.0,
+              "win_rate": 46.927374301675975
             },
             "1": {
-              "max_dd": 8.53246369045635,
-              "sharpe_ratio": 0.6077086615831506,
-              "total_fees_paid": 495.12918756269545,
-              "total_return": 5.5108870680653546,
-              "total_trades": 319.0,
-              "win_rate": 63.322884012539184
+              "max_dd": 23.498101903097012,
+              "sharpe_ratio": -1.6685395123938818,
+              "total_fees_paid": 609.3998650532941,
+              "total_return": -17.394373313975102,
+              "total_trades": 231.0,
+              "win_rate": 45.887445887445885
             },
             "2": {
-              "max_dd": 8.651810163535655,
-              "sharpe_ratio": 0.1452173038696819,
-              "total_fees_paid": 573.018617412325,
-              "total_return": 1.0211851600157273,
-              "total_trades": 269.0,
-              "win_rate": 52.78810408921933
+              "max_dd": 10.461633346995058,
+              "sharpe_ratio": 0.8075291148976248,
+              "total_fees_paid": 460.93609434831586,
+              "total_return": 8.76083559960154,
+              "total_trades": 176.0,
+              "win_rate": 53.40909090909091
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 13.837856800001349,
-            "sharpe_ratio": -0.22443710858757518,
-            "total_fees_paid": 531.1048525842438,
-            "total_return": -3.150262098005794,
-            "total_trades": 295.6666666666667,
-            "win_rate": 52.3045545623476
+            "max_dd": 15.87096262805938,
+            "sharpe_ratio": -0.49683827889816784,
+            "total_fees_paid": 529.0064554324964,
+            "total_return": -5.360019726686791,
+            "total_trades": 195.33333333333334,
+            "win_rate": 48.741303699404256
           },
           "metrics": {
-            "max_dd": 12.629108018112753,
-            "sharpe_ratio": -0.48689778164367864,
-            "total_fees_paid": 388.502218551843,
-            "total_return": -4.641797154442308,
-            "total_trades": 229.66666666666666,
-            "win_rate": 51.60992831664538
+            "max_dd": 13.416645387816727,
+            "sharpe_ratio": -0.4526914711686721,
+            "total_fees_paid": 414.4356778194445,
+            "total_return": -6.570403442497178,
+            "total_trades": 150.0,
+            "win_rate": 48.43827339637395
           },
           "params": {
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
           },
-          "score": -0.7686996345152424,
+          "score": -0.44471189083521234,
           "selection_metrics": {
             "0": {
-              "max_dd": 5.025563817869861,
-              "sharpe_ratio": -0.6421647152986285,
-              "total_fees_paid": 145.21071531512257,
-              "total_return": -3.453420009293816,
-              "total_trades": 71.0,
-              "win_rate": 50.70422535211267
+              "max_dd": 3.098681626267108,
+              "sharpe_ratio": 0.9399695380861119,
+              "total_fees_paid": 117.22376150916017,
+              "total_return": 5.129684452170378,
+              "total_trades": 40.0,
+              "win_rate": 52.5
             },
             "1": {
-              "max_dd": 24.329296546012046,
-              "sharpe_ratio": -1.426237291215558,
-              "total_fees_paid": 525.1667527777109,
-              "total_return": -15.982858522098464,
-              "total_trades": 299.0,
-              "win_rate": 40.802675585284284
+              "max_dd": 13.653152634086062,
+              "sharpe_ratio": -0.6295044391982465,
+              "total_fees_paid": 516.6834068958792,
+              "total_return": -7.446521465686811,
+              "total_trades": 179.0,
+              "win_rate": 46.927374301675975
             },
             "2": {
-              "max_dd": 8.53246369045635,
-              "sharpe_ratio": 0.6077086615831506,
-              "total_fees_paid": 495.12918756269545,
-              "total_return": 5.5108870680653546,
-              "total_trades": 319.0,
-              "win_rate": 63.322884012539184
+              "max_dd": 23.498101903097012,
+              "sharpe_ratio": -1.6685395123938818,
+              "total_fees_paid": 609.3998650532941,
+              "total_return": -17.394373313975102,
+              "total_trades": 231.0,
+              "win_rate": 45.887445887445885
             }
           }
         },
@@ -1483,76 +1487,76 @@
         "worst": {
           "held_out_metrics": {
             "0": {
-              "max_dd": 21.879582100013717,
-              "sharpe_ratio": -1.0981432385490384,
-              "total_fees_paid": 525.8399310143731,
-              "total_return": -13.559462831561081,
-              "total_trades": 157.0,
-              "win_rate": 41.40127388535032
+              "max_dd": 22.898667842061005,
+              "sharpe_ratio": -1.22911504626321,
+              "total_fees_paid": 512.7783731132242,
+              "total_return": -14.221398761464338,
+              "total_trades": 234.0,
+              "win_rate": 41.88034188034188
             },
             "1": {
-              "max_dd": 23.467150318536678,
-              "sharpe_ratio": -1.4579875045660868,
-              "total_fees_paid": 717.1581945003381,
-              "total_return": -15.973959150408263,
-              "total_trades": 220.0,
-              "win_rate": 45.909090909090914
+              "max_dd": 11.792850187282156,
+              "sharpe_ratio": -0.16200877524856871,
+              "total_fees_paid": 579.5102603669585,
+              "total_return": -2.1293054042748234,
+              "total_trades": 281.0,
+              "win_rate": 51.60142348754449
             },
             "2": {
-              "max_dd": 8.34292908726334,
-              "sharpe_ratio": 0.7421943343649329,
-              "total_fees_paid": 585.1851206084048,
-              "total_return": 8.698702755798058,
-              "total_trades": 171.0,
-              "win_rate": 50.877192982456144
+              "max_dd": 8.62199748543503,
+              "sharpe_ratio": 0.3394998521167859,
+              "total_fees_paid": 566.6211517092037,
+              "total_return": 3.376578259596031,
+              "total_trades": 232.0,
+              "win_rate": 56.03448275862068
             }
           },
           "held_out_metrics_mean": {
-            "max_dd": 17.896553835271245,
-            "sharpe_ratio": -0.6046454695833975,
-            "total_fees_paid": 609.394415374372,
-            "total_return": -6.944906408723763,
-            "total_trades": 182.66666666666666,
-            "win_rate": 46.0625192589658
+            "max_dd": 14.437838504926063,
+            "sharpe_ratio": -0.3505413231316643,
+            "total_fees_paid": 552.9699283964621,
+            "total_return": -4.324708635381043,
+            "total_trades": 249.0,
+            "win_rate": 49.838749375502346
           },
           "metrics": {
-            "max_dd": 16.277165147143887,
-            "sharpe_ratio": -0.7608370679354649,
-            "total_fees_paid": 453.1442089391766,
-            "total_return": -9.365764672402113,
-            "total_trades": 136.33333333333334,
-            "win_rate": 44.72845493148041
+            "max_dd": 13.041834917687659,
+            "sharpe_ratio": -0.5847793558689774,
+            "total_fees_paid": 413.33962345481945,
+            "total_return": -6.144208343520847,
+            "total_trades": 192.33333333333334,
+            "win_rate": 48.90252393983309
           },
           "params": {
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
             "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
-            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+            "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
           },
-          "score": -0.9699821989246513,
+          "score": -0.4447121822053679,
           "selection_metrics": {
             "0": {
-              "max_dd": 3.4847630228812654,
-              "sharpe_ratio": 0.2736195393087304,
-              "total_fees_paid": 116.43450130281852,
-              "total_return": 1.4361279647630045,
-              "total_trades": 32.0,
-              "win_rate": 46.875
+              "max_dd": 4.433986723719818,
+              "sharpe_ratio": -0.3632142460951536,
+              "total_fees_paid": 147.73023688427554,
+              "total_return": -2.0819208648233802,
+              "total_trades": 62.0,
+              "win_rate": 53.2258064516129
             },
             "1": {
-              "max_dd": 21.879582100013717,
-              "sharpe_ratio": -1.0981432385490384,
-              "total_fees_paid": 525.8399310143731,
-              "total_return": -13.559462831561081,
-              "total_trades": 157.0,
-              "win_rate": 41.40127388535032
+              "max_dd": 22.898667842061005,
+              "sharpe_ratio": -1.22911504626321,
+              "total_fees_paid": 512.7783731132242,
+              "total_return": -14.221398761464338,
+              "total_trades": 234.0,
+              "win_rate": 41.88034188034188
             },
             "2": {
-              "max_dd": 23.467150318536678,
-              "sharpe_ratio": -1.4579875045660868,
-              "total_fees_paid": 717.1581945003381,
-              "total_return": -15.973959150408263,
-              "total_trades": 220.0,
-              "win_rate": 45.909090909090914
+              "max_dd": 11.792850187282156,
+              "sharpe_ratio": -0.16200877524856871,
+              "total_fees_paid": 579.5102603669585,
+              "total_return": -2.1293054042748234,
+              "total_trades": 281.0,
+              "win_rate": 51.60142348754449
             }
           }
         }

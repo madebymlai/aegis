@@ -128,7 +128,7 @@ def _run(windows: list[int], *, optimization: OptimizationConfig | None = None) 
         optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
@@ -314,7 +314,7 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
         optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(close.index, optimization.split),
     )

@@ -1,6 +1,6 @@
 """Ranking validation — structural tests + thin coordinator net.
 
-Structural checks (min_weight ∈ 0..1, min_trades non-negative, extra keys)
+Structural checks (min_trades non-negative, extra keys rejected)
 live on the ``RankingConfig`` pydantic dataclass.  Metric membership is
 covered at the registry cross-check seam in ``test_cross_checks.py``; this
 file keeps the thin coordinator net (structural wording through resolve,
@@ -82,7 +82,6 @@ def _get_issues(path: str, error: ValidationError) -> list[dict[str, Any]]:
 def test_ranking_construction_accepts_valid_defaults() -> None:
     config = _RANKING_ADAPTER.validate_python({"metric": "total_return"})
     assert config.metric == "total_return"
-    assert config.min_weight == 0.3
     assert config.min_trades == 0
 
 
@@ -94,24 +93,12 @@ def test_ranking_construction_requires_metric() -> None:
     assert metric_errors[0]["msg"] == "Field required"
 
 
-def test_ranking_construction_accepts_custom_min_weight() -> None:
-    config = _RANKING_ADAPTER.validate_python({"metric": "sharpe_ratio", "min_weight": 0.5})
-    assert config.min_weight == 0.5
-
-
-def test_ranking_construction_rejects_min_weight_out_of_range() -> None:
+def test_ranking_construction_rejects_unknown_field() -> None:
+    # EB shrinkage is parameter-free; the removed min_weight knob is now an
+    # unknown field and must be rejected (extra="forbid"), not silently accepted.
     with pytest.raises(ValidationError) as e:
-        _RANKING_ADAPTER.validate_python({"metric": "sharpe_ratio", "min_weight": 1.5})
-    mw_errors = _get_issues("min_weight", e.value)
-    assert mw_errors[0]["msg"] == "Input should be less than or equal to 1"
-
-
-def test_ranking_construction_rejects_bool_min_weight() -> None:
-    """pydantic strict float rejects bool (bool is a subclass of int)."""
-    with pytest.raises(ValidationError) as e:
-        _RANKING_ADAPTER.validate_python({"metric": "sharpe_ratio", "min_weight": True})
-    mw_errors = _get_issues("min_weight", e.value)
-    assert mw_errors, "bool min_weight should be rejected"
+        _RANKING_ADAPTER.validate_python({"metric": "sharpe_ratio", "min_weight": 0.5})
+    assert _get_issues("min_weight", e.value), "removed min_weight must be rejected"
 
 
 def test_ranking_construction_rejects_negative_min_trades() -> None:
@@ -171,11 +158,11 @@ def test_ranking_unknown_metric_plus_unknown_key_co_reports(tmp_path: Path) -> N
 
 
 def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:
-    """A single structural problem (min_weight out of range) produces exactly one issue."""
+    """A single structural problem (min_trades out of range) produces exactly one issue."""
     with pytest.raises(ConfigValidationError) as e:
-        _resolve({"metric": "total_return", "min_weight": 1.5}, tmp_path=tmp_path)
-    mw_issues = [i for i in e.value.issues if i.path == "ranking.min_weight"]
-    assert len(mw_issues) == 1, f"expected 1 issue for min_weight, got {len(mw_issues)}"
+        _resolve({"metric": "total_return", "min_trades": -1}, tmp_path=tmp_path)
+    mt_issues = [i for i in e.value.issues if i.path == "ranking.min_trades"]
+    assert len(mt_issues) == 1, f"expected 1 issue for min_trades, got {len(mt_issues)}"
 
 
 # ── report.metrics: opt-in extra reported metrics beside the ranker ────────────

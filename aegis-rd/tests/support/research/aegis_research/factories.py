@@ -108,7 +108,7 @@ def make_portfolio_config(**overrides: Any) -> PortfolioConfig:
         "direction": "longonly",
         "short_borrow_rate": 0.005,
         "short_rebate_rate": 0.0,
-        "margin_interest_rate": 0.0324,
+        "margin_interest_rate": 0.0367,
         # Mechanics tests assert exact same-bar order dates/prices; pin same_close so they
         # stay shift-free. Production PortfolioConfig defaults to next_close; tests that
         # exercise realistic fills set fill_timing explicitly.
@@ -155,7 +155,6 @@ def make_ranking_config(**overrides: Any) -> RankingConfig:
     """Return a RankingConfig with valid defaults, overridden by any kwargs."""
     defaults: dict[str, Any] = {
         "metric": "total_return",
-        "min_weight": 0.3,
         "min_trades": 0,
     }
     defaults.update(overrides)

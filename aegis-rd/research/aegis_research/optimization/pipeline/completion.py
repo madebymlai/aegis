@@ -68,7 +68,6 @@ def run_pipeline_completion(
             array_contract=array_contract,
             ranking={
                 "metric": config.ranking.metric,
-                "min_weight": config.ranking.min_weight,
             },
             portfolio=to_builtin(config.portfolio),
             optimization=to_builtin(config.optimization),
@@ -115,7 +114,6 @@ def _completion_result(
         "candidate_store_path": str(store_path),
         "optimization": {
             "ranking_metric": ranking_metric,
-            "min_weight": config.ranking.min_weight,
             "split_count": split_result.metadata["n_splits"],
             "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
             "total": execution.get("total", 0),

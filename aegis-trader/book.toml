@@ -37,9 +37,11 @@ max_book_gross = 1.75
 gross_cap = 2.0
 net_cap = 2.0
 
-# Backtest funding: 1,000,000 EUR only (foreign legs reached via per-currency margin loans).
+# Backtest funding: 5,000 EUR only (foreign legs reached via per-currency margin loans).
+# RE-SCALED to the LIVE account size 2026-07-06 (was 1,000,000): per-order minimums and
+# tier-I financing only price honestly at true scale - the 1M runs flattered fixed fees.
 [starting_balances]
-EUR = 1_000_000.0
+EUR = 5_000.0
 
 # Backtest transaction costs (paper/live use broker-reported costs instead).
 # IBKR Europe pricing for this UCITS / LSE / Xetra book: 0.05% of trade value with a
@@ -53,13 +55,17 @@ min_commission_per_order = 1.25
 
 # Financing rates pinned 2026-07-06 from IBKR-IE published schedules.
 # Margin interest is charged on net negative cash per currency; positive cash
-# earns no credit interest. EUR 0.0324 is the flat blend for an approx. 670k
-# debit: 3.670% on the first 90k and 3.170% from 90k to 900k. USD 0.0513 is
-# the first-tier USD debit rate. IBKR floors negative benchmark rates at zero,
-# so these pinned rates deliberately overstate 2018-mid-2022 historical EUR
-# funding, when the loan was spread-only.
+# earns no credit interest. RE-PINNED to first-tier rates same day: the LIVE
+# account is ~5k EUR, so every debit sits below the 90k tier break - EUR
+# 0.0367 (BM + 1.5%) and USD 0.0513 (BM + 1.5%) apply in full. (The earlier
+# EUR 0.0324 was the 90k/900k blend for this file's 1M SIMULATION balance; at
+# live scale the blend understates the tier-I rate by ~0.4pp.) Keep in sync
+# with the research schema default (aegis-rd configuration/schema.py,
+# margin_interest_rate) - same pin, two homes. IBKR floors negative benchmark
+# rates at zero, so these pinned rates deliberately overstate 2018-mid-2022
+# historical EUR funding, when the loan was spread-only.
 [costs.margin_interest]
-EUR = 0.0324
+EUR = 0.0367
 USD = 0.0513
 
 # Flat general-collateral borrow fee for short market value. This is the IDTL

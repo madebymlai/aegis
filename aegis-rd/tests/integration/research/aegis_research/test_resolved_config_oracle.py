@@ -47,12 +47,14 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
     "int_valued_caps": _raw("int_caps", {"gross_cap": 1, "net_cap": 1, "direction": "both"}),
 }
 
-# Re-pinned when PortfolioConfig gained ``margin_interest_rate`` (default 0.0324):
-# the resolved document now prices levered research configs by default. The field
-# rides resolved_config.v1 deliberately, so schema_version stays put while hashes move.
+# Re-pinned when ``margin_interest_rate`` moved to the first-tier pin (0.0367,
+# 2026-07-06 - live-account scale; previously the 1M-blend 0.0324) and again when
+# ranking dropped ``min_weight`` for empirical-Bayes shrinkage (parameter-free):
+# the resolved document no longer carries the retired knob. Both fields ride
+# resolved_config.v1 deliberately, so schema_version stays put while hashes move.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "f5494cf1bf8b6806eb0bd8e9f0c49b6ab708cafa6d1e3f2e62800db7935c93b7",
-    "int_valued_caps": "28ab200569bd19c9a9f5209247fd359fe89f4e92071ccbe6342e179d99c15d82",
+    "canonical_grid": "3c9e5d68cb728a20e99702a70aaf151c597434f1930ac7ad14cad1bd1799212e",
+    "int_valued_caps": "023f0697e0b7bd47ee0dfb86ea86b299bb90b9ac510cca890c7c5478d4f508ea",
 }
 
 
