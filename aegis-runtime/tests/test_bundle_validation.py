@@ -51,7 +51,7 @@ def _close(instrument_ids: tuple[InstrumentId, ...] = (_id("A.XNAS"), _id("B.XNA
 def test_locked_execution_plan_rejects_illegal_caps_at_construction() -> None:
     # An illegal triple must fail when the plan is built (bundle load), not on the
     # first weight computation.
-    with pytest.raises(InvalidExposureLimits, match="gross_cap must be > 0"):
+    with pytest.raises(InvalidExposureLimits, match="gross_cap must be positive"):
         LockedExecutionPlan(
             strategy=ComponentSpec(
                 family="strategy", component_id="s", module="m",

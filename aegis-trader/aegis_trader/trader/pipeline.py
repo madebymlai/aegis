@@ -32,9 +32,13 @@ from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_proven
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import check_account_integrity
-from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
+from aegis_trader.domain.rebalancer import (
+    RebalancePlan,
+    rebalance_plan,
+    validate_executable_plan,
+)
 from aegis_trader.domain.roll import RollEvent
-from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
+from aegis_trader.domain.sizing import InstrumentSizing, SizedOrder, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain import startup as _startup
 from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
@@ -218,40 +222,68 @@ class RebalancePipeline:
         """Run one completed-period rebalance and return orders plus summary."""
         pending, sleeve_failures = self._compute_sleeve_targets(period)
         nav = self._book_state.nav()
+        realized_weights = self._book_state.realized_weights()
         if not pending:
+            try:
+                validate_executable_plan(realized_weights, (), self._book)
+            except ValueError as exc:
+                return _gate_error_result(
+                    nav=nav,
+                    num_sleeves=0,
+                    num_targets=0,
+                    reason=str(exc),
+                    sleeve_failures=sleeve_failures,
+                )
             return RebalanceResult(
                 orders=(),
                 summary=_summary(nav, 0, 0, 0, GateOutcome.PASS, 0.0),
                 sleeve_failures=sleeve_failures,
             )
 
-        realized_weights = self._book_state.realized_weights()
         try:
             plan = self._build_rebalance_plan(pending, nav, realized_weights)
         except ValueError as exc:
-            return RebalanceResult(
-                orders=(),
-                summary=_summary(nav, len(pending), 0, 0, GateOutcome.ERROR, 0.0),
-                halt_reason=str(exc),
+            return _gate_error_result(
+                nav=nav,
+                num_sleeves=len(pending),
+                num_targets=0,
+                reason=str(exc),
+                sleeve_failures=sleeve_failures,
             )
 
-        self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
         sized_orders, prices = self._size_plan(plan.deltas, nav, period)
-        executable_orders = _orders_for_fresh_instruments(
+        executable_sized_orders = _sized_orders_for_fresh_instruments(
             sized_orders,
             self._fresh_instrument_ids(period),
         )
-        total_notional = sum(abs(order.quantity) for order in executable_orders)
+        try:
+            validate_executable_plan(
+                realized_weights,
+                tuple(sized.projected_delta for sized in executable_sized_orders),
+                self._book,
+            )
+        except ValueError as exc:
+            return _gate_error_result(
+                nav=nav,
+                num_sleeves=len(pending),
+                num_targets=len(sized_orders),
+                reason=str(exc),
+                sleeve_failures=sleeve_failures,
+            )
+
+        self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
+        order_intents = tuple(sized.intent for sized in executable_sized_orders)
+        total_notional = sum(abs(order.quantity) for order in order_intents)
 
         self._record_period(nav, realized_weights, pending, prices)
 
         return RebalanceResult(
-            orders=executable_orders,
+            orders=order_intents,
             summary=_summary(
                 nav,
                 len(pending),
                 len(sized_orders),
-                len(executable_orders),
+                len(order_intents),
                 GateOutcome.PASS,
                 total_notional,
             ),
@@ -386,7 +418,7 @@ class RebalancePipeline:
         deltas: tuple[WeightDelta, ...],
         nav: float,
         period: CompletedRebalancePeriod,
-    ) -> tuple[tuple[OrderIntent, ...], dict[InstrumentId, float]]:
+    ) -> tuple[tuple[SizedOrder, ...], dict[InstrumentId, float]]:
         instrument_metas, fx_rates, prices = self._collect_sizing_params(period)
         orders = size_deltas(
             deltas,
@@ -602,10 +634,14 @@ def _bars_share_timestamps(
     return True
 
 
-def _orders_for_fresh_instruments(
-    orders: Sequence[OrderIntent], fresh_instrument_ids: frozenset[InstrumentId]
-) -> tuple[OrderIntent, ...]:
-    return tuple(order for order in orders if order.instrument_id in fresh_instrument_ids)
+def _sized_orders_for_fresh_instruments(
+    sized_orders: Sequence[SizedOrder], fresh_instrument_ids: frozenset[InstrumentId]
+) -> tuple[SizedOrder, ...]:
+    return tuple(
+        sized
+        for sized in sized_orders
+        if sized.intent.instrument_id in fresh_instrument_ids
+    )
 
 
 def _sleeve_target_snapshot(
@@ -641,4 +677,27 @@ def _summary(
         num_orders=num_orders,
         gate_outcome=gate_outcome,
         total_notional=total_notional,
+    )
+
+
+def _gate_error_result(
+    *,
+    nav: float,
+    num_sleeves: int,
+    num_targets: int,
+    reason: str,
+    sleeve_failures: tuple[SleeveComputeFailure, ...],
+) -> RebalanceResult:
+    return RebalanceResult(
+        orders=(),
+        summary=_summary(
+            nav,
+            num_sleeves,
+            num_targets,
+            0,
+            GateOutcome.ERROR,
+            0.0,
+        ),
+        halt_reason=reason,
+        sleeve_failures=sleeve_failures,
     )

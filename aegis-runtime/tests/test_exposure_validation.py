@@ -9,6 +9,7 @@ from aegis_runtime.exposure_validation import (
     GrossExposureBreach,
     GroupLabelMismatch,
     InvalidExposureLimits,
+    NonFiniteExposure,
     NetExposureBreach,
     validate_exposure,
 )
@@ -43,6 +44,7 @@ def test_every_failure_mode_remains_a_valueerror() -> None:
     for mode in (
         InvalidExposureLimits,
         GroupLabelMismatch,
+        NonFiniteExposure,
         DirectionBreach,
         GrossExposureBreach,
         NetExposureBreach,
@@ -54,8 +56,24 @@ def test_every_failure_mode_remains_a_valueerror() -> None:
 # --- ExposureLimits ------------------------------------------------------------
 
 def test_limits_reject_nonpositive_gross_cap_fail_closed() -> None:
-    with pytest.raises(InvalidExposureLimits, match="gross_cap must be > 0"):
+    with pytest.raises(InvalidExposureLimits, match="gross_cap must be positive"):
         ExposureLimits(gross_cap=0.0)
+
+
+def test_limits_reject_nan_gross_cap_fail_closed() -> None:
+    with pytest.raises(InvalidExposureLimits, match="gross_cap.*not NaN"):
+        ExposureLimits(gross_cap=np.nan)
+
+
+@pytest.mark.parametrize("net_cap", [np.nan, -0.1, -np.inf])
+def test_limits_reject_nan_or_negative_net_cap_fail_closed(net_cap: float) -> None:
+    with pytest.raises(InvalidExposureLimits, match="net_cap.*non-negative"):
+        ExposureLimits(gross_cap=1.0, net_cap=net_cap)
+
+
+def test_limits_allow_positive_infinity_as_an_explicit_unbounded_cap() -> None:
+    assert ExposureLimits(gross_cap=np.inf).net_cap == np.inf
+    assert ExposureLimits(gross_cap=np.inf, net_cap=np.inf).gross_cap == np.inf
 
 
 def test_limits_reject_unknown_direction_fail_closed() -> None:
@@ -86,12 +104,42 @@ def test_gross_exposure_above_cap_is_rejected_fail_closed() -> None:
         validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
 
 
+def test_gross_exposure_within_tolerance_passes() -> None:
+    validate_exposure(
+        _book({"A": [1.0 + 1e-9]}),
+        ExposureLimits(gross_cap=1.0),
+    )
+
+
+def test_gross_exposure_beyond_tolerance_fails() -> None:
+    with pytest.raises(GrossExposureBreach):
+        validate_exposure(
+            _book({"A": [1.0 + 2e-9]}),
+            ExposureLimits(gross_cap=1.0),
+        )
+
+
 def test_net_exposure_above_net_cap_is_rejected_fail_closed() -> None:
     # Σ|wᵢ| = 1.0 ≤ gross_cap, but net Σwᵢ = 1.0 > net_cap 0.2 (drifts net-long).
     allocations = _book({"A": [0.5], "B": [0.5]})
 
     with pytest.raises(NetExposureBreach, match="net_cap"):
         validate_exposure(allocations, ExposureLimits(gross_cap=1.0, net_cap=0.2))
+
+
+def test_net_exposure_within_tolerance_passes() -> None:
+    validate_exposure(
+        _book({"A": [1.0 + 1e-9]}),
+        ExposureLimits(gross_cap=2.0, net_cap=1.0),
+    )
+
+
+def test_net_exposure_beyond_tolerance_fails() -> None:
+    with pytest.raises(NetExposureBreach):
+        validate_exposure(
+            _book({"A": [1.0 + 2e-9]}),
+            ExposureLimits(gross_cap=2.0, net_cap=1.0),
+        )
 
 
 def test_market_neutral_book_within_net_cap_passes() -> None:
@@ -161,6 +209,56 @@ def test_all_nan_row_passes_as_no_rebalance() -> None:
     validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
 
 
+def test_float_convertible_weights_are_normalized_before_reduction() -> None:
+    allocations = pd.DataFrame({"A": ["0.5"], "B": ["-0.5"]}, index=_index())
+
+    validate_exposure(allocations, ExposureLimits(gross_cap=1.0, net_cap=0.0))
+
+
+def test_non_numeric_weight_is_rejected_with_named_error() -> None:
+    allocations = pd.DataFrame({"A": ["not-a-weight"]}, index=_index())
+
+    with pytest.raises(NonFiniteExposure, match="numeric weights"):
+        validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
+
+
+def test_complex_weight_is_rejected_instead_of_discarding_its_imaginary_part() -> None:
+    allocations = pd.DataFrame({"A": [1j]}, index=_index())
+
+    with pytest.raises(NonFiniteExposure, match="real numeric weights"):
+        validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
+
+
+def test_pandas_missing_row_passes_as_no_rebalance() -> None:
+    allocations = pd.DataFrame({"A": [pd.NA], "B": [pd.NA]}, index=_index())
+
+    validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
+
+
+def test_partial_nan_row_is_rejected_fail_closed() -> None:
+    allocations = _book({"A": [np.nan], "B": [0.5]})
+
+    with pytest.raises(NonFiniteExposure, match="mixes NaN and finite"):
+        validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
+
+
+def test_infinite_weight_is_rejected_even_when_cap_is_unbounded() -> None:
+    with pytest.raises(NonFiniteExposure, match="infinite weight"):
+        validate_exposure(
+            _book({"A": [np.inf]}),
+            ExposureLimits(gross_cap=np.inf),
+        )
+
+
+def test_caller_can_forbid_all_nan_no_rebalance_rows() -> None:
+    with pytest.raises(NonFiniteExposure, match="NaN weight"):
+        validate_exposure(
+            _book({"A": [np.nan], "B": [np.nan]}),
+            ExposureLimits(gross_cap=1.0),
+            allow_no_rebalance_rows=False,
+        )
+
+
 def test_empty_frame_passes() -> None:
     validate_exposure(pd.DataFrame(), ExposureLimits(gross_cap=1.0))
 
@@ -178,6 +276,18 @@ def test_grouped_frame_gates_each_group_independently() -> None:
     validate_exposure(
         allocations,
         ExposureLimits(gross_cap=1.0, net_cap=0.0),
+        group_by=_candidate_labels(allocations.columns),
+    )
+
+
+def test_grouped_no_rebalance_group_may_coexist_with_finite_group() -> None:
+    allocations = _candidate_frame(
+        {"candidate-a": [np.nan, np.nan], "candidate-b": [0.5, -0.5]}
+    )
+
+    validate_exposure(
+        allocations,
+        ExposureLimits(gross_cap=1.0),
         group_by=_candidate_labels(allocations.columns),
     )
 
@@ -238,6 +348,17 @@ def test_group_by_length_mismatch_is_rejected_fail_closed() -> None:
 
     with pytest.raises(GroupLabelMismatch, match="group_by has 1 labels"):
         validate_exposure(allocations, ExposureLimits(gross_cap=1.0), group_by=["only-one"])
+
+
+def test_missing_group_label_is_rejected_fail_closed() -> None:
+    allocations = _book({"A": [0.5], "B": [0.5]})
+
+    with pytest.raises(GroupLabelMismatch, match="must not contain missing"):
+        validate_exposure(
+            allocations,
+            ExposureLimits(gross_cap=1.0),
+            group_by=["candidate-a", None],
+        )
 
 
 def test_grouped_sign_guard_covers_the_whole_frame() -> None:

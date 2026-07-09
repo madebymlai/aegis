@@ -26,6 +26,14 @@ class InstrumentSizing:
     multiplier: float = 1.0
 
 
+@dataclass(frozen=True)
+class SizedOrder:
+    """A rounded order paired with the weight delta it can actually realize."""
+
+    intent: OrderIntent
+    projected_delta: WeightDelta
+
+
 def size_order(
     notional_eur: float,
     price: float,
@@ -83,8 +91,8 @@ def size_deltas(
     instrument_metas: Mapping[InstrumentId, InstrumentSizing],
     fx_rates: Mapping[str, float],
     prices: Mapping[InstrumentId, float],
-) -> tuple[OrderIntent, ...]:
-    """Convert signed weight deltas into sized, provider-agnostic orders.
+) -> tuple[SizedOrder, ...]:
+    """Convert signed weight deltas into rounded orders and executable projections.
 
     The sizing half of the rebalance pipeline: the pure (weight-space)
     rebalancer decides *what* to trade; this decides *how much* in native
@@ -99,7 +107,7 @@ def size_deltas(
     if nav <= 0:
         raise ValueError(f"NAV must be positive; got {nav!r}")
 
-    orders: list[OrderIntent] = []
+    sized_orders: list[SizedOrder] = []
     for d in deltas:
         meta = instrument_metas.get(d.instrument_id)
         price = prices.get(d.instrument_id)
@@ -111,11 +119,44 @@ def size_deltas(
         quantity = size_order(abs(d.delta) * nav, price, fx_rate, meta)
         if quantity is None:
             continue  # sub-increment -> no order
-        orders.append(
-            OrderIntent(
-                instrument_id=d.instrument_id,
-                side=d.side,
-                quantity=quantity,
+        sized_orders.append(
+            SizedOrder(
+                intent=OrderIntent(
+                    instrument_id=d.instrument_id,
+                    side=d.side,
+                    quantity=quantity,
+                ),
+                projected_delta=_projected_weight_delta(
+                    d,
+                    quantity=quantity,
+                    nav=nav,
+                    price=price,
+                    fx_rate=fx_rate,
+                    instrument=meta,
+                ),
             )
         )
-    return tuple(orders)
+    return tuple(sized_orders)
+
+
+def _projected_weight_delta(
+    requested: WeightDelta,
+    *,
+    quantity: float,
+    nav: float,
+    price: float,
+    fx_rate: float,
+    instrument: InstrumentSizing,
+) -> WeightDelta:
+    """Map a rounded native quantity back to its signed base-currency weight."""
+    notional_native = quantity * price * instrument.multiplier
+    if instrument.currency == _GBP_CURRENCY:
+        notional_native /= _PENCE_FACTOR
+    projected_magnitude = notional_native / fx_rate / nav
+    projected_delta = (
+        projected_magnitude if requested.delta > 0.0 else -projected_magnitude
+    )
+    return WeightDelta(
+        instrument_id=requested.instrument_id,
+        delta=projected_delta,
+    )

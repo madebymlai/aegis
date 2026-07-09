@@ -303,6 +303,30 @@ class TestBookConfigCaps:
         assert book.exposure_limits.gross_cap == math.inf
         assert book.exposure_limits.net_cap == math.inf
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        (("gross_cap", float("nan")), ("net_cap", float("nan")), ("net_cap", -0.1)),
+    )
+    def test_invalid_exposure_limits_fail_at_book_construction(self, field, value):
+        with pytest.raises(ValueError):
+            BookConfig(sleeves=(make_sleeve("trend"),), **{field: value})
+
+    @pytest.mark.parametrize("per_name_cap", [float("nan"), float("inf"), -0.1])
+    def test_invalid_per_name_cap_fails_at_book_construction(self, per_name_cap):
+        with pytest.raises(ValueError, match="per_name_cap must be finite and non-negative"):
+            BookConfig(
+                sleeves=(make_sleeve("trend"),),
+                per_name_cap=per_name_cap,
+            )
+
+    def test_zero_per_name_cap_is_a_valid_flat_only_limit(self):
+        book = BookConfig(
+            sleeves=(make_sleeve("trend"),),
+            per_name_cap=0.0,
+        )
+
+        assert book.per_name_cap == 0.0
+
 
 def test_starting_balances_normalize_currency_and_sort():
     """Per-currency starting balances are upper-cased and sorted for determinism."""

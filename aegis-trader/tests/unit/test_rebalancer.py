@@ -9,10 +9,14 @@ test_sizing.py; the composition is exercised by ``TestRebalancePipeline`` below.
 import pandas as pd
 import pytest
 
-from aegis_runtime import DriftBand, GrossExposureBreach, NetExposureBreach
+from aegis_runtime import (
+    DriftBand,
+    NetExposureBreach,
+    NonFiniteExposure,
+)
 from aegis_trader.domain.book_config import BookConfig, DrawdownDeleverCurve, SleeveConfig
 from aegis_trader.domain.rebalancer import (
-    _gate_book_caps,
+    PerNameExposureBreach,
     rebalance as _rebalance,
     rebalance_plan as _rebalance_plan,
 )
@@ -536,7 +540,7 @@ class TestRebalanceSlice4:
 
     def test_per_name_cap_breach_unfixable_fails_closed(self):
         book = self._book(per_name_cap=0.10)
-        with pytest.raises(ValueError, match="unfixable"):
+        with pytest.raises(PerNameExposureBreach, match="unfixable"):
             rebalance({book.sleeves[0].name: _target({"AAA": 0.15})}, book,
                       instrument_bands=self._bands(0.10, "AAA"),
                       realized_weights={_iid("AAA"): 0.15})
@@ -577,16 +581,15 @@ class TestRebalanceSlice4:
         with pytest.raises(ValueError, match="exceeds gross_cap"):
             self._book(max_book_gross=1.0, gross_cap=0.8)
 
-    def test_gate_book_caps_gross_breach_defensive(self):
-        """The gross gate is a defensive backstop: the schema rule keeps gross
-        within cap for any constructable book, but the gate still fails closed if
-        a post-book ever reaches it over the cap (e.g. a future path bypassing the
-        clamp).  Exercised directly because rebalance() can no longer reach it.
-        The breach is the kernel gate's named error — the gate math itself is
-        kernel-tested; this proves the wiring."""
-        book = self._book(max_book_gross=0.50, gross_cap=0.50)
-        with pytest.raises(GrossExposureBreach, match="exceeds gross_cap"):
-            _gate_book_caps({_iid("AAA"): 0.6, _iid("BBB"): 0.6}, book)
+    @pytest.mark.parametrize("bad_weight", [float("nan"), float("inf"), float("-inf")])
+    def test_rebalance_rejects_non_finite_realized_book(self, bad_weight: float):
+        book = self._book()
+        with pytest.raises(NonFiniteExposure):
+            rebalance(
+                {book.sleeves[0].name: _target({"AAA": 0.5})},
+                book,
+                realized_weights={_iid("AAA"): bad_weight},
+            )
 
     def test_within_band_drift_over_ceiling_clamped_not_failed(self):
         """Within-band drift can push the projected book over max_book_gross even
@@ -693,8 +696,8 @@ class TestRebalancePipeline:
             prices={_iid("EUR_ETF"): 100.0},
         )
         assert len(orders) == 1
-        assert orders[0].quantity == pytest.approx(500.0)  # 50_000 / 100
-        assert orders[0].side == OrderSide.BUY
+        assert orders[0].intent.quantity == pytest.approx(500.0)  # 50_000 / 100
+        assert orders[0].intent.side == OrderSide.BUY
 
     def test_multi_ccy_netting_then_sizing(self):
         book = make_book([("trend", "trend.whl", 0.6), ("carry", "carry.whl", 0.4)])
@@ -713,11 +716,11 @@ class TestRebalancePipeline:
             fx_rates={"EUR": 1.0, "USD": 1.10},
             prices={_iid("EUR_ETF"): 100.0, _iid("US_STOCK"): 110.0},
         )
-        by_symbol = {o.instrument_id.symbol.value: o for o in orders}
+        by_symbol = {o.intent.instrument_id.symbol.value: o.intent for o in orders}
         assert by_symbol["EUR_ETF"].quantity == pytest.approx(220.0)   # 22_000 / 100
         assert by_symbol["US_STOCK"].quantity == pytest.approx(220.0)  # 22_000·1.10 / 110
         for o in orders:
-            assert o.side == OrderSide.BUY
+            assert o.intent.side == OrderSide.BUY
 
 
 class TestDownOnlyGrossClamp:

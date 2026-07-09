@@ -421,6 +421,10 @@ class BookConfig:
             raise ValueError("sleeve_reversion_fraction must be in (0, 1]")
         if not math.isfinite(self.max_book_gross) or self.max_book_gross <= 0:
             raise ValueError("max_book_gross must be finite and positive")
+        if self.per_name_cap is not None and (
+            not math.isfinite(self.per_name_cap) or self.per_name_cap < 0
+        ):
+            raise ValueError("per_name_cap must be finite and non-negative")
         if self.gross_cap is not None and self.max_book_gross > self.gross_cap + _EPS:
             raise ValueError(
                 f"max_book_gross ({self.max_book_gross}) exceeds gross_cap "

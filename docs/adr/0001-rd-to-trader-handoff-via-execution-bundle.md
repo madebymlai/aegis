@@ -1,6 +1,6 @@
 # Hand research candidates to live trading as an Execution Bundle wheel
 
-Status: accepted (implementation pending; `aegis-runtime` not yet carved out)
+Status: accepted (as built; amended below)
 
 Aegis RD must hand a validated strategy to Aegis Trader for live execution. We
 resolve the handoff as an **Execution Bundle** — a versioned uv wheel that
@@ -178,3 +178,19 @@ typed payload plus component source text, no filesystem) and a thin
 `write_wheel(artifact, out_dir)` materializer (fail-closed clobber guard, then lay out files
 and zip). `BundleArtifact` and the split are implementation detail — not domain glossary;
 "Execution Bundle" remains the wheel.
+
+## Amendment (2026-07-03): bundle output returns to the shared Exposure Validation gate
+
+Root ADR-0008 supersedes the **no bundle-side gate** part of the 2026-06-14 amendment.
+`compute_weights` remains a pure `data -> signed weights` transform: it does not remediate,
+resize, or mutate an allocation. Before returning, however, it passes those weights and the
+limits in its `LockedExecutionPlan` to the one kernel-owned Exposure Validation module.
+Research uses that same module at Candidate scope, and Trader uses it again on the realized
+post-band plan and the executable post-round projection. The three scopes therefore share
+one inequality, tolerance, Direction vocabulary, and typed error hierarchy rather than
+maintaining nominally identical policies.
+
+The ownership split remains intact. The locked plan carries the sleeve limits validated by
+research; Trader's Book Config carries operator-selected realized-book limits; the startup
+provenance check prevents those book limits from exceeding the bundle's research evidence.
+Only the claim that validation occurs exclusively in the overlay is withdrawn.

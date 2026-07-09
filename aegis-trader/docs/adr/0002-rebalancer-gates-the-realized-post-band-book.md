@@ -1,6 +1,6 @@
 # The rebalancer gates the realized post-band book
 
-Status: accepted (implementation pending; refines the rebalance step of ADR-0001)
+Status: accepted (as built; refines the rebalance step of ADR-0001)
 
 Aegis Trader suppresses rebalance churn with a **drift band**: a leg trades only when its
 realized weight has drifted from target by more than the band. The band means under-band
@@ -11,12 +11,14 @@ post-round book** against the book's gross/net/per-name caps, not the requested 
 book. The gate is **authoritative**; the band is **subordinate** and may only suppress
 churn *within* the gate's compliance envelope.
 
-This book gate is **not** the wheel's **Allocation Policy**. Per root ADR-0001 (amended
-2026-06-14) the bundle is a pure transform and does no gating; exposure caps live in the
-**Book Config**, and the rebalancer invokes the one shared `aegis-runtime` validator at
-two scopes — **sleeve** (fail-closed attribution, plus the provenance assertion that the
-Manifest cap ≤ the sleeve's research-validated cap) and **book** (this realized-book
-invariant). Same validator, distinct scopes.
+This book gate is **not** a second wheel-local **Allocation Policy**. Root ADR-0008
+supersedes ADR-0001's 2026-06-14 removal of bundle-side validation: the Execution Bundle
+is still a pure transform, but it passes each **sleeve** allocation through the shared
+`aegis-runtime` validator using the limits locked with that bundle. The **Book Config**
+separately supplies the realized-book limits, and provenance prevents it from running a
+sleeve hotter than its locked research evidence. The Rebalancer gates that realized
+**book** through the same validator; it owns projection and remediation but no gross/net
+inequality, tolerance, or error vocabulary.
 
 Gating the target while emitting the band-filtered book is a tolerance gap of the same
 class as the NoCash tripwire (ADR-0011): each held leg is within band of target, but the
@@ -31,10 +33,9 @@ stance this is a fail-closed correctness requirement, not an optimisation.
   validates a book Trader will not hold; see the `N·band` correlated-drift breach above.
 - **Per-instrument band only** (no book-level trip): rejected as insufficient. A
   per-instrument band does not bound *aggregate* drift; the book can wander far from
-  intended weights with no single leg tripping. A book/sleeve-level drift trip (aggregate
-  gross, net, and per-sleeve-budget deviation) is the fidelity floor that forces a fuller
-  cleanup even when every leg is in-band — it only ever *adds* trades and is subordinate to
-  the gate.
+  intended weights with no single leg tripping. The configured aggregate L1
+  target-versus-realized drift threshold forces a full cleanup even when every leg is
+  in-band; it only ever *adds* trades and remains subordinate to the gate.
 - **A book-level turnover throttle** ("don't rebalance unless aggregate drift > X"):
   rejected — and the mirror image of the fidelity trip above, not to be confused with it.
   The trip *adds* trades when aggregate drift is high (safe); a throttle *suppresses* trades
@@ -54,28 +55,28 @@ stance this is a fail-closed correctness requirement, not an optimisation.
   buying a decaying asset every cycle, paying the bleed plus turnover. The tail needs
   `band_up` tight (catch the spike → trim → monetise) and `band_down` loose (let it bleed
   before topping up), which a single threshold cannot express.
-- **A min-cost-set solver for the gate override**: rejected for v1. When the realized book
-  breaches, widening the trade set *toward target* in a deterministic order has a
-  **proven compliant terminus** — the full trade-to-target book is compliant by
-  construction (the overlay validates each sleeve ≤ its Manifest cap, and Sleeve Budgets
-  sum `< 1` and net), so a solver is unnecessary complexity and loses reproducibility.
+- **A min-cost-set solver for the gate override**: rejected for v1. Trader applies a fixed
+  sequence of deterministic remediations before sizing, then reconstructs and validates
+  the executable rounded book. Any residual breach halts with no orders; no optimizer is
+  required to preserve the fail-closed invariant.
 - **Trade-to-edge by default** (move a tripped leg only to the band rim): rejected as the
   default. Edge-parking leaves legs at the rim so they re-trip next cycle and raises
-  tracking error; trade-to-target is the default, with trade-to-edge a per-book option if
-  measured turnover cost bites.
+  tracking error; trade-to-target is the default, with partial movement carried only when
+  the locked per-instrument `DriftBand.destination_fraction` says so.
 
 ## Consequences
 
-- **Rebalance pipeline:** `targets → net by InstrumentId → size→qty→round → per-instrument band
-  selects a tentative trade set → book-level band may widen it → assemble the realized
-  post-band book → gate the realized book → if breach, widen toward target deterministically
-  until compliant (fail closed if even full-target breaches) → emit (open venues only)`.
+- **Rebalance pipeline:** `targets → allocate/net by InstrumentId → clamp target gross →
+  resolve per-instrument bands → optional aggregate-L1 full cleanup → repair realized
+  per-name breaches → clamp projected gross → gate the planned book → size/round → filter
+  stale instruments → rebuild the executable book → gate per-name/gross/net → emit`. A
+  failure at either gate returns no orders and halts the strategy.
 - **Band lives in weight space**, per instrument, as a pair `(band_up, band_down)`
   defaulting symmetric to the book band; `w_c = position_notional_base / NAV_base`. Trip
   when `(w_c − w_t) > band_up` (trim) or `(w_t − w_c) > band_down` (add). Overrides are
-  per-sleeve / per-instrument in the Book Config. The tail sets `band_up` tight,
-  `band_down` loose.
-- **Trade-to-target by default**; trade-to-edge optional per book.
+  locked per instrument in the Execution Bundle and scaled by the owning sleeve's applied
+  allocation. The tail sets `band_up` tight and `band_down` loose.
+- **Trade-to-target by default**; a locked band may select a partial destination.
 - **Between-rebalance drift is still accepted**, now consistently: ADR-0007 defines
   `gross_cap` as a constraint on the *requested* rebalance, and the post-band book *is* the
   request.
@@ -84,13 +85,10 @@ stance this is a fail-closed correctness requirement, not an optimisation.
   each cycle (once/day for a daily book; negligible cost).
 - **Shut-venue legs are *masked*, not "below band."** An instrument whose venue is closed
   holds regardless of its drift — it can be far over band and still not trade. Its drifted
-  `w_c` is nonetheless part of the realized book the gate evaluates, so the gate must
-  *absorb* it: when a masked leg's drift breaches a cap, remediation can only use the
-  **open** (tradeable) legs, and Trader **fails closed** (halt + alert) if the open legs
-  cannot restore compliance. The "full trade-to-target is compliant by construction"
-  terminus holds for band-suppression breaches (under-band *open* legs); it does **not**
-  generally hold for a masked-leg breach, since the offending leg cannot be moved —
-  fail-closed is the backstop there.
+  `w_c` is nonetheless part of the executable book reconstructed after freshness
+  filtering. Already-planned orders for open legs remain in that projection; Trader does
+  not run a second open-leg remediation solve. If the surviving rounded orders cannot
+  restore compliance, Trader **fails closed** with no orders (halt + alert).
 - **Gate the realized book; trade only the targeted (one rule).** The realized book the gate
   evaluates spans the Manifest-targeted instruments and their reconciled `Cache` positions, so
   the gate always sees true exposure for the book Trader runs. The **trade set is the
@@ -105,11 +103,29 @@ stance this is a fail-closed correctness requirement, not an optimisation.
     retirement) is a future decision.
 - **NAV staleness is bounded, not eliminated.** `w_c` uses freshest-available marks; on a
   closed-venue day the shared `NAV_base` denominator is stale and a pure FX move can
-  spuriously trip an EUR leg. Because the gate is authoritative, a spurious trip costs at
-  most a small, often sub-band, trade. Documented, not engineered around for v1.
+  spuriously trip an EUR leg. Because the gate is authoritative, that can trigger a
+  corrective request or a fail-closed halt. Documented, not engineered around for v1.
 - **Two buffers compose intentionally** — the strategy's signal buffer
   (`trendStraddleBuffered`, baked in the bundle) and Trader's execution band are different
   layers. A fidelity diagnostic (realized tracking error vs the *unbuffered* target, plus
   turnover) is a test seam to confirm the floor does not go over-sticky.
-- **Determinism:** the widen-toward-target order is deterministic, so identical inputs
-  always yield the same minimal compliant trade set — auditable, matching RD's ethos.
+- **Determinism:** band resolution, full-cleanup selection, per-name repair, gross clamp,
+  sizing, and final validation are deterministic. No minimal-trade-set claim is made.
+
+## Amendment (2026-07-09): the executable rounded projection is authoritative
+
+The planned weight-space gate is necessary but not sufficient: native sizing can round or
+drop a delta, and freshness filtering can mask its order. Sizing therefore carries each
+`OrderIntent` together with the exact rounded `WeightDelta` it represents. After freshness
+filtering, the pipeline gives those executable deltas and the realized book back to the
+Rebalancer domain module, which reconstructs the actual requested book and repeats the
+per-name plus shared-kernel gross/net gate. This second call is the authoritative emission
+gate. On breach the pipeline emits no orders, records `GateOutcome.ERROR`, and preserves
+the kernel or Trader error as the halt reason.
+
+The Strategy then materializes every venue quantity as one batch before submitting any
+order. A missing instrument or a venue quantity that differs from the quantity used by the
+executable projection halts the book with no partial submission.
+
+Periods with no computed sleeve targets take the same path with an empty delta set. A
+no-decision hold can pass only when the held realized book is itself compliant.
