@@ -3,12 +3,12 @@ import pandas as pd
 import pytest
 from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, gate
+from aegis_runtime.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.configuration import PortfolioConfig
-from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.portfolios import (
     _SINGLE_CANDIDATE_ID,
     distribution_cash_dividends,
@@ -440,6 +440,32 @@ def test_batch_rejects_candidate_breaching_net_cap_and_names_it() -> None:
     )
     with pytest.raises(ValueError, match="cand-net-long"):
         simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+
+
+def test_batch_accepts_partial_nan_sparse_allocation_updates() -> None:
+    index = pd.date_range("2024-01-01", periods=3)
+    close = pd.DataFrame(
+        {"A": [10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0]},
+        index=index,
+    )
+    columns = pd.MultiIndex.from_product(
+        [["candidate"], ["A", "B"]],
+        names=["candidate_id", "symbol"],
+    )
+    allocations = pd.DataFrame(
+        [[0.4, np.nan], [np.nan, 0.6], [np.nan, np.nan]],
+        index=index,
+        columns=columns,
+    )
+
+    pf = simulate_portfolio_batch(
+        close,
+        allocations,
+        make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+        periods_per_year=252,
+    )
+
+    assert isinstance(pf, vbt.Portfolio)
 
 
 def test_batch_rejects_longonly_candidate_with_a_negative_weight() -> None:

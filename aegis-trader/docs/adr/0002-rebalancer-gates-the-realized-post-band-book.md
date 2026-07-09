@@ -5,11 +5,11 @@ Status: accepted (as built; refines the rebalance step of ADR-0001)
 Aegis Trader suppresses rebalance churn with a **drift band**: a leg trades only when its
 realized weight has drifted from target by more than the band. The band means under-band
 legs are *deliberately held* at their current weight `w_c`, so the book Trader actually
-holds after a cycle — `{traded legs → rounded target} ∪ {held legs → w_c}` — is **not**
-the all-at-target book. Therefore the **rebalancer** gates the **realized post-band,
-post-round book** against the book's gross/net/per-name caps, not the requested target
-book. The gate is **authoritative**; the band is **subordinate** and may only suppress
-churn *within* the gate's compliance envelope.
+requests after band resolution — `{traded legs → resolved target} ∪ {held legs → w_c}` —
+is **not** the all-at-target book. Therefore the **rebalancer** gates that **planned
+realized post-band book** against the book's gross/net/per-name caps, not the raw target
+book. The gate is **authoritative for the rebalance request**; the band is subordinate and
+may only suppress churn within the gate's compliance envelope.
 
 This book gate is **not** a second wheel-local **Allocation Policy**. Root ADR-0008
 supersedes ADR-0001's 2026-06-14 removal of bundle-side validation: the Execution Bundle
@@ -56,9 +56,8 @@ stance this is a fail-closed correctness requirement, not an optimisation.
   `band_up` tight (catch the spike → trim → monetise) and `band_down` loose (let it bleed
   before topping up), which a single threshold cannot express.
 - **A min-cost-set solver for the gate override**: rejected for v1. Trader applies a fixed
-  sequence of deterministic remediations before sizing, then reconstructs and validates
-  the executable rounded book. Any residual breach halts with no orders; no optimizer is
-  required to preserve the fail-closed invariant.
+  sequence of deterministic remediations in weight space before sizing. Any residual
+  planned-book breach halts with no orders; no optimizer is required.
 - **Trade-to-edge by default** (move a tripped leg only to the band rim): rejected as the
   default. Edge-parking leaves legs at the rim so they re-trip next cycle and raises
   tracking error; trade-to-target is the default, with partial movement carried only when
@@ -69,8 +68,8 @@ stance this is a fail-closed correctness requirement, not an optimisation.
 - **Rebalance pipeline:** `targets → allocate/net by InstrumentId → clamp target gross →
   resolve per-instrument bands → optional aggregate-L1 full cleanup → repair realized
   per-name breaches → clamp projected gross → gate the planned book → size/round → filter
-  stale instruments → rebuild the executable book → gate per-name/gross/net → emit`. A
-  failure at either gate returns no orders and halts the strategy.
+  stale instruments → emit`. A planned-book breach returns no orders and halts the
+  strategy.
 - **Band lives in weight space**, per instrument, as a pair `(band_up, band_down)`
   defaulting symmetric to the book band; `w_c = position_notional_base / NAV_base`. Trip
   when `(w_c − w_t) > band_up` (trim) or `(w_t − w_c) > band_down` (add). Overrides are
@@ -85,10 +84,9 @@ stance this is a fail-closed correctness requirement, not an optimisation.
   each cycle (once/day for a daily book; negligible cost).
 - **Shut-venue legs are *masked*, not "below band."** An instrument whose venue is closed
   holds regardless of its drift — it can be far over band and still not trade. Its drifted
-  `w_c` is nonetheless part of the executable book reconstructed after freshness
-  filtering. Already-planned orders for open legs remain in that projection; Trader does
-  not run a second open-leg remediation solve. If the surviving rounded orders cannot
-  restore compliance, Trader **fails closed** with no orders (halt + alert).
+  `w_c` is part of the planned post-band projection. Freshness filtering occurs after that
+  request is validated and simply suppresses orders for unavailable venues; Trader does
+  not run a second exposure policy over sizing or availability outcomes.
 - **Gate the realized book; trade only the targeted (one rule).** The realized book the gate
   evaluates spans the Manifest-targeted instruments and their reconciled `Cache` positions, so
   the gate always sees true exposure for the book Trader runs. The **trade set is the
@@ -103,29 +101,27 @@ stance this is a fail-closed correctness requirement, not an optimisation.
     retirement) is a future decision.
 - **NAV staleness is bounded, not eliminated.** `w_c` uses freshest-available marks; on a
   closed-venue day the shared `NAV_base` denominator is stale and a pure FX move can
-  spuriously trip an EUR leg. Because the gate is authoritative, that can trigger a
-  corrective request or a fail-closed halt. Documented, not engineered around for v1.
+  spuriously trip an EUR leg. Because the planned-book gate is authoritative, that can
+  trigger a corrective request. Documented, not engineered around for v1.
 - **Two buffers compose intentionally** — the strategy's signal buffer
   (`trendStraddleBuffered`, baked in the bundle) and Trader's execution band are different
   layers. A fidelity diagnostic (realized tracking error vs the *unbuffered* target, plus
   turnover) is a test seam to confirm the floor does not go over-sticky.
 - **Determinism:** band resolution, full-cleanup selection, per-name repair, gross clamp,
-  sizing, and final validation are deterministic. No minimal-trade-set claim is made.
+  and planned-book validation are deterministic. No minimal-trade-set claim is made.
 
-## Amendment (2026-07-09): the executable rounded projection is authoritative
+## Amendment (2026-07-10): remove the post-sizing defensive gate
 
-The planned weight-space gate is necessary but not sufficient: native sizing can round or
-drop a delta, and freshness filtering can mask its order. Sizing therefore carries each
-`OrderIntent` together with the exact rounded `WeightDelta` it represents. After freshness
-filtering, the pipeline gives those executable deltas and the realized book back to the
-Rebalancer domain module, which reconstructs the actual requested book and repeats the
-per-name plus shared-kernel gross/net gate. This second call is the authoritative emission
-gate. On breach the pipeline emits no orders, records `GateOutcome.ERROR`, and preserves
-the kernel or Trader error as the halt reason.
+The 2026-07-09 implementation added a second exposure gate after sizing, rounding, and
+freshness filtering. It required `SizedOrder.projected_delta`, reconstructed a second book
+from provider-agnostic quantities, and revalidated a held book even when no sleeve made a
+rebalance decision. That layer is removed.
 
-The Strategy then materializes every venue quantity as one batch before submitting any
-order. A missing instrument or a venue quantity that differs from the quantity used by the
-executable projection halts the book with no partial submission.
+The planned post-band book is the single Trader exposure scope. `size_deltas` again returns
+plain `OrderIntent` values, and a no-decision period performs no exposure validation.
+Rounding, missing sizing data, and venue availability are execution outcomes rather than a
+second book policy. Monitoring an already-held book is a separate risk-monitoring concern.
 
-Periods with no computed sleeve targets take the same path with an empty delta set. A
-no-decision hold can pass only when the held realized book is itself compliant.
+Strategy still materializes every order before submitting any, so a missing instrument
+cannot cause partial submission. The venue-produced `Quantity` is accepted directly; it is
+not compared against a separately derived float projection.

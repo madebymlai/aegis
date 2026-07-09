@@ -30,7 +30,6 @@ globally on failure.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from typing import Any, assert_never
 
@@ -553,11 +552,6 @@ class RebalanceStrategy(Strategy):
         if quantity is None:
             raise ValueError(
                 f"instrument not found for InstrumentId {execution_id.value}"
-            )
-        if not math.isclose(float(quantity), oi.quantity, rel_tol=0.0, abs_tol=1e-12):
-            raise ValueError(
-                f"venue quantity {float(quantity)} for {execution_id.value} differs from "
-                f"validated quantity {oi.quantity}"
             )
 
         nt_side = NtOrderSide.BUY if oi.side == OrderSide.BUY else NtOrderSide.SELL

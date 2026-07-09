@@ -186,9 +186,9 @@ Root ADR-0008 supersedes the **no bundle-side gate** part of the 2026-06-14 amen
 resize, or mutate an allocation. Before returning, however, it passes those weights and the
 limits in its `LockedExecutionPlan` to the one kernel-owned Exposure Validation module.
 Research uses that same module at Candidate scope, and Trader uses it again on the realized
-post-band plan and the executable post-round projection. The three scopes therefore share
-one inequality, tolerance, Direction vocabulary, and typed error hierarchy rather than
-maintaining nominally identical policies.
+post-band plan. The three scopes therefore share one inequality, tolerance, Direction
+vocabulary, and typed error hierarchy rather than maintaining nominally identical
+policies.
 
 The ownership split remains intact. The locked plan carries the sleeve limits validated by
 research; Trader's Book Config carries operator-selected realized-book limits; the startup

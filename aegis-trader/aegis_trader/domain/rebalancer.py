@@ -24,8 +24,7 @@ Realized-book gate (Slice 4):
 
 from __future__ import annotations
 
-import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -50,26 +49,6 @@ class RebalancePlan:
 
 class PerNameExposureBreach(ValueError):
     """A final or unfixable position exceeds Trader's per-name cap."""
-
-
-def validate_executable_plan(
-    realized_weights: Mapping[InstrumentId, float],
-    executable_deltas: Sequence[WeightDelta],
-    book: BookConfig,
-) -> None:
-    """Gate the book produced by the deltas that can actually be submitted.
-
-    The caller supplies post-sizing, post-availability deltas. This module owns
-    projecting them onto the realized book and applying Trader's per-name gate
-    plus the kernel-owned gross/net Exposure Validation policy.
-    """
-    post_book = dict(realized_weights)
-    for delta in executable_deltas:
-        post_book[delta.instrument_id] = (
-            post_book.get(delta.instrument_id, 0.0) + delta.delta
-        )
-    _assert_per_name_caps(post_book, book)
-    _gate_book_caps(post_book, book)
 
 
 def rebalance(
@@ -236,7 +215,7 @@ def rebalance_plan(
             continue
 
         deltas.append(WeightDelta(instrument_id=instrument_id, delta=delta))
-        post_book[instrument_id] = realized_w + delta
+        post_book[instrument_id] = resolved_w
 
     # -- Step 3: per-name cap gate on the realised book (widen-to-compliance) --
     _gate_per_name_caps(
@@ -260,9 +239,8 @@ def rebalance_plan(
         post_book = clamped_post_book
         deltas = _deltas_from_realized(post_book, rw)
 
-    # -- Step 4: final planned-book caps (the pipeline repeats this materially
-    #    different check after sizing, rounding, and availability filtering) --
-    validate_executable_plan(rw, deltas, book)
+    # -- Step 4: final planned-book caps --
+    _gate_book_caps(post_book, book)
 
     return RebalancePlan(
         deltas=tuple(deltas),
@@ -351,7 +329,7 @@ def _gate_per_name_caps(
     deltas: list[WeightDelta],
     book: BookConfig,
 ) -> None:
-    """Gate realised positions against the per-name cap.
+    """Remediate realized breaches, then gate every planned position.
 
     If a realised position breaches the per-name cap and no corrective delta was
     emitted (because the band suppressed it), widen-to-compliance: insert a
@@ -360,7 +338,7 @@ def _gate_per_name_caps(
 
     If the target itself exceeds the cap (unfixable), raise.
     """
-    if book.per_name_cap is None or not realized:
+    if book.per_name_cap is None:
         return
 
     for instrument_id, real_w in realized.items():
@@ -398,16 +376,8 @@ def _gate_per_name_caps(
         deltas.append(WeightDelta(instrument_id=instrument_id, delta=delta))
         post_book[instrument_id] = cap_w
 
-
-def _assert_per_name_caps(
-    post_book: Mapping[InstrumentId, float],
-    book: BookConfig,
-) -> None:
-    """Fail closed when a final projected position exceeds Trader's per-name cap."""
-    if book.per_name_cap is None:
-        return
     for instrument_id, weight in post_book.items():
-        if math.isfinite(weight) and abs(weight) > book.per_name_cap + _ZERO_GUARD:
+        if abs(weight) > book.per_name_cap + _ZERO_GUARD:
             raise PerNameExposureBreach(
                 f"InstrumentId {instrument_id.value}: projected weight {abs(weight):.6f} "
                 f"exceeds per-name cap {book.per_name_cap:.6f}"
@@ -464,8 +434,4 @@ def _gate_book_caps(
     checked, regardless of whether realised positions are supplied; breaches
     raise ``GrossExposureBreach`` / ``NetExposureBreach``.
     """
-    validate_exposure(
-        pd.DataFrame([post_book]),
-        book.exposure_limits,
-        allow_no_rebalance_rows=False,
-    )
+    validate_exposure(pd.DataFrame([post_book]), book.exposure_limits)

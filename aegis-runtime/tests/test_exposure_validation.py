@@ -9,7 +9,6 @@ from aegis_runtime.exposure_validation import (
     GrossExposureBreach,
     GroupLabelMismatch,
     InvalidExposureLimits,
-    NonFiniteExposure,
     NetExposureBreach,
     validate_exposure,
 )
@@ -44,7 +43,6 @@ def test_every_failure_mode_remains_a_valueerror() -> None:
     for mode in (
         InvalidExposureLimits,
         GroupLabelMismatch,
-        NonFiniteExposure,
         DirectionBreach,
         GrossExposureBreach,
         NetExposureBreach,
@@ -209,56 +207,6 @@ def test_all_nan_row_passes_as_no_rebalance() -> None:
     validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
 
 
-def test_float_convertible_weights_are_normalized_before_reduction() -> None:
-    allocations = pd.DataFrame({"A": ["0.5"], "B": ["-0.5"]}, index=_index())
-
-    validate_exposure(allocations, ExposureLimits(gross_cap=1.0, net_cap=0.0))
-
-
-def test_non_numeric_weight_is_rejected_with_named_error() -> None:
-    allocations = pd.DataFrame({"A": ["not-a-weight"]}, index=_index())
-
-    with pytest.raises(NonFiniteExposure, match="numeric weights"):
-        validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
-
-
-def test_complex_weight_is_rejected_instead_of_discarding_its_imaginary_part() -> None:
-    allocations = pd.DataFrame({"A": [1j]}, index=_index())
-
-    with pytest.raises(NonFiniteExposure, match="real numeric weights"):
-        validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
-
-
-def test_pandas_missing_row_passes_as_no_rebalance() -> None:
-    allocations = pd.DataFrame({"A": [pd.NA], "B": [pd.NA]}, index=_index())
-
-    validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
-
-
-def test_partial_nan_row_is_rejected_fail_closed() -> None:
-    allocations = _book({"A": [np.nan], "B": [0.5]})
-
-    with pytest.raises(NonFiniteExposure, match="mixes NaN and finite"):
-        validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
-
-
-def test_infinite_weight_is_rejected_even_when_cap_is_unbounded() -> None:
-    with pytest.raises(NonFiniteExposure, match="infinite weight"):
-        validate_exposure(
-            _book({"A": [np.inf]}),
-            ExposureLimits(gross_cap=np.inf),
-        )
-
-
-def test_caller_can_forbid_all_nan_no_rebalance_rows() -> None:
-    with pytest.raises(NonFiniteExposure, match="NaN weight"):
-        validate_exposure(
-            _book({"A": [np.nan], "B": [np.nan]}),
-            ExposureLimits(gross_cap=1.0),
-            allow_no_rebalance_rows=False,
-        )
-
-
 def test_empty_frame_passes() -> None:
     validate_exposure(pd.DataFrame(), ExposureLimits(gross_cap=1.0))
 
@@ -276,18 +224,6 @@ def test_grouped_frame_gates_each_group_independently() -> None:
     validate_exposure(
         allocations,
         ExposureLimits(gross_cap=1.0, net_cap=0.0),
-        group_by=_candidate_labels(allocations.columns),
-    )
-
-
-def test_grouped_no_rebalance_group_may_coexist_with_finite_group() -> None:
-    allocations = _candidate_frame(
-        {"candidate-a": [np.nan, np.nan], "candidate-b": [0.5, -0.5]}
-    )
-
-    validate_exposure(
-        allocations,
-        ExposureLimits(gross_cap=1.0),
         group_by=_candidate_labels(allocations.columns),
     )
 
@@ -350,10 +286,10 @@ def test_group_by_length_mismatch_is_rejected_fail_closed() -> None:
         validate_exposure(allocations, ExposureLimits(gross_cap=1.0), group_by=["only-one"])
 
 
-def test_missing_group_label_is_rejected_fail_closed() -> None:
-    allocations = _book({"A": [0.5], "B": [0.5]})
+def test_missing_group_label_is_included_in_the_gate() -> None:
+    allocations = _book({"A": [0.5], "B": [1.5]})
 
-    with pytest.raises(GroupLabelMismatch, match="must not contain missing"):
+    with pytest.raises(GrossExposureBreach):
         validate_exposure(
             allocations,
             ExposureLimits(gross_cap=1.0),

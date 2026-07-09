@@ -12,7 +12,6 @@ import pytest
 from aegis_runtime import (
     DriftBand,
     NetExposureBreach,
-    NonFiniteExposure,
 )
 from aegis_trader.domain.book_config import BookConfig, DrawdownDeleverCurve, SleeveConfig
 from aegis_trader.domain.rebalancer import (
@@ -581,16 +580,6 @@ class TestRebalanceSlice4:
         with pytest.raises(ValueError, match="exceeds gross_cap"):
             self._book(max_book_gross=1.0, gross_cap=0.8)
 
-    @pytest.mark.parametrize("bad_weight", [float("nan"), float("inf"), float("-inf")])
-    def test_rebalance_rejects_non_finite_realized_book(self, bad_weight: float):
-        book = self._book()
-        with pytest.raises(NonFiniteExposure):
-            rebalance(
-                {book.sleeves[0].name: _target({"AAA": 0.5})},
-                book,
-                realized_weights={_iid("AAA"): bad_weight},
-            )
-
     def test_within_band_drift_over_ceiling_clamped_not_failed(self):
         """Within-band drift can push the projected book over max_book_gross even
         when the target is within it.  The down-only clamp scales the projection
@@ -696,8 +685,8 @@ class TestRebalancePipeline:
             prices={_iid("EUR_ETF"): 100.0},
         )
         assert len(orders) == 1
-        assert orders[0].intent.quantity == pytest.approx(500.0)  # 50_000 / 100
-        assert orders[0].intent.side == OrderSide.BUY
+        assert orders[0].quantity == pytest.approx(500.0)  # 50_000 / 100
+        assert orders[0].side == OrderSide.BUY
 
     def test_multi_ccy_netting_then_sizing(self):
         book = make_book([("trend", "trend.whl", 0.6), ("carry", "carry.whl", 0.4)])
@@ -716,11 +705,11 @@ class TestRebalancePipeline:
             fx_rates={"EUR": 1.0, "USD": 1.10},
             prices={_iid("EUR_ETF"): 100.0, _iid("US_STOCK"): 110.0},
         )
-        by_symbol = {o.intent.instrument_id.symbol.value: o.intent for o in orders}
+        by_symbol = {order.instrument_id.symbol.value: order for order in orders}
         assert by_symbol["EUR_ETF"].quantity == pytest.approx(220.0)   # 22_000 / 100
         assert by_symbol["US_STOCK"].quantity == pytest.approx(220.0)  # 22_000·1.10 / 110
-        for o in orders:
-            assert o.intent.side == OrderSide.BUY
+        for order in orders:
+            assert order.side == OrderSide.BUY
 
 
 class TestDownOnlyGrossClamp:

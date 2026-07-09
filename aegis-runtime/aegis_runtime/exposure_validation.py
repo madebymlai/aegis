@@ -47,10 +47,6 @@ class GroupLabelMismatch(ExposureValidationError):
     """``group_by`` does not supply exactly one label per frame column."""
 
 
-class NonFiniteExposure(ExposureValidationError):
-    """An exposure frame contains malformed or non-finite weight values."""
-
-
 class DirectionBreach(ExposureValidationError):
     """A weight's sign contradicts the declared Direction."""
 
@@ -101,7 +97,6 @@ def validate_exposure(
     *,
     group_by: pd.Index | Sequence[Hashable] | None = None,
     describe_group: Callable[[Hashable], str] | None = None,
-    allow_no_rebalance_rows: bool = True,
 ) -> None:
     """Fail-closed gross/net/sign gate over a signed target-weight frame.
 
@@ -113,32 +108,31 @@ def validate_exposure(
     vectorized, one groupby pass — and a breach names the worst offender via
     ``describe_group`` (default ``group {key!r}``). Breaches raise the named
     ``ExposureValidationError`` subclass for their failure mode.
-
-    An all-NaN row within one validation group means "no rebalance" and is allowed
-    by default; infinities and a mixture of NaN/finite weights within one group are
-    always malformed. Callers such as Trader's realized-book gate that cannot have
-    no-rebalance rows pass ``allow_no_rebalance_rows=False`` to require every weight
-    to be finite.
     """
     if allocations.empty or len(allocations.columns) == 0:
         return
-    labels = _validated_group_labels(group_by, len(allocations.columns))
-    numeric_allocations, decided = _validated_numeric_allocations(allocations)
-    _assert_valid_weights(
-        allocations,
-        decided,
-        labels=labels,
-        allow_no_rebalance_rows=allow_no_rebalance_rows,
+    _assert_sign_consistent(
+        allocations.to_numpy(dtype=float, copy=False),
+        limits.direction,
     )
-    _assert_sign_consistent(decided, limits.direction)
-    if labels is None:
+    if group_by is None:
         describe = None
-        gross = numeric_allocations.abs().sum(axis=1)
-        net = numeric_allocations.sum(axis=1).abs()
+        gross = allocations.abs().sum(axis=1)
+        net = allocations.sum(axis=1).abs()
     else:
+        labels = np.asarray(group_by, dtype=object)
+        if len(labels) != len(allocations.columns):
+            raise GroupLabelMismatch(
+                f"group_by has {len(labels)} labels; allocations has "
+                f"{len(allocations.columns)} columns"
+            )
         describe = describe_group if describe_group is not None else _describe_group
-        gross = numeric_allocations.abs().T.groupby(labels, sort=False).sum().T.max(axis=0)
-        net = numeric_allocations.T.groupby(labels, sort=False).sum().T.abs().max(axis=0)
+        gross = (
+            allocations.abs().T.groupby(labels, sort=False, dropna=False).sum().T.max(axis=0)
+        )
+        net = (
+            allocations.T.groupby(labels, sort=False, dropna=False).sum().T.abs().max(axis=0)
+        )
     _assert_within_cap(
         gross,
         limits.gross_cap,
@@ -160,94 +154,6 @@ def validate_exposure(
 
 def _describe_group(key: Hashable) -> str:
     return f"group {key!r}"
-
-
-def _validated_group_labels(
-    group_by: pd.Index | Sequence[Hashable] | None,
-    column_count: int,
-) -> np.ndarray | None:
-    if group_by is None:
-        return None
-    label_index = group_by if isinstance(group_by, pd.Index) else pd.Index(group_by)
-    if len(label_index) != column_count:
-        raise GroupLabelMismatch(
-            f"group_by has {len(label_index)} labels; allocations has {column_count} columns"
-        )
-    label_frame = label_index.to_frame(index=False)
-    if label_frame.isna().to_numpy().any():
-        raise GroupLabelMismatch("group_by labels must not contain missing values")
-    return label_index.to_numpy(dtype=object)
-
-
-def _validated_numeric_allocations(
-    allocations: pd.DataFrame,
-) -> tuple[pd.DataFrame, np.ndarray]:
-    numeric_source = allocations.where(allocations.notna(), np.nan)
-    raw = numeric_source.to_numpy(copy=False)
-    if np.iscomplexobj(raw) or (
-        raw.dtype == object
-        and any(isinstance(value, (complex, np.complexfloating)) for value in raw.flat)
-    ):
-        raise NonFiniteExposure("allocations must contain real numeric weights")
-    try:
-        decided = numeric_source.to_numpy(dtype=float, copy=False, na_value=np.nan)
-    except (TypeError, ValueError) as error:
-        raise NonFiniteExposure("allocations must contain numeric weights") from error
-    numeric_allocations = pd.DataFrame(
-        decided,
-        index=allocations.index,
-        columns=allocations.columns,
-        copy=False,
-    )
-    return numeric_allocations, decided
-
-
-def _assert_valid_weights(
-    allocations: pd.DataFrame,
-    decided: np.ndarray,
-    *,
-    labels: np.ndarray | None,
-    allow_no_rebalance_rows: bool,
-) -> None:
-    infinite = np.isinf(decided)
-    if infinite.any():
-        _raise_non_finite_weight(allocations, infinite, "infinite")
-
-    nan = np.isnan(decided)
-    if not nan.any():
-        return
-    if not allow_no_rebalance_rows:
-        _raise_non_finite_weight(allocations, nan, "NaN")
-
-    groups: dict[Hashable | None, list[int]] = {}
-    if labels is None:
-        groups[None] = list(range(decided.shape[1]))
-    else:
-        for position, key in enumerate(labels):
-            groups.setdefault(cast(Hashable, key), []).append(position)
-    for key, positions in groups.items():
-        group_nan = nan[:, positions]
-        partial = group_nan.any(axis=1) & ~group_nan.all(axis=1)
-        if partial.any():
-            row_position = int(np.flatnonzero(partial)[0])
-            group = "implicit book" if key is None else f"group {key!r}"
-            raise NonFiniteExposure(
-                f"allocation row {allocations.index[row_position]!r} mixes NaN and "
-                f"finite weights within {group}"
-            )
-
-
-def _raise_non_finite_weight(
-    allocations: pd.DataFrame,
-    invalid: np.ndarray,
-    kind: str,
-) -> None:
-    row_position, column_position = (int(value) for value in np.argwhere(invalid)[0])
-    raise NonFiniteExposure(
-        f"allocations contains {kind} weight at row "
-        f"{allocations.index[row_position]!r}, column "
-        f"{allocations.columns[column_position]!r}"
-    )
 
 
 def _assert_within_cap(

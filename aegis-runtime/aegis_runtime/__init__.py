@@ -23,7 +23,6 @@ from aegis_runtime.exposure_validation import (
     ExposureLimits,
     ExposureValidationError,
     GrossExposureBreach,
-    NonFiniteExposure,
     NetExposureBreach,
     validate_exposure,
 )
@@ -55,7 +54,6 @@ __all__ = [
     "MarketDataMissingIndexError",
     "MarketDataBundle",
     "MissingIndexPolicy",
-    "NonFiniteExposure",
     "NetExposureBreach",
     "validate_bare_root",
     "validate_exposure",

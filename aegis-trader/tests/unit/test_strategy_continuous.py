@@ -22,11 +22,6 @@ from aegis_trader.domain.roll import (
 from aegis_trader.domain.startup import StartupGate, StartupResult
 from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource
 from aegis_trader.trader.book_startup import SubscribeQuoteTicks
-from aegis_trader.trader.pipeline import (
-    GateOutcome,
-    RebalanceResult,
-    RebalanceSummary,
-)
 from aegis_trader.trader.strategy import RebalanceStrategy
 
 
@@ -236,135 +231,30 @@ def test_submit_order_intent_leaves_a_native_instrument_untouched() -> None:
     )
 
     assert harness.submitted[0]["instrument_id"] == native
+    assert harness.submitted[0]["quantity"] == qty
 
 
-class _ResultPipeline:
-    def __init__(self, result: RebalanceResult) -> None:
-        self._result = result
-        self.last_sleeve_weights: dict[object, float] = {}
-
-    def rebalance_period(self, _period: object) -> RebalanceResult:
-        return self._result
-
-
-class _RebalanceHarness:
-    _rebalance_for_period: Any = RebalanceStrategy._rebalance_for_period
-    _require_pipeline: Any = RebalanceStrategy._require_pipeline
-    _submit_order_intents: Any = RebalanceStrategy._submit_order_intents
-    _materialize_order_intent: Any = RebalanceStrategy._materialize_order_intent
-    _require_market_data: Any = RebalanceStrategy._require_market_data
-
-    def __init__(
-        self,
-        result: RebalanceResult,
-        market_data: _FakeMarketData | None = None,
-    ) -> None:
-        self._pipeline = _ResultPipeline(result)
-        self._market_data = market_data or _FakeMarketData({}, Quantity.from_int(1))
-        self._is_halted = False
-        self._current_period = 1
-        self._period_ns = 86_400_000_000_000
-        self._last_sleeve_weights: dict[object, float] = {}
-        self.errors: list[str] = []
-        self.log = SimpleNamespace(error=self.errors.append, info=lambda *a: None)
-        self.logged_summaries: list[RebalanceSummary] = []
-        self.config = SimpleNamespace(fill_time_in_force=None)
-        self.order_factory = SimpleNamespace(market=lambda **kwargs: kwargs)
-        self.submitted: list[dict[str, object]] = []
-
-    def _log_rebalance_summary(self, summary: RebalanceSummary) -> None:
-        self.logged_summaries.append(summary)
-
-    def submit_order(self, order: dict[str, object]) -> None:
-        self.submitted.append(order)
-
-
-def test_strategy_halts_on_zero_sleeve_executable_gate_error() -> None:
-    summary = RebalanceSummary(
-        nav=100_000.0,
-        num_sleeves=0,
-        num_targets=0,
-        num_orders=0,
-        gate_outcome=GateOutcome.ERROR,
-        total_notional=0.0,
-    )
-    harness = _RebalanceHarness(
-        RebalanceResult(
-            orders=(),
-            summary=summary,
-            halt_reason="gross exposure exceeds gross_cap",
-        )
-    )
-
-    harness._rebalance_for_period()
-
-    assert harness._is_halted is True
-    assert harness.logged_summaries == [summary]
-    assert harness.errors == [
-        "Rebalance gate FAILED: gross exposure exceeds gross_cap. HALTING the book."
-    ]
-
-
-def test_strategy_halts_before_partial_submission_when_quantity_is_missing() -> None:
+def test_submit_order_intents_halts_before_partial_submission_when_quantity_is_missing() -> None:
     available = InstrumentId.from_str("VUSA.XLON")
     missing = InstrumentId.from_str("MISSING.XLON")
-    summary = RebalanceSummary(
-        nav=100_000.0,
-        num_sleeves=1,
-        num_targets=2,
-        num_orders=2,
-        gate_outcome=GateOutcome.PASS,
-        total_notional=10.0,
-    )
-    harness = _RebalanceHarness(
-        RebalanceResult(
-            orders=(
-                OrderIntent(available, OrderSide.SELL, 5.0),
-                OrderIntent(missing, OrderSide.SELL, 5.0),
-            ),
-            summary=summary,
-        ),
+    harness = _SubmitHarness(
         _FakeMarketData(
             {},
             Quantity.from_int(5),
             missing_ids=frozenset({missing}),
-        ),
+        )
     )
 
-    harness._rebalance_for_period()
+    harness._submit_order_intents(
+        (
+            OrderIntent(available, OrderSide.SELL, 5.0),
+            OrderIntent(missing, OrderSide.SELL, 5.0),
+        )
+    )
 
     assert harness.submitted == []
     assert harness._is_halted is True
-    assert harness.logged_summaries == [summary]
     assert harness.errors == [
         "Order materialization FAILED: instrument not found for InstrumentId "
         "MISSING.XLON. HALTING the book."
-    ]
-
-
-def test_strategy_halts_when_venue_changes_the_validated_quantity() -> None:
-    instrument_id = InstrumentId.from_str("VUSA.XLON")
-    summary = RebalanceSummary(
-        nav=100_000.0,
-        num_sleeves=1,
-        num_targets=1,
-        num_orders=1,
-        gate_outcome=GateOutcome.PASS,
-        total_notional=5.0,
-    )
-    harness = _RebalanceHarness(
-        RebalanceResult(
-            orders=(OrderIntent(instrument_id, OrderSide.BUY, 5.0),),
-            summary=summary,
-        ),
-        _FakeMarketData({}, Quantity.from_int(4)),
-    )
-
-    harness._rebalance_for_period()
-
-    assert harness.submitted == []
-    assert harness._is_halted is True
-    assert harness.errors == [
-        "Order materialization FAILED: venue quantity 4.0 for VUSA.XLON differs "
-        "from validated quantity 5.0. HALTING the book."
     ]

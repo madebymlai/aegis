@@ -46,19 +46,22 @@ a gate research never validated. We collapse to one kernel module,
 
 The same kernel interface now gates Trader's realized post-band book. `BookConfig`
 projects its optional book caps into one `ExposureLimits` value. The Rebalancer gates
-both its planned post-band projection and the executable projection reconstructed after
-sizing, rounding, and availability filtering; it no longer owns a second gross/net
-comparison, tolerance, or error vocabulary. Trader still owns the distinct work that
-belongs to its actor: projection, the down-only `max_book_gross` clamp, per-name
-remediation, and the decision to halt when the final book remains non-compliant.
+its planned post-band projection; it no longer owns a second gross/net comparison,
+tolerance, or error vocabulary. Trader still owns the distinct work that belongs to its
+actor: projection, the down-only `max_book_gross` clamp, per-name remediation, and the
+decision to halt when the planned book remains non-compliant.
 
 Exposure Validation therefore serves three scopes with one policy:
 
 - research gates Candidate-expanded frames before simulation;
 - an Execution Bundle gates one Sleeve's signed allocation;
-- Trader gates the planned and executable realized Commingled Book projections.
+- Trader gates the planned realized Commingled Book projection.
 
-The kernel accepts explicit all-NaN no-rebalance groups for research, but Trader's
-one-row realized book selects the strict input policy and must be entirely finite.
-Missing group labels and invalid cap values fail at the kernel boundary, so no Pandas
-reduction or IEEE NaN comparison can silently remove exposure from the gate.
+The kernel leaves allocation values unchanged and owns only the shared sign, gross,
+and net policy. In research, `NaN` remains the simulator's sparse "no new allocation"
+instruction; the gate uses the same Pandas reductions as before this amendment. The
+Execution Bundle retains its separate latest-row completeness check, while Trader
+supplies its realized one-row projection directly. Grouped reductions use
+`dropna=False`, so a missing label remains part of the gate instead of requiring a
+separate rejection path. Invalid cap values still fail at `ExposureLimits` construction
+because they make the shared inequalities meaningless.

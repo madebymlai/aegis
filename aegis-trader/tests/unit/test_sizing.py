@@ -11,7 +11,7 @@ _UK = InstrumentId.from_str("UK.TEST")
 
 
 class TestSizeDeltas:
-    """size_deltas: requested weights -> rounded orders plus executable weights."""
+    """size_deltas: requested weights -> rounded orders."""
 
     def test_eur_delta_sized_to_shares(self):
         """A +0.25 weight delta on a EUR instrument → BUY of |delta|·NAV/price."""
@@ -23,10 +23,9 @@ class TestSizeDeltas:
             prices={_F: 100.0},
         )
         assert len(orders) == 1
-        assert orders[0].intent.instrument_id == _F
-        assert orders[0].intent.side == OrderSide.BUY
-        assert orders[0].intent.quantity == pytest.approx(250.0)  # 25_000 EUR / 100
-        assert orders[0].projected_delta.delta == pytest.approx(0.25)
+        assert orders[0].instrument_id == _F
+        assert orders[0].side == OrderSide.BUY
+        assert orders[0].quantity == pytest.approx(250.0)  # 25_000 EUR / 100
 
     def test_negative_delta_is_sell(self):
         orders = size_deltas(
@@ -36,9 +35,8 @@ class TestSizeDeltas:
             fx_rates={"EUR": 1.0},
             prices={_F: 100.0},
         )
-        assert orders[0].intent.side == OrderSide.SELL
-        assert orders[0].intent.quantity == pytest.approx(250.0)
-        assert orders[0].projected_delta.delta == pytest.approx(-0.25)
+        assert orders[0].side == OrderSide.SELL
+        assert orders[0].quantity == pytest.approx(250.0)
 
     def test_gbp_pence_instrument_applies_pence_factor(self):
         """A GBp (pence) instrument: GBP/EUR FX, ×100 pence factor inside size_order."""
@@ -50,38 +48,7 @@ class TestSizeDeltas:
             prices={_UK: 850.0},     # price in pence
         )
         # 10_000 EUR · 0.85 · 100 pence / 850 = 1000 shares
-        assert orders[0].intent.quantity == pytest.approx(1000.0)
-        assert orders[0].projected_delta.delta == pytest.approx(0.10)
-
-    def test_projected_delta_reflects_the_rounded_quantity(self):
-        orders = size_deltas(
-            (WeightDelta(instrument_id=_F, delta=-0.10),),
-            nav=100_050.0,
-            instrument_metas={_F: InstrumentSizing(currency="EUR", size_increment=1.0)},
-            fx_rates={"EUR": 1.0},
-            prices={_F: 100.0},
-        )
-
-        assert orders[0].intent.quantity == pytest.approx(100.0)
-        assert orders[0].projected_delta.delta == pytest.approx(-0.09995002498750624)
-
-    def test_projected_delta_includes_the_contract_multiplier(self):
-        orders = size_deltas(
-            (WeightDelta(instrument_id=_F, delta=0.25),),
-            nav=1_000_000.0,
-            instrument_metas={
-                _F: InstrumentSizing(
-                    currency="USD",
-                    size_increment=1.0,
-                    multiplier=50.0,
-                )
-            },
-            fx_rates={"USD": 1.0},
-            prices={_F: 5_000.0},
-        )
-
-        assert orders[0].intent.quantity == pytest.approx(1.0)
-        assert orders[0].projected_delta.delta == pytest.approx(0.25)
+        assert orders[0].quantity == pytest.approx(1000.0)
 
     def test_missing_fx_rate_drops_delta(self):
         """No FX rate for the instrument's currency → no order (fail-soft skip)."""

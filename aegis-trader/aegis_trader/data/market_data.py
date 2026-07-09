@@ -47,8 +47,8 @@ class MarketDataPort(Protocol):
         ...
 
     def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> Quantity | None:
-        """A venue-valid order quantity from a raw share count, or ``None`` when
-        the instrument is not in the reconciled cache."""
+        """Materialize an already-sized share count as a venue quantity, or
+        ``None`` when the instrument is not in the reconciled cache."""
         ...
 
     def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:

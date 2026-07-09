@@ -357,12 +357,6 @@ class _MarketData:
         return instrument_id in self._fresh_instrument_ids
 
 
-class _MissingSizingMarketData(_MarketData):
-    def instrument_sizing(self, instrument_id: InstrumentId) -> None:
-        _ = instrument_id
-        return None
-
-
 def _book(
     *,
     per_name_cap: float | None = None,
@@ -649,79 +643,7 @@ def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instru
     assert result.summary.num_orders == 0
 
 
-def test_rebalance_pipeline_fails_closed_when_stale_filter_removes_cap_correction() -> None:
-    result = _started_pipeline(
-        book=_book(gross_cap=0.60),
-        book_state=_BookState({_INSTRUMENT_ID: 0.70}),
-        market_data=_MarketData(fresh_instrument_ids=frozenset()),
-        bundle=_FixedWeightBundle(0.50),
-    ).rebalance_period(_period())
-
-    assert result.orders == ()
-    assert result.summary.gate_outcome == GateOutcome.ERROR
-    assert result.halt_reason is not None
-    assert "gross exposure" in result.halt_reason
-
-
-def test_rebalance_pipeline_allows_stale_hold_when_book_remains_compliant() -> None:
-    result = _started_pipeline(
-        book=_book(gross_cap=0.60),
-        book_state=_BookState({_INSTRUMENT_ID: 0.55}),
-        market_data=_MarketData(fresh_instrument_ids=frozenset()),
-        bundle=_FixedWeightBundle(0.50),
-    ).rebalance_period(_period())
-
-    assert result.orders == ()
-    assert result.summary.gate_outcome == GateOutcome.PASS
-    assert result.halt_reason is None
-
-
-def test_rebalance_pipeline_fails_closed_when_rounding_leaves_book_over_cap() -> None:
-    result = _started_pipeline(
-        book=_book(gross_cap=0.60),
-        book_state=_BookState(
-            {_INSTRUMENT_ID: 0.70},
-            nav=100_050.0,
-            cash=100_050.0,
-        ),
-        bundle=_FixedWeightBundle(0.60),
-    ).rebalance_period(_period())
-
-    assert result.orders == ()
-    assert result.summary.gate_outcome == GateOutcome.ERROR
-    assert result.halt_reason is not None
-    assert "gross exposure" in result.halt_reason
-
-
-def test_rebalance_pipeline_fails_closed_when_sizing_drops_cap_correction() -> None:
-    result = _started_pipeline(
-        book=_book(gross_cap=0.60),
-        book_state=_BookState({_INSTRUMENT_ID: 0.70}),
-        market_data=_MissingSizingMarketData(),
-        bundle=_FixedWeightBundle(0.50),
-    ).rebalance_period(_period())
-
-    assert result.orders == ()
-    assert result.summary.gate_outcome == GateOutcome.ERROR
-    assert result.halt_reason is not None
-    assert "gross exposure" in result.halt_reason
-
-
-def test_rebalance_pipeline_fails_closed_when_stale_filter_removes_per_name_correction() -> None:
-    result = _started_pipeline(
-        book=_book(per_name_cap=0.60),
-        book_state=_BookState({_INSTRUMENT_ID: 0.70}),
-        market_data=_MarketData(fresh_instrument_ids=frozenset()),
-        bundle=_FixedWeightBundle(0.50),
-    ).rebalance_period(_period())
-
-    assert result.orders == ()
-    assert result.summary.gate_outcome == GateOutcome.ERROR
-    assert result.halt_reason is not None
-    assert "per-name cap" in result.halt_reason
-
-
-def test_rebalance_pipeline_gates_over_cap_hold_when_every_sleeve_fails() -> None:
+def test_rebalance_pipeline_does_not_gate_held_book_when_every_sleeve_fails() -> None:
     result = _started_pipeline(
         book=_book(gross_cap=0.60),
         book_state=_BookState({_INSTRUMENT_ID: 0.70}),
@@ -729,9 +651,8 @@ def test_rebalance_pipeline_gates_over_cap_hold_when_every_sleeve_fails() -> Non
     ).rebalance_period(_period())
 
     assert result.orders == ()
-    assert result.summary.gate_outcome == GateOutcome.ERROR
-    assert result.halt_reason is not None
-    assert "gross exposure" in result.halt_reason
+    assert result.summary.gate_outcome == GateOutcome.PASS
+    assert result.halt_reason is None
     assert [failure.sleeve for failure in result.sleeve_failures] == [_SLEEVE]
 
 
