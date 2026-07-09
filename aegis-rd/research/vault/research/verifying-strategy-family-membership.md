@@ -67,7 +67,7 @@ The four signatures combine into a per-family gate. The signs and orderings are 
 | Tail / Defensive | strongly positive | ≥ 0 | strongly positive | strongly negative | negative, ≤ 0 | 60mo |
 | Market-Neutral | ≈ 0 (±~0.2) | ≈ 0 (±~0.05) | ≈ 0 | ≈ 0 (±~0.1) | ≈ 0 (±~0.05) | 36mo |
 
-These are objective gates, implemented as Aegis RD custom Metrics and run during research so the Candidate Store stays populated with verified, regime-complementary streams. The "crisis-conditional return" column is the horizon-resolved `crisis_quarter_return` (smooth downside weight, 2-6 month band, annualized), not the daily `crash_day_return` whose sign inverts for a slow-crisis sleeve; gate on its sign and ordering, not its magnitude (the block-bootstrap CI is wide).
+These are objective gates, implementable as custom ranking metrics in a research pipeline and run during research so the candidate pool stays populated with verified, regime-complementary streams. The "crisis-conditional return" column is the horizon-resolved `crisis_quarter_return` (smooth downside weight, 2-6 month band, annualized), not the daily `crash_day_return` whose sign inverts for a slow-crisis sleeve; gate on its sign and ordering, not its magnitude (the block-bootstrap CI is wide).
 
 ## Limitations
 
@@ -81,7 +81,7 @@ The functional form is a choice. The quadratic Treynor-Mazuy model is one way to
 
 ## Strategy hypotheses this could seed
 
-- [ ] **Build the gates.** Implement skew (quarterly), the Treynor-Mazuy $\beta_2$, crisis-conditional return, and regime-conditional beta as Aegis RD custom Metrics, and confirm they sort existing Candidates into the predicted poles.
+- [ ] **Build the gates.** Implement skew (quarterly), the Treynor-Mazuy $\beta_2$, crisis-conditional return, and regime-conditional beta as custom ranking metrics in a research pipeline, and confirm they sort existing candidates into the predicted poles.
 - [ ] **Horizon matters.** Show that quarterly-horizon skew separates the trend sleeve from noise where monthly skew does not, on our own candidates.
 - [x] **Convexity horizon.** Show that $\beta_2$ measured on monthly/quarterly compounded returns is positive for a trend stream whose *daily* $\beta_2$ is ≈ 0, and set the gate's convexity horizon accordingly rather than fitting Treynor-Mazuy on daily bars. **Methodology stands, but no hidden convexity in our trend sleeve (2026-06-12):** for the Atalanta straddle $\beta_2$ is ≈ 0 at daily and goes slightly *negative* at monthly/quarterly (-0.0028, -0.0071), so the flat reading is genuine, not a horizon artifact. Still fit $\beta_2$ at the payoff horizon as a rule; just do not expect it to rescue a sleeve whose convexity is actually absent. See [[runs/atalanta/2026-06-12#H1 - convexity measurement horizon (diagnostic)]].
 - [x] **Own-gamma is the trend test.** A trend sleeve's membership tracks its loading on its own universe's trend efficiency, not benchmark $\beta_2$, and an equity-dominated substrate inverts the sign to short gamma. **Confirmed 2026-06-12:** [[runs/atalanta/2026-06-12|substrate test]].
