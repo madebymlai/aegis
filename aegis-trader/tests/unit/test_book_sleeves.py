@@ -124,9 +124,14 @@ def test_same_root_with_a_different_continuous_id_conflicts() -> None:
     with pytest.raises(ContinuousDeclarationConflictError) as excinfo:
         union_continuous_declarations(sleeves)
 
-    message = str(excinfo.value)
-    for expected in ("ES", "trend", "carry", "ES.XCME", "ES.IFUS"):
-        assert expected in message
+    error = excinfo.value
+    assert error.root == "ES"
+    assert error.sleeves == (SleeveName("trend"), SleeveName("carry"))
+    assert error.existing.continuous_id == _ES_XCME
+    assert error.conflicting.continuous_id == _ES_IFUS
+    message = str(error)
+    assert "ES.XCME" in message
+    assert "ES.IFUS" in message
 
 
 def test_same_root_with_a_different_adjustment_mode_conflicts() -> None:
@@ -138,6 +143,11 @@ def test_same_root_with_a_different_adjustment_mode_conflicts() -> None:
     with pytest.raises(ContinuousDeclarationConflictError) as excinfo:
         union_continuous_declarations(sleeves)
 
-    message = str(excinfo.value)
-    for expected in ("ES", "trend", "carry", "backward_ratio", "backward_spread"):
-        assert expected in message
+    error = excinfo.value
+    assert error.root == "ES"
+    assert error.sleeves == (SleeveName("trend"), SleeveName("carry"))
+    assert error.existing.adjustment_mode is _RATIO
+    assert error.conflicting.adjustment_mode is _SPREAD
+    message = str(error)
+    assert "backward_ratio" in message
+    assert "backward_spread" in message

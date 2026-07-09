@@ -86,21 +86,31 @@ def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
     assert desk.series(_ES) is not None
 
 
-def test_start_materializes_under_the_declarations_mode() -> None:
-    """The declaration's mode drives materialisation, so the same root produces
-    different adjusted histories under ratio vs spread — and a spread roll later
-    emits an additive Rebasing automatically (the model owns the algebra)."""
+def test_start_materializes_under_a_ratio_declaration() -> None:
+    # The window spans the ESH4->ESM4 roll: ratio scales the pre-roll history
+    # (first pre-roll close 100 becomes 173.5 in the post-roll basis).
     port, _ = es_port()
-    ratio_desk = _desk(port)
-    ratio_desk.start(
+    desk = _desk(port)
+    desk.start(
         timeframe="1D",
         history_start=_HISTORY_START,
         end=_dt("2024-04-30"),
         warmup=False,
         declarations=_declarations(),
     )
-    spread_desk = _desk(port)
-    spread_desk.start(
+
+    series = desk.series(_ES)
+    assert series is not None
+    assert series["Close"].iloc[0] == pytest.approx(173.5)
+    assert series["Close"].iloc[-1] == pytest.approx(274.0)
+
+
+def test_start_materializes_under_a_spread_declaration() -> None:
+    # Same legs, spread algebra: the pre-roll history is shifted, not scaled
+    # (first pre-roll close 100 becomes 200 in the post-roll basis).
+    port, _ = es_port()
+    desk = _desk(port)
+    desk.start(
         timeframe="1D",
         history_start=_HISTORY_START,
         end=_dt("2024-04-30"),
@@ -110,37 +120,38 @@ def test_start_materializes_under_the_declarations_mode() -> None:
         ),
     )
 
-    ratio_series = ratio_desk.series(_ES)
-    spread_series = spread_desk.series(_ES)
-    assert ratio_series is not None and spread_series is not None
-    # The window spans the ESH4->ESM4 roll, so the two algebras produce different
-    # back-adjusted histories from the same legs.
-    assert ratio_series["Close"].tolist() != spread_series["Close"].tolist()
+    series = desk.series(_ES)
+    assert series is not None
+    assert series["Close"].iloc[0] == pytest.approx(200.0)
+    assert series["Close"].iloc[-1] == pytest.approx(274.0)
 
 
-def test_roll_emits_multiplicative_rebasing_under_ratio_and_additive_under_spread() -> None:
+def _roll_event_carry(mode: ContinuousFutureAdjustmentType) -> RollEvent:
     port, native = es_port_two_rolls()
-    results: dict[str, float] = {}
-    for label, mode in (
-        ("ratio", ContinuousFutureAdjustmentType.BACKWARD_RATIO),
-        ("spread", ContinuousFutureAdjustmentType.BACKWARD_SPREAD),
-    ):
-        desk = _desk(port)
-        desk.start(
-            timeframe="1D",
-            history_start=_HISTORY_START,
-            end=_dt("2024-06-06"),
-            warmup=False,
-            declarations=_declarations(adjustment_mode=mode),
-        )
-        intents = desk.on_bar(_bar_on(native, _ESM4, date(2024, 6, 14)))
-        event = next(intent for intent in intents if isinstance(intent, RollEvent))
-        results[label] = event.rebasing.apply(0.0)
+    desk = _desk(port)
+    desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-06-06"),
+        warmup=False,
+        declarations=_declarations(adjustment_mode=mode),
+    )
+    intents = desk.on_bar(_bar_on(native, _ESM4, date(2024, 6, 14)))
+    return next(intent for intent in intents if isinstance(intent, RollEvent))
 
-    # Applying to 0 isolates the additive part: multiplicative carry maps 0 -> 0,
-    # additive carry maps 0 -> its offset.
-    assert results["ratio"] == pytest.approx(0.0)
-    assert results["spread"] != pytest.approx(0.0)
+
+def test_roll_emits_a_multiplicative_rebasing_under_a_ratio_declaration() -> None:
+    event = _roll_event_carry(ContinuousFutureAdjustmentType.BACKWARD_RATIO)
+
+    assert event.rebasing.apply(0.0) == pytest.approx(0.0)
+    assert event.rebasing.apply(100.0) == pytest.approx(121.56862745098039)
+
+
+def test_roll_emits_an_additive_rebasing_under_a_spread_declaration() -> None:
+    event = _roll_event_carry(ContinuousFutureAdjustmentType.BACKWARD_SPREAD)
+
+    assert event.rebasing.apply(0.0) == pytest.approx(66.0)
+    assert event.rebasing.apply(100.0) == pytest.approx(166.0)
 
 
 def test_start_halts_when_materialized_continuous_venue_differs_from_declaration() -> None:

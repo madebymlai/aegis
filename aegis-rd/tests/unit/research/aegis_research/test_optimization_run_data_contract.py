@@ -101,18 +101,26 @@ def test_build_candidate_data_identity_captures_instrument_ids_and_contract(
 def test_candidate_data_identity_records_the_materialised_adjustment_mode(
     tmp_path: pytest.TempPathFactory,
 ) -> None:
-    """A futures Run's identity carries the enum value; otherwise the key is absent."""
     resolved = build_resolved_run_config(tmp_path)
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
 
-    futures_identity = build_candidate_data_identity(
+    identity = build_candidate_data_identity(
         FakeDataResult(adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO),
         contract,
     )
-    etf_identity = build_candidate_data_identity(FakeDataResult(), contract)
 
-    assert futures_identity["adjustment_mode"] == "backward_ratio"
-    assert "adjustment_mode" not in etf_identity
+    assert identity["adjustment_mode"] == "backward_ratio"
+
+
+def test_candidate_data_identity_omits_the_mode_key_without_futures(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    identity = build_candidate_data_identity(FakeDataResult(), contract)
+
+    assert "adjustment_mode" not in identity
 
 
 def test_run_data_evidence_payload_records_the_materialised_adjustment_mode(
@@ -125,10 +133,19 @@ def test_run_data_evidence_payload_records_the_materialised_adjustment_mode(
         FakeDataResult(adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD),
         contract,
     )
-    etf_payload = build_run_data_evidence_payload(FakeDataResult(), contract)
 
     assert payload["adjustment_mode"] == "backward_spread"
-    assert "adjustment_mode" not in etf_payload
+
+
+def test_run_data_evidence_payload_omits_the_mode_key_without_futures(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    payload = build_run_data_evidence_payload(FakeDataResult(), contract)
+
+    assert "adjustment_mode" not in payload
 
 
 def _id(value: str) -> InstrumentId:

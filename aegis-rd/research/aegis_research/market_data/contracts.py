@@ -20,6 +20,9 @@ LOGICAL_ARRAYS = {
     "close": "Close",
     "volume": "Volume",
 }
+# The one source-metadata key naming the materialised synthetic continuous roots;
+# written by the catalog adapter, read by the MarketDataResult mode invariant.
+CONTINUOUS_ROOT_IDS_KEY = "continuous_root_ids"
 QUALITY_HEALTHY = "healthy"
 QUALITY_DEGRADED_ALLOWED = "degraded_allowed"
 QUALITY_REJECTED = "rejected"
@@ -37,6 +40,10 @@ class MarketDataQualityError(ValueError):
         self.quality = quality
         details = "; ".join(quality.reasons) or quality.state
         super().__init__(f"Market data quality check failed: {details}")
+
+
+class AdjustmentModeEvidenceError(ValueError):
+    """A market-data result pairs futures evidence and adjustment mode incoherently."""
 
 
 class MarketDataAdapter(Protocol):
@@ -223,14 +230,14 @@ class MarketDataResult:
         # Adjustment mode is a materialisation fact: it exists iff continuous
         # roots were materialised. A drifted pairing can only mean a wiring bug
         # upstream, so it fails here rather than becoming false Run evidence.
-        roots = self.metadata.provenance.source_metadata.get("continuous_root_ids") or ()
+        roots = self.metadata.provenance.source_metadata.get(CONTINUOUS_ROOT_IDS_KEY) or ()
         if roots and self.adjustment_mode is None:
-            raise ValueError(
+            raise AdjustmentModeEvidenceError(
                 f"market data materialised continuous roots {list(roots)} but "
                 "carries no adjustment_mode fact"
             )
         if self.adjustment_mode is not None and not roots:
-            raise ValueError(
+            raise AdjustmentModeEvidenceError(
                 "market data carries an adjustment_mode fact but materialised "
                 "no continuous roots"
             )

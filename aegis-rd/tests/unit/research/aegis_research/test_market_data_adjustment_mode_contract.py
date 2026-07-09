@@ -14,6 +14,7 @@ import pytest
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 
 from research.aegis_research.market_data.contracts import (
+    AdjustmentModeEvidenceError,
     MarketDataQuality,
     MarketDataResult,
 )
@@ -49,7 +50,7 @@ def test_result_carries_the_mode_alongside_futures_evidence() -> None:
 
 
 def test_result_rejects_futures_evidence_without_a_mode() -> None:
-    with pytest.raises(ValueError, match="no adjustment_mode"):
+    with pytest.raises(AdjustmentModeEvidenceError, match="no adjustment_mode"):
         _result(
             metadata=_metadata(continuous_root_ids=["ES.XCME"]),
             adjustment_mode=None,
@@ -57,7 +58,7 @@ def test_result_rejects_futures_evidence_without_a_mode() -> None:
 
 
 def test_result_rejects_a_mode_without_futures_evidence() -> None:
-    with pytest.raises(ValueError, match="no continuous roots"):
+    with pytest.raises(AdjustmentModeEvidenceError, match="no continuous roots"):
         _result(
             metadata=default_metadata(),
             adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD,

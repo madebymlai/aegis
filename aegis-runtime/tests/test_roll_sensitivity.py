@@ -376,6 +376,8 @@ def test_failure_names_the_mode_and_hedges_its_claim() -> None:
 
     message = str(excinfo.value)
     assert "backward_ratio" in message
-    assert "metamorphic" in message or "observed roll sensitivity" in message
-    for forbidden in ("proved", "certified", "guaranteed"):
-        assert forbidden not in message
+    assert "metamorphic check failed" in message
+    assert "observed roll sensitivity" in message
+    assert "proved" not in message
+    assert "certified" not in message
+    assert "guaranteed" not in message

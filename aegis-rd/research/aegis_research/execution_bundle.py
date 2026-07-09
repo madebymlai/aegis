@@ -255,7 +255,7 @@ def _bundle_contract(
     components: AssembledComponents,
     instrument_ids: Sequence[InstrumentId],
     *,
-    adjustment_mode: ContinuousFutureAdjustmentType | None = None,
+    adjustment_mode: ContinuousFutureAdjustmentType | None,
 ) -> DataContract:
     futures = tuple(config.data.futures)
     if futures and adjustment_mode is None:

@@ -112,14 +112,11 @@ def test_compute_weights_applies_the_conversion_before_components() -> None:
         currency_conversion=conversion,
     )
 
-    converted_close = native_close.copy()
-    converted_close[aapl] = native_close[aapl] * rate
-    expected = bundle.compute_weights(
-        MarketDataBundle({"Close": converted_close}),
-        currency_conversion=None,
-    )
-    pd.testing.assert_frame_equal(weights, expected)
-    assert weights.iloc[-1][aapl] == pytest.approx((12.0 * 1.1) / (12.0 * 1.1 + 22.0))
+    # The strategy reflects the panel it was handed: these are the proportions of
+    # the CONVERTED closes (AAPL 9.0/11.0/13.2 against MSFT 20/21/22), proving the
+    # panel the components saw was converted exactly once, inside the bundle.
+    assert weights[aapl].tolist() == pytest.approx([0.3103448275862069, 0.34375, 0.375])
+    assert weights[msft].tolist() == pytest.approx([0.6896551724137931, 0.65625, 0.625])
 
 
 def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:

@@ -28,7 +28,10 @@ from research.aegis_research.market_data.adapters._support import (
     native_from_array_dict,
     native_index,
 )
-from research.aegis_research.market_data.contracts import MarketDataAdapterResult
+from research.aegis_research.market_data.contracts import (
+    CONTINUOUS_ROOT_IDS_KEY,
+    MarketDataAdapterResult,
+)
 from research.aegis_research.market_data.identity import instrument_ids
 
 
@@ -110,7 +113,7 @@ def load_catalog_source(
             "requested_instrument_ids": list(config.native_instrument_ids),
             "tradeable_instrument_ids": list(config.instruments),
             "exchange_instrument_ids": list(config.exchange),
-            "continuous_root_ids": [root_id.value for root_id in continuous_frames],
+            CONTINUOUS_ROOT_IDS_KEY: [root_id.value for root_id in continuous_frames],
             # Derived from each root's dated-leg definitions; rides the existing
             # data-identity projection into Candidate evidence.
             "continuous_root_currencies": {
@@ -161,11 +164,10 @@ def _continuous_frames(
     The currency is the model's leg-derived fact — a synthetic root carries no
     catalog definition, so this is how it joins the base-currency conversion.
     """
-    if roots and adjustment_mode is None:
-        raise ValueError("continuous-future roots require an explicit adjustment mode")
     frames: dict[InstrumentId, pd.DataFrame] = {}
     currencies: dict[InstrumentId, str] = {}
     for root in roots:
+        assert adjustment_mode is not None  # the caller selects a mode iff roots exist
         model = ContinuousContractModel(
             data_port,
             root,

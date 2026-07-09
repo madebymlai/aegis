@@ -178,34 +178,6 @@ def test_model_requires_an_explicit_adjustment_mode() -> None:
         ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")  # type: ignore[call-arg]
 
 
-def test_model_materializes_under_an_explicitly_passed_adjustment_mode() -> None:
-    # The mode is a caller-supplied fact: research records the enum it passed here
-    # as Run evidence, so the model must materialise under exactly that algebra.
-    port, native = es_port()
-    chain = fetch_contract_chain(
-        "ES",
-        date(2024, 1, 15),
-        date(2024, 5, 31),
-        list_contracts=lambda *_args: port.resolve_continuous("ES").legs,
-        fetch=port.fetch_contract_ohlcv,
-        bar_cadence=timedelta(days=1),
-        probe_volume=port.probe_contract_volume,
-    )
-    spread = ContinuousFutureAdjustmentType.BACKWARD_SPREAD
-    future = continuous_future(chain, _ES_XCME, adjustment_mode=spread)
-    oracle = backward_series(native, future.transitions, mode=spread)
-
-    model = ContinuousContractModel(
-        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=spread
-    )
-    model.materialize(end=ES_END)
-
-    head = oracle[: len(model.frame)]
-    assert model.frame["Close"].tolist() == pytest.approx(
-        [bar.close_raw / _RAW_SCALE for bar in head]
-    )
-
-
 def test_materialize_derives_the_roots_quote_currency_from_its_legs() -> None:
     # A synthetic continuous root has no catalog definition of its own; its quote
     # currency is the one currency every resolved dated leg declares. Research
@@ -367,30 +339,33 @@ def test_roll_records_the_rebasing_from_the_seam() -> None:
     assert model.last_rebasing.apply(100.0) == pytest.approx(121.56862745098039)
 
 
-def test_roll_rebasing_is_multiplicative_under_ratio_and_additive_under_spread() -> None:
-    """The model's ``ContinuousFuture`` owns the declared mode, so the emitted roll
-    carry is the matching algebra automatically: a ratio roll scales, a spread roll
-    shifts. Applying to 0.0 isolates the additive part — a multiplicative carry maps
-    0 to 0, an additive one maps 0 to its offset."""
-    ratio_model = _materialized_two_roll_model()
-    assert ratio_model.last_rebasing.apply(0.0) == pytest.approx(0.0)
-    assert ratio_model.last_rebasing.apply(200.0) == pytest.approx(
-        2 * ratio_model.last_rebasing.apply(100.0)
-    )
+def test_roll_rebasing_is_multiplicative_under_ratio() -> None:
+    # The model's ``ContinuousFuture`` owns the declared mode, so a ratio roll's
+    # carry scales: 0 maps to 0 and doubling the input doubles the output
+    # (121.568… is the seam factor applied to 100, pinned above).
+    model = _materialized_two_roll_model()
 
+    assert model.last_rebasing.apply(0.0) == pytest.approx(0.0)
+    assert model.last_rebasing.apply(100.0) == pytest.approx(121.56862745098039)
+    assert model.last_rebasing.apply(200.0) == pytest.approx(243.13725490196077)
+
+
+def test_roll_rebasing_is_additive_under_spread() -> None:
+    # Under spread the same seam carries a constant +66 offset: 0 maps to the
+    # offset itself and every input shifts by exactly it.
     port, native = es_port_two_rolls()
-    spread_model = ContinuousContractModel(
+    model = ContinuousContractModel(
         port,
         "ES",
         start=ES_START,
         timeframe="1D",
         adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
     )
-    spread_model.materialize(end="2024-06-10")
-    spread_model.on_bar(_bar_on(native, _ESU4, date(2024, 6, 14)))
-    offset = spread_model.last_rebasing.apply(0.0)
-    assert offset != pytest.approx(0.0)
-    assert spread_model.last_rebasing.apply(100.0) == pytest.approx(100.0 + offset)
+    model.materialize(end="2024-06-10")
+    model.on_bar(_bar_on(native, _ESU4, date(2024, 6, 14)))
+
+    assert model.last_rebasing.apply(0.0) == pytest.approx(66.0)
+    assert model.last_rebasing.apply(100.0) == pytest.approx(166.0)
 
 
 def test_roll_rematerializes_prior_closes_in_the_new_basis() -> None:

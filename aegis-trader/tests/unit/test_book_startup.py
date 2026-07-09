@@ -293,8 +293,11 @@ def test_bootstrap_halts_on_declaration_conflict_before_starting_roll_desk() -> 
     assert isinstance(result, Halt)
     assert result.gate == StartupGate.CONTINUOUS_DECLARATION
     assert result.reason is not None
-    for expected in ("ES", "trend", "carry", "ES.XCME", "ES.IFUS"):
-        assert expected in result.reason
+    assert "'ES'" in result.reason
+    assert "trend" in result.reason
+    assert "carry" in result.reason
+    assert "ES.XCME" in result.reason
+    assert "ES.IFUS" in result.reason
     assert roll_desk.calls == []
 
 

@@ -35,7 +35,31 @@ class ContinuousRootDeclaration:
 
 
 class ContinuousDeclarationConflictError(ValueError):
-    """Two Sleeves declare the same root with a different id or adjustment mode."""
+    """Two Sleeves declare the same root with a different id or adjustment mode.
+
+    Carries the conflict as typed facts — the bare root, the declaring Sleeves,
+    and both declarations — so the startup gate can report it without parsing
+    the message.
+    """
+
+    def __init__(
+        self,
+        *,
+        root: str,
+        sleeves: tuple[SleeveName, ...],
+        existing: ContinuousRootDeclaration,
+        conflicting: ContinuousRootDeclaration,
+    ) -> None:
+        self.root = root
+        self.sleeves = sleeves
+        self.existing = existing
+        self.conflicting = conflicting
+        super().__init__(
+            f"continuous root {root!r} is declared incoherently across sleeves "
+            f"{[str(name) for name in sleeves]}: "
+            f"{existing.continuous_id.value}/{existing.adjustment_mode.value} "
+            f"vs {conflicting.continuous_id.value}/{conflicting.adjustment_mode.value}"
+        )
 
 
 def union_continuous_declarations(
@@ -59,10 +83,7 @@ def union_continuous_declarations(
         }
         mode = contract.adjustment_mode
         for root in contract.futures:
-            if mode is None:  # unreachable: DataContract enforces mode-iff-futures
-                raise ContinuousDeclarationConflictError(
-                    f"continuous root {root!r} declared without an adjustment mode"
-                )
+            assert mode is not None  # DataContract enforces mode-iff-futures
             declaration = ContinuousRootDeclaration(
                 continuous_id=continuous_by_root[root],
                 adjustment_mode=mode,
@@ -71,11 +92,10 @@ def union_continuous_declarations(
             declaring_sleeves.setdefault(root, []).append(sleeve_name)
             if existing != declaration:
                 raise ContinuousDeclarationConflictError(
-                    f"continuous root {root!r} is declared incoherently across "
-                    f"sleeves {[str(name) for name in declaring_sleeves[root]]}: "
-                    f"{existing.continuous_id.value}/{existing.adjustment_mode.value} "
-                    f"vs {declaration.continuous_id.value}/"
-                    f"{declaration.adjustment_mode.value}"
+                    root=root,
+                    sleeves=tuple(declaring_sleeves[root]),
+                    existing=existing,
+                    conflicting=declaration,
                 )
     return declarations
 

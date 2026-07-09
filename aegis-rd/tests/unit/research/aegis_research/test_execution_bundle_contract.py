@@ -93,6 +93,7 @@ def test_bundle_contract_carries_the_fx_conversion_legs() -> None:
         SimpleNamespace(data=data),
         _components(),
         (InstrumentId.from_str("LQDH.LSEETF"),),
+        adjustment_mode=None,
     )
 
     assert contract.exchange == (InstrumentId.from_str("EUR/USD.IDEALPRO"),)
@@ -112,7 +113,10 @@ def test_bundle_contract_has_no_roots_when_none_declared() -> None:
     )
 
     contract = _bundle_contract(
-        SimpleNamespace(data=data), _components(), (InstrumentId.from_str("AAPL.NASDAQ"),)
+        SimpleNamespace(data=data),
+        _components(),
+        (InstrumentId.from_str("AAPL.NASDAQ"),),
+        adjustment_mode=None,
     )
 
     assert contract.futures == ()
@@ -154,6 +158,37 @@ def test_bundle_contract_carries_the_locked_runs_recorded_mode_not_the_default()
     )
 
     assert contract.adjustment_mode is ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+
+
+def test_export_retains_the_recorded_mode_after_the_process_default_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flip the process default everywhere it is actually read (aegis-data and the
+    # research adapter's binding): the exported contract must still carry the
+    # locked Run's recorded BACKWARD_RATIO, because export never reads the default.
+    import aegis_data.continuous_future as continuous_future_module
+
+    from research.aegis_research.market_data.adapters import catalog as catalog_adapter
+
+    monkeypatch.setattr(
+        continuous_future_module,
+        "DEFAULT_ADJUSTMENT_MODE",
+        ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+    )
+    monkeypatch.setattr(
+        catalog_adapter,
+        "DEFAULT_ADJUSTMENT_MODE",
+        ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+    )
+
+    contract = _bundle_contract(
+        SimpleNamespace(data=_futures_data()),
+        _components(),
+        _FUTURES_IDS,
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+    )
+
+    assert contract.adjustment_mode is ContinuousFutureAdjustmentType.BACKWARD_RATIO
 
 
 def test_futures_export_without_recorded_mode_fails_with_rerun_guidance() -> None:
