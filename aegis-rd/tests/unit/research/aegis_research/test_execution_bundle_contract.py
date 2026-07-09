@@ -159,7 +159,7 @@ def test_bundle_contract_carries_the_locked_runs_recorded_mode_not_the_default()
 def test_futures_export_without_recorded_mode_fails_with_rerun_guidance() -> None:
     # A pre-evidence Run cannot prove which algebra materialised its frames; export
     # must fail loudly instead of reading the current code default.
-    with pytest.raises(UnrecordedAdjustmentModeError, match="re-run.*re-lock"):
+    with pytest.raises(UnrecordedAdjustmentModeError, match=r"re-run.*re-lock"):
         _bundle_contract(
             SimpleNamespace(data=_futures_data()),
             _components(),

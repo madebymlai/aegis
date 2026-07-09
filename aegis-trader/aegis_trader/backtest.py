@@ -295,21 +295,19 @@ def _catalog_instruments(
     data_port: CatalogBackedDataPort,
     instrument_ids: tuple[InstrumentId, ...],
 ) -> dict[InstrumentId, Instrument]:
-    loaded = {
-        instrument.id.value: instrument
-        for instrument in data_port.instruments(instrument_ids)
-    }
+    # The port keys definitions back to the caller's authored ids.
+    loaded = data_port.instruments(instrument_ids)
     missing = [
         instrument_id.value
         for instrument_id in instrument_ids
-        if instrument_id.value not in loaded
+        if instrument_id not in loaded
     ]
     if missing:
         raise CatalogInstrumentError(
             "catalog is missing instrument definitions for native "
             f"InstrumentIds: {missing}"
         )
-    return {instrument_id: loaded[instrument_id.value] for instrument_id in instrument_ids}
+    return {instrument_id: loaded[instrument_id] for instrument_id in instrument_ids}
 
 
 def _validate_market_data(sleeves: SleeveBundles, market_data: BacktestMarketData) -> None:

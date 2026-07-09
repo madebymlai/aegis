@@ -25,6 +25,7 @@ from nautilus_trader.config import (
     TradingNodeConfig,
 )
 from nautilus_trader.model.enums import TimeInForce
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.catalog import catalog_root
@@ -208,6 +209,7 @@ def test_union_loadable_instrument_ids_excludes_continuous_future_roots():
         missing_index=MissingIndexPolicy.DROP,
         lookback_bars=1,
         futures=("ES",),
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
     )
     sleeves = ((SleeveName("equity"), SimpleNamespace(contract=contract)),)
 

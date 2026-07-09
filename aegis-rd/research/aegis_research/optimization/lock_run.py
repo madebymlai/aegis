@@ -16,9 +16,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
-
 from aegis_runtime import SUPPORTED_ADJUSTMENT_MODES
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 
 from research.aegis_research.component_registry import (
     COMPONENT_FAMILIES,

@@ -4,13 +4,13 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from aegis_data.distributions import Distribution
+from aegis_runtime.currency import CurrencyConversion
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from research.aegis_research.configuration import DataConfig
-from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.market_data.native_metadata import supports_update
 
 LOGICAL_ARRAYS = {

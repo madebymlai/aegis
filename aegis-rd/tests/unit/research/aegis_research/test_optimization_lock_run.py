@@ -29,7 +29,7 @@ from research.aegis_research.optimization.ranking import (
 from tests.support.research.aegis_research.factories import make_lock
 
 _DATA_IDENTITY = {
-    "schema_version": "candidate_data_identity.v2",
+    "schema_version": "candidate_data_identity.v3",
     "requested_instrument_ids": ["SYN.XNAS"],
     "instrument_ids": ["SYN.XNAS"],
     "timeframe": "1D",

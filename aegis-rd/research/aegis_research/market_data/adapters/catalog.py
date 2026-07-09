@@ -13,6 +13,11 @@ from aegis_data.catalog import (
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.distributions import Distribution
+from aegis_runtime.currency import (
+    CurrencyConversion,
+    MissingInstrumentDefinitionError,
+    build_currency_conversion,
+)
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
@@ -24,11 +29,6 @@ from research.aegis_research.market_data.adapters._support import (
     native_index,
 )
 from research.aegis_research.market_data.contracts import MarketDataAdapterResult
-from aegis_runtime.currency import (
-    CurrencyConversion,
-    MissingInstrumentDefinitionError,
-    build_currency_conversion,
-)
 from research.aegis_research.market_data.identity import instrument_ids
 
 

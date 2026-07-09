@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "c233c4571de64bf45d5b5683ec2924e19b1f573e30610ed935b4bd73e9dd0e4d",
+      "hash": "fb491fdeddee0a926e6f3e160512625aa2250cd7284968886b32c29a04aecafa",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -188,7 +188,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_d559d1e896d6a6fd105301547e1c3545",
+          "candidate_key": "cand_f508314219a202a4d9eba922060f5132",
           "held_out_metrics": {
             "0": {
               "max_dd": 15.157424798610176,
@@ -395,7 +395,7 @@
                 }
               ],
               "rows": 1008,
-              "schema_version": "candidate_data_identity.v2",
+              "schema_version": "candidate_data_identity.v3",
               "source_metadata": {
                 "catalog_path": "catalog",
                 "continuous_root_ids": [],
@@ -553,7 +553,7 @@
           }
         },
         {
-          "candidate_key": "cand_e6d3a867c70fc74ea7a32726da1cca26",
+          "candidate_key": "cand_ad3a86a16ff7abe5d99cb500cefbfebb",
           "held_out_metrics": {
             "0": {
               "max_dd": 17.34543783066552,
@@ -760,7 +760,7 @@
                 }
               ],
               "rows": 1008,
-              "schema_version": "candidate_data_identity.v2",
+              "schema_version": "candidate_data_identity.v3",
               "source_metadata": {
                 "catalog_path": "catalog",
                 "continuous_root_ids": [],
@@ -918,7 +918,7 @@
           }
         },
         {
-          "candidate_key": "cand_8dcf2e1c61df054c856f7a122f9d9f10",
+          "candidate_key": "cand_2f42613edf052abd06220d1993652574",
           "held_out_metrics": {
             "0": {
               "max_dd": 22.898667842061005,
@@ -1125,7 +1125,7 @@
                 }
               ],
               "rows": 1008,
-              "schema_version": "candidate_data_identity.v2",
+              "schema_version": "candidate_data_identity.v3",
               "source_metadata": {
                 "catalog_path": "catalog",
                 "continuous_root_ids": [],

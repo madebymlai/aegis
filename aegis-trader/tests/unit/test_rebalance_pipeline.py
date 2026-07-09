@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 import pandas as pd
 import pytest
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.rebasing import ratio_rebasing, spread_rebasing
@@ -99,6 +100,7 @@ class _ContinuousWeightBundle(ExecutionBundle):
             missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
             futures=("ES",),
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
         )
         manifest = BundleManifest(
             run_id="pipeline-test",

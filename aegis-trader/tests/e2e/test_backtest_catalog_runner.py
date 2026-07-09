@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 from aegis_data.distributions import Distribution, write_distribution_data
 from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
@@ -234,6 +235,7 @@ class _ContinuousRootBundle(ExecutionBundle):
             missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
             futures=("ES",),
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
         )
         manifest = BundleManifest(
             run_id="catalog-runner-continuous-root",
