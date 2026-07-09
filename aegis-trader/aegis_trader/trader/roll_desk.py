@@ -11,6 +11,7 @@ from aegis_data.continuous_contract_model import ContinuousContractModel
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_trader.bundles.book_sleeves import ContinuousRootDeclaration
 from aegis_trader.domain.roll import (
     Halt,
     RequestBars,
@@ -33,11 +34,9 @@ class RollDesk:
         *,
         catalog_port: CatalogBackedDataPort,
         instrument_present: InstrumentPresence,
-        declared_continuous_ids_by_root: Mapping[str, InstrumentId],
     ) -> None:
         self._catalog_port = catalog_port
         self._instrument_present = instrument_present
-        self._declared_continuous_ids_by_root = dict(declared_continuous_ids_by_root)
         self._timeframe: str | None = None
         self._models: dict[InstrumentId, ContinuousContractModel] = {}
         self._leg_to_continuous_id: dict[InstrumentId, InstrumentId] = {}
@@ -50,35 +49,44 @@ class RollDesk:
         history_start: datetime,
         end: datetime,
         warmup: bool,
+        declarations: Mapping[str, ContinuousRootDeclaration],
     ) -> RollIntentBatch:
-        """Materialize declared roots and emit front-leg warmup/subscription intents."""
+        """Materialize the declared roots and emit front-leg warmup/subscription intents.
+
+        ``declarations`` is the already coherent cross-Sleeve union built by book
+        startup; each root materialises under its declaration's bundle-recorded
+        adjustment mode, so the emitted roll ``Rebasing`` is multiplicative for
+        ratio and additive for spread automatically.
+        """
         self._timeframe = timeframe
         models: dict[InstrumentId, ContinuousContractModel] = {}
         leg_to_continuous_id: dict[InstrumentId, InstrumentId] = {}
         intents: list[RequestBars | SubscribeBars] = []
 
-        for root, declared_id in sorted(self._declared_continuous_ids_by_root.items()):
+        for root, declaration in sorted(declarations.items()):
             model = ContinuousContractModel(
                 self._catalog_port,
                 root,
                 start=history_start.date().isoformat(),
                 timeframe=timeframe,
+                adjustment_mode=declaration.adjustment_mode,
             )
             model.materialize(end=end.date().isoformat())
-            if model.continuous_id != declared_id:
+            if model.continuous_id != declaration.continuous_id:
                 return (
                     Halt(
                         gate=StartupGate.CONTINUOUS_IDENTITY,
                         reason=(
                             f"continuous root {root!r} materialized as "
-                            f"{model.continuous_id.value}, expected {declared_id.value}"
+                            f"{model.continuous_id.value}, expected "
+                            f"{declaration.continuous_id.value}"
                         ),
                     ),
                 )
 
             front_leg = model.front_leg
-            models[declared_id] = model
-            leg_to_continuous_id[front_leg] = declared_id
+            models[declaration.continuous_id] = model
+            leg_to_continuous_id[front_leg] = declaration.continuous_id
             if warmup:
                 intents.append(
                     RequestBars(

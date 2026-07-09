@@ -34,9 +34,12 @@ The explicit list of roll seams — transition instant, the two legs by native
 `InstrumentId`, and each leg's seam Close — that aegis-data derives as a pure
 function over catalog legs (`continuous_future.py`). Handed to Nautilus via
 `request_bars`/`subscribe_bars` `params`; the engine materialises the back-adjusted
-continuous series on demand (Path A), `BACKWARD_SPREAD` (Panama), and it is never
-persisted. A spread golden test pins the engine's output byte-for-byte.
-_Avoid_: Panama transform, bespoke back-adjust, persisted continuous series
+continuous series on demand (Path A) under an explicitly supplied adjustment mode
+(`BACKWARD_RATIO` or `BACKWARD_SPREAD`) — research supplies the mode it records as
+Run evidence, live supplies the locked bundle contract's mode — and it is never
+persisted. Golden tests pin the engine's output byte-for-byte for both backward
+modes (root ADR-0009).
+_Avoid_: implicit mode defaults on the shared path, bespoke back-adjust, persisted continuous series
 
 **ContinuousContractModel**:
 The stateful owner of one bare continuous-futures root's adjusted frame, front

@@ -13,11 +13,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, RawBarRequest, bars_to_ohlcv
 from aegis_data.chain import fetch_contract_chain
-from aegis_data.continuous_future import (
-    DEFAULT_ADJUSTMENT_MODE,
-    ContinuousFuture,
-    continuous_future,
-)
+from aegis_data.continuous_future import ContinuousFuture, continuous_future
 from aegis_data.continuous_materialize import materialize_continuous_bars
 from aegis_data.liquidity import liquid_roll_schedule
 from aegis_data.rebasing import IDENTITY, Rebasing
@@ -52,7 +48,7 @@ class ContinuousContractModel:
         *,
         start: str,
         timeframe: str = "1D",
-        adjustment_mode: ContinuousFutureAdjustmentType = DEFAULT_ADJUSTMENT_MODE,
+        adjustment_mode: ContinuousFutureAdjustmentType,
     ) -> None:
         self._port = port
         self._root = root

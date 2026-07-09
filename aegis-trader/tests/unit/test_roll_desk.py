@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 import pandas as pd
+import pytest
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.roll import (
@@ -16,6 +18,7 @@ from aegis_trader.domain.roll import (
     SubscribeBars,
     UnsubscribeBars,
 )
+from aegis_trader.bundles.book_sleeves import ContinuousRootDeclaration
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.trader.roll_desk import RollDesk
 
@@ -29,13 +32,26 @@ _ESM4 = InstrumentId.from_str("ESM4.XCME")
 _ESU4 = InstrumentId.from_str("ESU4.XCME")
 
 
-def _desk(port, *, present: tuple[InstrumentId, ...] = (), declared: InstrumentId = _ES) -> RollDesk:
+def _desk(port, *, present: tuple[InstrumentId, ...] = ()) -> RollDesk:
     present_set = set(present)
     return RollDesk(
         catalog_port=port,
         instrument_present=present_set.__contains__,
-        declared_continuous_ids_by_root={"ES": declared},
     )
+
+
+def _declarations(
+    *,
+    declared: InstrumentId = _ES,
+    adjustment_mode: ContinuousFutureAdjustmentType = (
+        ContinuousFutureAdjustmentType.BACKWARD_RATIO
+    ),
+) -> dict[str, ContinuousRootDeclaration]:
+    return {
+        "ES": ContinuousRootDeclaration(
+            continuous_id=declared, adjustment_mode=adjustment_mode
+        )
+    }
 
 
 def _dt(day: str) -> datetime:
@@ -59,6 +75,7 @@ def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
         history_start=_HISTORY_START,
         end=_dt("2024-02-15"),
         warmup=True,
+        declarations=_declarations(),
     )
 
     assert intents == (
@@ -69,15 +86,73 @@ def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
     assert desk.series(_ES) is not None
 
 
+def test_start_materializes_under_the_declarations_mode() -> None:
+    """The declaration's mode drives materialisation, so the same root produces
+    different adjusted histories under ratio vs spread — and a spread roll later
+    emits an additive Rebasing automatically (the model owns the algebra)."""
+    port, _ = es_port()
+    ratio_desk = _desk(port)
+    ratio_desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-04-30"),
+        warmup=False,
+        declarations=_declarations(),
+    )
+    spread_desk = _desk(port)
+    spread_desk.start(
+        timeframe="1D",
+        history_start=_HISTORY_START,
+        end=_dt("2024-04-30"),
+        warmup=False,
+        declarations=_declarations(
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+        ),
+    )
+
+    ratio_series = ratio_desk.series(_ES)
+    spread_series = spread_desk.series(_ES)
+    assert ratio_series is not None and spread_series is not None
+    # The window spans the ESH4->ESM4 roll, so the two algebras produce different
+    # back-adjusted histories from the same legs.
+    assert ratio_series["Close"].tolist() != spread_series["Close"].tolist()
+
+
+def test_roll_emits_multiplicative_rebasing_under_ratio_and_additive_under_spread() -> None:
+    port, native = es_port_two_rolls()
+    results: dict[str, float] = {}
+    for label, mode in (
+        ("ratio", ContinuousFutureAdjustmentType.BACKWARD_RATIO),
+        ("spread", ContinuousFutureAdjustmentType.BACKWARD_SPREAD),
+    ):
+        desk = _desk(port)
+        desk.start(
+            timeframe="1D",
+            history_start=_HISTORY_START,
+            end=_dt("2024-06-06"),
+            warmup=False,
+            declarations=_declarations(adjustment_mode=mode),
+        )
+        intents = desk.on_bar(_bar_on(native, _ESM4, date(2024, 6, 14)))
+        event = next(intent for intent in intents if isinstance(intent, RollEvent))
+        results[label] = event.rebasing.apply(0.0)
+
+    # Applying to 0 isolates the additive part: multiplicative carry maps 0 -> 0,
+    # additive carry maps 0 -> its offset.
+    assert results["ratio"] == pytest.approx(0.0)
+    assert results["spread"] != pytest.approx(0.0)
+
+
 def test_start_halts_when_materialized_continuous_venue_differs_from_declaration() -> None:
     port, _native = es_port()
-    desk = _desk(port, declared=_ES_IFUS)
+    desk = _desk(port)
 
     intents = desk.start(
         timeframe="1D",
         history_start=_HISTORY_START,
         end=_dt("2024-02-15"),
         warmup=True,
+        declarations=_declarations(declared=_ES_IFUS),
     )
 
     assert intents == (
@@ -96,6 +171,7 @@ def test_on_bar_without_a_roll_appends_offset_zero_and_emits_no_intents() -> Non
         history_start=_HISTORY_START,
         end=_dt("2024-05-10"),
         warmup=False,
+        declarations=_declarations(),
     )
     series_before = desk.series(_ES)
     bar = _bar_on(native, _ESM4, date(2024, 5, 13))
@@ -117,6 +193,7 @@ def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> N
         history_start=_HISTORY_START,
         end=_dt("2024-06-06"),
         warmup=False,
+        declarations=_declarations(),
     )
     bar = _bar_on(native, _ESM4, date(2024, 6, 14))
 
@@ -139,6 +216,7 @@ def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument(
         history_start=_HISTORY_START,
         end=_dt("2024-06-06"),
         warmup=False,
+        declarations=_declarations(),
     )
     bar = _bar_on(native, _ESM4, date(2024, 6, 14))
 
@@ -155,6 +233,7 @@ def test_on_instrument_completes_a_deferred_front_leg_subscription() -> None:
         history_start=_HISTORY_START,
         end=_dt("2024-06-06"),
         warmup=False,
+        declarations=_declarations(),
     )
     desk.on_bar(_bar_on(native, _ESM4, date(2024, 6, 14)))
 

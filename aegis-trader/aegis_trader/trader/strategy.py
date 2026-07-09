@@ -30,6 +30,8 @@ globally on failure.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from typing import Any, assert_never
 
 from nautilus_trader.model.data import Bar, QuoteTick
@@ -196,35 +198,18 @@ class RebalanceStrategy(Strategy):
     def _registered_instrument_ids(self) -> tuple[InstrumentId, ...]:
         return union_loadable_instrument_ids(tuple(self._sleeve_to_bundle.items()))
 
-    def _declared_continuous_ids_by_root(self) -> dict[str, InstrumentId]:
-        """Continuous-root declarations keyed by bare root."""
-        declared: dict[str, InstrumentId] = {}
-        for contract in self._sleeve_to_contract.values():
-            continuous_ids = {
-                instrument_id.symbol.value: instrument_id
-                for instrument_id in contract.continuous_instrument_ids
-            }
-            for root in contract.futures:
-                continuous_id = continuous_ids[root]
-                existing = declared.setdefault(root, continuous_id)
-                if existing != continuous_id:
-                    raise RuntimeError(
-                        f"continuous root {root!r} declared as both "
-                        f"{existing.value} and {continuous_id.value}"
-                    )
-        return dict(sorted(declared.items()))
-
     def _require_roll_desk(self) -> RollDesk:
         if self._roll_desk is None:
             raise RuntimeError("roll desk queried before on_start wired it")
         return self._roll_desk
 
     def _build_roll_desk(self) -> RollDesk:
+        # Operational dependencies only: bundle contracts are unioned into coherent
+        # declarations by book startup, which hands them to RollDesk.start.
         return RollDesk(
             catalog_port=self._continuous_port(),
             instrument_present=lambda instrument_id: self.cache.instrument(instrument_id)
             is not None,
-            declared_continuous_ids_by_root=self._declared_continuous_ids_by_root(),
         )
 
     def _continuous_port(self) -> CatalogBackedDataPort:
@@ -420,18 +405,17 @@ class RebalanceStrategy(Strategy):
                 f"Sleeve compute FAILED: sleeve={failure.sleeve} "
                 f"reason={failure.reason}. Sleeve holds this period."
             )
-        if result.summary.num_sleeves == 0:
-            return
-
-        self._log_rebalance_summary(result.summary)
         if result.summary.gate_outcome == GateOutcome.ERROR:
+            self._log_rebalance_summary(result.summary)
             self._is_halted = True
             reason = result.halt_reason or "rebalance gate failed"
             self.log.error(f"Rebalance gate FAILED: {reason}. HALTING the book.")
             return
+        if result.summary.num_sleeves == 0:
+            return
 
-        for oi in result.orders:
-            self._submit_order_intent(oi)
+        self._log_rebalance_summary(result.summary)
+        self._submit_order_intents(result.orders)
 
     def _log_startup_halt(self, result: StartupResult) -> None:
         gate = result.halt_gate.value if result.halt_gate is not None else "unknown"
@@ -544,8 +528,19 @@ class RebalanceStrategy(Strategy):
 
     # -- order submission -------------------------------------------------------
 
-    def _submit_order_intent(self, oi: OrderIntent) -> None:
-        """Translate a domain OrderIntent into a Nautilus MARKET order and submit.
+    def _submit_order_intents(self, intents: Sequence[OrderIntent]) -> None:
+        """Materialize every intent before submitting any order; halt on a gap."""
+        try:
+            orders = tuple(self._materialize_order_intent(intent) for intent in intents)
+        except ValueError as exc:
+            self._is_halted = True
+            self.log.error(f"Order materialization FAILED: {exc}. HALTING the book.")
+            return
+        for order in orders:
+            self.submit_order(order)
+
+    def _materialize_order_intent(self, oi: OrderIntent) -> Any:
+        """Translate a domain OrderIntent into a venue-valid Nautilus MARKET order.
 
         A continuous-root intent is a price-series signal; the order trades the real dated front
         leg the market-data port maps it to (root→front, rolling in lock-step with the data roll).
@@ -556,10 +551,14 @@ class RebalanceStrategy(Strategy):
         execution_id = market_data.execution_instrument_id(oi.instrument_id)
         quantity = market_data.make_quantity(execution_id, oi.quantity)
         if quantity is None:
-            self.log.error(
-                f"Instrument not found for InstrumentId {execution_id.value}; skipping order"
+            raise ValueError(
+                f"instrument not found for InstrumentId {execution_id.value}"
             )
-            return
+        if not math.isclose(float(quantity), oi.quantity, rel_tol=0.0, abs_tol=1e-12):
+            raise ValueError(
+                f"venue quantity {float(quantity)} for {execution_id.value} differs from "
+                f"validated quantity {oi.quantity}"
+            )
 
         nt_side = NtOrderSide.BUY if oi.side == OrderSide.BUY else NtOrderSide.SELL
         kwargs: dict[str, Any] = {
@@ -575,5 +574,4 @@ class RebalanceStrategy(Strategy):
             self.log.info(
                 f"Roll order: {oi.side.value} {oi.quantity:.0f} {execution_id.value}"
             )
-        order = self.order_factory.market(**kwargs)
-        self.submit_order(order)
+        return self.order_factory.market(**kwargs)

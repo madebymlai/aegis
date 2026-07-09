@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 import pandas as pd
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import (
@@ -19,6 +21,7 @@ from aegis_runtime import (
 )
 from aegis_runtime.currency import CurrencyConversion
 
+from aegis_trader.bundles.book_sleeves import ContinuousRootDeclaration
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import Halt, RequestBars, RollIntentBatch, SubscribeBars
@@ -172,6 +175,7 @@ class _RollDesk:
         history_start: datetime,
         end: datetime,
         warmup: bool,
+        declarations: Mapping[str, ContinuousRootDeclaration],
     ) -> RollIntentBatch:
         self.calls.append(
             {
@@ -179,6 +183,7 @@ class _RollDesk:
                 "history_start": history_start,
                 "end": end,
                 "warmup": warmup,
+                "declarations": dict(declarations),
             }
         )
         return self.intents
@@ -214,6 +219,110 @@ def _bootstrap(
         fx_reference_pairs=fx_reference_pairs,
         warmup_cache_on_start=warmup_cache_on_start,
     )
+
+
+class _FuturesBundle(_FixedWeightBundle):
+    """A futures sleeve declaring one continuous root with its recorded mode."""
+
+    def __init__(
+        self,
+        continuous_id: InstrumentId,
+        *,
+        root: str = "ES",
+        adjustment_mode: ContinuousFutureAdjustmentType = (
+            ContinuousFutureAdjustmentType.BACKWARD_RATIO
+        ),
+    ) -> None:
+        contract = DataContract(
+            instrument_ids=(continuous_id,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=20,
+            futures=(root,),
+            adjustment_mode=adjustment_mode,
+        )
+        manifest = BundleManifest(
+            run_id="book-startup-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(continuous_id,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={continuous_id: DriftBand.symmetric(0.0)},
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+        )
+        ExecutionBundle.__init__(self, contract=contract, manifest=manifest, plan=plan)
+
+
+def test_bootstrap_halts_on_declaration_conflict_before_starting_roll_desk() -> None:
+    # Same bare root, different synthetic continuous ids across two Sleeves: the
+    # typed declaration gate halts and Roll Desk never materialises anything.
+    trend = SleeveName("trend")
+    carry = SleeveName("carry")
+    roll_desk = _RollDesk()
+
+    result = _bootstrap(
+        book=BookConfig(
+            sleeves=(
+                SleeveConfig(name=trend, wheel_filename="trend.whl", risk_share=0.5),
+                SleeveConfig(name=carry, wheel_filename="carry.whl", risk_share=0.5),
+            ),
+            base_currency="EUR",
+        ),
+        sleeve_to_bundle={
+            trend: _FuturesBundle(InstrumentId.from_str("ES.XCME")),
+            carry: _FuturesBundle(InstrumentId.from_str("ES.IFUS")),
+        },
+        roll_desk=roll_desk,
+    )
+
+    assert isinstance(result, Halt)
+    assert result.gate == StartupGate.CONTINUOUS_DECLARATION
+    assert result.reason is not None
+    for expected in ("ES", "trend", "carry", "ES.XCME", "ES.IFUS"):
+        assert expected in result.reason
+    assert roll_desk.calls == []
+
+
+def test_bootstrap_passes_coherent_declarations_to_roll_desk() -> None:
+    roll_desk = _RollDesk()
+    es = InstrumentId.from_str("ES.XCME")
+
+    result = _bootstrap(
+        sleeve_to_bundle={_SLEEVE: _FuturesBundle(es)},
+        roll_desk=roll_desk,
+    )
+
+    assert isinstance(result, BootResult)
+    assert roll_desk.calls[0]["declarations"] == {
+        "ES": ContinuousRootDeclaration(
+            continuous_id=es,
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+        )
+    }
+
+
+def test_bootstrap_resolves_an_empty_declaration_mapping_for_etf_books() -> None:
+    roll_desk = _RollDesk()
+
+    result = _bootstrap(roll_desk=roll_desk)
+
+    assert isinstance(result, BootResult)
+    assert roll_desk.calls[0]["declarations"] == {}
 
 
 def test_bootstrap_halts_on_mixed_timeframes_before_starting_roll_desk() -> None:

@@ -11,6 +11,11 @@ from aegis_data.bar_type import timeframe_to_ns
 from aegis_runtime import ExecutionBundle
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_trader.bundles.book_sleeves import (
+    ContinuousDeclarationConflictError,
+    ContinuousRootDeclaration,
+    union_continuous_declarations,
+)
 from aegis_trader.data.market_data import MarketDataPort
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.book_timeframe import MixedTimeframeError, resolve_book_timeframe
@@ -32,8 +37,9 @@ class RollStartupPort(Protocol):
         history_start: datetime,
         end: datetime,
         warmup: bool,
+        declarations: Mapping[str, ContinuousRootDeclaration],
     ) -> RollIntentBatch:
-        """Materialize continuous roots and return front-leg startup intents."""
+        """Materialize the declared continuous roots and return front-leg startup intents."""
         ...
 
 
@@ -94,11 +100,19 @@ def bootstrap(
         timeframe=timeframe,
         lookback_bars=max(bundle.contract.lookback_bars for bundle in sleeve_to_bundle.values()),
     )
+    # Bootstrap sees every Sleeve bundle, so it owns the cross-Sleeve declaration
+    # union; Roll Desk receives already coherent declarations and owns only
+    # materialisation and roll lifecycle.
+    try:
+        declarations = union_continuous_declarations(tuple(sleeve_to_bundle.items()))
+    except ContinuousDeclarationConflictError as exc:
+        return Halt(StartupGate.CONTINUOUS_DECLARATION, str(exc))
     roll_intents = roll_desk.start(
         timeframe=timeframe,
         history_start=history_start,
         end=now,
         warmup=warmup_cache_on_start,
+        declarations=declarations,
     )
     halt = _halt_from(roll_intents)
     if halt is not None:
