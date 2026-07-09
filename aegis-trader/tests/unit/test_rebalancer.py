@@ -9,7 +9,7 @@ test_sizing.py; the composition is exercised by ``TestRebalancePipeline`` below.
 import pandas as pd
 import pytest
 
-from aegis_runtime import DriftBand
+from aegis_runtime import DriftBand, GrossExposureBreach, NetExposureBreach
 from aegis_trader.domain.book_config import BookConfig, DrawdownDeleverCurve, SleeveConfig
 from aegis_trader.domain.rebalancer import (
     _gate_book_caps,
@@ -581,9 +581,11 @@ class TestRebalanceSlice4:
         """The gross gate is a defensive backstop: the schema rule keeps gross
         within cap for any constructable book, but the gate still fails closed if
         a post-book ever reaches it over the cap (e.g. a future path bypassing the
-        clamp).  Exercised directly because rebalance() can no longer reach it."""
+        clamp).  Exercised directly because rebalance() can no longer reach it.
+        The breach is the kernel gate's named error — the gate math itself is
+        kernel-tested; this proves the wiring."""
         book = self._book(max_book_gross=0.50, gross_cap=0.50)
-        with pytest.raises(ValueError, match="Gross exposure"):
+        with pytest.raises(GrossExposureBreach, match="exceeds gross_cap"):
             _gate_book_caps({_iid("AAA"): 0.6, _iid("BBB"): 0.6}, book)
 
     def test_within_band_drift_over_ceiling_clamped_not_failed(self):
@@ -609,7 +611,7 @@ class TestRebalanceSlice4:
 
     def test_net_cap_breach_fails_closed(self):
         book = self._book(net_cap=0.10)
-        with pytest.raises(ValueError, match="Net exposure"):
+        with pytest.raises(NetExposureBreach, match="exceeds net_cap"):
             rebalance({book.sleeves[0].name: _target({"AAA": 0.15, "BBB": -0.01})}, book)
 
     def test_aggregate_drift_within_threshold_no_error(self):

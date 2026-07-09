@@ -2,12 +2,14 @@ import json
 import sys
 
 import pytest
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.bundle import (
     BundleManifest,
     ComponentSpec,
     DataContract,
+    DataContractError,
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
@@ -139,18 +141,19 @@ def test_bundle_payload_without_destination_fraction_loads_trade_to_target() -> 
         assert band.destination_fraction == 1.0
 
 
-def test_bundle_payload_round_trips_continuous_future_roots() -> None:
-    """The continuous-root declaration must survive the wheel payload, or the additive-
-    invariance guard (which keys off ``contract.futures``) is dead on a loaded bundle."""
-    contract = DataContract(
-        instrument_ids=(_id("ES.XCME"),),
-        required_arrays=("Close",),
-        base_currency="USD",
-        timeframe="1D",
-        missing_index=MissingIndexPolicy.DROP,
-        lookback_bars=20,
-        futures=("ES",),
-    )
+@pytest.mark.parametrize(
+    ("mode", "wire_value"),
+    [
+        (ContinuousFutureAdjustmentType.BACKWARD_RATIO, "backward_ratio"),
+        (ContinuousFutureAdjustmentType.BACKWARD_SPREAD, "backward_spread"),
+    ],
+)
+def test_bundle_payload_round_trips_continuous_future_roots(
+    mode: ContinuousFutureAdjustmentType, wire_value: str
+) -> None:
+    """The continuous-root declaration and its recorded adjustment mode must survive
+    the wheel payload, or the roll-sensitivity guard is dead on a loaded bundle."""
+    contract = _futures_contract(mode)
 
     payload = dump_bundle_payload(
         contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
@@ -158,7 +161,95 @@ def test_bundle_payload_round_trips_continuous_future_roots() -> None:
     bundle = load_bundle_payload(json.loads(json.dumps(payload)))
 
     assert payload["contract"]["futures"] == ["ES"]
+    assert payload["contract"]["adjustment_mode"] == wire_value
     assert bundle.contract.futures == ("ES",)
+    assert bundle.contract.adjustment_mode is mode
+
+
+def test_bundle_payload_omits_adjustment_mode_for_etf_only_contracts() -> None:
+    """An ETF-only contract has no re-basing algebra to declare; the key is absent,
+    not null."""
+    contract = _contract()
+
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
+
+    assert "adjustment_mode" not in payload["contract"]
+    assert bundle.contract.adjustment_mode is None
+
+
+def test_bundle_payload_rejects_v3_schema() -> None:
+    """Forward-First: v3 recorded no adjustment mode, so no v3 payload is trusted —
+    an old-schema bundle fails by version, never by silently discarding the field."""
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    payload["schema_version"] = "execution_bundle.v3"
+
+    with pytest.raises(BundlePayloadSchemaError, match="execution_bundle.v4"):
+        load_bundle_payload(payload)
+
+
+@pytest.mark.parametrize("bad_value", [None, 3, ["backward_ratio"]])
+def test_bundle_payload_rejects_non_string_adjustment_mode(bad_value) -> None:
+    contract = _futures_contract(ContinuousFutureAdjustmentType.BACKWARD_RATIO)
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    payload["contract"]["adjustment_mode"] = bad_value
+
+    with pytest.raises(BundlePayloadFieldError, match="adjustment_mode"):
+        load_bundle_payload(payload)
+
+
+@pytest.mark.parametrize("bad_value", ["forward_ratio", "forward_spread", "BACKWARD_RATIO", "nearest"])
+def test_bundle_payload_rejects_unknown_and_forward_adjustment_modes(bad_value: str) -> None:
+    contract = _futures_contract(ContinuousFutureAdjustmentType.BACKWARD_RATIO)
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    payload["contract"]["adjustment_mode"] = bad_value
+
+    with pytest.raises(BundlePayloadFieldError, match="not a supported mode"):
+        load_bundle_payload(payload)
+
+
+def test_bundle_payload_rejects_futures_without_adjustment_mode() -> None:
+    contract = _futures_contract(ContinuousFutureAdjustmentType.BACKWARD_RATIO)
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    del payload["contract"]["adjustment_mode"]
+
+    with pytest.raises(DataContractError, match="no adjustment_mode"):
+        load_bundle_payload(payload)
+
+
+def test_bundle_payload_rejects_adjustment_mode_without_futures() -> None:
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+    payload["contract"]["adjustment_mode"] = "backward_ratio"
+
+    with pytest.raises(DataContractError, match="futures declares no"):
+        load_bundle_payload(payload)
+
+
+def _futures_contract(mode: ContinuousFutureAdjustmentType) -> DataContract:
+    return DataContract(
+        instrument_ids=(_id("ES.XCME"),),
+        required_arrays=("Close",),
+        base_currency="USD",
+        timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
+        lookback_bars=20,
+        futures=("ES",),
+        adjustment_mode=mode,
+    )
 
 
 def test_bundle_payload_round_trips_exchange_conversion_legs() -> None:

@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.cache.cache import Cache
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import continuous_bar_type, raw_bar_type
@@ -154,6 +155,34 @@ def _live_cache_with_raw_bar() -> Cache:
     )[0]
     live_cache.add_bar(leg_bar)
     return live_cache
+
+
+def test_model_materializes_under_an_explicitly_passed_adjustment_mode() -> None:
+    # The mode is a caller-supplied fact: research records the enum it passed here
+    # as Run evidence, so the model must materialise under exactly that algebra.
+    port, native = es_port()
+    chain = fetch_contract_chain(
+        "ES",
+        date(2024, 1, 15),
+        date(2024, 5, 31),
+        list_contracts=lambda *_args: port.resolve_continuous("ES").legs,
+        fetch=port.fetch_contract_ohlcv,
+        bar_cadence=timedelta(days=1),
+        probe_volume=port.probe_contract_volume,
+    )
+    spread = ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+    future = continuous_future(chain, _ES_XCME, adjustment_mode=spread)
+    oracle = backward_series(native, future.transitions, mode=spread)
+
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=spread
+    )
+    model.materialize(end=ES_END)
+
+    head = oracle[: len(model.frame)]
+    assert model.frame["Close"].tolist() == pytest.approx(
+        [bar.close_raw / _RAW_SCALE for bar in head]
+    )
 
 
 def test_materialize_exposes_the_continuous_root_id() -> None:

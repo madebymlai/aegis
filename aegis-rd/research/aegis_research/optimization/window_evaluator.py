@@ -24,10 +24,10 @@ import numpy as np
 import pandas as pd
 from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, InstrumentId
+from aegis_runtime.currency import CurrencyConversion
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import PortfolioConfig, ReportConfig
-from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )

@@ -1,5 +1,6 @@
 from aegis_runtime.additive_invariance import AbsolutePriceLevelError
 from aegis_runtime.bundle import (
+    SUPPORTED_ADJUSTMENT_MODES,
     BundleManifest,
     ComponentSpec,
     ComponentStrategyInputs,
@@ -22,6 +23,8 @@ from aegis_runtime.drift_band import DriftBand, gate
 from aegis_runtime.exposure_validation import (
     ExposureLimits,
     ExposureValidationError,
+    GrossExposureBreach,
+    NetExposureBreach,
     validate_exposure,
 )
 from aegis_runtime.financing import debit_interest
@@ -30,6 +33,7 @@ from aegis_runtime.futures_roots import validate_bare_root
 __all__ = [
     "AbsolutePriceLevelError",
     "BundleManifest",
+    "SUPPORTED_ADJUSTMENT_MODES",
     "ComponentSpec",
     "ComponentStrategyInputs",
     "DataContractError",
@@ -41,6 +45,7 @@ __all__ = [
     "ExposureLimits",
     "ExposureValidationError",
     "gate",
+    "GrossExposureBreach",
     "InstrumentId",
     "InvalidMissingIndexPolicy",
     "LockedExecutionPlan",
@@ -49,6 +54,7 @@ __all__ = [
     "MarketDataMissingIndexError",
     "MarketDataBundle",
     "MissingIndexPolicy",
+    "NetExposureBreach",
     "validate_bare_root",
     "validate_exposure",
 ]

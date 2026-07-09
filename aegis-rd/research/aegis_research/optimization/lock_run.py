@@ -16,6 +16,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
+
+from aegis_runtime import SUPPORTED_ADJUSTMENT_MODES
+
 from research.aegis_research.component_registry import (
     COMPONENT_FAMILIES,
     ComponentFamily,
@@ -48,6 +52,10 @@ class ResolvedLockRun:
     candidate_key: str
     component_params: ResolvedComponentParams
     provenance: dict[str, Any]
+    # The continuous-futures re-basing mode the locked Run's frames were
+    # materialised under, parsed from persisted provenance. ``None`` when the Run
+    # recorded no mode (no futures, or a pre-evidence Run).
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None
 
 
 def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
@@ -97,6 +105,30 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
             "candidate_id": row["candidate_key"],
             "candidate": dict(row["provenance"]),
         },
+        adjustment_mode=_recorded_adjustment_mode(row["provenance"], row["candidate_key"]),
+    )
+
+
+def _recorded_adjustment_mode(
+    provenance: Mapping[str, Any],
+    candidate_key: str,
+) -> ContinuousFutureAdjustmentType | None:
+    """Parse the persisted materialisation mode into the typed lock-resolved fact.
+
+    This is the single persisted-provenance read; export consumes only the parsed
+    enum and never traverses raw Candidate provenance.
+    """
+    data = provenance.get("data")
+    value = data.get("adjustment_mode") if isinstance(data, Mapping) else None
+    if value is None:
+        return None
+    for mode in SUPPORTED_ADJUSTMENT_MODES:
+        if value == mode.value:
+            return mode
+    supported = sorted(mode.value for mode in SUPPORTED_ADJUSTMENT_MODES)
+    raise LockRunResolutionError(
+        f"candidate {candidate_key} records unknown adjustment mode {value!r}; "
+        f"expected one of {supported}"
     )
 
 

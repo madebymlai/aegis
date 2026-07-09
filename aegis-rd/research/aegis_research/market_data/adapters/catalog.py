@@ -11,7 +11,9 @@ from aegis_data.catalog import (
     catalog_data_port,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
+from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.distributions import Distribution
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 
@@ -56,8 +58,18 @@ def load_catalog_source(
     )
     # Continuous-future roots are synthetic: aegis-data materialises each model as an
     # adjusted series on demand and hands it back as an OHLCV frame keyed by its root id.
+    # The effective mode is resolved ONCE here and the same enum flows into every
+    # materialisation and out as Run evidence — never a separately re-read constant.
+    adjustment_mode: ContinuousFutureAdjustmentType | None = (
+        DEFAULT_ADJUSTMENT_MODE if config.futures else None
+    )
     continuous_frames = _continuous_frames(
-        data_port, config.futures, start=start, end=end, timeframe=config.timeframe
+        data_port,
+        config.futures,
+        start=start,
+        end=end,
+        timeframe=config.timeframe,
+        adjustment_mode=adjustment_mode,
     )
     collisions = set(raw_frames) & set(continuous_frames)
     if collisions:
@@ -101,6 +113,7 @@ def load_catalog_source(
         evidence=index_evidence(native_index(native_data), source="nautilus_catalog"),
         provider_metadata=provider_metadata,
         currency_conversion=currency_conversion,
+        adjustment_mode=adjustment_mode,
         distributions=distributions,
     )
 
@@ -133,10 +146,19 @@ def _continuous_frames(
     start: str,
     end: str,
     timeframe: str,
+    adjustment_mode: ContinuousFutureAdjustmentType | None,
 ) -> dict[InstrumentId, pd.DataFrame]:
+    if roots and adjustment_mode is None:
+        raise ValueError("continuous-future roots require an explicit adjustment mode")
     frames: dict[InstrumentId, pd.DataFrame] = {}
     for root in roots:
-        model = ContinuousContractModel(data_port, root, start=start, timeframe=timeframe)
+        model = ContinuousContractModel(
+            data_port,
+            root,
+            start=start,
+            timeframe=timeframe,
+            adjustment_mode=adjustment_mode,
+        )
         model.materialize(end=end)
         frames[model.continuous_id] = model.frame
     return frames

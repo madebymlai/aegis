@@ -4,10 +4,14 @@ date: 2026-07-03
 topic: carry
 distilled-into:
 tags:
-  - article
+  - note
+  - carry
 ---
 
 # The UCITS-Constrained Carry Sleeve
+
+> [!note] Status
+> INSTRUMENT SURVEY, mostly tested; demoted from `research/` on 2026-07-09. The instrument facts (tickers, ISINs, TERs, AUM, broker tradability) were verified 2026-07-03 and are stale by design - re-verify before acting on any of them. This is construction work under our mandate rather than generic research; the durable mechanisms (DTS as the crash-beta dial, the trend-gate skew flip, the defensive-tilt trap) live in [[the-skew-is-the-product]].
 
 > [!abstract] One-line takeaway
 > Under a long-only, no-derivatives, EU-retail constraint the carry pole's credible upgrades sort into two kinds: legs that deepen income-per-tail while *keeping* the pole's negative skew (a short-maturity tilt inside HY; an EM local-currency leg as the only investable FX-carry skew source), and tilts that quietly dissolve the pole's identity (a trend gate flips its skew convex; a fallen-angel tilt smuggles back the rates duration the sleeve exists to exclude). The quality edge inside HY is largely the fallen-angel technical wearing a different label - and since no BB-only USD HY UCITS fund exists, it is bought through maturity-bucket index choice or not at all.

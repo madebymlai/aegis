@@ -87,15 +87,20 @@ class FakeDataResult:
 
     metadata = default_metadata()
 
+    adjustment_mode = None
+
     def __init__(
         self,
         *,
         quality_state: str = "healthy",
         metadata: MarketDataMetadataV3 | None = None,
+        adjustment_mode: Any = None,
     ) -> None:
         self.quality = type("_Quality", (), {"state": quality_state})()
         if metadata is not None:
             self.metadata = metadata
+        if adjustment_mode is not None:
+            self.adjustment_mode = adjustment_mode
 
 
 class FakeArrayContract:

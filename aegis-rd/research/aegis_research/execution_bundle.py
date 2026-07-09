@@ -14,6 +14,7 @@ from aegis_runtime import (
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 
 from research.aegis_research.component_registry import (
     ComponentDefinition,
@@ -40,6 +41,10 @@ CANDIDATE_PREFIX_LENGTH = 8
 
 class UnlockedBundleConfigError(ValueError):
     """Raised when export is attempted for a config with no single locked Candidate."""
+
+
+class UnrecordedAdjustmentModeError(ValueError):
+    """Raised when a futures-declaring export's locked Run recorded no adjustment mode."""
 
 
 @dataclass(frozen=True)
@@ -95,7 +100,9 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
         component_registry=component_registry,
         component_params=lock_run.component_params,
     )
-    contract = _bundle_contract(config, components, instrument_ids)
+    contract = _bundle_contract(
+        config, components, instrument_ids, adjustment_mode=lock_run.adjustment_mode
+    )
     manifest = BundleManifest(
         run_id=lock_run.run_id,
         role=_manifest_role(config.lock.candidate_id),
@@ -244,8 +251,23 @@ def _component_spec(
 
 
 def _bundle_contract(
-    config: RunConfig, components: AssembledComponents, instrument_ids: Sequence[InstrumentId]
+    config: RunConfig,
+    components: AssembledComponents,
+    instrument_ids: Sequence[InstrumentId],
+    *,
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None,
 ) -> DataContract:
+    futures = tuple(config.data.futures)
+    if futures and adjustment_mode is None:
+        # Never fall back to the current DEFAULT_ADJUSTMENT_MODE: the export must
+        # declare the algebra the locked Run's frames were actually built under.
+        raise UnrecordedAdjustmentModeError(
+            f"this export declares continuous-future roots {sorted(futures)}, but the "
+            "locked Run recorded no adjustment mode (it predates adjustment-mode "
+            "evidence). Historical futures frames cannot prove which re-basing "
+            "algebra they used - re-run the optimization under the current research "
+            "code, then re-lock and re-export."
+        )
     return DataContract(
         instrument_ids=tuple(instrument_ids),
         required_arrays=tuple(_required_arrays(components)),
@@ -253,10 +275,11 @@ def _bundle_contract(
         timeframe=config.data.timeframe,
         missing_index=MissingIndexPolicy(config.data.missing_index),
         lookback_bars=components.lookback_bars,
-        futures=tuple(config.data.futures),
+        futures=futures,
         exchange=tuple(
             InstrumentId.from_str(value) for value in config.data.exchange
         ),
+        adjustment_mode=adjustment_mode if futures else None,
     )
 
 

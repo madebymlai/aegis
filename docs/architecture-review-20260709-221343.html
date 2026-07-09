@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review - aegis</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: "base",
+        securityLevel: "loose",
+        flowchart: { curve: "basis", htmlLabels: true },
+        themeVariables: {
+          background: "#ffffff",
+          primaryColor: "#f8fafc",
+          primaryTextColor: "#0f172a",
+          primaryBorderColor: "#94a3b8",
+          lineColor: "#64748b",
+          secondaryColor: "#ecfdf5",
+          tertiaryColor: "#fff7ed",
+          fontFamily: "ui-sans-serif, system-ui, sans-serif"
+        }
+      });
+      document.addEventListener("DOMContentLoaded", async () => {
+        const diagrams = [...document.querySelectorAll("pre.mermaid")];
+        for (const [index, diagram] of diagrams.entries()) {
+          const source = diagram.textContent.trim();
+          const { svg, bindFunctions } = await mermaid.render(
+            `architecture-diagram-${index}`,
+            source
+          );
+          diagram.innerHTML = svg;
+          bindFunctions?.(diagram);
+          diagram.dataset.processed = "true";
+        }
+      });
+    </script>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      * {
+        box-sizing: border-box;
+        letter-spacing: 0 !important;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+      }
+      .diagram {
+        min-height: 320px;
+      }
+      .mermaid {
+        display: flex;
+        min-height: 270px;
+        align-items: center;
+        justify-content: center;
+        margin: 0;
+      }
+      .mermaid svg {
+        max-width: 100% !important;
+        height: auto !important;
+      }
+      .seam-line {
+        border-top: 2px dashed #64748b;
+      }
+      .leak-line {
+        border-top: 3px solid #dc2626;
+      }
+      .deep-module {
+        border: 4px solid #0f172a;
+        background: #f8fafc;
+      }
+      .internal-module {
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+      }
+      .arrow-down::after {
+        content: "\2193";
+        display: block;
+        color: #64748b;
+        font-size: 1.5rem;
+        line-height: 1;
+        text-align: center;
+        margin-top: 0.35rem;
+      }
+      .flow-arrow-compact {
+        color: #64748b;
+        font-size: 1.25rem;
+        line-height: 1;
+        margin: 0.25rem 0;
+        text-align: center;
+      }
+      @media (max-width: 767px) {
+        .diagram {
+          min-height: 280px;
+        }
+        .mermaid {
+          min-height: 230px;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-stone-50 font-sans text-slate-900 antialiased">
+    <main class="mx-auto max-w-6xl space-y-12 px-4 py-10 sm:px-6 lg:px-8 lg:py-14">
+      <header class="border-b border-slate-300 pb-8">
+        <div class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p class="text-xs font-semibold uppercase text-emerald-700">Architecture review</p>
+            <h1 class="mt-2 font-serif text-4xl font-semibold text-slate-950 sm:text-5xl">aegis</h1>
+            <p class="mt-3 text-sm text-slate-600">9 July 2026 &middot; graph: 8,676 nodes / 29,366 edges</p>
+          </div>
+          <div class="grid grid-cols-2 gap-x-5 gap-y-3 text-xs text-slate-600 sm:grid-cols-4">
+            <div class="flex items-center gap-2"><span class="h-5 w-7 border border-slate-500 bg-white"></span><span>module</span></div>
+            <div class="flex items-center gap-2"><span class="w-7 border-t-2 border-dashed border-slate-500"></span><span>seam</span></div>
+            <div class="flex items-center gap-2"><span class="w-7 border-t-[3px] border-red-600"></span><span>leakage</span></div>
+            <div class="flex items-center gap-2"><span class="h-5 w-7 border-4 border-slate-900 bg-slate-50"></span><span>deep module</span></div>
+          </div>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-12">
+        <article id="continuous-rebase" class="rounded-lg border border-slate-300 bg-white p-5 shadow-sm sm:p-7">
+          <div class="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase text-slate-500">01</p>
+              <h2 class="mt-1 font-serif text-2xl font-semibold text-slate-950">Make continuous re-basing one contract</h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span>
+              <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">ports &amp; adapters</span>
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <p class="text-xs font-semibold uppercase text-slate-500">Files</p>
+            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-data/aegis_data/continuous_future.py &middot; aegis-data/aegis_data/continuous_contract_model.py &middot; aegis-runtime/aegis_runtime/additive_invariance.py &middot; aegis-runtime/aegis_runtime/bundle.py &middot; docs/adr/0007-instrument-identity-is-the-nautilus-instrumentid.md</p>
+          </div>
+
+          <div class="mt-6 grid gap-6 md:grid-cols-2">
+            <section aria-label="Before diagram" class="diagram bg-red-50 p-4">
+              <p class="text-xs font-semibold uppercase text-red-700">Before</p>
+              <div class="mx-auto mt-4 max-w-sm text-center text-xs">
+                <div class="border-2 border-red-600 bg-white p-3"><span class="block text-slate-500">Aegis Data glossary</span><strong>BACKWARD_SPREAD</strong></div>
+                <div class="flow-arrow-compact">&#8595;</div>
+                <div class="border-2 border-red-600 bg-white p-3"><span class="block text-slate-500">ContinuousContractModel</span><strong>BACKWARD_RATIO</strong></div>
+                <div class="flow-arrow-compact">&#8595;</div>
+                <div class="border border-slate-500 bg-white p-3"><span class="block text-slate-500">DataContract</span><strong>no adjustment fact</strong></div>
+                <div class="flow-arrow-compact">&#8595;</div>
+                <div class="border-2 border-red-600 bg-white p-3"><span class="block text-slate-500">Execution Bundle gate</span><strong>uniform additive shift</strong></div>
+              </div>
+            </section>
+            <section aria-label="After diagram" class="diagram bg-emerald-50 p-4">
+              <p class="text-xs font-semibold uppercase text-emerald-700">After</p>
+              <div class="deep-module mx-auto mt-4 max-w-md p-4">
+                <p class="text-center text-xs font-semibold uppercase text-slate-500">Deep re-basing policy module</p>
+                <p class="mt-2 text-center text-sm font-semibold">Mode, transform, and invariant</p>
+                <div class="mt-4 grid grid-cols-2 gap-2 text-center text-xs">
+                  <div class="internal-module p-3">ContinuousContractModel</div>
+                  <div class="internal-module p-3">Execution Bundle contract</div>
+                  <div class="internal-module p-3">invariance verification</div>
+                  <div class="internal-module p-3">domain documentation</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <dl class="mt-6 grid gap-4 md:grid-cols-2">
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">Aegis Data ships ratio re-basing while the runtime proves additive invariance, so the seam can approve a Strategy that changes under the transform live actually applies.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Deepen the continuous-futures seam so one adjustment policy drives materialisation, the Execution Bundle contract, invariance verification, and documentation.</dd></div>
+          </dl>
+
+          <div class="mt-5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <p class="border-l-2 border-emerald-500 pl-3">locality: one rebase policy</p>
+            <p class="border-l-2 border-emerald-500 pl-3">leverage: every Strategy gate</p>
+            <p class="border-l-2 border-emerald-500 pl-3">tests exercise actual transform</p>
+            <p class="border-l-2 border-emerald-500 pl-3">parity becomes one invariant</p>
+          </div>
+
+          <div class="mt-5 border-l-4 border-red-600 bg-red-50 px-4 py-3 text-sm text-red-900"><strong>Decision drift:</strong> root ADR-0007 says <span class="font-mono text-xs">BACKWARD_RATIO</span>; the runtime module and its tests still enforce <span class="font-mono text-xs">BACKWARD_SPREAD</span> semantics, while Aegis Data's glossary is stale in the opposite direction.</div>
+        </article>
+
+        <article id="exposure-validation" class="rounded-lg border border-slate-300 bg-white p-5 shadow-sm sm:p-7">
+          <div class="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase text-slate-500">02</p>
+              <h2 class="mt-1 font-serif text-2xl font-semibold text-slate-950">Restore one Exposure Validation module</h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span>
+              <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">in-process</span>
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <p class="text-xs font-semibold uppercase text-slate-500">Files</p>
+            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-runtime/aegis_runtime/exposure_validation.py &middot; aegis-trader/aegis_trader/domain/rebalancer.py &middot; aegis-trader/aegis_trader/domain/book_config.py &middot; aegis-runtime/tests/test_exposure_validation.py &middot; aegis-trader/tests/unit/test_rebalancer.py</p>
+          </div>
+
+          <div class="mt-6 grid gap-6 md:grid-cols-2">
+            <section aria-label="Before diagram" class="diagram bg-red-50 p-4">
+              <p class="text-xs font-semibold uppercase text-red-700">Before</p>
+              <div class="mt-8 grid gap-5">
+                <div class="border-2 border-red-600 bg-white p-4">
+                  <p class="text-xs font-semibold uppercase text-slate-500">Shared kernel module</p>
+                  <p class="mt-2 text-sm font-semibold">gross + net + sign</p>
+                  <p class="mt-1 font-mono text-xs text-slate-600">tolerance = 1e-9</p>
+                </div>
+                <div class="flex items-center gap-3"><span class="h-px flex-1 bg-red-600"></span><span class="text-xs font-semibold uppercase text-red-700">same knowledge, two homes</span><span class="h-px flex-1 bg-red-600"></span></div>
+                <div class="border-2 border-red-600 bg-white p-4">
+                  <p class="text-xs font-semibold uppercase text-slate-500">Trader rebalancer</p>
+                  <p class="mt-2 text-sm font-semibold">gross + net reimplemented</p>
+                  <p class="mt-1 font-mono text-xs text-slate-600">_ZERO_GUARD = 1e-12</p>
+                </div>
+              </div>
+            </section>
+            <section aria-label="After diagram" class="diagram bg-emerald-50 p-4">
+              <p class="text-xs font-semibold uppercase text-emerald-700">After</p>
+              <div class="deep-module mt-8 p-5">
+                <p class="text-xs font-semibold uppercase text-slate-500">Deep Exposure Validation module</p>
+                <p class="mt-2 text-sm font-semibold text-slate-950">One cap inequality, tolerance, and error vocabulary</p>
+                <div class="mt-5 grid gap-3 sm:grid-cols-3">
+                  <div class="internal-module p-3 text-center text-xs">research<br/>Candidate scope</div>
+                  <div class="internal-module p-3 text-center text-xs">Execution Bundle<br/>allocation scope</div>
+                  <div class="internal-module p-3 text-center text-xs">Trader<br/>realized book scope</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <dl class="mt-6 grid gap-4 md:grid-cols-2">
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">The Trader asks and recomputes gross/net exposure with different tolerance and errors instead of telling the kernel-owned module to validate the realized post-band book.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Keep post-band projection and remediation in the Rebalancer, but return all gross/net policy to the one existing Exposure Validation interface.</dd></div>
+          </dl>
+
+          <div class="mt-5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <p class="border-l-2 border-emerald-500 pl-3">locality: cap math once</p>
+            <p class="border-l-2 border-emerald-500 pl-3">leverage: three validation scopes</p>
+            <p class="border-l-2 border-emerald-500 pl-3">kernel tests own semantics</p>
+            <p class="border-l-2 border-emerald-500 pl-3">Trader tests prove wiring</p>
+          </div>
+
+          <div class="mt-5 border-l-4 border-red-600 bg-red-50 px-4 py-3 text-sm text-red-900"><strong>Contradicts ADRs:</strong> root ADR-0008 and Trader ADR-0002 both assign these inequalities to the shared kernel module; the current Rebalancer bypasses that decision.</div>
+        </article>
+
+        <article id="component-wiring" class="rounded-lg border border-slate-300 bg-white p-5 shadow-sm sm:p-7">
+          <div class="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase text-slate-500">03</p>
+              <h2 class="mt-1 font-serif text-2xl font-semibold text-slate-950">Deepen Component wiring across Run and export</h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span>
+              <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">local-substitutable</span>
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <p class="text-xs font-semibold uppercase text-slate-500">Files</p>
+            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-rd/research/aegis_research/component_registry/contracts.py &middot; configuration/cross_checks.py &middot; optimization/component_source.py &middot; execution_bundle.py &middot; aegis-runtime/aegis_runtime/bundle.py</p>
+          </div>
+
+          <div class="mt-6 grid gap-6 md:grid-cols-2">
+            <section aria-label="Before diagram" class="diagram bg-red-50 p-4">
+              <p class="text-xs font-semibold uppercase text-red-700">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  D[ComponentDefinition]
+  M[(raw manifest)]
+  V[Run Config validation]
+  O[optimization runtime]
+  E[Execution Bundle export]
+  D --> M
+  V -->|small queries| D
+  O -->|manifest + getattr + load| M
+  E -->|family cast + source + lookback| M
+  classDef leak fill:#fef2f2,stroke:#dc2626,stroke-width:3px,color:#7f1d1d;
+  class M,O,E leak;
+              </pre>
+            </section>
+            <section aria-label="After diagram" class="diagram bg-emerald-50 p-4">
+              <p class="text-xs font-semibold uppercase text-emerald-700">After</p>
+              <pre class="mermaid">
+flowchart TB
+  W[Deep Component wiring module]
+  V[Run Config validation]
+  R[research batched adapter]
+  B[locked Execution Bundle adapter]
+  I[manifest / source / entrypoints<br/>hidden implementation]
+  V --> W
+  R --> W
+  B --> W
+  W -.-> I
+  classDef deep fill:#0f172a,stroke:#0f172a,stroke-width:4px,color:#ffffff;
+  class W deep;
+              </pre>
+            </section>
+          </div>
+
+          <dl class="mt-6 grid gap-4 md:grid-cols-2">
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">The ComponentDefinition interface is broad yet validation, optimization, and export still reach through its seam to raw manifests, entrypoints, source identity, and family-specific casts.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Concentrate Component file-contract knowledge in one deep wiring module used by the research batched adapter and the locked Execution Bundle adapter.</dd></div>
+          </dl>
+
+          <div class="mt-5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <p class="border-l-2 border-emerald-500 pl-3">locality: file contract once</p>
+            <p class="border-l-2 border-emerald-500 pl-3">leverage: validation through export</p>
+            <p class="border-l-2 border-emerald-500 pl-3">tests hit one interface</p>
+            <p class="border-l-2 border-emerald-500 pl-3">raw manifest stops leaking</p>
+          </div>
+
+          <div class="mt-5 border-l-4 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-950"><strong>Decision constraint:</strong> preserve ADR-0017's one-callable Component contract and ADR-0014's rule that Run Config tree paths stay outside the registry.</div>
+        </article>
+
+        <article id="commingled-book" class="rounded-lg border border-slate-300 bg-white p-5 shadow-sm sm:p-7">
+          <div class="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase text-slate-500">04</p>
+              <h2 class="mt-1 font-serif text-2xl font-semibold text-slate-950">Deepen Commingled Book assembly</h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span>
+              <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">ports &amp; adapters</span>
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <p class="text-xs font-semibold uppercase text-slate-500">Files</p>
+            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-trader/aegis_trader/bundles/book_sleeves.py &middot; bundles/port.py &middot; bundles/registry.py &middot; bundles/stub.py &middot; bundles/bands.py &middot; bundles/provenance.py &middot; domain/book_timeframe.py &middot; trader/node.py &middot; backtest.py</p>
+          </div>
+
+          <div class="mt-6 grid gap-6 md:grid-cols-2">
+            <section aria-label="Before diagram" class="diagram bg-red-50 p-4">
+              <p class="text-xs font-semibold uppercase text-red-700">Before</p>
+              <div class="mx-auto mt-6 max-w-sm text-center">
+                <div class="border border-slate-500 bg-white p-3 text-sm font-semibold">tuple[(SleeveName, ExecutionBundle)]</div>
+                <div class="arrow-down"></div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div class="border border-red-400 bg-white p-3">loadable ids</div>
+                  <div class="border border-red-400 bg-white p-3">timeframe</div>
+                  <div class="border border-red-400 bg-white p-3">band owners</div>
+                  <div class="border border-red-400 bg-white p-3">cap provenance</div>
+                  <div class="border border-red-400 bg-white p-3">strategy registration</div>
+                  <div class="border border-red-400 bg-white p-3">margin need</div>
+                </div>
+                <p class="mt-4 text-xs font-semibold text-red-700">live and backtest derive these separately</p>
+              </div>
+            </section>
+            <section aria-label="After diagram" class="diagram bg-emerald-50 p-4">
+              <p class="text-xs font-semibold uppercase text-emerald-700">After</p>
+              <div class="mx-auto mt-6 max-w-md">
+                <div class="grid grid-cols-2 gap-3 text-center text-xs">
+                  <div class="border border-slate-400 bg-white p-3">EntryPoint adapter</div>
+                  <div class="border border-slate-400 bg-white p-3">Stub adapter</div>
+                </div>
+                <div class="arrow-down"></div>
+                <div class="deep-module p-5 text-center">
+                  <p class="text-xs font-semibold uppercase text-slate-500">Deep Commingled Book assembly module</p>
+                  <p class="mt-2 text-sm font-semibold">Loads Sleeves and owns derived book facts</p>
+                </div>
+                <div class="mt-4 grid grid-cols-2 gap-3 text-center text-xs">
+                  <div class="border border-slate-400 bg-white p-3">live caller</div>
+                  <div class="border border-slate-400 bg-white p-3">backtest caller</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <dl class="mt-6 grid gap-4 md:grid-cols-2">
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">Bundle loading returns a raw tuple, so live and backtest callers must know how a valid Commingled Book derives identity, timeframe, band ownership, cap provenance, and registration.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Deepen the existing bundle-loading module so assembly owns the loaded Sleeves and the book facts both callers need, retaining the two real registry adapters.</dd></div>
+          </dl>
+
+          <div class="mt-5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <p class="border-l-2 border-emerald-500 pl-3">locality: valid book once</p>
+            <p class="border-l-2 border-emerald-500 pl-3">leverage: live and backtest</p>
+            <p class="border-l-2 border-emerald-500 pl-3">tests assemble real books</p>
+            <p class="border-l-2 border-emerald-500 pl-3">six relays become internal</p>
+          </div>
+
+          <div class="mt-5 border-l-4 border-emerald-600 bg-emerald-50 px-4 py-3 text-sm text-emerald-950"><strong>ADR fit:</strong> extends Trader ADR-0003's declared bundle-loading seam; the EntryPoint and Stub adapters justify keeping that seam.</div>
+        </article>
+
+        <article id="market-data-views" class="rounded-lg border border-slate-300 bg-white p-5 shadow-sm sm:p-7">
+          <div class="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase text-slate-500">05</p>
+              <h2 class="mt-1 font-serif text-2xl font-semibold text-slate-950">Prepare signal and P&amp;L Arrays together</h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">Strong</span>
+              <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">in-process</span>
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <p class="text-xs font-semibold uppercase text-slate-500">Files</p>
+            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-rd/research/aegis_research/market_data/contracts.py &middot; market_data/panels.py &middot; run_pipeline.py &middot; optimization/pipeline/setup.py &middot; optimization/runner.py &middot; optimization/window_evaluator.py</p>
+          </div>
+
+          <div class="mt-6 grid gap-6 md:grid-cols-2">
+            <section aria-label="Before diagram" class="diagram bg-red-50 p-4">
+              <p class="text-xs font-semibold uppercase text-red-700">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  R[MarketDataResult]
+  S[market_data_bundle<br/>signal Arrays]
+  P[_pnl_bundle<br/>parallel materialisation]
+  FX1[base currency]
+  FX2[base currency]
+  F[four frames<br/>close/open + pnl_close/pnl_open]
+  R --> S --> FX1 --> F
+  R --> P --> FX2 --> F
+  classDef leak fill:#fef2f2,stroke:#dc2626,stroke-width:3px,color:#7f1d1d;
+  class P,FX2,F leak;
+              </pre>
+            </section>
+            <section aria-label="After diagram" class="diagram bg-emerald-50 p-4">
+              <p class="text-xs font-semibold uppercase text-emerald-700">After</p>
+              <pre class="mermaid">
+flowchart TB
+  R[MarketDataResult]
+  V[Deep Run market-data views module]
+  S[signal Array view]
+  P[P&amp;L Array view]
+  E[Window Evaluation]
+  R --> V
+  V --> S
+  V --> P
+  S --> E
+  P --> E
+  classDef deep fill:#0f172a,stroke:#0f172a,stroke-width:4px,color:#ffffff;
+  class V deep;
+              </pre>
+            </section>
+          </div>
+
+          <dl class="mt-6 grid gap-4 md:grid-cols-2">
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">Callers must coordinate which Array view drives Indicators and Splits, which drives portfolio P&amp;L, the fallback rule, base-currency conversion, and four-frame alignment.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Deepen Run market-data preparation so signal and P&amp;L views are materialised, converted, aligned, and handed to Window Evaluation as one coherent responsibility.</dd></div>
+          </dl>
+
+          <div class="mt-5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <p class="border-l-2 border-emerald-500 pl-3">locality: fallback rule once</p>
+            <p class="border-l-2 border-emerald-500 pl-3">leverage: setup through scoring</p>
+            <p class="border-l-2 border-emerald-500 pl-3">tests cover view alignment</p>
+            <p class="border-l-2 border-emerald-500 pl-3">parallel builder disappears</p>
+          </div>
+
+          <div class="mt-5 border-l-4 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-950"><strong>ADR note:</strong> extends ADR-0020's single Array interface; ADR-0015's five-field SetupResult has already drifted to seven fields as the P&amp;L view leaked across the seam.</div>
+        </article>
+
+        <article id="run-data-facts" class="rounded-lg border border-slate-300 bg-white p-5 shadow-sm sm:p-7">
+          <div class="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase text-slate-500">06</p>
+              <h2 class="mt-1 font-serif text-2xl font-semibold text-slate-950">Deepen Run data facts and projections</h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">Worth exploring</span>
+              <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">in-process</span>
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <p class="text-xs font-semibold uppercase text-slate-500">Files</p>
+            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-rd/research/aegis_research/optimization/run_data_contract.py &middot; candidate_store_identity.py &middot; run_artifacts.py &middot; pipeline/setup.py &middot; pipeline/publishing.py &middot; pipeline/completion.py &middot; run_pipeline.py</p>
+          </div>
+
+          <div class="mt-6 grid gap-6 md:grid-cols-2">
+            <section aria-label="Before diagram" class="diagram bg-red-50 p-4">
+              <p class="text-xs font-semibold uppercase text-red-700">Before</p>
+              <div class="mx-auto mt-5 max-w-md">
+                <div class="grid grid-cols-2 gap-3 text-xs">
+                  <div class="border-4 border-red-500 bg-white p-3 text-center">data_result</div>
+                  <div class="border-4 border-red-500 bg-white p-3 text-center">array_contract</div>
+                </div>
+                <p class="my-4 text-center text-xs font-semibold text-red-700">threaded together seven times</p>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div class="border border-slate-400 bg-white p-3">Array Evidence</div>
+                  <div class="border border-slate-400 bg-white p-3">Candidate identity</div>
+                  <div class="border border-slate-400 bg-white p-3">Store Provenance</div>
+                  <div class="border border-slate-400 bg-white p-3">strategy artifact</div>
+                </div>
+                <div class="mt-4 border-4 border-red-500 bg-white p-3 text-center text-xs">13-value payload builder</div>
+              </div>
+            </section>
+            <section aria-label="After diagram" class="diagram bg-emerald-50 p-4">
+              <p class="text-xs font-semibold uppercase text-emerald-700">After</p>
+              <div class="deep-module mx-auto mt-5 max-w-md p-5">
+                <p class="text-center text-xs font-semibold uppercase text-slate-500">Deep Run data-facts module</p>
+                <div class="mt-5 h-1 bg-slate-900"></div>
+                <div class="mt-5 grid grid-cols-2 gap-2 text-xs">
+                  <div class="internal-module p-3">Evidence projection</div>
+                  <div class="internal-module p-3">identity projection</div>
+                  <div class="internal-module p-3">Provenance projection</div>
+                  <div class="internal-module p-3">artifact projection</div>
+                </div>
+              </div>
+              <p class="mt-5 text-center text-xs text-slate-600">one source of Run data truth</p>
+            </section>
+          </div>
+
+          <dl class="mt-6 grid gap-4 md:grid-cols-2">
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">The same Run data pair crosses five modules while one-caller builders expose interfaces that nearly mirror their Evidence, Candidate identity, Provenance, and artifact dicts.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Name one deep module after the Run data facts it owns, then keep every schema projection behind that seam instead of threading raw sources into each stage.</dd></div>
+          </dl>
+
+          <div class="mt-5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <p class="border-l-2 border-emerald-500 pl-3">locality: schema facts once</p>
+            <p class="border-l-2 border-emerald-500 pl-3">leverage: four projections</p>
+            <p class="border-l-2 border-emerald-500 pl-3">tests build one fixture</p>
+            <p class="border-l-2 border-emerald-500 pl-3">wide builders become internal</p>
+          </div>
+
+          <div class="mt-5 border-l-4 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-950"><strong>ADR revisit trigger:</strong> ADR-0015 rejected an ambient RunContext but explicitly named <span class="font-mono text-xs">data_result + array_contract + metric_registry_fingerprint</span> as a future domain-named module when they kept co-travelling; that trigger is now active.</div>
+        </article>
+
+        <article id="distribution-coverage" class="rounded-lg border border-slate-300 bg-white p-5 shadow-sm sm:p-7">
+          <div class="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase text-slate-500">07</p>
+              <h2 class="mt-1 font-serif text-2xl font-semibold text-slate-950">Put distribution verification behind the Catalog</h2>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">Worth exploring</span>
+              <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">ports &amp; adapters</span>
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <p class="text-xs font-semibold uppercase text-slate-500">Files</p>
+            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-data/aegis_data/catalog.py &middot; aegis-data/aegis_data/distribution_coverage.py &middot; aegis-data/tests/test_catalog.py &middot; aegis-rd/tests/support/research/aegis_research/market_data_fixtures.py</p>
+          </div>
+
+          <div class="mt-6 grid gap-6 md:grid-cols-2">
+            <section aria-label="Before diagram" class="diagram bg-red-50 p-4">
+              <p class="text-xs font-semibold uppercase text-red-700">Before</p>
+              <pre class="mermaid">
+flowchart TB
+  C[CatalogBackedDataPort.distributions]
+  S[new DistributionCoverageService]
+  Q[query_distribution_data]
+  T[tests + RD fixtures]
+  C --> S --> Q
+  T -->|bypass Catalog seam| S
+  classDef leak fill:#fef2f2,stroke:#dc2626,stroke-width:3px,color:#7f1d1d;
+  class S,T leak;
+              </pre>
+            </section>
+            <section aria-label="After diagram" class="diagram bg-emerald-50 p-4">
+              <p class="text-xs font-semibold uppercase text-emerald-700">After</p>
+              <pre class="mermaid">
+flowchart TB
+  RD[Aegis RD adapter]
+  TR[Aegis Trader adapter]
+  TS[verification tests]
+  C[Deep Nautilus Catalog module]
+  I[coverage ledger + adjusted-last<br/>hidden implementation]
+  RD --> C
+  TR --> C
+  TS --> C
+  C -.-> I
+  classDef deep fill:#0f172a,stroke:#0f172a,stroke-width:4px,color:#ffffff;
+  class C deep;
+              </pre>
+            </section>
+          </div>
+
+          <dl class="mt-6 grid gap-4 md:grid-cols-2">
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">Production constructs distribution verification behind the Catalog, but verification tests and fixtures bypass that seam and depend directly on a second public module.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Keep internal file decomposition, but make the Nautilus Catalog interface own coverage lifecycle, test controls, and all verified distribution reads.</dd></div>
+          </dl>
+
+          <div class="mt-5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <p class="border-l-2 border-emerald-500 pl-3">locality: marker rules once</p>
+            <p class="border-l-2 border-emerald-500 pl-3">leverage: RD and Trader</p>
+            <p class="border-l-2 border-emerald-500 pl-3">interface becomes test surface</p>
+            <p class="border-l-2 border-emerald-500 pl-3">implementation seam becomes internal</p>
+          </div>
+
+          <div class="mt-5 border-l-4 border-emerald-600 bg-emerald-50 px-4 py-3 text-sm text-emerald-950"><strong>ADR fit:</strong> directly reinforces Aegis Data ADR-0008, which says research and Trader cross one verified Catalog seam.</div>
+        </article>
+      </section>
+
+      <section id="top-recommendation" class="rounded-lg border-2 border-emerald-700 bg-emerald-50 p-6 sm:p-8">
+        <p class="text-xs font-semibold uppercase text-emerald-800">Top recommendation</p>
+        <h2 class="mt-2 font-serif text-3xl font-semibold text-slate-950"><a class="underline decoration-emerald-600 decoration-2 underline-offset-4" href="#continuous-rebase">Make continuous re-basing one contract</a></h2>
+        <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-700">It is the highest-risk locality failure: the runtime verifies a different transform from the one the ContinuousContractModel applies, so the current interface can certify false live-research parity.</p>
+      </section>
+    </main>
+  </body>
+</html>

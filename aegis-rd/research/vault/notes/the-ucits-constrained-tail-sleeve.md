@@ -4,10 +4,14 @@ date: "2026-06-14"
 topic: crisis-alpha
 distilled-into:
 tags:
-  - article
+  - note
+  - crisis-alpha
 ---
 
 # The UCITS-Constrained Tail Sleeve: Convexity Without Account-Level Derivatives
+
+> [!note] Status
+> INSTRUMENT SURVEY, bake-off pending; demoted from `research/` on 2026-07-09. The shelf facts (VOOL/SPQH/DBi inceptions, listings, counterparty structures) were verified June 2026 and go stale - re-verify before acting. The one durable generic lesson - hold an always-on basket of imperfect havens whose failure regimes do not coincide, rather than picking or rotating havens - lives in [[havens-at-regime-turning-points]]; the where-do-the-derivatives-live regime split is this note's own contribution and stays here until it earns an article.
 
 > [!abstract] One-line takeaway
 > For an EU-retail investor who cannot trade futures or options, the binding question for a tail sleeve is not *which instrument* but *where the derivatives live* - at the account (forbidden) or inside the fund wrapper (permitted) - and that one ruling decides whether a genuine immediate-gamma tail is even reachable: once it is, the only instrument that is both genuinely fast *and* backtestable on daily retail data is a UCITS VIX-futures ETF, which re-poses the standard VIXY question (spike versus uncarryable bleed) on an instrument a EU-retail book can finally hold and test, while the pure-physical fallback is a Swiss-franc-and-gold-led haven basket, not a dollar anchor.

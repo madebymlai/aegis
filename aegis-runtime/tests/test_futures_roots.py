@@ -10,20 +10,26 @@ function, so a venue-qualified id is rejected identically on both sides.
 from __future__ import annotations
 
 import pytest
-
-from aegis_runtime import DataContract, MissingIndexPolicy, validate_bare_root
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
+
+from aegis_runtime import DataContract, DataContractError, MissingIndexPolicy, validate_bare_root
 
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")
 _ES = InstrumentId.from_str("ES.XCME")
 _KC = InstrumentId.from_str("KC.XNYM")
+_EURUSD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 
 
 def _contract(
     *,
     futures: tuple[str, ...],
     instrument_ids: tuple[InstrumentId, ...] = (_AAPL,),
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None,
+    exchange: tuple[InstrumentId, ...] = (),
 ) -> DataContract:
+    if futures and adjustment_mode is None:
+        adjustment_mode = ContinuousFutureAdjustmentType.BACKWARD_RATIO
     return DataContract(
         instrument_ids=instrument_ids,
         required_arrays=("Close",),
@@ -32,6 +38,8 @@ def _contract(
         missing_index=MissingIndexPolicy.DROP,
         lookback_bars=1,
         futures=futures,
+        exchange=exchange,
+        adjustment_mode=adjustment_mode,
     )
 
 
@@ -111,3 +119,80 @@ def test_data_contract_rejects_venue_qualified_root() -> None:
 def test_data_contract_rejects_duplicate_roots() -> None:
     with pytest.raises(ValueError, match="duplicate"):
         _contract(futures=("ES", "ES"))
+
+
+# --- adjustment mode: present iff futures, backward-only, independent of FX ------
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+        ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+    ],
+)
+@pytest.mark.parametrize("exchange", [(), (_EURUSD,)])
+def test_data_contract_accepts_both_backward_modes_with_and_without_fx(
+    mode: ContinuousFutureAdjustmentType, exchange: tuple[InstrumentId, ...]
+) -> None:
+    # Adjustment mode and ``exchange`` are independent declarations: ratio and
+    # spread are both valid whether or not FX conversion legs exist.
+    contract = _contract(
+        futures=("ES",),
+        instrument_ids=(_AAPL, _ES),
+        adjustment_mode=mode,
+        exchange=exchange,
+    )
+
+    assert contract.adjustment_mode is mode
+    assert contract.exchange == exchange
+
+
+def test_data_contract_rejects_futures_without_adjustment_mode() -> None:
+    with pytest.raises(DataContractError, match="no adjustment_mode"):
+        DataContract(
+            instrument_ids=(_AAPL, _ES),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            futures=("ES",),
+        )
+
+
+def test_data_contract_rejects_adjustment_mode_without_futures() -> None:
+    with pytest.raises(DataContractError, match="futures declares no"):
+        _contract(
+            futures=(),
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+        )
+
+
+@pytest.mark.parametrize("bad_mode", ["backward_ratio", 2, object()])
+def test_data_contract_rejects_non_enum_adjustment_mode(bad_mode) -> None:
+    # The contract carries the native Nautilus enum, never a string or a
+    # parallel Aegis encoding.
+    with pytest.raises(DataContractError, match="ContinuousFutureAdjustmentType"):
+        _contract(
+            futures=("ES",),
+            instrument_ids=(_AAPL, _ES),
+            adjustment_mode=bad_mode,
+        )
+
+
+@pytest.mark.parametrize(
+    "forward_mode",
+    [
+        ContinuousFutureAdjustmentType.FORWARD_RATIO,
+        ContinuousFutureAdjustmentType.FORWARD_SPREAD,
+    ],
+)
+def test_data_contract_rejects_forward_adjustment_modes(
+    forward_mode: ContinuousFutureAdjustmentType,
+) -> None:
+    with pytest.raises(DataContractError, match="unsupported"):
+        _contract(
+            futures=("ES",),
+            instrument_ids=(_AAPL, _ES),
+            adjustment_mode=forward_mode,
+        )

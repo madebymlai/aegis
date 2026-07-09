@@ -118,10 +118,14 @@ def build_run_data_evidence_payload(
     data_result: Any,
     array_contract: DataArrayContract,
 ) -> dict[str, Any]:
-    return data_array_evidence_payload(data_result, array_contract) | {
-        "strategy_consumed_runner_data": True,
-        "strategy_data_binding": "runner_data_bundle",
-    }
+    return (
+        data_array_evidence_payload(data_result, array_contract)
+        | {
+            "strategy_consumed_runner_data": True,
+            "strategy_data_binding": "runner_data_bundle",
+        }
+        | _adjustment_mode_fact(data_result)
+    )
 
 
 def build_candidate_data_identity(
@@ -131,7 +135,7 @@ def build_candidate_data_identity(
     metadata = data_result.metadata
     loaded_arrays = [d.name for d in metadata.arrays if d.loaded]
     return {
-        "schema_version": "candidate_data_identity.v2",
+        "schema_version": "candidate_data_identity.v3",
         "requested_instrument_ids": metadata.request.requested_instrument_ids,
         "instrument_ids": metadata.coverage.instrument_ids,
         "timeframe": metadata.request.timeframe,
@@ -143,4 +147,14 @@ def build_candidate_data_identity(
         "index_evidence": metadata.provenance.index_evidence,
         "source_metadata": metadata.provenance.source_metadata,
         "array_contract": array_contract.metadata(),
+        # Present iff futures were materialised: otherwise-identical ratio and
+        # spread Runs must produce different Candidate keys.
+        **_adjustment_mode_fact(data_result),
     }
+
+
+def _adjustment_mode_fact(data_result: Any) -> dict[str, str]:
+    mode = data_result.adjustment_mode
+    if mode is None:
+        return {}
+    return {"adjustment_mode": mode.value}

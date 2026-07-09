@@ -7,12 +7,17 @@ from typing import TypeVar
 
 import pandas as pd
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, RawBarRequest, bars_to_ohlcv
 from aegis_data.chain import fetch_contract_chain
-from aegis_data.continuous_future import ContinuousFuture, continuous_future
+from aegis_data.continuous_future import (
+    DEFAULT_ADJUSTMENT_MODE,
+    ContinuousFuture,
+    continuous_future,
+)
 from aegis_data.continuous_materialize import materialize_continuous_bars
 from aegis_data.liquidity import liquid_roll_schedule
 from aegis_data.rebasing import IDENTITY, Rebasing
@@ -43,11 +48,13 @@ class ContinuousContractModel:
         *,
         start: str,
         timeframe: str = "1D",
+        adjustment_mode: ContinuousFutureAdjustmentType = DEFAULT_ADJUSTMENT_MODE,
     ) -> None:
         self._port = port
         self._root = root
         self._start = start
         self._timeframe = timeframe
+        self._adjustment_mode = adjustment_mode
         self._bar_cadence = pd.Timedelta(
             timeframe_to_ns(timeframe), unit="ns"
         ).to_pytimedelta()
@@ -168,7 +175,10 @@ class ContinuousContractModel:
             ),
         )
         future = continuous_future(
-            chain, resolved.instrument_id, timeframe=self._timeframe
+            chain,
+            resolved.instrument_id,
+            timeframe=self._timeframe,
+            adjustment_mode=self._adjustment_mode,
         )
         leg_ids = tuple(InstrumentId.from_str(symbol) for symbol in chain.symbols)
         leg_bars = self._port.read_native_bars(

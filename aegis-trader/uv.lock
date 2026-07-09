@@ -40,7 +40,7 @@ dependencies = [
     { name = "aegis-runtime" },
 ]
 wheels = [
-    { filename = "aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl", hash = "sha256:4c8f2bfec2f5b35a160258fb66ec2bdac08f66bd1c2e632dd5408a4763e60ce0" },
+    { filename = "aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl", hash = "sha256:59f9dff5147fc11d7e18fd25151a1d15bcf6c2580452eb96c044066c74a971d8" },
 ]
 
 [package.metadata]
@@ -54,7 +54,7 @@ dependencies = [
     { name = "aegis-runtime" },
 ]
 wheels = [
-    { filename = "aegis_exec_atalanta_keystone_shortmute_cand_30c-1.0.0-py3-none-any.whl", hash = "sha256:6adfb617b4ae180ed996bed64dff715bddb1a99d5dfb9800e7fe1b43c2d0dfc8" },
+    { filename = "aegis_exec_atalanta_keystone_shortmute_cand_30c-1.0.0-py3-none-any.whl", hash = "sha256:88e126708f7ddd03047ce14fbc5f7af38a5d0a97af2eab14fb136dc2ea9f3190" },
 ]
 
 [package.metadata]
@@ -68,7 +68,7 @@ dependencies = [
     { name = "aegis-runtime" },
 ]
 wheels = [
-    { filename = "aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl", hash = "sha256:1dac0c5eed540da13a3e9a1035589f2adc066b75f03080289bfeffce2db7a2da" },
+    { filename = "aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl", hash = "sha256:961f41a2d213d9bdc0f43dc35a066547b386d3f967cc525f5a78715b696e7c24" },
 ]
 
 [package.metadata]
@@ -76,7 +76,7 @@ requires-dist = [{ name = "aegis-runtime" }]
 
 [[package]]
 name = "aegis-runtime"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "../aegis-runtime" }
 dependencies = [
     { name = "nautilus-trader" },

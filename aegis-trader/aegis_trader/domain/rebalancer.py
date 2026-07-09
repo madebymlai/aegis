@@ -13,7 +13,9 @@ Netting (Slice 2):
 Realized-book gate (Slice 4):
 - Asymmetric drift bands (band_up, band_down) per instrument suppress
   unnecessary trading when the realized position is still within tolerance.
-- The realized post-band book is gated against gross/net/per-name caps.
+- The realized post-band book is gated against gross/net/per-name caps; the
+  gross/net gate is the kernel-owned Exposure Validation module
+  (``aegis_runtime.validate_exposure``, root ADR-0008).
 - A per-name cap breach triggers deterministic widen-to-compliance (ignore
   bands, trade back to the cap); an unfixable breach raises (fail closed).
 - An aggregate drift threshold trips when the book has drifted too far from
@@ -27,7 +29,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 import pandas as pd
-from aegis_runtime import DriftBand
+from aegis_runtime import DriftBand, validate_exposure
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import Allocation, SleeveWeightBand, allocate
@@ -414,20 +416,12 @@ def _gate_book_caps(
     post_book: dict[InstrumentId, float],
     book: BookConfig,
 ) -> None:
-    """Gate the post-execution book against gross and net caps.
+    """Gate the post-execution book through the kernel Exposure Validation module.
 
-    Always checked, regardless of whether realised positions are supplied.
+    The Rebalancer owns projection and remediation (bands, clamps,
+    widen-to-compliance); the gross/net inequalities, tolerance, and error
+    vocabulary are the kernel gate's (root ADR-0008, Trader ADR-0002).  Always
+    checked, regardless of whether realised positions are supplied; breaches
+    raise ``GrossExposureBreach`` / ``NetExposureBreach``.
     """
-    if book.gross_cap is not None:
-        gross = sum(abs(w) for w in post_book.values())
-        if gross > book.gross_cap + _ZERO_GUARD:
-            raise ValueError(
-                f"Gross exposure {gross:.6f} exceeds cap {book.gross_cap:.6f}"
-            )
-
-    if book.net_cap is not None:
-        net = abs(sum(post_book.values()))
-        if net > book.net_cap + _ZERO_GUARD:
-            raise ValueError(
-                f"Net exposure {net:.6f} exceeds cap {book.net_cap:.6f}"
-            )
+    validate_exposure(pd.DataFrame([post_book]), book.exposure_limits)

@@ -1,7 +1,10 @@
 """Unit tests for BookConfig — zero Nautilus."""
 
+import math
+
 import pytest
 
+from aegis_runtime import ExposureLimits
 from aegis_trader.domain.book_config import (
     BookConfig,
     CostModelConfig,
@@ -281,6 +284,24 @@ class TestBookConfigCaps:
         assert book.net_cap == 0.8
         assert book.per_name_cap == 0.15
         assert book.aggregate_drift_threshold == 0.05
+
+    def test_exposure_limits_holds_declared_caps(self):
+        """BookConfig is an Exposure Limits holder (root ADR-0008): the declared
+        gross/net caps cross the kernel seam unchanged."""
+        book = BookConfig(
+            sleeves=(make_sleeve("trend"),),
+            max_book_gross=1.0,
+            gross_cap=1.5,
+            net_cap=0.8,
+        )
+        assert book.exposure_limits == ExposureLimits(gross_cap=1.5, net_cap=0.8)
+
+    def test_exposure_limits_omitted_caps_are_unbounded(self):
+        """A book with no declared caps still yields legal Exposure Limits that
+        gate as unbounded — no skip-the-gate branch at the call site."""
+        book = BookConfig(sleeves=(make_sleeve("trend"),))
+        assert book.exposure_limits.gross_cap == math.inf
+        assert book.exposure_limits.net_cap == math.inf
 
 
 def test_starting_balances_normalize_currency_and_sort():

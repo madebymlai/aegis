@@ -1,0 +1,66 @@
+name: atalanta_trend_floor_nbhd
+schema_version: 10
+output_dir: runs/atalanta/trend-floor-nbhd
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# ATALANTA — PARAM-NEIGHBORHOOD ROBUSTNESS PROBE (diagnostic, not a promotion candidate).
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# Question this run answers (issue #80 Q1, and the "did we overfit atalanta?" doubt): is the locked
+# champion's 0.447 tcp a robust PLATEAU or a lucky SPIKE in signal-param space? The champion
+# trend_floor.yaml PINS lookback=189 / vol_window=126; here we UNPIN both so each sweeps its native
+# param_space grid on the champion's OWN window (2018-2025, EUR, same universe/strategy/portfolio/split):
+#     lookback    ∈ {126, 189, 252}         (champion 189 is the middle notch)
+#     vol_window  ∈ {21, 63, 126, 252}      (champion 126 is the third notch)
+# => 12 candidates, the exact search space the champion was originally selected from. Read the spread
+# of held-out trend_convexity_payoff across the 12:
+#   - tight plateau (champion near top, neighbors close)  -> NOT param-overfit; the 2020-08 control
+#     drop to 0.29 is WINDOW/regime (convexity decay), not tuning.
+#   - sharp spike (champion far above its ±1 neighbors)    -> param-overfit; the lock is fragile.
+# Everything except the two unpinned signal params is byte-identical to trend_floor.yaml.
+data:
+  base_currency: EUR
+  instruments: [IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress
+  - id: atalanta.realized_vol
+
+strategy:
+  id: atalanta.keystone_shortmute
+  params:
+    enter_band: 0.10
+    exit_band: 0.05
+    short_cap: 0.10
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 2.0
+  net_cap: 2.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

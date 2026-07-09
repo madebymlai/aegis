@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.canonical_json import to_builtin
@@ -84,7 +85,7 @@ def test_build_candidate_data_identity_captures_instrument_ids_and_contract(
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
     identity = build_candidate_data_identity(FakeDataResult(), contract)
 
-    assert identity["schema_version"] == "candidate_data_identity.v2"
+    assert identity["schema_version"] == "candidate_data_identity.v3"
     assert identity["requested_instrument_ids"] == [_id("SYN.XNAS")]
     assert identity["instrument_ids"] == [_id("SYN.XNAS")]
     assert to_builtin(identity)["requested_instrument_ids"] == ["SYN.XNAS"]
@@ -95,6 +96,39 @@ def test_build_candidate_data_identity_captures_instrument_ids_and_contract(
     assert identity["index_end"] == "2020-06-01"
     assert "array_contract" in identity
     assert "configured_arrays" in identity["array_contract"]
+
+
+def test_candidate_data_identity_records_the_materialised_adjustment_mode(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """A futures Run's identity carries the enum value; otherwise the key is absent."""
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    futures_identity = build_candidate_data_identity(
+        FakeDataResult(adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO),
+        contract,
+    )
+    etf_identity = build_candidate_data_identity(FakeDataResult(), contract)
+
+    assert futures_identity["adjustment_mode"] == "backward_ratio"
+    assert "adjustment_mode" not in etf_identity
+
+
+def test_run_data_evidence_payload_records_the_materialised_adjustment_mode(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    payload = build_run_data_evidence_payload(
+        FakeDataResult(adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD),
+        contract,
+    )
+    etf_payload = build_run_data_evidence_payload(FakeDataResult(), contract)
+
+    assert payload["adjustment_mode"] == "backward_spread"
+    assert "adjustment_mode" not in etf_payload
 
 
 def _id(value: str) -> InstrumentId:

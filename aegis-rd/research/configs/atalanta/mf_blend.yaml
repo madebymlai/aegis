@@ -1,0 +1,67 @@
+name: atalanta_mf_blend
+schema_version: 10
+output_dir: runs/atalanta/mf-blend
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# BUILD-VS-BUY block 2 - the HYBRID (GH #80, [[runs/atalanta/2026-07-09#dbmf_atalanta_blend]]).
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# Blend w * WTMF wrapper long + (1 - w) * atalanta keystone on the convex core (IDTL/IGLN/ICOM).
+# NESTED CONTROLS: w = 0 reproduces the champion (trend_convexity 0.4451) on the evaluated windows;
+# w = 1 reproduces mf_wrapper_challenger. w is swept {0, 0.25, 0.50, 0.75, 1.0} via the strategy's
+# param_space (keystone params pinned there); depends on running mf_wrapper_challenger first for the
+# wrapper's standalone family/convexity/Sharpe attribution.
+#
+# PARETO keep/kill (held-out): KEEP if an interior w holds trend_convexity_payoff >= 0.4451 - CI
+# AND lifts standalone Sharpe >= 1.15 by > CI AND 2022-type slow crisis >= +4.5% (complements ->
+# wrapper-core + thin-atalanta-dose). KILL as substitutes if convexity falls monotonically in w with
+# no bulge (pick one; seat stays pure atalanta). Guardrails: worst calm year >= -6%,
+# |monthly corr to carry| <= 0.10, worst-split maxDD <= champion + 2pp.
+#
+# WTMF (bought beta, 2011+, covers the window) + the 3 convex-core legs. USD legs convert via EUR/USD.
+data:
+  base_currency: EUR
+  instruments: [WTMF.ARCA, IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress   # the convex core's signal; WTMF's slope is computed but
+    params:                            # ignored (masked out of the keystone book)
+      lookback: 189
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+
+strategy:
+  id: atalanta.mf_blend                # blend_w swept {0,0.25,0.5,0.75,1.0} via param_space
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 2.0
+  net_cap: 2.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

@@ -22,6 +22,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.additive_invariance import AbsolutePriceLevelError
@@ -64,6 +65,9 @@ def _contract(*, futures: tuple[str, ...]) -> DataContract:
         missing_index=MissingIndexPolicy.DROP,
         lookback_bars=0,
         futures=futures,
+        adjustment_mode=(
+            ContinuousFutureAdjustmentType.BACKWARD_SPREAD if futures else None
+        ),
     )
 
 

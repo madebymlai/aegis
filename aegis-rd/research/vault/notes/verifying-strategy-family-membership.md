@@ -4,10 +4,14 @@ date: "2026-06-11"
 topic: strategy-taxonomy
 distilled-into:
 tags:
-  - article
+  - note
+  - strategy-taxonomy
 ---
 
 # Verifying Strategy-Family Membership from the Return Stream
+
+> [!note] Status
+> METHODOLOGY SPEC, settled and shipped; demoted from `research/` on 2026-07-09. This is the project's own gate and metric specification - the per-family threshold table, the shipped `crisis_quarter_return` / `crash_day_return` metrics, and our measured horizon flips - rather than generic research. The generic measurement backbone it cites (Treynor-Mazuy, the CFM convexity identity, L-moments/medcouple skew estimators) stays available through the footnotes here; articles keep linking here for the operational gates.
 
 > [!abstract] One-line takeaway
 > A strategy earns its family label only if its realized return stream passes objective gates - four measured signatures (own-return skew, quadratic convexity, crisis-conditional return, regime-conditional beta) against a common benchmark, over multi-year windows. Declaration is not membership; the stream is.

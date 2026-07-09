@@ -1,0 +1,63 @@
+name: atalanta_mf_wrapper_challenger
+schema_version: 10
+output_dir: runs/atalanta/mf-wrapper-challenger
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# BUILD-VS-BUY block 1 - the "BUY" arm (GH #80, [[runs/atalanta/2026-07-09#dbmf_seatchallenger]]).
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# Hold a managed-futures UCITS wrapper LONG and judge it on the trend-seat scorecard against the
+# hand-built champion (trend_floor.yaml). PROXY = WTMF (WisdomTree Managed Futures, NYSE Arca,
+# 2011+) - the only MF proxy that covers the FULL 2018-2024 champion window; DBMF.ARCA (2019+) and
+# KMLM.ARCA (2021+) are shorter-window confirmations (swap the instrument, shorten `start`). The
+# UCITS DBMF ETF itself only lists from 2025-03, so it has no backtest history - WTMF is the proxy.
+# USD-quoted -> converts to EUR base via EUR/USD. Identical window / split / portfolio to the
+# champion so the comparison is clean; ranked on trend_convexity_payoff.
+#
+# Pre-registered keep/kill (held-out, #80 promotion rule): (a) verify trend-family membership
+# (positive own-horizon skew); (b) trend_convexity_payoff >= 0.4451 - CI [expected FAIL - slow
+# diversified replicator]; (c) standalone Sharpe >= 1.15 [the target it exists to close]. If it
+# fails convexity but lifts Sharpe -> run mf_blend.yaml (the hybrid).
+data:
+  base_currency: EUR
+  instruments: [WTMF.ARCA]     # DBMF.ARCA / KMLM.ARCA = shorter-window confirmations
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.realized_vol   # consumed to stay on the proven indicator path; the wrapper is
+    params:                     # internally vol-managed, so this is not a second vol-target layer
+      vol_window: 126
+
+strategy:
+  id: atalanta.hold_wrapper     # single static candidate (gross_target 1.0) via param_space
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 2.0
+  net_cap: 2.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10

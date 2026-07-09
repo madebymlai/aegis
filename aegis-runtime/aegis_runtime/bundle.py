@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.additive_invariance import assert_additive_invariance
@@ -16,6 +17,14 @@ from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
 from aegis_runtime.futures_roots import validate_bare_root
 
 INSTRUMENT_ID_LEVEL = "instrument_id"
+
+# The only continuous-futures re-basing algebras Aegis supports. Forward modes are
+# rejected everywhere (research never materialises them), so a bundle can only
+# declare what a locked Run can actually have used.
+SUPPORTED_ADJUSTMENT_MODES = (
+    ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+    ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+)
 
 
 class MissingIndexPolicy(str, Enum):
@@ -71,6 +80,11 @@ class DataContract:
     # tradeables to the book's base currency (research parity) and mark the FX rate
     # sizing reads.
     exchange: tuple[InstrumentId, ...] = ()
+    # The continuous-futures re-basing algebra the locked Run's frames were actually
+    # materialised under — a recorded historical fact, never a current code default.
+    # Present iff ``futures`` declares roots. Independent of ``exchange``: both
+    # backward modes are valid with or without FX conversion legs.
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
@@ -81,6 +95,7 @@ class DataContract:
         )
         _validate_bare_roots(self.futures, "DataContract.futures")
         _continuous_instrument_ids(self.instrument_ids, self.futures)
+        _validate_adjustment_mode(self.adjustment_mode, self.futures)
         _validate_instrument_ids(self.exchange, "DataContract.exchange")
         overlap = sorted(
             instrument_id.value
@@ -334,6 +349,36 @@ def _validate_instrument_band_contract(
         raise ValueError(
             "LockedExecutionPlan.instrument_bands must match DataContract.instrument_ids; "
             f"missing={missing}, extra={extra}"
+        )
+
+
+def _validate_adjustment_mode(
+    mode: ContinuousFutureAdjustmentType | None,
+    futures: Sequence[str],
+) -> None:
+    if mode is None:
+        if futures:
+            raise DataContractError(
+                "DataContract.futures declares continuous roots "
+                f"{sorted(futures)} but no adjustment_mode; the mode the locked "
+                "Run materialised under is a required fact"
+            )
+        return
+    if not futures:
+        raise DataContractError(
+            "DataContract.adjustment_mode is set but futures declares no "
+            "continuous roots; a mode without futures is meaningless"
+        )
+    if not isinstance(mode, ContinuousFutureAdjustmentType):
+        raise DataContractError(
+            "DataContract.adjustment_mode must be a Nautilus "
+            f"ContinuousFutureAdjustmentType; got {mode!r}"
+        )
+    if mode not in SUPPORTED_ADJUSTMENT_MODES:
+        supported = sorted(member.value for member in SUPPORTED_ADJUSTMENT_MODES)
+        raise DataContractError(
+            f"DataContract.adjustment_mode {mode.value!r} is unsupported; "
+            f"only backward modes {supported} are materialisable"
         )
 
 

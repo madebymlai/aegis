@@ -13,6 +13,7 @@ Organizes the research campaign: useful sites, per-run diaries, and articles to 
 - [[site-index|Site Index]] - useful sites found, organized by category
 - `runs/<strategy>/<date>.md` - one diary note per day per strategy, with a section per run: what was tested, how it went
 - `research/<article-name>.md` - general knowledge: articles we synthesize in prose from studied sources, cited with footnotes, distilled into strategy hypotheses
+- [[notes/readme|Notes]] - research scratchpad: provisional, article-shaped findings we do not want to lose, before they earn a full `research/` article
 - [[graveyard|Graveyard]] - killed hypotheses, one line each, so dead ideas don't get re-researched
 
 ## Conventions

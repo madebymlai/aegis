@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from aegis_data.distributions import Distribution
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -69,6 +70,10 @@ class MarketDataAdapterResult:
     # Non-base → base FX conversion derived from the catalog's resolved instruments and
     # ``exchange:`` FX series; ``None`` for a single-currency book (no ``exchange:``).
     currency_conversion: CurrencyConversion | None = None
+    # The continuous-futures re-basing mode this pull materialised its synthetic
+    # roots under — the exact enum supplied to materialisation, recorded as a Run
+    # fact. ``None`` when no futures were materialised.
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None
     # Listed-ETF cash events read from the same Nautilus catalog as bars.
     distributions: tuple[Distribution, ...] = ()
     # Set only by ``provider_failed_adapter_result``: adapters raise
@@ -211,7 +216,24 @@ class MarketDataResult:
     quality: MarketDataQuality
     pnl_native_data: Any = None
     currency_conversion: CurrencyConversion | None = None
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None
     distributions: tuple[Distribution, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Adjustment mode is a materialisation fact: it exists iff continuous
+        # roots were materialised. A drifted pairing can only mean a wiring bug
+        # upstream, so it fails here rather than becoming false Run evidence.
+        roots = self.metadata.provenance.source_metadata.get("continuous_root_ids") or ()
+        if roots and self.adjustment_mode is None:
+            raise ValueError(
+                f"market data materialised continuous roots {list(roots)} but "
+                "carries no adjustment_mode fact"
+            )
+        if self.adjustment_mode is not None and not roots:
+            raise ValueError(
+                "market data carries an adjustment_mode fact but materialised "
+                "no continuous roots"
+            )
 
     def assert_usable(self) -> None:
         if not self.quality.usable:

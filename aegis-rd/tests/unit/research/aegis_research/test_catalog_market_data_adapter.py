@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from aegis_data.bar_type import mic_canonical_instrument_id
 from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
+from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.distributions import Distribution
 from aegis_data.testing import bars
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
@@ -154,10 +155,12 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
     continuous = {es: _frame(index, close=[5000.0, 5010.0], volume=[1.0, 2.0])}
 
     seen_roots: list = []
+    seen_modes: list = []
 
     class FakeContinuousModel:
-        def __init__(self, _port_arg, root, **_kwargs):
+        def __init__(self, _port_arg, root, *, adjustment_mode, **_kwargs):
             seen_roots.append(str(root))
+            seen_modes.append(adjustment_mode)
             self.continuous_id = es
             self.frame = continuous[es]
 
@@ -189,6 +192,32 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
     assert bundle.array("Close")[es].tolist() == [5000.0, 5010.0]
     assert bundle.array("Volume")[es].tolist() == [1.0, 2.0]
     assert result.metadata.provenance.source_metadata["continuous_root_ids"] == ["ES.XCME"]
+    # The recorded fact IS the value supplied to materialisation — selected once,
+    # never a separately re-read constant.
+    assert seen_modes == [DEFAULT_ADJUSTMENT_MODE]
+    assert result.adjustment_mode is seen_modes[0]
+
+
+def test_catalog_adapter_returns_no_adjustment_mode_without_futures() -> None:
+    aapl = _id("AAPL.NASDAQ")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    port = _RecordingCatalogPort(
+        frames={aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    )
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ"],
+        start="2024-01-01",
+        end="2024-01-03",
+    )
+
+    result = load_market_data_result(
+        config,
+        adapter=lambda current: load_catalog_source(current, port=port),
+    )
+
+    assert result.adjustment_mode is None
 
 
 def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrument(

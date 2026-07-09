@@ -15,6 +15,8 @@ import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from aegis_runtime import ExposureLimits
+
 from aegis_trader.domain.types import SleeveName
 
 _EPS = 1e-12
@@ -401,6 +403,8 @@ class BookConfig:
     # ── aggregate fidelity ──
     aggregate_drift_threshold: float | None = None  # max Σ|w_realized - w_target|
 
+    _exposure_limits: ExposureLimits = field(init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         if not self.sleeves:
             raise ValueError("BookConfig must declare at least one sleeve")
@@ -424,6 +428,14 @@ class BookConfig:
                 f"max_book_gross, so a soft ceiling above the hard cap could never "
                 f"be made compliant and would always fail closed at the gross gate"
             )
+        object.__setattr__(
+            self,
+            "_exposure_limits",
+            ExposureLimits(
+                gross_cap=math.inf if self.gross_cap is None else self.gross_cap,
+                net_cap=self.net_cap,
+            ),
+        )
         self._validate_starting_balances()
         self._validate_tail_convexity_budget()
         if sum(self.allocator_risk_shares().values()) <= _EPS:
@@ -445,6 +457,16 @@ class BookConfig:
     @property
     def sleeve_count(self) -> int:
         return len(self.sleeves)
+
+    @property
+    def exposure_limits(self) -> ExposureLimits:
+        """Kernel Exposure Limits at book scope (root ADR-0008).
+
+        An omitted ``gross_cap`` resolves to unbounded; an omitted ``net_cap``
+        resolves in the kernel to the gross cap, a no-op bound — so a book with
+        no declared caps gates as unbounded rather than skipping the gate.
+        """
+        return self._exposure_limits
 
     def allocator_risk_shares(self) -> dict[SleeveName, float]:
         """Return risk shares consumed by the allocator.

@@ -4,10 +4,15 @@ date: 2026-07-04
 topic: trend
 distilled-into:
 tags:
-  - article
+  - note
+  - trend
+  - carry
 ---
 
 # Carry Diversifies Only a Divergent Trend
+
+> [!note] Status
+> SETTLED on our book (2026-07-04); demoted from `research/` on 2026-07-09. This is a project post-mortem - the co-crash decomposition of our own floor's poles, with our run numbers load-bearing throughout - not generic research. The generic lessons live in articles: TSMOM-not-safe-havens is in [[divergent-vs-defensive-crash-resistance]] and [[the-tiered-strategy-roster]]; the monthly-frequency measurement rule and the orthogonal-income target are in [[insurance-linked-securities-as-the-orthogonal-income-pole]] and [[the-skew-is-the-product]].
 
 > [!abstract] One-line takeaway
 > A concave income pole's value to a two-pole book is not a property of the income pole alone - it is a property of the *pairing*, and it is conditional on the convex pole being a genuinely divergent, long-straddle payoff (futures time-series momentum), not a static long-beta "safe-haven" basket. Passive long-duration, long-gold and long-credit-protection are unreliable crisis hedges; a trend-follower that can go short is orthogonal to carry in calm markets and profits in the shocks that sink it. The literature result is general; our own application of it carried a trap. Our convex pole *is* a divergent TSMOM, and once the co-crash is decomposed, the existing carry pole already diversifies it at the horizon the floor operates (ex-fast-crash contribution +0.007, monthly correlation +0.081) - the alarming daily -0.009 / +0.42 headline was a single-fast-crash, daily-frequency artifact. So the operative lesson is narrower than "suspect the convex pole": measure the pairing at the right frequency and let the tail tier own fast crashes, before concluding either pole is broken.

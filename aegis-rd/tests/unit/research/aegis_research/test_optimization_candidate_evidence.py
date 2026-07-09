@@ -20,7 +20,7 @@ from research.aegis_research.optimization.ranking import (
 )
 
 DATA_IDENTITY = {
-    "schema_version": "candidate_data_identity.v2",
+    "schema_version": "candidate_data_identity.v3",
     "requested_instrument_ids": ["SYN.XNAS"],
     "instrument_ids": ["SYN.XNAS"],
     "timeframe": "1D",
@@ -110,7 +110,8 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         {"rsi_window": 14, "ma_window": 100, "entry": 40.0},
         source_identity={"source": "component", "id": "demo.rsi", "source_hash": "abc123"},
         data_identity={
-            "schema_version": "candidate_data_identity.v2",
+            "schema_version": "candidate_data_identity.v3",
+            "adjustment_mode": "backward_ratio",
             "requested_instrument_ids": ["SYN.XNAS", "ALT.XNAS"],
             "instrument_ids": ["SYN.XNAS", "ALT.XNAS"],
             "timeframe": "1D",
@@ -135,19 +136,37 @@ def test_candidate_identity_golden_bytes_pin() -> None:
 
     assert canonical_json_bytes(row["identity"]) == (
         b'{"book_settings":{"fees":0.001,"target_exposure_cap":1.0},'
-        b'"data_identity":{"array_contract":{"component_required_arrays":[],'
+        b'"data_identity":{"adjustment_mode":"backward_ratio",'
+        b'"array_contract":{"component_required_arrays":[],'
         b'"configured_arrays":["Close"],"contract_required_arrays":["Close","Open"],'
         b'"missing_required_arrays":["Open"],"pipeline_required_arrays":["Close","Open"]},'
         b'"effective_arrays":["Close","Open"],"index_end":"2026-01-31",'
         b'"index_evidence":{},"index_start":"2026-01-01",'
         b'"instrument_ids":["SYN.XNAS","ALT.XNAS"],"loaded_arrays":["Close"],'
         b'"requested_instrument_ids":["SYN.XNAS","ALT.XNAS"],"rows":31,'
-        b'"schema_version":"candidate_data_identity.v2","source_metadata":{},'
+        b'"schema_version":"candidate_data_identity.v3","source_metadata":{},'
         b'"timeframe":"1D"},"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
         b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v4",'
         b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
     )
-    assert row["candidate_key"] == "cand_77b490a16196ee004c1c820d593f6f05"
+    assert row["candidate_key"] == "cand_c6baa6ff4ce9660e482fe7db1add8d58"
+
+
+def test_otherwise_identical_ratio_and_spread_runs_have_different_candidate_keys() -> None:
+    params = {"rsi_window": 14}
+
+    ratio = _single_candidate_row(
+        params,
+        source_identity={"source_hash": "abc"},
+        data_identity={**DATA_IDENTITY, "adjustment_mode": "backward_ratio"},
+    )
+    spread = _single_candidate_row(
+        params,
+        source_identity={"source_hash": "abc"},
+        data_identity={**DATA_IDENTITY, "adjustment_mode": "backward_spread"},
+    )
+
+    assert ratio["candidate_key"] != spread["candidate_key"]
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:

@@ -136,7 +136,9 @@ def _write_dist_info(
         f"Name: {dist_name}\n"
         f"Version: {version}\n"
         "Summary: Aegis locked execution bundle\n"
-        "Requires-Dist: aegis-runtime\n",
+        # The first aegis-runtime that speaks execution_bundle.v4; schema
+        # rejection stays the safety mechanism, this just resolves it earlier.
+        "Requires-Dist: aegis-runtime>=0.2.0\n",
         encoding="utf-8",
     )
     wheel_metadata = "\n".join(

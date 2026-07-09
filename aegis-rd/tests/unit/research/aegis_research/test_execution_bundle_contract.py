@@ -8,13 +8,17 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_runtime import ComponentSpec, MissingIndexPolicy
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import TypeAdapter
 
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.execution_bundle import (
     AssembledComponents,
+    UnrecordedAdjustmentModeError,
     _bundle_contract,
 )
 
@@ -60,10 +64,12 @@ def test_bundle_contract_carries_the_continuous_future_roots() -> None:
             InstrumentId.from_str("ES.XCME"),
             InstrumentId.from_str("KC.XNYM"),
         ),
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
     )
 
     assert contract.futures == ("ES", "KC")
     assert contract.missing_index is MissingIndexPolicy.DROP
+    assert contract.adjustment_mode is ContinuousFutureAdjustmentType.BACKWARD_RATIO
 
 
 def test_bundle_contract_carries_the_fx_conversion_legs() -> None:
@@ -110,3 +116,53 @@ def test_bundle_contract_has_no_roots_when_none_declared() -> None:
     )
 
     assert contract.futures == ()
+    assert contract.adjustment_mode is None
+
+
+def _futures_data() -> DataConfig:
+    return _DATA.validate_python(
+        {
+            "arrays": ["OHLCV"],
+            "base_currency": "USD",
+            "instruments": ["AAPL.NASDAQ"],
+            "futures": ["ES"],
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+            "timeframe": "1D",
+            "missing_index": "drop",
+        }
+    )
+
+
+_FUTURES_IDS = (
+    InstrumentId.from_str("AAPL.NASDAQ"),
+    InstrumentId.from_str("ES.XCME"),
+)
+
+
+def test_bundle_contract_carries_the_locked_runs_recorded_mode_not_the_default() -> None:
+    # BACKWARD_SPREAD is deliberately NOT the shipped DEFAULT_ADJUSTMENT_MODE: the
+    # exported mode is the locked Run's recorded fact, so a later default change
+    # cannot change what an export declares.
+    assert DEFAULT_ADJUSTMENT_MODE is not ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+
+    contract = _bundle_contract(
+        SimpleNamespace(data=_futures_data()),
+        _components(),
+        _FUTURES_IDS,
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+    )
+
+    assert contract.adjustment_mode is ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+
+
+def test_futures_export_without_recorded_mode_fails_with_rerun_guidance() -> None:
+    # A pre-evidence Run cannot prove which algebra materialised its frames; export
+    # must fail loudly instead of reading the current code default.
+    with pytest.raises(UnrecordedAdjustmentModeError, match="re-run.*re-lock"):
+        _bundle_contract(
+            SimpleNamespace(data=_futures_data()),
+            _components(),
+            _FUTURES_IDS,
+            adjustment_mode=None,
+        )

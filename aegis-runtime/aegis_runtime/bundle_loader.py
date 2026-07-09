@@ -5,9 +5,11 @@ from collections.abc import Mapping
 from importlib import resources
 from typing import Any
 
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.bundle import (
+    SUPPORTED_ADJUSTMENT_MODES,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -16,7 +18,9 @@ from aegis_runtime.bundle import (
 )
 from aegis_runtime.drift_band import DriftBand
 
-BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v3"
+BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v4"
+
+_ADJUSTMENT_MODE_BY_VALUE = {mode.value: mode for mode in SUPPORTED_ADJUSTMENT_MODES}
 
 
 class BundlePayloadError(ValueError):
@@ -37,18 +41,21 @@ def dump_bundle_payload(
     manifest: BundleManifest,
     plan: LockedExecutionPlan,
 ) -> dict[str, Any]:
+    contract_payload: dict[str, Any] = {
+        "instrument_ids": [_dump_instrument_id(item) for item in contract.instrument_ids],
+        "required_arrays": list(contract.required_arrays),
+        "base_currency": contract.base_currency,
+        "timeframe": contract.timeframe,
+        "missing_index": contract.missing_index.value,
+        "lookback_bars": contract.lookback_bars,
+        "futures": list(contract.futures),
+        "exchange": [_dump_instrument_id(item) for item in contract.exchange],
+    }
+    if contract.adjustment_mode is not None:
+        contract_payload["adjustment_mode"] = contract.adjustment_mode.value
     return {
         "schema_version": BUNDLE_PAYLOAD_SCHEMA_VERSION,
-        "contract": {
-            "instrument_ids": [_dump_instrument_id(item) for item in contract.instrument_ids],
-            "required_arrays": list(contract.required_arrays),
-            "base_currency": contract.base_currency,
-            "timeframe": contract.timeframe,
-            "missing_index": contract.missing_index.value,
-            "lookback_bars": contract.lookback_bars,
-            "futures": list(contract.futures),
-            "exchange": [_dump_instrument_id(item) for item in contract.exchange],
-        },
+        "contract": contract_payload,
         "manifest": {
             "run_id": manifest.run_id,
             "role": manifest.role,
@@ -94,6 +101,9 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
             _load_instrument_id(item)
             for item in _required_sequence(contract_payload, "exchange", "DataContract")
         ),
+        # Wire decoding only: presence/type/known-value. The present-iff-futures
+        # semantic is DataContract's own construction rule.
+        adjustment_mode=_load_adjustment_mode(contract_payload),
     )
     manifest = BundleManifest(
         run_id=_required_value(manifest_payload, "run_id", "BundleManifest"),
@@ -182,6 +192,27 @@ def _load_drift_band(payload: Mapping[str, Any]) -> DriftBand:
         # trade-to-target behaviour (forward-safe default).
         destination_fraction=payload.get("destination_fraction", 1.0),
     )
+
+
+def _load_adjustment_mode(
+    contract_payload: Mapping[str, Any],
+) -> ContinuousFutureAdjustmentType | None:
+    if "adjustment_mode" not in contract_payload:
+        return None
+    value = contract_payload["adjustment_mode"]
+    if not isinstance(value, str):
+        raise BundlePayloadFieldError(
+            "DataContract.adjustment_mode must be a supported mode string when "
+            f"present; got {value!r}"
+        )
+    try:
+        return _ADJUSTMENT_MODE_BY_VALUE[value]
+    except KeyError:
+        supported = sorted(_ADJUSTMENT_MODE_BY_VALUE)
+        raise BundlePayloadFieldError(
+            f"DataContract.adjustment_mode {value!r} is not a supported mode; "
+            f"expected one of {supported}"
+        ) from None
 
 
 def _dump_instrument_id(instrument_id: InstrumentId) -> str:

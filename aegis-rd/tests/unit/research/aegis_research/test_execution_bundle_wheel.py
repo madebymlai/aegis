@@ -108,6 +108,22 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
     assert bundle.manifest.candidate_key == "0123456789abcdef"
 
 
+def test_write_wheel_requires_the_first_v4_capable_runtime(tmp_path) -> None:
+    # Schema rejection is the safety mechanism; the package bound makes
+    # installation resolve a v4-capable aegis-runtime up front.
+    artifact = _artifact()
+
+    wheel_path = write_wheel(artifact, tmp_path)
+
+    with zipfile.ZipFile(wheel_path) as zf:
+        metadata_path = next(
+            name for name in zf.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = zf.read(metadata_path).decode()
+
+    assert "Requires-Dist: aegis-runtime>=0.2.0" in metadata
+
+
 def test_write_wheel_uses_same_name_when_same_candidate_already_exists(tmp_path) -> None:
     artifact = _artifact()
 
