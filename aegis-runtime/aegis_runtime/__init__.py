@@ -1,4 +1,3 @@
-from aegis_runtime.additive_invariance import AbsolutePriceLevelError
 from aegis_runtime.bundle import (
     SUPPORTED_ADJUSTMENT_MODES,
     BundleManifest,
@@ -24,15 +23,17 @@ from aegis_runtime.exposure_validation import (
     ExposureLimits,
     ExposureValidationError,
     GrossExposureBreach,
+    NonFiniteExposure,
     NetExposureBreach,
     validate_exposure,
 )
 from aegis_runtime.financing import debit_interest
 from aegis_runtime.futures_roots import validate_bare_root
+from aegis_runtime.roll_sensitivity import RollSensitivityError
 
 __all__ = [
-    "AbsolutePriceLevelError",
     "BundleManifest",
+    "RollSensitivityError",
     "SUPPORTED_ADJUSTMENT_MODES",
     "ComponentSpec",
     "ComponentStrategyInputs",
@@ -54,6 +55,7 @@ __all__ = [
     "MarketDataMissingIndexError",
     "MarketDataBundle",
     "MissingIndexPolicy",
+    "NonFiniteExposure",
     "NetExposureBreach",
     "validate_bare_root",
     "validate_exposure",

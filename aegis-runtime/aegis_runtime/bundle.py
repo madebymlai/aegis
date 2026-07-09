@@ -11,9 +11,9 @@ import pandas as pd
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime.additive_invariance import assert_additive_invariance
 from aegis_runtime.currency import CurrencyConversion
 from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.roll_sensitivity import compute_roll_checked_weights
 from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
 from aegis_runtime.futures_roots import validate_bare_root
 
@@ -263,30 +263,15 @@ class ExecutionBundle:
             )
             return self._decide_weights(component_input)
 
-        weights = decide(native_prices)
-        # A continuous-future root is re-based at every roll; reject an allocation that
-        # reads its absolute price level (it would silently desync live-vs-research).
-        # The probe perturbs the NATIVE window and recomputes through the same
-        # composed conversion+decision path as the baseline.
-        assert_additive_invariance(
-            weights=weights,
-            recompute=decide,
-            window=native_prices,
-            continuous_ids=self._continuous_ids(),
+        # A continuous-future root is re-based at every roll under the contract's
+        # declared mode; an allocation that moves under that re-base would silently
+        # desync live-vs-research. The check owns baseline + per-root native probes
+        # and recomputes each through this same composed conversion+decision path.
+        return compute_roll_checked_weights(
+            contract=self.contract,
+            native_window=native_prices,
+            decide=decide,
         )
-        return weights
-
-    def _continuous_ids(self) -> tuple[InstrumentId, ...]:
-        """The contract's instrument ids that materialise a declared continuous-future root —
-        the columns a roll re-bases.
-
-        Each bare root resolves to the *one* synthetic continuous id whose symbol matches it
-        (``ES`` → ``ES.XCME``). A root that matches more than one instrument id is ambiguous —
-        the contract cannot tell the continuous root from a same-symbol native (a stock ``ES``),
-        and re-basing the native's price column would corrupt the invariance check — so it is
-        rejected loudly rather than silently re-basing the wrong column.
-        """
-        return self.contract.continuous_instrument_ids
 
     def _decide_weights(
         self,
@@ -435,7 +420,7 @@ def _continuous_instrument_ids(
             raise ValueError(
                 f"continuous-future root {root!r} is ambiguous: it matches instrument ids "
                 f"{[match.value for match in matches]}; a continuous root must resolve to "
-                f"exactly one column so the additive-invariance re-base targets it alone"
+                f"exactly one column so the roll-sensitivity probe re-bases it alone"
             )
         continuous.append(matches[0])
     return tuple(continuous)
