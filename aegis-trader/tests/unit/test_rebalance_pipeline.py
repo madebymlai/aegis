@@ -20,6 +20,8 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
+from aegis_runtime.currency import CurrencyConversion
+
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import RollEvent
@@ -77,8 +79,13 @@ class _FixedWeightBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         target = pd.DataFrame(
             {_INSTRUMENT_ID: [self._weight, self._weight]},
             index=close.index,
@@ -126,8 +133,13 @@ class _ContinuousWeightBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         target = pd.DataFrame({_ES: [self._weight, self._weight]}, index=close.index)
         target.columns.name = "instrument_id"
         return target
@@ -174,8 +186,13 @@ class _CalendarParityBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         self.close_panel = close.copy()
         weights = close.div(close.sum(axis=1), axis=0)
         weights.columns.name = "instrument_id"
@@ -219,14 +236,24 @@ class _PoisonBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
         raise RuntimeError("component exploded")
 
 
 class _PoisonFixedInstrumentBundle(_FixedWeightBundle):
     """A poison sleeve owning the fixed instrument's band (for the all-fail case)."""
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
         raise RuntimeError("component exploded")
 
 
@@ -778,13 +805,15 @@ _EURUSD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 
 
 class _SpyConversionBundle(ExecutionBundle):
-    """Fixed-weight bundle over a USD-quoted instrument that records the Close
-    panel its compute received, so a test can pin the research-parity fact:
-    the trader computes on base-currency-converted prices."""
+    """Fixed-weight bundle over a USD-quoted instrument that records the native
+    Close panel and the conversion its compute received, so a test can pin the
+    native-price boundary: the trader hands over native arrays plus the resolved
+    conversion and never pre-converts."""
 
     def __init__(self, weight: float) -> None:
         self._weight = weight
         self.seen_close: pd.DataFrame | None = None
+        self.seen_conversion: CurrencyConversion | None = None
         contract = DataContract(
             instrument_ids=(_INSTRUMENT_ID,),
             required_arrays=("Close",),
@@ -818,9 +847,15 @@ class _SpyConversionBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         self.seen_close = close
+        self.seen_conversion = currency_conversion
         target = pd.DataFrame(
             {_INSTRUMENT_ID: [self._weight] * len(close)},
             index=close.index,
@@ -848,9 +883,11 @@ def _fx_market_data() -> _MarketData:
     )
 
 
-def test_sleeve_panel_is_converted_to_base_currency_before_compute() -> None:
-    """Regression (aegis-rd-reyj): research validated the sleeve on EUR-converted
-    panels; the trader must compute on the same converted prices, not native USD."""
+def test_sleeve_compute_receives_native_prices_and_the_resolved_conversion() -> None:
+    """The native-price boundary (aegis-rd-tkj5.4): the pipeline resolves the
+    period's conversion but hands the bundle NATIVE arrays plus that conversion —
+    the bundle owns applying it, so it is applied exactly once. The resolved
+    conversion still produces research's EUR view (aegis-rd-reyj)."""
     bundle = _SpyConversionBundle(0.5)
     pipeline = _started_pipeline(market_data=_fx_market_data(), bundle=bundle)
 
@@ -858,8 +895,108 @@ def test_sleeve_panel_is_converted_to_base_currency_before_compute() -> None:
 
     assert result.sleeve_failures == ()
     assert bundle.seen_close is not None
-    assert bundle.seen_close[_INSTRUMENT_ID].tolist() == pytest.approx([80.0, 80.0])
+    # Native USD closes, not a pre-converted panel.
+    assert bundle.seen_close[_INSTRUMENT_ID].tolist() == pytest.approx([100.0, 100.0])
+    # The resolved conversion is the one typed transformation: applying it yields
+    # the EUR view research validated on (USD 100 at EUR/USD 1.25 -> EUR 80).
+    assert bundle.seen_conversion is not None
+    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    assert converted[_INSTRUMENT_ID].tolist() == pytest.approx([80.0, 80.0])
     assert [order.instrument_id for order in result.orders] == [_INSTRUMENT_ID]
+
+
+class _SpyContinuousConversionBundle(ExecutionBundle):
+    """Records the native panel + conversion for a USD-quoted continuous root in a
+    EUR-base book — the research/trader continuous-root parity double."""
+
+    def __init__(self) -> None:
+        self.seen_close: pd.DataFrame | None = None
+        self.seen_conversion: CurrencyConversion | None = None
+        contract = DataContract(
+            instrument_ids=(_ES,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+            futures=("ES",),
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+            exchange=(_EURUSD,),
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-continuous-fx-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(_ES,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={_ES: DriftBand.symmetric(0.0)},
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
+        self.seen_close = close
+        self.seen_conversion = currency_conversion
+        target = pd.DataFrame({_ES: [0.5] * len(close)}, index=close.index)
+        target.columns.name = "instrument_id"
+        return target
+
+
+def test_continuous_root_conversion_matches_the_research_view_under_moving_fx() -> None:
+    """Research/Trader continuous-root currency parity (aegis-rd-tkj5.4): from the
+    same native ES closes and the same moving EUR/USD series, the trader's resolved
+    conversion produces the identical base-currency panel research's catalog adapter
+    pins (5000/1.25, 5010/1.20). Trader derives the root's USD from its front leg;
+    research derives it from all dated legs — same code, same builder, same view."""
+    market_data = _MarketData(
+        bars_by_instrument_id={
+            _ES: (
+                MarketBar(0, 5000.0, 5000.0, 5000.0, 5000.0, 1_000.0),
+                MarketBar(_DAY_NS, 5010.0, 5010.0, 5010.0, 5010.0, 1_000.0),
+            ),
+            _EURUSD: (
+                MarketBar(0, 1.25, 1.25, 1.25, 1.25, 0.0),
+                MarketBar(_DAY_NS, 1.20, 1.20, 1.20, 1.20, 0.0),
+            ),
+        },
+        fresh_instrument_ids=frozenset({_ES}),
+        currencies={_ES: "USD"},
+        pairs={_EURUSD: ("EUR", "USD")},
+        fx_rates={"USD": 1.25},
+    )
+    bundle = _SpyContinuousConversionBundle()
+    pipeline = _started_pipeline(market_data=market_data, bundle=bundle)
+
+    result = pipeline.rebalance_period(_period())
+
+    assert result.sleeve_failures == ()
+    assert bundle.seen_close is not None
+    assert bundle.seen_close[_ES].tolist() == pytest.approx([5000.0, 5010.0])
+    assert bundle.seen_conversion is not None
+    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    # The exact base-currency panel research's catalog adapter derives for the same
+    # native prices and FX series (see test_catalog_adapter_converts_a_non_base_
+    # continuous_root_through_exchange_fx in aegis-rd).
+    assert converted[_ES].tolist() == pytest.approx([5000.0 / 1.25, 5010.0 / 1.20])
 
 
 def test_missing_fx_bars_fail_the_sleeve_closed_not_the_book() -> None:

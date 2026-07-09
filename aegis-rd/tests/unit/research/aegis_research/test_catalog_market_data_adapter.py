@@ -12,6 +12,7 @@ from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.distributions import Distribution
 from aegis_data.testing import bars
+from aegis_runtime.currency import MissingFxPairError
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
@@ -158,6 +159,8 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
     seen_modes: list = []
 
     class FakeContinuousModel:
+        quote_currency = "USD"
+
         def __init__(self, _port_arg, root, *, adjustment_mode, **_kwargs):
             seen_roots.append(str(root))
             seen_modes.append(adjustment_mode)
@@ -198,6 +201,85 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
     assert result.adjustment_mode is seen_modes[0]
 
 
+def test_catalog_adapter_converts_a_non_base_continuous_root_through_exchange_fx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A USD-quoted continuous root in a EUR-base book joins the same native->base
+    conversion as native instruments (closing the foreign-futures parity gap), and
+    the derived root currency lands in source metadata -> Candidate data identity."""
+    es = _id("ES.XCME")
+    eurusd = _id("EUR/USD.IDEALPRO")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    port = _RecordingCatalogPort(
+        frames={eurusd: _frame(index, close=[1.25, 1.20], volume=[0.0, 0.0])}
+    )
+
+    class FakeContinuousModel:
+        quote_currency = "USD"
+
+        def __init__(self, _port_arg, _root, **_kwargs):
+            self.continuous_id = es
+            self.frame = _frame(index, close=[5000.0, 5010.0], volume=[1.0, 2.0])
+
+        def materialize(self, *, end: str) -> None:
+            assert end == "2024-01-03"
+
+    monkeypatch.setattr(catalog_adapter, "ContinuousContractModel", FakeContinuousModel)
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="EUR",
+        instruments=[],
+        futures=["ES"],
+        exchange=["EUR/USD.IDEALPRO"],
+        start="2024-01-01",
+        end="2024-01-03",
+    )
+
+    result = load_catalog_source(config, port=port)
+
+    assert result.source_metadata["continuous_root_currencies"] == {"ES.XCME": "USD"}
+    conversion = result.currency_conversion
+    assert conversion is not None
+    # USD -> EUR is the inverse of the declared EUR/USD pair, applied per period.
+    converted = conversion.apply(
+        {"Close": pd.DataFrame({es: [5000.0, 5010.0]}, index=index)}
+    )["Close"]
+    assert converted[es].tolist() == pytest.approx([5000.0 / 1.25, 5010.0 / 1.20])
+
+
+def test_catalog_adapter_fails_loud_for_a_non_base_continuous_root_without_fx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-base continuous root with no matching FX pair fails at research loading
+    exactly as a non-base native instrument does."""
+    es = _id("ES.XCME")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    port = _RecordingCatalogPort(frames={})
+
+    class FakeContinuousModel:
+        quote_currency = "USD"
+
+        def __init__(self, _port_arg, _root, **_kwargs):
+            self.continuous_id = es
+            self.frame = _frame(index, close=[5000.0, 5010.0], volume=[1.0, 2.0])
+
+        def materialize(self, *, end: str) -> None:
+            pass
+
+    monkeypatch.setattr(catalog_adapter, "ContinuousContractModel", FakeContinuousModel)
+    config = make_data_config(
+        arrays=["Close", "Volume"],
+        base_currency="EUR",
+        instruments=[],
+        futures=["ES"],
+        start="2024-01-01",
+        end="2024-01-03",
+    )
+
+    with pytest.raises(MissingFxPairError, match=r"ES\.XCME"):
+        load_catalog_source(config, port=port)
+
+
 def test_catalog_adapter_returns_no_adjustment_mode_without_futures() -> None:
     aapl = _id("AAPL.NASDAQ")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
@@ -230,6 +312,8 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
     port = _RecordingCatalogPort(frames={es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])})
 
     class FakeContinuousModel:
+        quote_currency = "USD"
+
         def __init__(self, _port_arg, _root, **_kwargs):
             self.continuous_id = es
             self.frame = _frame(index, close=[99.0, 99.0], volume=[9.0, 9.0])

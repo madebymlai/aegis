@@ -296,10 +296,14 @@ class RebalancePipeline:
             name: _combine_array_series(sleeve_bars, name)
             for name in contract.required_arrays
         }
+        # The pipeline resolves the period's market facts; the bundle owns the
+        # native -> base transformation, so the conversion is applied exactly once
+        # (and roll probes can perturb native prices before it).
         conversion = self._currency_conversion(contract, period)
-        if conversion is not None:
-            arrays = conversion.apply(arrays)
-        return bundle.compute_weights(MarketDataBundle(arrays))
+        return bundle.compute_weights(
+            MarketDataBundle(arrays),
+            currency_conversion=conversion,
+        )
 
     def _currency_conversion(
         self, contract: DataContract, period: CompletedRebalancePeriod

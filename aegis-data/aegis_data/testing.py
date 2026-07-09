@@ -26,7 +26,7 @@ from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AssetClass
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import FuturesContract
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import CatalogBackedDataPort
@@ -41,7 +41,7 @@ _CROSSOVER = pd.Timestamp("2024-03-01")
 
 
 def future(
-    instrument_id: str, expiry: str, *, underlying: str = "ES"
+    instrument_id: str, expiry: str, *, underlying: str = "ES", currency: Currency = USD
 ) -> FuturesContract:
     """A dated futures-contract definition for the fake catalog."""
     iid = InstrumentId.from_str(instrument_id)
@@ -50,7 +50,7 @@ def future(
         raw_symbol=iid.symbol,
         asset_class=AssetClass.INDEX,
         exchange=iid.venue.value,
-        currency=USD,
+        currency=currency,
         price_precision=_PRECISION,
         price_increment=Price(10**-_PRECISION, _PRECISION),
         multiplier=Quantity.from_int(1),
@@ -168,8 +168,19 @@ class FakeCatalog:
         return []
 
 
-def es_port() -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
-    """ES with two legs and one liquidity migration at the crossover."""
+def es_port(
+    *, leg_currencies: dict[str, str] | None = None
+) -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
+    """ES with two legs and one liquidity migration at the crossover.
+
+    ``leg_currencies`` overrides individual legs' quote currencies (by
+    instrument-id string) so currency-derivation tests can stage disagreement.
+    """
+    currencies = leg_currencies or {}
+
+    def _currency(instrument_id: str) -> Currency:
+        return Currency.from_str(currencies.get(instrument_id, "USD"))
+
     esh4 = InstrumentId.from_str("ESH4.XCME")
     esm4 = InstrumentId.from_str("ESM4.XCME")
     frames = {
@@ -178,7 +189,10 @@ def es_port() -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
     }
     return _port(
         frames,
-        [future("ESH4.XCME", "2024-03-15"), future("ESM4.XCME", "2024-06-21")],
+        [
+            future("ESH4.XCME", "2024-03-15", currency=_currency("ESH4.XCME")),
+            future("ESM4.XCME", "2024-06-21", currency=_currency("ESM4.XCME")),
+        ],
     )
 
 

@@ -32,6 +32,8 @@ from aegis_runtime import (
     MissingIndexPolicy,
 )
 
+from aegis_runtime.currency import CurrencyConversion
+
 from aegis_trader.backtest import (
     BacktestMarketData,
     CatalogBacktestDataSource,
@@ -142,8 +144,13 @@ class _FixedWeightBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         weights = pd.DataFrame(
             {self._instrument_id: [self._weight] * len(close)},
             index=close.index,
@@ -210,8 +217,13 @@ class _TwoVenueBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         weights = pd.DataFrame(
             {
                 _INSTRUMENT_ID: [0.25] * len(close),
@@ -261,8 +273,13 @@ class _ContinuousRootBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         weights = pd.DataFrame({_ES: [0.1] * len(close)}, index=close.index)
         weights.columns.name = "instrument_id"
         return weights

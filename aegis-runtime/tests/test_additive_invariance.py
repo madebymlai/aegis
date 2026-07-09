@@ -26,6 +26,7 @@ from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.additive_invariance import AbsolutePriceLevelError
+from aegis_runtime.currency import CurrencyConversion
 from aegis_runtime.bundle import (
     BundleManifest,
     ComponentSpec,
@@ -108,14 +109,14 @@ def test_absolute_price_strategy_is_rejected_for_a_continuous_root() -> None:
     proportions, so the bundle would desync at a roll → rejected at allocation."""
     bundle = _bundle("price_proportional_strategy", futures=("ES",))
     with pytest.raises(AbsolutePriceLevelError, match="ES"):
-        bundle.compute_weights(_window())
+        bundle.compute_weights(_window(), currency_conversion=None)
 
 
 def test_difference_strategy_is_accepted_for_a_continuous_root() -> None:
     """``Close − Close[0]`` is invariant to the re-base, so the continuous-root bundle
     computes weights without tripping the guard."""
     bundle = _bundle("momentum_strategy", futures=("ES",))
-    weights = bundle.compute_weights(_window())
+    weights = bundle.compute_weights(_window(), currency_conversion=None)
     assert list(weights.columns) == [_ES, _AAPL]
     # latest row: ES change +5, AAPL change +5 → equal split, summing to 1.0
     assert weights.iloc[-1].to_numpy() == pytest.approx([0.5, 0.5])
@@ -123,7 +124,7 @@ def test_difference_strategy_is_accepted_for_a_continuous_root() -> None:
 
 def test_equal_weight_strategy_is_accepted_for_a_continuous_root() -> None:
     bundle = _bundle("equal_weight_strategy", futures=("ES",))
-    weights = bundle.compute_weights(_window())
+    weights = bundle.compute_weights(_window(), currency_conversion=None)
     assert (weights.to_numpy() == 0.5).all()
 
 
@@ -131,8 +132,38 @@ def test_absolute_price_strategy_allowed_without_continuous_roots() -> None:
     """Native equities never re-base, so the same absolute-level strategy is fine when no
     continuous root is declared — the guard must not over-reject."""
     bundle = _bundle("price_proportional_strategy", futures=())
-    weights = bundle.compute_weights(_window())  # no raise
+    weights = bundle.compute_weights(_window(), currency_conversion=None)  # no raise
     assert weights.iloc[-1].sum() == pytest.approx(1.0)
+
+
+def test_probe_survives_a_constant_conversion_for_a_difference_strategy() -> None:
+    """The probe re-bases NATIVE prices and recomputes through the same conversion:
+    under a constant FX rate, ``(price + shift) * c`` keeps differences uniformly
+    scaled, so a difference strategy still passes."""
+    bundle = _bundle("momentum_strategy", futures=("ES",))
+    conversion = CurrencyConversion(
+        rate_by_instrument={_ES: pd.Series([1.1, 1.1, 1.1], index=_index(3))},
+        currency_by_instrument_id={_ES: "USD", _AAPL: "EUR"},
+    )
+
+    weights = bundle.compute_weights(_window(), currency_conversion=conversion)
+
+    assert weights.iloc[-1].sum() == pytest.approx(1.0)
+
+
+def test_probe_composes_native_rebase_before_a_moving_conversion() -> None:
+    """With time-varying FX the probed path is ``(price + shift) * FX(t)`` — the shift
+    acquires ``shift * ΔFX`` in base currency, so an ordinary base-currency difference
+    correctly fails. This pins the probe to the native side of the conversion: a
+    post-conversion probe would let this exact bundle pass."""
+    bundle = _bundle("momentum_strategy", futures=("ES",))
+    conversion = CurrencyConversion(
+        rate_by_instrument={_ES: pd.Series([1.0, 1.2, 1.4], index=_index(3))},
+        currency_by_instrument_id={_ES: "USD", _AAPL: "EUR"},
+    )
+
+    with pytest.raises(AbsolutePriceLevelError, match="ES"):
+        bundle.compute_weights(_window(), currency_conversion=conversion)
 
 
 def test_root_colliding_with_a_same_symbol_native_is_rejected() -> None:
@@ -159,10 +190,12 @@ def test_difference_weights_are_byte_stable_across_a_rebase() -> None:
     across the roll's additive shift."""
     bundle = _bundle("momentum_strategy", futures=("ES",))
     window = _window()
-    base = bundle.compute_weights(window)
+    base = bundle.compute_weights(window, currency_conversion=None)
 
     shifted_close = window.array("Close").copy()
     shifted_close[_ES] = shifted_close[_ES] + 137.0  # a roll's uniform additive re-base of ES
-    rebased = bundle.compute_weights(MarketDataBundle({"Close": shifted_close}))
+    rebased = bundle.compute_weights(
+        MarketDataBundle({"Close": shifted_close}), currency_conversion=None
+    )
 
     assert np.allclose(base.to_numpy(), rebased.to_numpy(), atol=1e-9, equal_nan=True)

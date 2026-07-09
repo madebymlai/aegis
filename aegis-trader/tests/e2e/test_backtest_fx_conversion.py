@@ -28,6 +28,8 @@ from aegis_runtime import (
     MissingIndexPolicy,
 )
 
+from aegis_runtime.currency import CurrencyConversion
+
 from aegis_trader.backtest import CatalogBacktestDataSource, run_book_backtest
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.data import build_currency_pair
@@ -86,8 +88,13 @@ class _UsdFixedWeightBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         weights = pd.DataFrame(
             {_USD_INSTRUMENT_ID: [self._weight] * len(close)},
             index=close.index,

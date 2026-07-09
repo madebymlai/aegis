@@ -1,7 +1,7 @@
 {
   "artifacts": [
     {
-      "hash": "a1037a3d10d2fd2280158df22c7e78da9b0b9a1f1da42f6815af14ad74b85e3c",
+      "hash": "ca41b4180b1ee5da1e705c618d3cb1ef176704261158300a0354cc1ac6e42c5b",
       "hash_algorithm": "sha256",
       "id": "data.metadata",
       "metadata": {},
@@ -10,14 +10,14 @@
       "role": "data_metadata",
       "schema_version": "data_metadata.v3",
       "shape": {},
-      "size": 21084,
+      "size": 21124,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
       "upstream_artifact_ids": []
     },
     {
-      "hash": "fb491fdeddee0a926e6f3e160512625aa2250cd7284968886b32c29a04aecafa",
+      "hash": "9b2f9638655dec8304c4a7cb24ac8cc448201163626a4983cccc6424f96e9baa",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 62907,
+      "size": 63089,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -188,7 +188,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_f508314219a202a4d9eba922060f5132",
+          "candidate_key": "cand_207889656e43344a304bb96313e8b677",
           "held_out_metrics": {
             "0": {
               "max_dd": 15.157424798610176,
@@ -398,6 +398,7 @@
               "schema_version": "candidate_data_identity.v3",
               "source_metadata": {
                 "catalog_path": "catalog",
+                "continuous_root_currencies": {},
                 "continuous_root_ids": [],
                 "exchange_instrument_ids": [],
                 "requested_instrument_ids": [
@@ -553,7 +554,7 @@
           }
         },
         {
-          "candidate_key": "cand_ad3a86a16ff7abe5d99cb500cefbfebb",
+          "candidate_key": "cand_ec16d524648bbe2b15b808a85499f8af",
           "held_out_metrics": {
             "0": {
               "max_dd": 17.34543783066552,
@@ -763,6 +764,7 @@
               "schema_version": "candidate_data_identity.v3",
               "source_metadata": {
                 "catalog_path": "catalog",
+                "continuous_root_currencies": {},
                 "continuous_root_ids": [],
                 "exchange_instrument_ids": [],
                 "requested_instrument_ids": [
@@ -918,7 +920,7 @@
           }
         },
         {
-          "candidate_key": "cand_2f42613edf052abd06220d1993652574",
+          "candidate_key": "cand_6d935da0a73b529c15a9b87ba6365ee8",
           "held_out_metrics": {
             "0": {
               "max_dd": 22.898667842061005,
@@ -1128,6 +1130,7 @@
               "schema_version": "candidate_data_identity.v3",
               "source_metadata": {
                 "catalog_path": "catalog",
+                "continuous_root_currencies": {},
                 "continuous_root_ids": [],
                 "exchange_instrument_ids": [],
                 "requested_instrument_ids": [

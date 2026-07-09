@@ -18,7 +18,11 @@ from aegis_data.catalog import (
     ContinuousRootVenueMismatchError,
 )
 from aegis_data.chain import fetch_contract_chain
-from aegis_data.continuous_contract_model import ContinuousContractModel
+from aegis_data.continuous_contract_model import (
+    ContinuousContractModel,
+    ContinuousContractModelNotMaterializedError,
+    ContinuousLegCurrencyError,
+)
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE, continuous_future
 from aegis_data.liquidity import liquid_cycle_causal
 from tests.support.continuous_oracle import backward_series
@@ -183,6 +187,34 @@ def test_model_materializes_under_an_explicitly_passed_adjustment_mode() -> None
     assert model.frame["Close"].tolist() == pytest.approx(
         [bar.close_raw / _RAW_SCALE for bar in head]
     )
+
+
+def test_materialize_derives_the_roots_quote_currency_from_its_legs() -> None:
+    # A synthetic continuous root has no catalog definition of its own; its quote
+    # currency is the one currency every resolved dated leg declares. Research
+    # includes the root in its base-currency conversion using exactly this fact.
+    port, _ = es_port()
+
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model.materialize(end=ES_END)
+
+    assert model.quote_currency == "USD"
+
+
+def test_quote_currency_before_materialization_fails_loud() -> None:
+    port, _ = es_port()
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+
+    with pytest.raises(ContinuousContractModelNotMaterializedError):
+        model.quote_currency
+
+
+def test_materialize_rejects_legs_disagreeing_on_quote_currency() -> None:
+    port, _ = es_port(leg_currencies={"ESM4.XCME": "EUR"})
+    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+
+    with pytest.raises(ContinuousLegCurrencyError, match="EUR"):
+        model.materialize(end=ES_END)
 
 
 def test_materialize_exposes_the_continuous_root_id() -> None:

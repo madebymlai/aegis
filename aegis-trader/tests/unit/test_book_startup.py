@@ -17,6 +17,8 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
+from aegis_runtime.currency import CurrencyConversion
+
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import Halt, RequestBars, RollIntentBatch, SubscribeBars
@@ -82,8 +84,13 @@ class _FixedWeightBundle(ExecutionBundle):
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         target = pd.DataFrame({self._instrument_id: [0.5, 0.5]}, index=close.index)
         target.columns.name = "instrument_id"
         return target

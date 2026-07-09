@@ -12,6 +12,7 @@ from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.additive_invariance import assert_additive_invariance
+from aegis_runtime.currency import CurrencyConversion
 from aegis_runtime.drift_band import DriftBand
 from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
 from aegis_runtime.futures_roots import validate_bare_root
@@ -240,15 +241,37 @@ class ExecutionBundle:
 
     def compute_weights(
         self,
-        prices: MarketDataBundle,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None,
     ) -> pd.DataFrame:
-        weights = self._decide_weights(prices)
+        """Decide weights from NATIVE price arrays.
+
+        The bundle owns the ordered transformation
+        ``native contracts -> continuous re-base -> FX conversion -> Components``:
+        callers hand over native arrays plus the resolved conversion (or an
+        explicit ``None`` for an all-base book) and never pre-convert. The
+        keyword is required so an already converted panel can never be silently
+        reinterpreted as native.
+        """
+
+        def decide(native: MarketDataBundle) -> pd.DataFrame:
+            component_input = (
+                native
+                if currency_conversion is None
+                else MarketDataBundle(currency_conversion.apply(native.arrays))
+            )
+            return self._decide_weights(component_input)
+
+        weights = decide(native_prices)
         # A continuous-future root is re-based at every roll; reject an allocation that
         # reads its absolute price level (it would silently desync live-vs-research).
+        # The probe perturbs the NATIVE window and recomputes through the same
+        # composed conversion+decision path as the baseline.
         assert_additive_invariance(
             weights=weights,
-            recompute=self._decide_weights,
-            window=prices,
+            recompute=decide,
+            window=native_prices,
             continuous_ids=self._continuous_ids(),
         )
         return weights

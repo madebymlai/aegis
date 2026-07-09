@@ -16,7 +16,7 @@ from aegis_data.distributions import Distribution
 from aegis_runtime.currency import (
     CurrencyConversion,
     MissingInstrumentDefinitionError,
-    build_currency_conversion,
+    build_currency_conversion_from_codes,
 )
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
@@ -63,7 +63,7 @@ def load_catalog_source(
     adjustment_mode: ContinuousFutureAdjustmentType | None = (
         DEFAULT_ADJUSTMENT_MODE if config.futures else None
     )
-    continuous_frames = _continuous_frames(
+    continuous_frames, continuous_currencies = _continuous_frames(
         data_port,
         config.futures,
         start=start,
@@ -85,7 +85,9 @@ def load_catalog_source(
     # The exchange: FX legs rode in via native_instrument_ids and stay OUT of the
     # tradeable native_data above (no weights/signals/positions); here they become a
     # conversion view instead — native prices in the catalog, base prices per consumer.
-    currency_conversion = _currency_conversion(config, data_port, raw_frames)
+    currency_conversion = _currency_conversion(
+        config, data_port, raw_frames, continuous_currencies
+    )
     distributions = _distribution_data(
         data_port,
         tradeable_instrument_ids,
@@ -109,6 +111,12 @@ def load_catalog_source(
             "tradeable_instrument_ids": list(config.instruments),
             "exchange_instrument_ids": list(config.exchange),
             "continuous_root_ids": [root_id.value for root_id in continuous_frames],
+            # Derived from each root's dated-leg definitions; rides the existing
+            # data-identity projection into Candidate evidence.
+            "continuous_root_currencies": {
+                root_id.value: currency
+                for root_id, currency in continuous_currencies.items()
+            },
         },
         evidence=index_evidence(native_index(native_data), source="nautilus_catalog"),
         provider_metadata=provider_metadata,
@@ -147,10 +155,16 @@ def _continuous_frames(
     end: str,
     timeframe: str,
     adjustment_mode: ContinuousFutureAdjustmentType | None,
-) -> dict[InstrumentId, pd.DataFrame]:
+) -> tuple[dict[InstrumentId, pd.DataFrame], dict[InstrumentId, str]]:
+    """Materialise each root's adjusted frame plus its derived quote currency.
+
+    The currency is the model's leg-derived fact — a synthetic root carries no
+    catalog definition, so this is how it joins the base-currency conversion.
+    """
     if roots and adjustment_mode is None:
         raise ValueError("continuous-future roots require an explicit adjustment mode")
     frames: dict[InstrumentId, pd.DataFrame] = {}
+    currencies: dict[InstrumentId, str] = {}
     for root in roots:
         model = ContinuousContractModel(
             data_port,
@@ -161,31 +175,46 @@ def _continuous_frames(
         )
         model.materialize(end=end)
         frames[model.continuous_id] = model.frame
-    return frames
+        currencies[model.continuous_id] = model.quote_currency
+    return frames, currencies
 
 
 def _currency_conversion(
     config: DataConfig,
     data_port: CatalogBackedDataPort,
     raw_frames: dict[InstrumentId, pd.DataFrame],
+    continuous_currencies: dict[InstrumentId, str],
 ) -> CurrencyConversion | None:
     """Build the non-base → base conversion from resolved instruments + exchange FX.
 
     Every tradeable leg's currency is read from its resolved catalog ``Instrument``
-    (never configured) and matched to a declared ``exchange:`` FX pair. A non-base leg
-    with no matching pair fails loud — whether the pair is simply absent or no
-    ``exchange:`` was declared at all — so a multi-currency book can never run silently
-    unconverted. An all-base book converts nothing (raw instruments only, no synthetic
-    continuous-future roots, which carry no catalog definition and are out of scope).
+    (never configured) and matched to a declared ``exchange:`` FX pair. A synthetic
+    continuous root joins through its leg-derived quote currency — no synthetic
+    ``Instrument`` is minted — so a non-base continuous future converts exactly like
+    a non-base native. Any non-base leg with no matching pair fails loud — whether
+    the pair is simply absent or no ``exchange:`` was declared at all — so a
+    multi-currency book can never run silently unconverted.
     """
     tradeable_ids = instrument_ids(config.instruments)
     exchange_ids = instrument_ids(config.exchange)
-    if not tradeable_ids and not exchange_ids:
+    if not tradeable_ids and not exchange_ids and not continuous_currencies:
         return None
     definitions = _resolve_definitions(data_port, (*tradeable_ids, *exchange_ids))
-    return build_currency_conversion(
-        instruments={instrument_id: definitions[instrument_id] for instrument_id in tradeable_ids},
-        fx_pairs={instrument_id: definitions[instrument_id] for instrument_id in exchange_ids},
+    return build_currency_conversion_from_codes(
+        currency_by_instrument_id={
+            **{
+                instrument_id: definitions[instrument_id].quote_currency.code
+                for instrument_id in tradeable_ids
+            },
+            **continuous_currencies,
+        },
+        pair_currencies={
+            pair_id: (
+                definitions[pair_id].base_currency.code,
+                definitions[pair_id].quote_currency.code,
+            )
+            for pair_id in exchange_ids
+        },
         fx_close={
             instrument_id: raw_frames[instrument_id]["Close"] for instrument_id in exchange_ids
         },
