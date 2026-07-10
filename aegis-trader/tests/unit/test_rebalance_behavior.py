@@ -18,7 +18,7 @@ import pytest
 from aegis_runtime import DriftBand
 from aegis_trader.domain.book_config import DrawdownDeleverCurve
 from aegis_trader.domain.types import OrderSide, SleeveName
-from aegis_trader.trader.pipeline import GateOutcome
+from aegis_trader.trader.pipeline import GateOutcome, HaltCause
 from tests.support.rebalance_harness import (
     SleeveSpec,
     StagedLedger,
@@ -96,9 +96,9 @@ def test_unfixable_per_name_breach_returns_no_orders_and_halts() -> None:
 
     assert result.orders == ()
     assert result.summary.gate_outcome == GateOutcome.ERROR
+    assert result.halt_cause == HaltCause.PER_NAME_CAP_BREACH
     assert result.halt_reason is not None
     assert "AAA.TEST" in result.halt_reason
-    assert "unfixable" in result.halt_reason
 
 
 def test_net_cap_breach_returns_no_orders_and_halts() -> None:
@@ -111,8 +111,33 @@ def test_net_cap_breach_returns_no_orders_and_halts() -> None:
 
     assert result.orders == ()
     assert result.summary.gate_outcome == GateOutcome.ERROR
+    assert result.halt_cause == HaltCause.NET_CAP_BREACH
     assert result.halt_reason is not None
-    assert "exceeds net_cap" in result.halt_reason
+
+
+def test_planning_failure_halts_with_the_catch_all_cause() -> None:
+    """Any other planning ValueError (here: a degenerate staged variance the
+    allocator rejects) halts with PLANNING_FAILED, never a silent pass."""
+    low = SleeveName("low")
+    degenerate = {low: {low: 0.0}}
+    harness = build_harness(
+        [SleeveSpec("low", 1.0, {"LOW": 1.0})],
+        ledger=StagedLedger(covariances=[degenerate]),
+    )
+
+    result = harness.run()
+
+    assert result.orders == ()
+    assert result.summary.gate_outcome == GateOutcome.ERROR
+    assert result.halt_cause == HaltCause.PLANNING_FAILED
+    assert result.halt_reason is not None
+
+
+def test_passing_rebalance_carries_no_halt_cause() -> None:
+    result = build_harness([SleeveSpec("trend", 1.0, {"AAA": 0.5})]).run()
+
+    assert result.summary.gate_outcome == GateOutcome.PASS
+    assert result.halt_cause is None
 
 
 def test_gross_clamp_scales_the_target_book_to_the_ceiling() -> None:

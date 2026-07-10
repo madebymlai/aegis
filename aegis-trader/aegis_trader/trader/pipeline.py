@@ -26,16 +26,21 @@ from aegis_runtime.currency import (
     CurrencyConversion,
     build_currency_conversion_from_codes,
 )
+from aegis_runtime.exposure_validation import NetExposureBreach
 
 from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.integrity import check_account_integrity
-from aegis_trader.trader._rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain import startup as _startup
 from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
+from aegis_trader.trader._rebalancer import (
+    PerNameExposureBreach,
+    RebalancePlan,
+    rebalance_plan,
+)
 
 if TYPE_CHECKING:
     from aegis_trader.data.market_data import MarketDataPort
@@ -47,6 +52,20 @@ class GateOutcome(str, Enum):
 
     PASS = "pass"
     ERROR = "error"
+
+
+class HaltCause(str, Enum):
+    """The behaviorally distinct halt families of a failed rebalance plan.
+
+    The closed vocabulary consumers branch on; ``halt_reason`` carries the
+    human-readable detail.  One value per contract, not per raise site: every
+    per-name breach — unfixable target, unremediable position, projected
+    sweep — is the one fail-closed per-name contract (ADR-0002).
+    """
+
+    PER_NAME_CAP_BREACH = "per_name_cap_breach"
+    NET_CAP_BREACH = "net_cap_breach"
+    PLANNING_FAILED = "planning_failed"
 
 
 @dataclass(frozen=True)
@@ -84,6 +103,7 @@ class RebalanceResult:
     orders: tuple[OrderIntent, ...]
     summary: RebalanceSummary
     halt_reason: str | None = None
+    halt_cause: HaltCause | None = None
     sleeve_failures: tuple[SleeveComputeFailure, ...] = ()
 
 
@@ -202,6 +222,7 @@ class RebalancePipeline:
                 orders=(),
                 summary=_summary(nav, len(pending), 0, 0, GateOutcome.ERROR, 0.0),
                 halt_reason=str(exc),
+                halt_cause=_halt_cause(exc),
                 sleeve_failures=sleeve_failures,
             )
 
@@ -589,6 +610,14 @@ def _column_instrument_id(column: object) -> InstrumentId:
     if isinstance(column, InstrumentId):
         return column
     raise ValueError(f"target weight columns must be InstrumentId values; got {column!r}")
+
+
+def _halt_cause(exc: ValueError) -> HaltCause:
+    if isinstance(exc, PerNameExposureBreach):
+        return HaltCause.PER_NAME_CAP_BREACH
+    if isinstance(exc, NetExposureBreach):
+        return HaltCause.NET_CAP_BREACH
+    return HaltCause.PLANNING_FAILED
 
 
 def _summary(
