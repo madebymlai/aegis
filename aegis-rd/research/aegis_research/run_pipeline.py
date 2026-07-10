@@ -14,7 +14,6 @@ from research.aegis_research.configuration import (
     RunConfig,
 )
 from research.aegis_research.data import (
-    MarketDataResult,
     RunArrays,
     load_market_data_result,
     prepare_run_arrays,
@@ -31,7 +30,7 @@ from research.aegis_research.optimization.pipeline.execution import run_pipeline
 from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.run_data_contract import (
-    DataArrayContract,
+    RunDataFacts,
     build_run_data_array_contract,
 )
 from research.aegis_research.provenance.capture import capture_config_evidence
@@ -103,20 +102,23 @@ def run_strategy_sweep(
             config.data,
             required_arrays=array_contract.required_arrays,
         )
-        write_data_metadata_artifact(recorder, data_result, array_contract)
+        metric_registry = resolved_config.metric_registry
+        facts = RunDataFacts(
+            data_result=data_result,
+            array_contract=array_contract,
+            metric_registry_fingerprint=metric_registry.fingerprint,
+        )
+        write_data_metadata_artifact(recorder, facts)
         # One constructor prepares everything the sweep consumes: both views,
         # FX-converted, alignment proven, usability gated (unusable data keeps
         # its recorded metadata artifact above).
         arrays = prepare_run_arrays(data_result)
-        metric_registry = resolved_config.metric_registry
         return _run_optimization_strategy_sweep(
             config,
             component_registry=component_registry,
             recorder=recorder,
-            data_result=data_result,
+            facts=facts,
             arrays=arrays,
-            array_contract=array_contract,
-            metric_registry_fingerprint=metric_registry.fingerprint,
             metric_registry=metric_registry,
             run_evidence=run_evidence,
         )
@@ -146,10 +148,8 @@ def _run_optimization_strategy_sweep(
     *,
     component_registry: FrozenComponentRegistry,
     recorder: RunRecorder,
-    data_result: MarketDataResult,
+    facts: RunDataFacts,
     arrays: RunArrays,
-    array_contract: DataArrayContract,
-    metric_registry_fingerprint: str | None,
     metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
@@ -159,9 +159,7 @@ def _run_optimization_strategy_sweep(
             config=config,
             component_registry=component_registry,
             arrays=arrays,
-            data_result=data_result,
-            array_contract=array_contract,
-            metric_registry_fingerprint=metric_registry_fingerprint,
+            facts=facts,
             run_evidence=run_evidence,
         )
     except Exception as error:
@@ -180,13 +178,11 @@ def _run_optimization_strategy_sweep(
     publishing = run_pipeline_publishing(
         config=config,
         recorder=recorder,
-        data_result=data_result,
-        array_contract=array_contract,
+        facts=facts,
         optimization_source=setup.optimization_source,
         execution=execution,
         run_evidence=run_evidence,
         store_path=setup.store_path,
-        metric_registry_fingerprint=metric_registry_fingerprint,
     )
 
     # Stage 4: Completion — artifact, completion, activation, result
@@ -195,8 +191,6 @@ def _run_optimization_strategy_sweep(
         publishing=publishing,
         config=config,
         recorder=recorder,
-        data_result=data_result,
-        array_contract=array_contract,
+        facts=facts,
         run_evidence=run_evidence,
-        metric_registry_fingerprint=metric_registry_fingerprint,
     )

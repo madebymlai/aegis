@@ -22,6 +22,7 @@ from research.aegis_research.optimization.pipeline.publishing import PublishingR
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_run_config,
+    make_run_data_facts,
     make_setup_result,
 )
 from tests.support.research.aegis_research.test_doubles import (
@@ -136,10 +137,12 @@ def test_completion_returns_result_and_marks_completed(
         publishing=publishing,
         config=config,
         recorder=recorder,
-        data_result=FakeDataResult(),
-        array_contract=FakeArrayContract(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(),
+            array_contract=FakeArrayContract(),
+            metric_registry_fingerprint="test-fp",
+        ),
         run_evidence=run_evidence,
-        metric_registry_fingerprint="test-fp",
     )
 
     # Assert returned result dict

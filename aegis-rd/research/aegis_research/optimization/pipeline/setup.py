@@ -19,7 +19,6 @@ from research.aegis_research.configuration import (
     to_builtin,
 )
 from research.aegis_research.data import (
-    MarketDataResult,
     RunArrays,
 )
 from research.aegis_research.optimization.candidate_store import CandidateStore
@@ -40,10 +39,7 @@ from research.aegis_research.optimization.lock_run import (
     ResolvedLockRun,
     resolve_lock_run,
 )
-from research.aegis_research.optimization.run_data_contract import (
-    DataArrayContract,
-    build_run_data_evidence_payload,
-)
+from research.aegis_research.optimization.run_data_contract import RunDataFacts
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_CONTRACT,
     OptimizationSource,
@@ -84,9 +80,7 @@ def run_pipeline_setup(
     config: RunConfig,
     component_registry: FrozenComponentRegistry,
     arrays: RunArrays,
-    data_result: MarketDataResult,
-    array_contract: DataArrayContract,
-    metric_registry_fingerprint: str | None,
+    facts: RunDataFacts,
     run_evidence: RunEvidence,
 ) -> SetupResult:
     """Resolve the Lock, build the optimization source, and construct the evidence baseline."""
@@ -122,9 +116,7 @@ def run_pipeline_setup(
             optimization_source=optimization_source,
             optimization_builtin=optimization_builtin,
             split_metadata=split_result.metadata,
-            data_result=data_result,
-            array_contract=array_contract,
-            metric_registry_fingerprint=metric_registry_fingerprint,
+            facts=facts,
             lock_evidence=lock_evidence,
         )
     )
@@ -163,9 +155,7 @@ def _optimization_evidence_baseline(
     optimization_source: Any,
     optimization_builtin: Mapping[str, Any],
     split_metadata: Mapping[str, Any],
-    data_result: MarketDataResult,
-    array_contract: DataArrayContract,
-    metric_registry_fingerprint: str | None,
+    facts: RunDataFacts,
     lock_evidence: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     return {
@@ -175,8 +165,8 @@ def _optimization_evidence_baseline(
         "param_names": list(optimization_source.params),
         "optimization": optimization_builtin,
         "split": split_metadata,
-        "data": build_run_data_evidence_payload(data_result, array_contract),
-        "metric_registry_fingerprint": metric_registry_fingerprint,
+        "data": facts.evidence_payload(),
+        "metric_registry_fingerprint": facts.metric_registry_fingerprint,
         "open_prices_available": True,
         "lock": lock_evidence,
     }

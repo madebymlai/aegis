@@ -30,7 +30,10 @@ from research.aegis_research.optimization.run_data_contract import (
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
 )
-from tests.support.research.aegis_research.factories import make_run_arrays
+from tests.support.research.aegis_research.factories import (
+    make_run_arrays,
+    make_run_data_facts,
+)
 from tests.support.research.aegis_research.market_data_fixtures import (
     native_data_config_payload,
 )
@@ -168,9 +171,10 @@ def test_locked_setup_resolves_every_component_from_candidate(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=_run_evidence(),
     )
 
@@ -194,9 +198,10 @@ def test_locked_setup_performs_no_optimization(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=_run_evidence(),
     )
 
@@ -216,9 +221,10 @@ def test_locked_setup_records_reproduction_evidence(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 
@@ -242,9 +248,10 @@ def test_unlocked_setup_has_no_lock_evidence(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 
@@ -350,9 +357,10 @@ def test_locked_setup_records_overridden_params_in_evidence(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 
@@ -385,9 +393,10 @@ def test_locked_setup_records_empty_overrides_when_no_params(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 

@@ -51,6 +51,11 @@ from research.aegis_research.optimization.candidate_grid import (
 )
 from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.precompute import CandidateKey
+from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
+    RunDataFacts,
+)
+from tests.support.research.aegis_research.test_doubles import FakeDataResult
 
 
 def make_data_quality_config(**overrides: Any) -> DataQualityConfig:
@@ -389,6 +394,25 @@ def make_run_arrays(**overrides: Any) -> RunArrays:
     }
     defaults.update(overrides)
     return RunArrays(**defaults)
+
+
+def make_run_data_facts(**overrides: Any) -> RunDataFacts:
+    """Return a RunDataFacts with valid defaults, overridden by any kwargs.
+
+    Defaults are the simplest healthy fixture: a fake data result, a contract
+    whose configured arrays satisfy the pipeline-required Close/Open pair, and
+    no metric-registry fingerprint.
+    """
+    defaults: dict[str, Any] = {
+        "data_result": FakeDataResult(),
+        "array_contract": DataArrayContract(
+            configured_arrays=("Close", "Open"),
+            pipeline_required_arrays=("Close", "Open"),
+        ),
+        "metric_registry_fingerprint": None,
+    }
+    defaults.update(overrides)
+    return RunDataFacts(**defaults)
 
 
 def make_setup_result(**overrides: Any) -> SetupResult:

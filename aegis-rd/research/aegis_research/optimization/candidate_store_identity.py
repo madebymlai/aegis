@@ -6,10 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.configuration import to_builtin
-from research.aegis_research.optimization.run_data_contract import (
-    DataArrayContract,
-    build_candidate_data_identity,
-)
+from research.aegis_research.optimization.run_data_contract import RunDataFacts
 
 CANDIDATE_STORE_RELATIVE_PATH = Path(".candidate_store") / "candidates.sqlite3"
 
@@ -29,20 +26,18 @@ def build_candidate_store_provenance(
     recorder: Any,
     *,
     optimization_source: dict[str, Any],
-    data_result: Any,
-    array_contract: DataArrayContract,
+    facts: RunDataFacts,
     config: Any,
-    metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     return {
         "schema_version": "candidate_store_provenance.v1",
         "run_id": recorder.manifest.run_id,
         "strategy_artifact_id": "strategy.run",
         "source": optimization_source,
-        "data": build_candidate_data_identity(data_result, array_contract),
+        "data": facts.candidate_data_identity(),
         "portfolio": to_builtin(config.portfolio),
         "ranking": {
             "metric": config.ranking.metric,
         },
-        "metric_registry_fingerprint": metric_registry_fingerprint,
+        "metric_registry_fingerprint": facts.metric_registry_fingerprint,
     }

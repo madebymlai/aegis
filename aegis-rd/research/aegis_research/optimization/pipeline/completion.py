@@ -15,9 +15,6 @@ from research.aegis_research.configuration import (
     lock_handle,
     to_builtin,
 )
-from research.aegis_research.data import (
-    MarketDataResult,
-)
 from research.aegis_research.optimization.candidate_evidence import (
     candidate_held_out_headline,
     held_out_warning,
@@ -37,7 +34,7 @@ from research.aegis_research.optimization.run_artifacts import (
     build_strategy_artifact_payload,
     write_strategy_artifact,
 )
-from research.aegis_research.optimization.run_data_contract import DataArrayContract
+from research.aegis_research.optimization.run_data_contract import RunDataFacts
 from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.run_splits import RunSplitsResult
 
@@ -48,10 +45,8 @@ def run_pipeline_completion(
     publishing: PublishingResult,
     config: RunConfig,
     recorder: RunRecorder,
-    data_result: MarketDataResult,
-    array_contract: DataArrayContract,
+    facts: RunDataFacts,
     run_evidence: RunEvidence,
-    metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     """Write the strategy artifact, complete the run, and activate candidates.
 
@@ -65,8 +60,7 @@ def run_pipeline_completion(
         store_namespace = candidate_store_namespace()
         artifact_payload = build_strategy_artifact_payload(
             strategy_evidence=setup.strategy_evidence,
-            data_result=data_result,
-            array_contract=array_contract,
+            facts=facts,
             ranking={
                 "metric": config.ranking.metric,
             },
@@ -78,7 +72,6 @@ def run_pipeline_completion(
             candidates=[to_builtin(record) for record in publishing.candidate_rows],
             candidate_store_path=store_namespace["path"],
             candidate_store_provenance=publishing.candidate_store_provenance,
-            metric_registry_fingerprint=metric_registry_fingerprint,
         )
         write_strategy_artifact(recorder, artifact_payload)
         recorder.mark_run_completed()

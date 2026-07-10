@@ -14,7 +14,10 @@ from research.aegis_research.optimization.pipeline.setup import (
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
 )
-from tests.support.research.aegis_research.factories import make_run_arrays
+from tests.support.research.aegis_research.factories import (
+    make_run_arrays,
+    make_run_data_facts,
+)
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -57,9 +60,10 @@ def test_pipeline_setup_returns_setup_result(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=_run_evidence(),
     )
 
@@ -85,9 +89,10 @@ def test_pipeline_setup_evidence_baseline_shape(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 
@@ -115,9 +120,10 @@ def test_pipeline_setup_store_path_matches_candidate_store(
         config=config,
         component_registry=resolved.component_registry,
         arrays=_arrays(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=_run_evidence(),
     )
 
