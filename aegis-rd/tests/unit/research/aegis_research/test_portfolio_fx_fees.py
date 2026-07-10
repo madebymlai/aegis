@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.portfolios import simulate_single_book
+from research.aegis_research.optimization.window_evaluation._simulation import simulate_single_book
 
 
 def test_per_symbol_fees_charge_each_leg_its_own_rate_in_simulation() -> None:

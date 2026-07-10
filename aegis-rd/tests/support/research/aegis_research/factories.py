@@ -55,6 +55,10 @@ from research.aegis_research.optimization.run_data_contract import (
     DataArrayContract,
     RunDataFacts,
 )
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
+from research.aegis_research.optimization.window_evaluation._simulation import (
+    simulate_portfolio_batch,
+)
 from tests.support.research.aegis_research.test_doubles import FakeDataResult
 
 
@@ -450,3 +454,24 @@ class _FakeSplitResult:
 
 def _fake_split_result() -> Any:
     return _FakeSplitResult()
+
+
+def make_candidate_portfolio(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: Any | None = None,
+    *,
+    periods_per_year: int = 252,
+    **sim_kwargs: Any,
+) -> Any:
+    """Simulate a Candidate batch for metrics tests.
+
+    Wraps the Window Evaluation internal simulation seam so tests that only
+    need a Portfolio to extract metrics from never name the sim module
+    (mirrors ``make_run_arrays``). ``config`` defaults to the factory
+    PortfolioConfig.
+    """
+    book = ResolvedBook(config if config is not None else make_portfolio_config())
+    return simulate_portfolio_batch(
+        close, allocations, book, periods_per_year=periods_per_year, **sim_kwargs
+    )

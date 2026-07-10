@@ -13,7 +13,7 @@ from research.aegis_research.optimization.runner import (
     execute_optimization,
 )
 from research.aegis_research.optimization.source import OptimizationSource
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,

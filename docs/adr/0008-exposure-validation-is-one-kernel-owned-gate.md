@@ -63,3 +63,11 @@ Book-to-Sleeve cap comparison is made at startup.
 The kernel leaves allocation values unchanged. In research, `NaN` remains the simulator's
 sparse "no new allocation" instruction, and grouped reductions use `dropna=False` so every
 supplied group remains part of the gate.
+
+## Amendment (2026-07-10): the research call site moved behind Window Evaluation
+
+RD ADR-0026 made portfolio simulation internal to Window Evaluation. Research's one
+mandated wiring test through `simulate_portfolio_batch` (label derivation + Candidate
+phrasing) is unchanged in substance but now crosses Window Evaluation's internal
+simulation seam; the research call site is `optimization/window_evaluation/_simulation.py`
+rather than `portfolios.py`. The kernel-side surface and test home are untouched.

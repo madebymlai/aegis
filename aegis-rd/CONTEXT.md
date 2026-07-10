@@ -48,6 +48,10 @@ _Avoid_: slice, range, period, fold
 Scoring one chunk of **Candidates** over one **Window**: slice the price and indicator Windows, short-circuit a chunk whose every Candidate is **Invalid**, run the **Strategy** allocation, and reduce the result to one row of **Metrics** per Candidate. The sweep performs a Window Evaluation per (**Split**, set); their rows stack into the **Candidate Grid**.
 _Avoid_: window callback, sweep step, apply function
 
+**ResolvedBook**:
+The run-constant terms a **Run's** portfolio simulation trades every **Candidate's** book under: the declared portfolio config together with the per-instrument facts resolved from it — the FX-adjusted trade-fee series, the instrument → drift-band map (the same one the bundle carries), and the continuous-future roots. Resolved once from the Run Config and the Run's currency conversion, so an incoherent config/facts pairing cannot exist as a value (ADR-0026). It is not the book of positions — that is the simulated portfolio.
+_Avoid_: book facts, portfolio policy, simulation config
+
 **Candidate Grid**:
 The scored table an optimization **Run** produces: every registered **Metric**, per **Split**, for every sampled **Candidate**. Built once from the **Selection** sets — the data validity verdicts and global ranking read — and again from the **Held-out** sets for the three representatives. Internal to the Run; never part of **Evidence**.
 _Avoid_: tidy grid, metrics frame, results table, parameter grid

@@ -1,6 +1,7 @@
 # Run market-data preparation is one constructor: RunArrays carries both views, proven coherent
 
-Status: accepted
+Status: accepted. ADR-0026 extends this lesson one layer up: the run-constant book
+facts (fees, bands, futures roots) become one `ResolvedBook` value the same way.
 
 A **Run** sweeps two views of one catalog pull: the signal series that drives **Indicators**, Strategy allocation, and **Splits**, and the P&L series (a future's `pnl_adjustment` mode) that prices the portfolio. Before this work the coordination between them was caller-owned and had already failed:
 

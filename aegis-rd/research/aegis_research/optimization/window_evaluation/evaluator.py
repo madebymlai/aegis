@@ -37,11 +37,13 @@ from research.aegis_research.optimization.precompute import (
     candidate_keys,
 )
 from research.aegis_research.optimization.source import OptimizationSource
-from research.aegis_research.portfolios import (
+from research.aegis_research.optimization.window_evaluation._simulation import (
     count_non_executable_rows,
     simulate_portfolio_batch,
 )
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation.resolved_book import (
+    ResolvedBook,
+)
 
 
 @dataclass(frozen=True)

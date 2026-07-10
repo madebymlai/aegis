@@ -20,7 +20,9 @@ from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.market_data.identity import as_instrument_id
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation.resolved_book import (
+    ResolvedBook,
+)
 
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
@@ -71,7 +73,7 @@ _DIRECTION_BOTH = int(Direction.Both)
 
 
 def _vbt_staticized_callback_path() -> Path:
-    return Path(__file__).with_name("portfolio_callbacks.py").resolve()
+    return Path(__file__).with_name("_callbacks.py").resolve()
 
 
 def _vbt_staticized_source_paths() -> tuple[Path, ...]:

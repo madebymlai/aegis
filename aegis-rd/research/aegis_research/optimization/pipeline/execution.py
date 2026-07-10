@@ -28,7 +28,7 @@ from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 
 
 @dataclass(frozen=True)

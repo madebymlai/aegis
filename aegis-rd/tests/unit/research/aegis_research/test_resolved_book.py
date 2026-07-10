@@ -14,7 +14,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from pandas.testing import assert_series_equal
 
 from research.aegis_research.configuration import InstrumentBandConfig
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_data_config,
     make_portfolio_config,

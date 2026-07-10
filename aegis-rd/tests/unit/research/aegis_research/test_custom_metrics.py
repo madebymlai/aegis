@@ -37,9 +37,8 @@ from research.aegis_research.metrics.stats import (
     PORTFOLIO_METRIC_VALUE_KEYS,
     register_vbt_stats_metrics,
 )
-from research.aegis_research.portfolios import simulate_portfolio_batch
-from research.aegis_research.resolved_book import ResolvedBook
 from tests.support.research.aegis_research.factories import (
+    make_candidate_portfolio,
     make_portfolio_config,
     make_report_config,
 )
@@ -143,9 +142,8 @@ def _two_candidate_portfolio():
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
     allocations.loc[index[0], ("candidate-a", "A")] = 0.3
     allocations.loc[index[0], ("candidate-b", "A")] = 0.5
-    simulation = simulate_portfolio_batch(
-        close, allocations, ResolvedBook(make_portfolio_config(fees=0.001, slippage=0, direction="longonly")),
-        periods_per_year=252,
+    simulation = make_candidate_portfolio(
+        close, allocations, make_portfolio_config(fees=0.001, slippage=0, direction="longonly")
     )
     return simulation, candidate_ids
 

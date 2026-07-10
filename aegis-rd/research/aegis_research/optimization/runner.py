@@ -49,8 +49,10 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
-from research.aegis_research.optimization.window_evaluator import WindowEvaluator
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation import (
+    ResolvedBook,
+    WindowEvaluator,
+)
 from research.aegis_research.run_splits import (
     HELD_OUT_SET,
     SELECTION_SET,

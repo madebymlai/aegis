@@ -13,8 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from research.aegis_research.optimization.window_evaluator import WindowEvaluator
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation import ResolvedBook, WindowEvaluator
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,

@@ -2,8 +2,10 @@ from pathlib import Path
 
 from aegis_runtime import debit_interest, gate
 
-from research.aegis_research import portfolio_callbacks
-from research.aegis_research.portfolios import (
+from research.aegis_research.optimization.window_evaluation import (
+    _callbacks as portfolio_callbacks,
+)
+from research.aegis_research.optimization.window_evaluation._simulation import (
     VBT_STATICIZED_CACHE_ENV,
     _band_pre_order_segment_nb,
     _vbt_staticized_cache_dir,
@@ -38,7 +40,7 @@ def test_staticized_callback_module_exports_vbt_symbol() -> None:
     callback_path = _vbt_staticized_callback_path()
 
     assert callback_path == Path(portfolio_callbacks.__file__)
-    assert callback_path.name == "portfolio_callbacks.py"
+    assert callback_path.name == "_callbacks.py"
     assert portfolio_callbacks.pre_order_segment_func_nb is _band_pre_order_segment_nb
 
 

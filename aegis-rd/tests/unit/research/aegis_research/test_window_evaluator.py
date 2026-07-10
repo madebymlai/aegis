@@ -21,8 +21,7 @@ from vectorbtpro import vbt
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.source import OptimizationSource
-from research.aegis_research.optimization.window_evaluator import WindowEvaluator
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation import ResolvedBook, WindowEvaluator
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,

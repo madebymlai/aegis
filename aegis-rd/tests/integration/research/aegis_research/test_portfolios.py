@@ -9,14 +9,14 @@ from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.portfolios import (
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
+from research.aegis_research.optimization.window_evaluation._simulation import (
     _SINGLE_CANDIDATE_ID,
     distribution_cash_dividends,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
     simulate_single_book,
 )
-from research.aegis_research.resolved_book import ResolvedBook
 from tests.support.research.aegis_research.factories import make_portfolio_config
 
 
@@ -1094,7 +1094,7 @@ def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
 def test_batch_nocash_tripwire_is_invoked_and_error_propagates(monkeypatch) -> None:
     # The NoCash tripwire is called exactly once during simulate_portfolio_batch
     # and its ValueError propagates to the caller.
-    import research.aegis_research.portfolios as portfolios_module
+    import research.aegis_research.optimization.window_evaluation._simulation as portfolios_module
 
     index = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame(

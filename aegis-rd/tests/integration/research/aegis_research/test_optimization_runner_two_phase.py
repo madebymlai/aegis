@@ -27,7 +27,7 @@ from research.aegis_research.optimization.ranking import (
 )
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
-from research.aegis_research.resolved_book import ResolvedBook
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
@@ -366,7 +366,7 @@ def test_runner_passes_full_market_index_to_simulate_not_window_index(monkeypatc
     not the window's own index. With a contiguous split method both are
     effectively the same, but with a purged split the difference is that the
     full index has gaps the window index doesn't."""
-    from research.aegis_research.optimization import window_evaluator
+    from research.aegis_research.optimization.window_evaluation import evaluator as window_evaluator
 
     real_sim = window_evaluator.simulate_portfolio_batch
     captured_indices: list[pd.Index] = []
