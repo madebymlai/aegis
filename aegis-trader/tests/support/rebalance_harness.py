@@ -62,7 +62,8 @@ class SleeveSpec:
 
     ``targets`` maps symbol -> latest target weight; ``rows`` optionally stages
     earlier target rows before it.  ``bands`` defaults to a zero-width band per
-    owned symbol (trade straight to target).
+    owned symbol (trade straight to target).  ``stale`` starves the sleeve of
+    bars so it holds.
     """
 
     name: str
@@ -71,6 +72,7 @@ class SleeveSpec:
     rows: Sequence[Mapping[str, float]] = ()
     bands: Mapping[str, DriftBand] | None = None
     weight_band: float = 0.0
+    stale: bool = False
 
     @property
     def sleeve_name(self) -> SleeveName:
@@ -216,15 +218,18 @@ class _UnitPriceMarketData:
         return instrument_id in self._instrument_ids
 
 
-class SequencedCovarianceLedger(SleeveLedger):
-    """A ledger whose covariance answer is staged per rebalance period."""
+class StagedLedger(SleeveLedger):
+    """A ledger answering staged covariance (one entry per period) and drawdown."""
 
     def __init__(
         self,
-        covariances: Sequence[dict[SleeveName, dict[SleeveName, float]] | None],
+        *,
+        covariances: Sequence[dict[SleeveName, dict[SleeveName, float]] | None] | None = None,
+        drawdown: float | None = None,
     ) -> None:
         super().__init__()
-        self._covariances = list(covariances)
+        self._covariances = None if covariances is None else list(covariances)
+        self._drawdown = drawdown
 
     def realized_covariance(
         self,
@@ -232,17 +237,13 @@ class SequencedCovarianceLedger(SleeveLedger):
         *,
         min_returns: int = MIN_SLEEVE_VOL_RETURNS,
     ) -> dict[SleeveName, dict[SleeveName, float]] | None:
+        if self._covariances is None:
+            return None
         return self._covariances.pop(0)
 
-
-class DrawdownLedger(SleeveLedger):
-    """A ledger reporting a staged current drawdown."""
-
-    def __init__(self, drawdown: float) -> None:
-        super().__init__()
-        self._drawdown = drawdown
-
     def current_drawdown(self, current_nav: float) -> float:
+        if self._drawdown is None:
+            return super().current_drawdown(current_nav)
         return self._drawdown
 
 
@@ -284,7 +285,7 @@ def build_harness(
     )
     bundles = {spec.wheel_filename: WeightSleeveBundle(spec) for spec in sleeves}
     staged_ids = frozenset(
-        iid(symbol) for spec in sleeves for symbol in spec.targets
+        iid(symbol) for spec in sleeves if not spec.stale for symbol in spec.targets
     ) | frozenset(iid(symbol) for symbol in (realized or {}))
     pipeline = RebalancePipeline(
         book_state=_BookState({iid(symbol): weight for symbol, weight in (realized or {}).items()}),
