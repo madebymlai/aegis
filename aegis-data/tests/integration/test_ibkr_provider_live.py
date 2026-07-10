@@ -61,10 +61,11 @@ def _provider() -> IbkrHistoricalProvider:
 
 
 def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
-    bars = _provider().request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
+    served = _provider().request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
 
-    assert bars
-    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in bars)
+    assert served.bars
+    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in served.bars)
+    assert served.served_from == _START
 
 
 def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
@@ -75,10 +76,10 @@ def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
     bar_type = raw_bar_type(_EUR_USD, "1D")
     assert bar_type.spec.price_type == PriceType.MID
 
-    bars = _provider().request_bars(bar_type, start=_START, end=_END)
+    served = _provider().request_bars(bar_type, start=_START, end=_END)
 
-    assert bars
-    assert all(bar.bar_type == bar_type for bar in bars)
+    assert served.bars
+    assert all(bar.bar_type == bar_type for bar in served.bars)
 
 
 def test_request_instruments_round_trips_native_identity() -> None:
@@ -162,10 +163,10 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
     end = pd.Timestamp("2026-06-01", tz="UTC")
 
     spy_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end)
+        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end).bars
     )["Close"]
     gld_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end)
+        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end).bars
     )["Close"]
     spy = request_distribution_data(
         provider,

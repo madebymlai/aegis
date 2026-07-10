@@ -19,7 +19,12 @@ from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError, raw_bar_type
+from aegis_data.catalog import (
+    CatalogBackedDataPort,
+    CatalogCoverageGapError,
+    ServedBars,
+    raw_bar_type,
+)
 from aegis_data.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
@@ -161,8 +166,8 @@ class _BarOnlyProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> list[Bar]:
-        return []
+    ) -> ServedBars:
+        return ServedBars((), start)
 
 
 class _TwoVenueBundle(ExecutionBundle):

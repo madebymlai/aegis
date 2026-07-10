@@ -20,6 +20,7 @@ from aegis_data.catalog import (
     ContinuousRootLegsNotFoundError,
     ContinuousRootVenueMismatchError,
     RawBarRequest,
+    ServedBars,
     catalog_data_port,
     catalog_root,
     continuous_root_legs,
@@ -67,8 +68,9 @@ def _write_span(
 
 
 class _ProviderPort:
-    def __init__(self, bars: list[Bar]) -> None:
+    def __init__(self, bars: list[Bar], *, served_from: str | None = None) -> None:
         self.bars = bars
+        self.served_from = served_from
         self.requests: list[BarType] = []
 
     def request_bars(
@@ -77,9 +79,14 @@ class _ProviderPort:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> list[Bar]:
+    ) -> ServedBars:
         self.requests.append(bar_type)
-        return self.bars
+        served_from = (
+            start
+            if self.served_from is None
+            else pd.Timestamp(self.served_from, tz="UTC")
+        )
+        return ServedBars(tuple(self.bars), served_from)
 
 
 class _AdjustedLastProvider:
@@ -367,6 +374,40 @@ def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Pa
                 end="2024-01-02",
             )
         )
+
+
+def test_catalog_port_persists_partial_fill_and_raises_gap_at_the_wall(
+    tmp_path: Path,
+) -> None:
+    """The no-data wall at port altitude (#75): the provider returns only the
+    history that exists, the port still writes those bars — even a failed fill
+    leaves the catalog warmer — and the coverage gate, the sole unsatisfiability
+    judge, raises naming the interval that remains missing."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("AAPL.NASDAQ")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    provider = _ProviderPort(
+        [_bar(bar_type, "2024-01-04", 10.0), _bar(bar_type, "2024-01-05", 11.0)],
+        served_from="2024-01-04",
+    )
+    port = CatalogBackedDataPort(catalog, provider=provider)
+    request = RawBarRequest(
+        instrument_ids=(instrument_id,),
+        start="2024-01-01",
+        end="2024-01-05",
+    )
+
+    with pytest.raises(CatalogCoverageGapError, match="2024-01-01") as excinfo:
+        port.load_raw_bars(request)
+
+    assert "missing=" in str(excinfo.value)
+    warmed = port.read_native_bars(request)[instrument_id]
+    assert [pd.Timestamp(bar.ts_event, tz="UTC").date().isoformat() for bar in warmed] == [
+        "2024-01-04",
+        "2024-01-05",
+    ]
 
 
 def test_catalog_port_rejects_unverified_distribution_events(tmp_path: Path) -> None:

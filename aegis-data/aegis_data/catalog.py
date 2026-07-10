@@ -38,13 +38,29 @@ class ContinuousRootVenueMismatchError(ValueError):
     """A continuous root's dated legs span more than one venue."""
 
 
+@dataclass(frozen=True)
+class ServedBars:
+    """A provider's answer for one requested window.
+
+    ``served_from`` is the oldest instant the provider verified against the
+    source: the requested start when the whole window was walked, or the
+    no-data wall when the instrument's history ended first (#75).  The port
+    claims catalog coverage from ``served_from`` only — an empty head inside a
+    verified window (weekend, holiday) is covered, while a pre-wall head stays
+    missing so the coverage gate can judge it.
+    """
+
+    bars: tuple[Bar, ...]
+    served_from: pd.Timestamp
+
+
 class NautilusDataProviderPort(Protocol):
     """A pure fetch of bars for a window (ADR-0008): a query, never a write.
 
     The catalog's write format, ``EXTERNAL`` identity, window, and merge are the
     :class:`CatalogBackedDataPort`'s secret; it is the single writer of record.
-    Mirrors Nautilus's standalone ``HistoricInteractiveBrokersClient``, which
-    *returns* bars for the caller to persist.
+    Answers with :class:`ServedBars` — the bars plus how far back the source's
+    history actually reached — for the caller to persist.
     """
 
     def request_bars(
@@ -53,7 +69,7 @@ class NautilusDataProviderPort(Protocol):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> Sequence[Bar]: ...
+    ) -> ServedBars: ...
 
 
 class DistributionDataProviderPort(Protocol):
@@ -279,13 +295,21 @@ class CatalogBackedDataPort:
         if self.provider is None:
             raise _coverage_gap(bar_type, missing)
         for start_ns, end_ns in missing:
-            pulled = self.provider.request_bars(
+            served = self.provider.request_bars(
                 bar_type,
                 start=pd.Timestamp(start_ns, tz="UTC"),
                 end=pd.Timestamp(end_ns, tz="UTC"),
             )
-            if pulled:
-                self.catalog.write_data(list(pulled), start=start_ns, end=end_ns)
+            if served.bars:
+                # Claim coverage only from where the source's history actually
+                # reached (#75): a pre-wall head stays missing for the gate below,
+                # while a fully walked interval is covered edge to edge even where
+                # no bars trade (weekends, holidays).
+                self.catalog.write_data(
+                    list(served.bars),
+                    start=max(start_ns, served.served_from.value),
+                    end=end_ns,
+                )
         self.catalog.consolidate_data(
             _bar_cls(), identifier=str(bar_type), deduplicate=True
         )
@@ -405,6 +429,7 @@ __all__ = [
     "NautilusDataProviderPort",
     "RawBarRequest",
     "ResolvedContinuousRoot",
+    "ServedBars",
     "bars_to_ohlcv",
     "catalog_data_port",
     "catalog_root",

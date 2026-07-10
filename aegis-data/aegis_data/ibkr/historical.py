@@ -28,6 +28,7 @@ import pandas as pd
 from nautilus_trader.common.config import msgspec_encoding_hook
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.catalog import ServedBars
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
 if TYPE_CHECKING:
@@ -40,6 +41,10 @@ IB_PORT = 4002
 IB_CLIENT_ID = 1
 IB_MARKET_DATA_TYPE = "REALTIME"
 IB_REQUEST_TIMEOUT = 120
+# The dead-call line: any single await on the vendor session that makes no
+# progress for this long is stuck, not slow (the vendor stack has unbounded
+# awaits — connect, shared-request futures — that otherwise hang forever, #75).
+IB_CALL_DEADLINE = 600
 
 # IB ``MarketDataTypeEnum`` member names — validated up front so a bad value fails
 # at construction, not at connect time, without importing ``ibapi`` to do it.
@@ -63,9 +68,10 @@ class IbkrRequestError(RuntimeError):
     ``int``-vs-``None`` ``TypeError`` from the adapter's reconnect path).  The
     provider translates them into this one error so a caller learns *which* fetch
     failed and *why*, rather than an opaque stack trace; the original is chained as
-    the cause.  Per-request *latency* on a no-data fetch (IB error 162) is bounded by
-    the underlying client's request timeout — internal to the vendor adapter — so
-    this clarifies the failure, it does not pre-empt that wait.
+    the cause.  The vendor stack also has genuinely unbounded awaits (connect,
+    shared-request futures, stuck qualification of an instrument that cannot
+    resolve to one asset) — every session await is therefore deadline-bounded
+    (``call_deadline``), so a dead call surfaces here instead of hanging (#75).
     """
 
 
@@ -91,6 +97,7 @@ class IbkrHistoricalProvider:
     market_data_type: str = IB_MARKET_DATA_TYPE
     use_rth: bool = True
     timeout: int = IB_REQUEST_TIMEOUT
+    call_deadline: float = IB_CALL_DEADLINE
     include_expired_futures: bool = False
     client_factory: Callable[[], Any] | None = None
     adjusted_last_client_factory: Callable[[], Any] | None = None
@@ -108,8 +115,18 @@ class IbkrHistoricalProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> Sequence[Bar]:
-        """The vendor-aggregated bars for *bar_type* over ``[start, end]``."""
+    ) -> ServedBars:
+        """The vendor-aggregated bars for *bar_type* over ``[start, end]``.
+
+        The window is walked newest-first in ≤365-day chunks (one IB historic
+        request each) and the walk **stops at the no-data wall**: the first chunk
+        that comes back empty means the window has stepped past the instrument's
+        available history, so earlier chunks are never requested (#75) — each one
+        would only burn a full request timeout to learn the same thing.  The
+        answer carries the bars *and* ``served_from`` (how far back the walk got)
+        so the port claims coverage honestly; judging whether the shortfall is
+        acceptable stays with the catalog's coverage gate.
+        """
         contract = self._expired_future_contract(bar_type.instrument_id)
         instrument_kwargs = (
             {"contracts": [contract]}
@@ -118,16 +135,44 @@ class IbkrHistoricalProvider:
         )
         return self._request(
             f"historical bars {bar_type}",
-            lambda session: session.request_bars(
-                bar_specifications=[str(bar_type.spec)],
-                start_date_time=_naive_utc(start),
-                end_date_time=_naive_utc(end),
-                tz_name="UTC",
-                use_rth=self.use_rth,
-                timeout=self.timeout,
-                **instrument_kwargs,
+            lambda session: self._walk_bars_to_the_wall(
+                session,
+                bar_type=bar_type,
+                start=start,
+                end=end,
+                instrument_kwargs=instrument_kwargs,
             ),
         )
+
+    async def _walk_bars_to_the_wall(
+        self,
+        session: Any,
+        *,
+        bar_type: BarType,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        instrument_kwargs: Mapping[str, Any],
+    ) -> ServedBars:
+        bars: list[Bar] = []
+        served_from = end
+        for chunk_start, chunk_end in _backward_windows(start, end):
+            pulled = await asyncio.wait_for(
+                session.request_bars(
+                    bar_specifications=[str(bar_type.spec)],
+                    start_date_time=_naive_utc(chunk_start),
+                    end_date_time=_naive_utc(chunk_end),
+                    tz_name="UTC",
+                    use_rth=self.use_rth,
+                    timeout=self.timeout,
+                    **instrument_kwargs,
+                ),
+                timeout=self.call_deadline,
+            )
+            if not pulled:
+                return ServedBars(tuple(bars), served_from)
+            bars = list(pulled) + bars
+            served_from = chunk_start
+        return ServedBars(tuple(bars), start)
 
     def request_instruments(
         self, instrument_ids: Sequence[InstrumentId]
@@ -137,7 +182,9 @@ class IbkrHistoricalProvider:
         return self._request(
             "instrument definitions "
             f"[{', '.join(instrument_id.value for instrument_id in instrument_ids)}]",
-            lambda session: _request_instrument_parts(session, plain_ids, contracts),
+            lambda session: _request_instrument_parts(
+                session, plain_ids, contracts, deadline=self.call_deadline
+            ),
         )
 
     def request_adjusted_last(
@@ -207,7 +254,7 @@ class IbkrHistoricalProvider:
         # Test path only: the fake session has no process-global constraint, so it
         # connects, runs, and closes per call in its own loop.
         session = make()
-        await session.connect()
+        await asyncio.wait_for(session.connect(), timeout=self.call_deadline)
         try:
             return await call(session)
         finally:
@@ -218,7 +265,9 @@ class IbkrHistoricalProvider:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             session = self._build_real_session()
-            loop.run_until_complete(session.connect())
+            loop.run_until_complete(
+                asyncio.wait_for(session.connect(), timeout=self.call_deadline)
+            )
             _IB_CONNECTION["loop"] = loop
             _IB_CONNECTION["session"] = session
         return _IB_CONNECTION["loop"], _IB_CONNECTION["session"]
@@ -268,14 +317,52 @@ class IbkrHistoricalProvider:
         return _expired_future_contract(instrument_id)
 
 
+# One IB historic request serves at most this much history for daily bars; the
+# backward walk steps in windows of this span.
+_FETCH_CHUNK_SPAN = pd.Timedelta(days=365)
+# Adjacent chunks abut one second apart — IB requests are second-granular, and no
+# bar the corpus serves (daily) can fall inside the crack.
+_CHUNK_GAP = pd.Timedelta(seconds=1)
+
+
+def _backward_windows(
+    start: pd.Timestamp, end: pd.Timestamp
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """``[start, end]`` as newest-first chunk windows for the wall-stopping walk."""
+    windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    chunk_end = end
+    while chunk_end > start:
+        chunk_start = max(start, chunk_end - _FETCH_CHUNK_SPAN)
+        windows.append((chunk_start, chunk_end))
+        chunk_end = chunk_start - _CHUNK_GAP
+    return windows
+
+
 async def _request_instrument_parts(
-    session: Any, plain_ids: Sequence[str], contracts: Sequence[Any]
+    session: Any,
+    plain_ids: Sequence[str],
+    contracts: Sequence[Any],
+    *,
+    deadline: float,
 ) -> list[Instrument]:
+    # Each vendor await is deadline-bounded: an instrument that cannot resolve to
+    # one asset can leave the qualification machinery stuck instead of erroring,
+    # and a dead await must surface as an IbkrRequestError, not a hang (#75).
     instruments: list[Instrument] = []
     if plain_ids:
-        instruments.extend(await session.request_instruments(instrument_ids=list(plain_ids)))
+        instruments.extend(
+            await asyncio.wait_for(
+                session.request_instruments(instrument_ids=list(plain_ids)),
+                timeout=deadline,
+            )
+        )
     if contracts:
-        instruments.extend(await session.request_instruments(contracts=list(contracts)))
+        instruments.extend(
+            await asyncio.wait_for(
+                session.request_instruments(contracts=list(contracts)),
+                timeout=deadline,
+            )
+        )
     return instruments
 
 

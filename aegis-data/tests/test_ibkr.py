@@ -12,6 +12,7 @@ importing the adapter never pulls ``ibapi`` (the lazy boundary).
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -71,7 +72,9 @@ def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
         end=pd.Timestamp("2024-03-01", tz="UTC"),
     )
 
-    assert list(out) == sentinel_bars
+    assert list(out.bars) == sentinel_bars
+    # The whole window was walked: coverage is served from the requested start.
+    assert out.served_from == pd.Timestamp("2024-01-01", tz="UTC")
     call = fake.bar_calls[0]
     assert call["bar_specifications"] == ["1-DAY-LAST"]
     assert call["instrument_ids"] == ["AAPL.XNAS"]
@@ -82,7 +85,70 @@ def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
     assert call["end_date_time"] == datetime(2024, 3, 1)
 
 
-def test_request_bars_can_pass_expired_future_contracts() -> None:
+def test_request_bars_walks_a_wide_window_backward_in_yearly_chunks() -> None:
+    """A window wider than one IB request allows is fetched newest-first in ≤365-day
+    chunks through the same session, and the chunks reassemble in chronological
+    order.  The provider owns this walk (not the vendor client's internal
+    segmentation) so it can stop at the no-data wall (#75)."""
+    newest_chunk_bar, oldest_chunk_bar = object(), object()
+
+    class _Chunked(_FakeHistoricClient):
+        async def request_bars(self, **kwargs: Any) -> list[Any]:
+            self.bar_calls.append(kwargs)
+            return [newest_chunk_bar] if len(self.bar_calls) == 1 else [oldest_chunk_bar]
+
+    fake = _Chunked(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    out = provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2016-06-01", tz="UTC"),
+        end=pd.Timestamp("2018-01-01", tz="UTC"),
+    )
+
+    windows = [(call["start_date_time"], call["end_date_time"]) for call in fake.bar_calls]
+    assert windows == [
+        (datetime(2017, 1, 1), datetime(2018, 1, 1)),
+        (datetime(2016, 6, 1), datetime(2016, 12, 31, 23, 59, 59)),
+    ]
+    assert list(out.bars) == [oldest_chunk_bar, newest_chunk_bar]
+    assert out.served_from == pd.Timestamp("2016-06-01", tz="UTC")
+    # One session serves the whole walk — connect/close wrap the walk, not each chunk.
+    assert fake.events == ["connect", "aclose"]
+
+
+def test_request_bars_stops_cleanly_at_the_no_data_wall() -> None:
+    """GH #75: a chunk with no bars is the no-data wall — history simply does not
+    reach back that far (TLT pre-2016, SPTL pre-2017).  The walk stops there instead
+    of stepping further into pre-listing history chunk by timed-out chunk, and the
+    bars already pulled are still returned."""
+    listing_date = pd.Timestamp("2016-06-15", tz="UTC")
+    bar = object()
+
+    class _Walled(_FakeHistoricClient):
+        async def request_bars(self, **kwargs: Any) -> list[Any]:
+            self.bar_calls.append(kwargs)
+            chunk_end = pd.Timestamp(kwargs["end_date_time"], tz="UTC")
+            return [bar] if chunk_end >= listing_date else []
+
+    fake = _Walled(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    bar_type = raw_bar_type(InstrumentId.from_str("TLT.XNAS"), "1D")
+
+    out = provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2013-01-01", tz="UTC"),
+        end=pd.Timestamp("2018-01-01", tz="UTC"),
+    )
+
+    # Two chunks with data, then the first empty chunk ends the walk — the two
+    # remaining pre-wall years are never requested.
+    assert len(fake.bar_calls) == 3
+    assert list(out.bars) == [bar, bar]
+    # Coverage is served only from the oldest data-bearing chunk, so the port
+    # leaves the pre-wall head unclaimed and the coverage gate judges it.
+    assert out.served_from == pd.Timestamp("2016-01-01 23:59:59", tz="UTC")
     sentinel_bars = [object()]
     fake = _FakeHistoricClient(bars=sentinel_bars, instruments=[])
     provider = IbkrHistoricalProvider(
@@ -97,7 +163,7 @@ def test_request_bars_can_pass_expired_future_contracts() -> None:
         end=pd.Timestamp("2026-06-23", tz="UTC"),
     )
 
-    assert list(out) == sentinel_bars
+    assert list(out.bars) == sentinel_bars
     call = fake.bar_calls[0]
     assert "instrument_ids" not in call
     contract = call["contracts"][0]
@@ -163,6 +229,65 @@ def test_request_bars_wraps_a_fault_in_a_named_error_and_still_closes() -> None:
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert str(excinfo.value.__cause__) == "ib down"
     assert fake.events == ["connect", "aclose"]
+
+
+def test_request_bars_converts_a_dead_vendor_call_into_a_named_error() -> None:
+    """The other face of #75: the vendor stack has unbounded awaits (a stuck
+    qualification when an instrument cannot resolve to one asset, shared-request
+    futures).  A session call that makes no progress past the deadline surfaces
+    as an ``IbkrRequestError`` instead of hanging forever."""
+    class _Stuck(_FakeHistoricClient):
+        async def request_bars(self, **kwargs: Any) -> list[Any]:
+            await asyncio.sleep(3600)
+            return []
+
+    fake = _Stuck(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake, call_deadline=0.05)
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    with pytest.raises(IbkrRequestError) as excinfo:
+        provider.request_bars(
+            bar_type,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+        )
+
+    assert str(bar_type) in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, TimeoutError)
+    assert fake.events == ["connect", "aclose"]
+
+
+def test_request_bars_converts_a_dead_connect_into_a_named_error() -> None:
+    class _NeverConnects(_FakeHistoricClient):
+        async def connect(self) -> None:
+            await asyncio.sleep(3600)
+
+    fake = _NeverConnects(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake, call_deadline=0.05)
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    with pytest.raises(IbkrRequestError):
+        provider.request_bars(
+            bar_type,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+        )
+
+
+def test_request_instruments_converts_a_stuck_qualification_into_a_named_error() -> None:
+    class _StuckQualification(_FakeHistoricClient):
+        async def request_instruments(self, **kwargs: Any) -> list[Any]:
+            await asyncio.sleep(3600)
+            return []
+
+    fake = _StuckQualification(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake, call_deadline=0.05)
+
+    with pytest.raises(IbkrRequestError) as excinfo:
+        provider.request_instruments((InstrumentId.from_str("VUSA.XLON"),))
+
+    assert "VUSA.XLON" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, TimeoutError)
 
 
 def test_request_instruments_wraps_a_failed_qualification_in_a_named_error() -> None:
