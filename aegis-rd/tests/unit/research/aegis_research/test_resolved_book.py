@@ -89,12 +89,19 @@ def test_bands_resolve_through_the_drift_bands_authority() -> None:
     }
 
 
-def test_carries_the_declared_portfolio_config_and_roots() -> None:
+def test_carries_the_declared_portfolio_config() -> None:
     config = make_run_config()
 
     book = ResolvedBook.resolve(config, None)
 
     assert book.config is config.portfolio
+
+
+def test_futures_roots_read_off_the_data_config() -> None:
+    config = make_run_config()
+
+    book = ResolvedBook.resolve(config, None)
+
     assert book.futures_roots == ()
 
 

@@ -46,7 +46,12 @@ from research.aegis_research.metrics.custom.carry import (
     _to_unit_vol,
     composite_allocator_utility,
 )
-from research.aegis_research.portfolios import fx_adjusted_fees, simulate_single_book
+from research.aegis_research.optimization.window_evaluation._simulation import (
+    simulate_single_book,
+)
+from research.aegis_research.optimization.window_evaluation.resolved_book import (
+    _fx_adjusted_fees as fx_adjusted_fees,
+)
 from research.aegis_research.run_pipeline import _to_base_currency
 
 DEFAULT_TREND_CONFIG = REPO_ROOT / "research/configs/atalanta/trend_floor.yaml"

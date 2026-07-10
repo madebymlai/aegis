@@ -9,20 +9,23 @@ from research.aegis_research.optimization import window_evaluation as facade
 # package is implementation behind an internal seam — the package's own
 # mechanics tests cross it deliberately, production code never does. Widening
 # or narrowing this surface is an interface decision, not a refactor.
-EXPECTED_PUBLIC_NAMES = (
-    "ResolvedBook",
-    "WindowEvaluator",
-)
 
 
 def test_facade_all_surface_is_unchanged() -> None:
-    assert sorted(facade.__all__) == sorted(EXPECTED_PUBLIC_NAMES)
+    assert sorted(facade.__all__) == ["ResolvedBook", "WindowEvaluator"]
 
 
-def test_every_public_name_imports_from_the_facade() -> None:
+def test_resolved_book_imports_from_the_facade() -> None:
     fresh = importlib.import_module(
         "research.aegis_research.optimization.window_evaluation"
     )
-    for name in EXPECTED_PUBLIC_NAMES:
-        assert hasattr(fresh, name), f"facade no longer exposes {name!r}"
-        assert getattr(fresh, name) is not None
+
+    assert fresh.ResolvedBook is facade.ResolvedBook
+
+
+def test_window_evaluator_imports_from_the_facade() -> None:
+    fresh = importlib.import_module(
+        "research.aegis_research.optimization.window_evaluation"
+    )
+
+    assert fresh.WindowEvaluator is facade.WindowEvaluator

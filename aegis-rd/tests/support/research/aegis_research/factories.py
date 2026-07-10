@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from aegis_runtime import MarketDataBundle
+from vectorbtpro import vbt
 
 from research.aegis_research.component_registry.contracts import (
     ComponentDefinition,
@@ -459,11 +460,11 @@ def _fake_split_result() -> Any:
 def make_candidate_portfolio(
     close: pd.DataFrame,
     allocations: pd.DataFrame,
-    config: Any | None = None,
+    config: PortfolioConfig | None = None,
     *,
     periods_per_year: int = 252,
     **sim_kwargs: Any,
-) -> Any:
+) -> vbt.Portfolio:
     """Simulate a Candidate batch for metrics tests.
 
     Wraps the Window Evaluation internal simulation seam so tests that only

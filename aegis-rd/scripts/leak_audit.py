@@ -403,7 +403,7 @@ def masking_check(audit, repo):
     try:
         import pandas as pd
 
-        from research.aegis_research.portfolios import (
+        from research.aegis_research.optimization.window_evaluation._simulation import (
             count_non_executable_rows,
             simulate_single_book,
         )

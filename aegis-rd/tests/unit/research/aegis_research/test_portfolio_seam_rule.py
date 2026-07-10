@@ -12,8 +12,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from vectorbtpro import vbt
 
-from research.aegis_research.optimization.window_evaluation import ResolvedBook, WindowEvaluator
+from research.aegis_research.optimization.precompute import empty_precompute
+from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.optimization.window_evaluation import (
+    ResolvedBook,
+    WindowEvaluator,
+)
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,
@@ -21,15 +27,26 @@ from tests.support.research.aegis_research.factories import (
 )
 
 
+def _never_simulate(*args: object, **kwargs: object) -> object:
+    raise AssertionError("the geometry query must not simulate")
+
+
 def _evaluator(market_index: pd.Index) -> WindowEvaluator:
     close = pd.DataFrame({"SYN": np.ones(len(market_index))}, index=market_index)
     return WindowEvaluator(
-        # The geometry query touches neither the source nor the store.
-        source=None,
+        source=OptimizationSource(
+            precompute=empty_precompute,
+            simulate=_never_simulate,
+            params={"alpha": vbt.Param([1.0])},
+            output_name="target_weights",
+            evidence={},
+            diagnostics={},
+            metadata={},
+        ),
         book=ResolvedBook(make_portfolio_config()),
         report=make_report_config(),
         arrays=make_run_arrays(close=close, open_=close),
-        store=None,
+        store=empty_precompute(close, 1, alpha=[1.0]),
         extractors={},
     )
 
