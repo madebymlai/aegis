@@ -27,6 +27,10 @@ SUPPORTED_ADJUSTMENT_MODES = (
     ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
 )
 
+# The closed mark-mode wire vocabulary (aegis-rd-tggo.3). The runtime owns only
+# the serialization slot; resolution semantics live in aegis-data's marking seam.
+RECORDED_MARK_MODES = ("LAST", "MID", "QUOTE")
+
 
 class MissingIndexPolicy(str, Enum):
     NAN = "nan"
@@ -86,6 +90,13 @@ class DataContract:
     # Present iff ``futures`` declares roots. Independent of ``exchange``: both
     # backward modes are valid with or without FX conversion legs.
     adjustment_mode: ContinuousFutureAdjustmentType | None = None
+    # Recorded mark modes (aegis-rd-tggo.3): how each leg's mark was resolved in
+    # research (LAST / MID / QUOTE), pinned at export so live subscribes exactly
+    # the mark the run validated and never re-derives it. Keys are declared
+    # loadable ids; continuous roots and their dated legs are LAST by
+    # construction and are never recorded. Only the mark travels — the research
+    # fill/sim projection is never serialized.
+    mark_modes: Mapping[InstrumentId, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
@@ -107,6 +118,7 @@ class DataContract:
                 "DataContract.exchange legs must be data-only, not tradeable "
                 f"instrument_ids: {overlap}"
             )
+        _validate_mark_modes(self.mark_modes, self.loadable_instrument_ids)
 
     @property
     def continuous_instrument_ids(self) -> tuple[InstrumentId, ...]:
@@ -387,6 +399,32 @@ def _validate_adjustment_mode(
         raise DataContractError(
             f"DataContract.adjustment_mode {mode.value!r} is unsupported; "
             f"only backward modes {supported} are materialisable"
+        )
+
+
+def _validate_mark_modes(
+    mark_modes: Mapping[InstrumentId, str],
+    loadable_instrument_ids: Sequence[InstrumentId],
+) -> None:
+    unknown_modes = sorted(
+        f"{instrument_id.value}={mode!r}"
+        for instrument_id, mode in mark_modes.items()
+        if mode not in RECORDED_MARK_MODES
+    )
+    if unknown_modes:
+        raise DataContractError(
+            "DataContract.mark_modes carries modes outside the closed set "
+            f"{RECORDED_MARK_MODES}: {unknown_modes}"
+        )
+    undeclared = sorted(
+        instrument_id.value
+        for instrument_id in mark_modes
+        if instrument_id not in set(loadable_instrument_ids)
+    )
+    if undeclared:
+        raise DataContractError(
+            "DataContract.mark_modes records marks for ids the contract does "
+            f"not load: {undeclared}"
         )
 
 

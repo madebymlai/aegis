@@ -50,6 +50,12 @@ def dump_bundle_payload(
         "lookback_bars": contract.lookback_bars,
         "futures": list(contract.futures),
         "exchange": [_dump_instrument_id(item) for item in contract.exchange],
+        # Only the mark travels (aegis-rd-tggo.3); the research fill/sim
+        # projection is never serialized.
+        "mark_modes": {
+            _dump_instrument_id(instrument_id): mode
+            for instrument_id, mode in contract.mark_modes.items()
+        },
     }
     if contract.adjustment_mode is not None:
         contract_payload["adjustment_mode"] = contract.adjustment_mode.value
@@ -104,6 +110,15 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         # Wire decoding only: presence/type/known-value. The present-iff-futures
         # semantic is DataContract's own construction rule.
         adjustment_mode=_load_adjustment_mode(contract_payload),
+        # Absent on pre-tggo.3 payloads: nothing recorded. Live's recorded-marking
+        # resolver fails closed per instrument, so an old wheel cannot silently
+        # default a thin leg to a sparse LAST feed.
+        mark_modes={
+            _load_instrument_id(key): value
+            for key, value in _ensure_mapping(
+                contract_payload.get("mark_modes", {}), "DataContract.mark_modes"
+            ).items()
+        },
     )
     manifest = BundleManifest(
         run_id=_required_value(manifest_payload, "run_id", "BundleManifest"),

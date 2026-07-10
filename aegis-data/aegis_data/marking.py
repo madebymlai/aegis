@@ -154,6 +154,23 @@ class InstrumentMarking:
             return (bid.loc[index] + ask.loc[index]) / 2.0
         return bars_to_ohlcv(bars_by_type[self.mark_bars[0]])
 
+    def derived_mark(self, latest_by_type: Mapping[BarType, Bar | None]) -> Price | None:
+        """The mark to publish when quote-marked and both sides are current.
+
+        ``None`` for a bar-marked instrument (its bar close is the native
+        valuation fallback — no mark is published) and while the BID/ASK pair
+        is incomplete or split across timestamps.  When both sides share one
+        timestamp the mark is :meth:`reference_price` — the single mid formula
+        — so research and live value the leg identically by construction.
+        """
+        if self.mode is not MarkMode.QUOTE:
+            return None
+        bid = latest_by_type.get(self.mark_bars[0])
+        ask = latest_by_type.get(self.mark_bars[1])
+        if bid is None or ask is None or bid.ts_event != ask.ts_event:
+            return None
+        return self.reference_price([bid, ask])
+
     def quote_ohlcv_frames(
         self, bars_by_type: Mapping[BarType, Sequence[Bar]]
     ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
@@ -216,6 +233,20 @@ class SymbolShapeFacts:
         return "/" in instrument_id.symbol.value
 
 
+def marking_for_mode(
+    instrument_id: InstrumentId, timeframe: str, mode: MarkMode
+) -> InstrumentMarking:
+    """The :class:`InstrumentMarking` a known mode resolves to — the one public
+    builder shared by every resolver (declared research-side, recorded
+    bundle-backed live-side), so mark bars can never be constructed two ways."""
+    corpus_id = mic_canonical_instrument_id(instrument_id)
+    return InstrumentMarking(
+        instrument_id=corpus_id,
+        mode=mode,
+        mark_bars=_mark_bars(corpus_id, timeframe, mode),
+    )
+
+
 @dataclass(frozen=True)
 class DeclaredMarkingResolver:
     """Declaration + static facts -> :class:`InstrumentMarking` (aegis-rd-tggo.2).
@@ -242,12 +273,7 @@ class DeclaredMarkingResolver:
 
     def resolve(self, instrument_id: InstrumentId, timeframe: str) -> InstrumentMarking:
         corpus_id = mic_canonical_instrument_id(instrument_id)
-        mode = self._mode(corpus_id)
-        return InstrumentMarking(
-            instrument_id=corpus_id,
-            mode=mode,
-            mark_bars=_mark_bars(corpus_id, timeframe, mode),
-        )
+        return marking_for_mode(corpus_id, timeframe, self._mode(corpus_id))
 
     def _mode(self, corpus_id: InstrumentId) -> MarkMode:
         declared = self.declared.get(corpus_id)
@@ -281,6 +307,7 @@ __all__ = [
     "RawBarTypeResolver",
     "SymbolShapeFacts",
     "UnknownMarkTokenError",
+    "marking_for_mode",
     "parse_mark_declaration",
     "split_mark_token",
 ]

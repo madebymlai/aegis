@@ -33,7 +33,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, assert_never
 
-from nautilus_trader.model.data import Bar, BarType, QuoteTick
+from nautilus_trader.model.data import Bar, BarType, MarkPriceUpdate, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.events import OrderDenied
@@ -315,6 +315,8 @@ class RebalanceStrategy(Strategy):
         if self._apply_roll_intents(self._require_roll_desk().on_bar(bar)):
             return
 
+        self._publish_derived_mark(bar)
+
         period = self._extract_period(bar)
 
         # ── period-advance → rebalance the completed period ──────────────
@@ -380,6 +382,37 @@ class RebalanceStrategy(Strategy):
 
     def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
         return self._bar_type_resolver.resolve(instrument_id, timeframe).mark_bars
+
+    def _publish_derived_mark(self, bar: Bar) -> None:
+        """Publish a quote-marked leg's derived mid mark from its completed pair.
+
+        The one marking path research and live share (aegis-rd-tggo.3/.5): the
+        mark is ``reference_price = (bid + ask) / 2`` over the leg's own BID/ASK
+        bars, handed to the Portfolio exactly as the data engine would deliver a
+        vendor mark (cache + the mark-prices topic).  A bar-marked leg publishes
+        nothing — its bar close is the native valuation.
+        """
+        marking = self._bar_type_resolver.resolve(
+            bar.bar_type.instrument_id, self._require_assembled_book().timeframe
+        )
+        mark = marking.derived_mark(
+            {bar_type: self.cache.bar(bar_type) for bar_type in marking.mark_bars}
+        )
+        if mark is None:
+            return
+        update = MarkPriceUpdate(
+            instrument_id=marking.instrument_id,
+            value=mark,
+            ts_event=bar.ts_event,
+            ts_init=bar.ts_init,
+        )
+        self.cache.add_mark_price(update)
+        # The data engine's own mark-price delivery topic: the Portfolio
+        # (use_mark_prices) subscribes to it in backtest and live alike.
+        self.msgbus.publish(
+            topic=f"data.mark_prices.{marking.instrument_id.venue}.{marking.instrument_id.symbol}",
+            msg=update,
+        )
 
     def _halt_from_roll_intent(self, intent: Halt) -> None:
         startup_result = StartupResult(

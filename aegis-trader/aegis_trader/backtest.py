@@ -23,7 +23,7 @@ from nautilus_trader.model.data import Bar, CustomData, DataType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.instruments import CurrencyPair, Instrument
-from nautilus_trader.model.objects import Currency, Money, Price
+from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.config import PortfolioConfig
 from nautilus_trader.risk.config import RiskEngineConfig
 
@@ -36,6 +36,7 @@ from aegis_data.catalog import (
 )
 
 from aegis_trader.bundles.book import AssembledBook, assemble_book
+from aegis_trader.bundles.marking import recorded_marking_resolver
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
@@ -195,7 +196,9 @@ def run_book_backtest(
     # source, the wrangler, the equity recorder, and the strategy so they name
     # identical bars.  The sim/fill projection below is DERIVED from the resolved
     # markings, research-side only, and never serialized (aegis-rd-tggo.5).
-    resolver = bar_type_resolver if bar_type_resolver is not None else DeclaredMarkingResolver()
+    resolver = (
+        bar_type_resolver if bar_type_resolver is not None else _book_resolver(assembled_book)
+    )
     source = data_source or CatalogBacktestDataSource(
         catalog_path=catalog_path,
         provider=provider,
@@ -250,6 +253,20 @@ def run_book_backtest(
         financing_module.totals.by_currency if financing_module is not None else {}
     )
     return BookBacktestResult(engine=engine, financing_totals=financing_totals)
+
+
+def _book_resolver(book: AssembledBook) -> RawBarTypeResolver:
+    """The runner's marking resolver for *book*.
+
+    A bundle that records mark modes is backtested on exactly those recorded
+    markings — the same read-only view live consumes — so research validation
+    and deployment resolve one truth.  A bundle recording nothing (pre-recording
+    exports, synthetic test stubs) keeps the corpus-default declared resolver.
+    """
+    recorded = recorded_marking_resolver(book)
+    if recorded.recorded:
+        return recorded
+    return DeclaredMarkingResolver()
 
 
 def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | None:
@@ -490,32 +507,6 @@ def _wrangle_quote_external_bars(
         timeframe,
         resolver=resolver,
     )
-
-
-def _mark_price_updates(instrument: Instrument, mid_ohlcv: pd.DataFrame) -> list[Any]:
-    """One ``MarkPriceUpdate`` per bar close at the quote mid.
-
-    *mid_ohlcv* is the marking's derived mid frame, so the value fed here is
-    ``reference_price = (bid + ask) / 2`` — the single mid formula — consumed
-    natively by the Portfolio (``use_mark_prices``) while fills stay at the
-    touch.
-    """
-    from nautilus_trader.model.data import MarkPriceUpdate
-
-    closes = _normalize_ohlcv(mid_ohlcv)["close"]
-    if closes.index.tz is None:
-        closes = closes.tz_localize("UTC")
-    # One extra decimal so the exact half-tick mid stays representable.
-    precision = instrument.price_precision + 1
-    return [
-        MarkPriceUpdate(
-            instrument_id=instrument.id,
-            value=Price(float(value), precision),
-            ts_event=timestamp.value,
-            ts_init=timestamp.value,
-        )
-        for timestamp, value in closes.items()
-    ]
 
 
 def _add_distribution_data(

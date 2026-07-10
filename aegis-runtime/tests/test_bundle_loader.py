@@ -424,3 +424,69 @@ def test_load_installed_bundle_reads_package_manifest(tmp_path) -> None:
         sys.modules.pop("aegis_exec_test_bundle", None)
 
     assert bundle.contract == contract
+
+
+def test_bundle_payload_round_trips_recorded_mark_modes() -> None:
+    contract = DataContract(
+        instrument_ids=(_id("UEQC.XETR"), _id("AAPL.NASDAQ")),
+        required_arrays=("Close",),
+        base_currency="EUR",
+        timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
+        lookback_bars=20,
+        exchange=(_id("EUR/USD.IDEALPRO"),),
+        mark_modes={
+            _id("UEQC.XETR"): "QUOTE",
+            _id("AAPL.NASDAQ"): "LAST",
+            _id("EUR/USD.IDEALPRO"): "MID",
+        },
+    )
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+    )
+
+    loaded = load_bundle_payload(json.loads(json.dumps(payload)))
+
+    assert loaded.contract.mark_modes == {
+        _id("UEQC.XETR"): "QUOTE",
+        _id("AAPL.NASDAQ"): "LAST",
+        _id("EUR/USD.IDEALPRO"): "MID",
+    }
+
+
+def test_bundle_payload_without_mark_modes_records_nothing() -> None:
+    # A pre-tggo.3 wheel: nothing recorded — live's recorded-marking resolver
+    # fails closed per instrument rather than defaulting a thin leg to LAST.
+    contract = _contract()
+    payload = dump_bundle_payload(
+        contract=contract, manifest=_manifest(contract), plan=_plan()
+    )
+    del payload["contract"]["mark_modes"]
+
+    loaded = load_bundle_payload(json.loads(json.dumps(payload)))
+
+    assert loaded.contract.mark_modes == {}
+
+
+def test_data_contract_rejects_a_mark_mode_outside_the_closed_set() -> None:
+    with pytest.raises(DataContractError, match="closed set"):
+        DataContract(
+            instrument_ids=(_id("AAPL.NASDAQ"),),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            mark_modes={_id("AAPL.NASDAQ"): "TOUCH"},
+        )
+
+
+def test_data_contract_rejects_a_recorded_mark_for_an_undeclared_id() -> None:
+    with pytest.raises(DataContractError, match="does not load"):
+        DataContract(
+            instrument_ids=(_id("AAPL.NASDAQ"),),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            mark_modes={_id("UEQC.XETR"): "QUOTE"},
+        )

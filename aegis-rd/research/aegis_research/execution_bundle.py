@@ -14,6 +14,7 @@ from aegis_runtime import (
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 
 from research.aegis_research.component_registry import (
@@ -252,6 +253,7 @@ def _bundle_contract(
             "algebra they used - re-run the optimization under the current research "
             "code, then re-lock and re-export."
         )
+    exchange = tuple(InstrumentId.from_str(value) for value in config.data.exchange)
     return DataContract(
         instrument_ids=tuple(instrument_ids),
         required_arrays=tuple(_required_arrays(components)),
@@ -260,11 +262,46 @@ def _bundle_contract(
         missing_index=MissingIndexPolicy(config.data.missing_index),
         lookback_bars=components.lookback_bars,
         futures=futures,
-        exchange=tuple(
-            InstrumentId.from_str(value) for value in config.data.exchange
-        ),
+        exchange=exchange,
         adjustment_mode=adjustment_mode if futures else None,
+        mark_modes=_recorded_mark_modes(config, instrument_ids, futures, exchange),
     )
+
+
+def _recorded_mark_modes(
+    config: RunConfig,
+    instrument_ids: Sequence[InstrumentId],
+    futures: tuple[str, ...],
+    exchange: tuple[InstrumentId, ...],
+) -> dict[InstrumentId, str]:
+    """The resolved mark mode per loadable leg, pinned into the export.
+
+    The same resolution research loaded under (the declared token + the corpus
+    defaults), recorded explicitly for every static leg — LAST included — so
+    live consumes the mark and never re-derives it (aegis-rd-tggo.3).
+    Continuous roots are LAST by construction and are not recorded.
+    """
+    resolver = DeclaredMarkingResolver(
+        declared={
+            InstrumentId.from_str(value): MarkMode(mode)
+            for value, mode in config.data.mark_modes.items()
+        }
+    )
+    continuous_symbols = set(futures)
+    loadable = (
+        *(
+            instrument_id
+            for instrument_id in instrument_ids
+            if instrument_id.symbol.value not in continuous_symbols
+        ),
+        *exchange,
+    )
+    return {
+        instrument_id: resolver.resolve(instrument_id, config.data.timeframe).mode.value
+        for instrument_id in loadable
+    }
+
+
 def _required_arrays(components: AssembledComponents) -> tuple[str, ...]:
     names: list[str] = []
     for spec in (*components.indicators, components.strategy):

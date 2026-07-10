@@ -201,3 +201,39 @@ def test_futures_export_without_recorded_mode_fails_with_rerun_guidance() -> Non
             _FUTURES_IDS,
             adjustment_mode=None,
         )
+
+
+def test_bundle_contract_records_the_resolved_mark_mode_per_loadable_leg() -> None:
+    """The boundary AC (aegis-rd-tggo.3): the declared mode exported is what a
+    bundle-backed consumer reads back — every static leg recorded explicitly
+    (LAST included, cash FX bar-marked MID), continuous roots not recorded."""
+    data = _DATA.validate_python(
+        {
+            "arrays": ["OHLCV"],
+            "base_currency": "EUR",
+            "instruments": ["UEQC.XETR:QUOTE", "VUSA.XLON"],
+            "exchange": ["EUR/USD.IDEALPRO"],
+            "futures": ["ES"],
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+            "timeframe": "1D",
+            "missing_index": "drop",
+        }
+    )
+
+    contract = _bundle_contract(
+        SimpleNamespace(data=data),
+        _components(),
+        (
+            InstrumentId.from_str("UEQC.XETR"),
+            InstrumentId.from_str("VUSA.XLON"),
+            InstrumentId.from_str("ES.XCME"),
+        ),
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+    )
+
+    assert contract.mark_modes == {
+        InstrumentId.from_str("UEQC.XETR"): "QUOTE",
+        InstrumentId.from_str("VUSA.XLON"): "LAST",
+        InstrumentId.from_str("EUR/USD.IDEALPRO"): "MID",
+    }

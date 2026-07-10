@@ -315,6 +315,54 @@ def test_bar_marked_instrument_has_no_sided_quote_frames():
     assert marking.quote_ohlcv_frames({marking.mark_bars[0]: bars}) is None
 
 
+def test_quote_marking_derived_mark_is_the_mid_of_a_complete_pair():
+    resolver = DeclaredMarkingResolver(
+        declared={InstrumentId.from_str("UEQC.IBIS"): MarkMode.QUOTE}
+    )
+    marking = resolver.resolve(InstrumentId.from_str("UEQC.IBIS"), "1D")
+    bid = _bar(marking.mark_bars[0], "100.00")
+    ask = _bar(marking.mark_bars[1], "100.50")
+
+    mark = marking.derived_mark({marking.mark_bars[0]: bid, marking.mark_bars[1]: ask})
+
+    assert mark is not None
+    assert mark.as_double() == pytest.approx(100.25)
+
+
+def test_quote_marking_derived_mark_waits_for_a_same_timestamp_pair():
+    resolver = DeclaredMarkingResolver(
+        declared={InstrumentId.from_str("UEQC.IBIS"): MarkMode.QUOTE}
+    )
+    marking = resolver.resolve(InstrumentId.from_str("UEQC.IBIS"), "1D")
+    bid = _bar(marking.mark_bars[0], "100.00", day="2024-01-02")
+    stale_ask = _bar(marking.mark_bars[1], "100.50", day="2024-01-01")
+
+    mark = marking.derived_mark(
+        {marking.mark_bars[0]: bid, marking.mark_bars[1]: stale_ask}
+    )
+
+    assert mark is None
+
+
+def test_bar_marked_instrument_publishes_no_derived_mark():
+    marking = DeclaredMarkingResolver().resolve(
+        InstrumentId.from_str("VWRD.LSEETF"), "1D"
+    )
+    latest = _bar(marking.mark_bars[0], "104.25")
+
+    assert marking.derived_mark({marking.mark_bars[0]: latest}) is None
+
+
+def test_marking_for_mode_is_the_one_builder_shared_by_resolvers():
+    from aegis_data.marking import marking_for_mode
+
+    marking = marking_for_mode(InstrumentId.from_str("UEQC.IBIS"), "1D", MarkMode.QUOTE)
+
+    assert marking == DeclaredMarkingResolver(
+        declared={InstrumentId.from_str("UEQC.IBIS"): MarkMode.QUOTE}
+    ).resolve(InstrumentId.from_str("UEQC.IBIS"), "1D")
+
+
 def test_marking_is_an_immutable_value_object():
     marking = DeclaredMarkingResolver().resolve(
         InstrumentId.from_str("VWRD.LSEETF"), "1D"
