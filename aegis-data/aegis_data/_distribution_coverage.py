@@ -1,6 +1,14 @@
+"""Distribution-coverage verification: internal to the Catalog port (ADR-0010).
+
+The marker ledger, applicability rules, and gap verification behind
+``CatalogBackedDataPort``'s verified distribution reads.  Only the port
+constructs the service; every other caller — production, tests, fixtures —
+crosses the port's interface.
+"""
+
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from dataclasses import dataclass, field
+from typing import Any, cast
 
 import pandas as pd
 from nautilus_trader.core.data import Data
@@ -11,6 +19,7 @@ from nautilus_trader.model.instruments import FuturesContract
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
     CatalogCoverageGapError,
+    DistributionDataProviderPort,
     bars_to_ohlcv,
     catalog_definitions,
     continuous_root_legs,
@@ -22,23 +31,6 @@ from aegis_data.distributions import (
 )
 
 _NANOS_PER_DAY = 86_400_000_000_000
-
-
-def _now_ns() -> int:
-    return pd.Timestamp.now(tz="UTC").value
-
-
-class DistributionDataProviderPort(Protocol):
-    """Fetch the adjusted-last series needed to verify distribution coverage."""
-
-    def request_adjusted_last(
-        self,
-        instrument_id: InstrumentId,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-        currency: str = "USD",
-    ) -> pd.Series: ...
 
 
 @customdataclass
@@ -59,7 +51,7 @@ class DistributionCoverageMarker(Data):
 class DistributionCoverageService:
     catalog: Any
     provider: DistributionDataProviderPort | None = None
-    clock_ns: Callable[[], int] = _now_ns
+    clock_ns: Callable[[], int] = field(kw_only=True)
 
     def ensure_covered(
         self,
@@ -465,8 +457,3 @@ def _range_text(start_ns: int, end_ns: int) -> str:
     )
 
 
-__all__ = [
-    "DistributionCoverageMarker",
-    "DistributionCoverageService",
-    "DistributionDataProviderPort",
-]

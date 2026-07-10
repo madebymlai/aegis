@@ -6,8 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from aegis_data.catalog import raw_bar_type
-from aegis_data.distribution_coverage import DistributionCoverageService
+from aegis_data.catalog import CatalogBackedDataPort, raw_bar_type
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity
@@ -165,7 +164,7 @@ def seed_catalog_ohlcv(
             start=start_ts.value,
             end=end_ts.value,
         )
-        _write_zero_distribution_coverage(
+        _verify_zero_distribution_coverage(
             catalog,
             current_id,
             panels=panels,
@@ -175,7 +174,7 @@ def seed_catalog_ohlcv(
     return start_ts.date().isoformat(), end_ts.date().isoformat()
 
 
-def _write_zero_distribution_coverage(
+def _verify_zero_distribution_coverage(
     catalog: ParquetDataCatalog,
     instrument_id: InstrumentId,
     *,
@@ -185,11 +184,14 @@ def _write_zero_distribution_coverage(
 ) -> None:
     # ADR-0008: seeded synthetic catalogs must be self-describing for distributions
     # too, so RD integration tests stay warm and never query IBKR for fake symbols.
-    DistributionCoverageService(
+    # The verified read is the ensure (ADR-0010); the clock is pinned to the window
+    # start so seeded corpora stay byte-deterministic.
+    events = CatalogBackedDataPort(
         catalog,
-        _ZeroDistributionProvider(panels),
+        distribution_provider=_ZeroDistributionProvider(panels),
         clock_ns=lambda: start.value,
-    ).ensure_covered((instrument_id,), start=start, end=end)
+    ).distributions((instrument_id,), start=start, end=end)
+    assert not events, f"synthetic corpus grew distributions for {instrument_id.value}"
 
 
 class _ZeroDistributionProvider:

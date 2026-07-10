@@ -30,7 +30,6 @@ from aegis_data.distributions import (
     query_distribution_data,
     write_distribution_data,
 )
-from aegis_data.distribution_coverage import DistributionCoverageService
 from aegis_data.roll import DatedContract
 from aegis_data.testing import FakeCatalog, bars, future
 
@@ -477,12 +476,12 @@ def test_catalog_port_reports_verified_distribution_coverage(
             )
         }
     )
-    DistributionCoverageService(
+    port = CatalogBackedDataPort(
         catalog,
-        provider,
+        distribution_provider=provider,
         clock_ns=lambda: pd.Timestamp("2026-01-01", tz="UTC").value,
-    ).ensure_covered((instrument_id,), start="2024-01-01", end="2024-01-04")
-    port = CatalogBackedDataPort(catalog)
+    )
+    port.distributions((instrument_id,), start="2024-01-01", end="2024-01-04")
 
     report = port.distribution_coverage_report(
         (instrument_id,),
@@ -1131,11 +1130,11 @@ def _verify_distribution_window(
     *,
     checked_at: str,
 ) -> None:
-    DistributionCoverageService(
+    CatalogBackedDataPort(
         catalog,
-        provider,
+        distribution_provider=provider,
         clock_ns=lambda: pd.Timestamp(checked_at, tz="UTC").value,
-    ).ensure_covered((instrument_id,), start="2024-01-01", end="2024-01-06")
+    ).distributions((instrument_id,), start="2024-01-01", end="2024-01-06")
 
 
 def _force_reverify_distribution_window(
@@ -1145,11 +1144,13 @@ def _force_reverify_distribution_window(
     *,
     checked_at: str,
 ) -> None:
-    DistributionCoverageService(
+    CatalogBackedDataPort(
         catalog,
-        provider,
+        distribution_provider=provider,
         clock_ns=lambda: pd.Timestamp(checked_at, tz="UTC").value,
-    ).force_reverify((instrument_id,), start="2024-01-01", end="2024-01-03")
+    ).force_reverify_distribution_coverage(
+        (instrument_id,), start="2024-01-01", end="2024-01-03"
+    )
 
 
 def _restated_adjusted_last(dates: pd.DatetimeIndex) -> pd.Series:

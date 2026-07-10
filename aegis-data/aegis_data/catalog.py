@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from nautilus_trader.model.data import Bar, BarType
     from nautilus_trader.model.instruments import Instrument
 
-    from aegis_data.distribution_coverage import DistributionDataProviderPort
+    from aegis_data._distribution_coverage import DistributionCoverageService
 
 AEGIS_DATA_DIR_ENV = "AEGIS_DATA_DIR"
 CATALOG_DIRNAME = "catalog"
@@ -54,6 +54,19 @@ class NautilusDataProviderPort(Protocol):
         start: pd.Timestamp,
         end: pd.Timestamp,
     ) -> Sequence[Bar]: ...
+
+
+class DistributionDataProviderPort(Protocol):
+    """Fetch the adjusted-last series needed to verify distribution coverage."""
+
+    def request_adjusted_last(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        currency: str = "USD",
+    ) -> pd.Series: ...
 
 
 @dataclass(frozen=True)
@@ -109,6 +122,10 @@ def catalog_definitions(
     }
 
 
+def _now_ns() -> int:
+    return pd.Timestamp.now(tz="UTC").value
+
+
 @dataclass(frozen=True)
 class CatalogBackedDataPort:
     catalog: Any
@@ -118,6 +135,10 @@ class CatalogBackedDataPort:
     # instrument (ADR-0008): the bar port stays pure-fetch — definitions are a
     # separate, idempotent lifecycle wired in by the caller, not a port method.
     definition_seeder: Callable[[InstrumentId], None] | None = None
+    # The clock that stamps coverage markers' checked-at (ADR-0010): an injected
+    # dependency, so deterministic callers cross this seam instead of building
+    # the coverage service themselves.
+    clock_ns: Callable[[], int] = _now_ns
 
     def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
         for instrument_id in request.instrument_ids:
@@ -172,11 +193,9 @@ class CatalogBackedDataPort:
         The port owns the raw catalog query so consumers and fakes declare distribution
         behavior on the same interface they use for bars and definitions.
         """
-        from aegis_data.distribution_coverage import DistributionCoverageService
-
         # ADR-0008: distributions cross the verified catalog port; direct catalog
         # reads are storage primitives, not research/trader data paths.
-        DistributionCoverageService(self.catalog, self.distribution_provider).ensure_covered(
+        self._coverage_service().ensure_covered(
             tuple(instrument_ids), start=start, end=end
         )
         return query_distribution_data(self.catalog, instrument_ids, start=start, end=end)
@@ -188,9 +207,7 @@ class CatalogBackedDataPort:
         start: str | int | pd.Timestamp | None = None,
         end: str | int | pd.Timestamp | None = None,
     ) -> tuple[dict[str, Any], ...]:
-        from aegis_data.distribution_coverage import DistributionCoverageService
-
-        return DistributionCoverageService(self.catalog).coverage_report(
+        return self._coverage_service().coverage_report(
             tuple(instrument_ids), start=start, end=end
         )
 
@@ -201,9 +218,7 @@ class CatalogBackedDataPort:
         start: str | int | pd.Timestamp,
         end: str | int | pd.Timestamp,
     ) -> None:
-        from aegis_data.distribution_coverage import DistributionCoverageService
-
-        DistributionCoverageService(self.catalog, self.distribution_provider).force_reverify(
+        self._coverage_service().force_reverify(
             tuple(instrument_ids), start=start, end=end
         )
 
@@ -249,6 +264,13 @@ class CatalogBackedDataPort:
                 f"{sorted(venue.value for venue in venues)}; expected one"
             )
         return ResolvedContinuousRoot(InstrumentId(Symbol(root), next(iter(venues))), legs)
+
+    def _coverage_service(self) -> DistributionCoverageService:
+        from aegis_data._distribution_coverage import DistributionCoverageService
+
+        return DistributionCoverageService(
+            self.catalog, self.distribution_provider, clock_ns=self.clock_ns
+        )
 
     def _ensure_covered(self, bar_type: BarType, request: RawBarRequest) -> None:
         missing = self._missing_intervals(bar_type, request)
@@ -379,6 +401,7 @@ __all__ = [
     "ContinuousRootLegsNotFoundError",
     "ContinuousRootVenueMismatchError",
     "Distribution",
+    "DistributionDataProviderPort",
     "NautilusDataProviderPort",
     "RawBarRequest",
     "ResolvedContinuousRoot",
