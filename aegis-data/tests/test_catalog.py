@@ -21,6 +21,7 @@ from aegis_data.catalog import (
     ContinuousRootLegsNotFoundError,
     ContinuousRootVenueMismatchError,
     GapFillProviderError,
+    MissingCatalogDefinitionsError,
     RawBarRequest,
     ServedBars,
     catalog_data_port,
@@ -1278,6 +1279,173 @@ def test_catalog_port_fetches_only_missing_distribution_gap_between_verified_ran
     assert len(provider.requests) == 1
     assert provider.requests[0]["start"].date() == date(2024, 1, 3)
     assert provider.requests[0]["end"] < pd.Timestamp("2024-01-05", tz="UTC")
+
+
+def test_catalog_port_load_window_returns_one_coherent_value(
+    tmp_path: Path,
+) -> None:
+    # ADR-0012: one call answers the whole window — bars, complete definitions,
+    # verified distributions, and the coverage report. The cash FX leg rides in
+    # the same id set with no caller filtering, and ONE verification pass serves
+    # both the distributions and the report (exactly one adjusted-last request).
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    equity_id = _id("SPY.ARCA")
+    fx_pair = _id("EUR/USD.IDEALPRO")
+    equity_bar_type = raw_bar_type(equity_id, "1D")
+    fx_bar_type = raw_bar_type(fx_pair, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(equity_bar_type, "2024-01-01", 100.0),
+            _bar(equity_bar_type, "2024-01-02", 100.0),
+            _bar(equity_bar_type, "2024-01-03", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    _write_span(
+        catalog,
+        [
+            _bar(fx_bar_type, "2024-01-01", 1.10),
+            _bar(fx_bar_type, "2024-01-02", 1.11),
+            _bar(fx_bar_type, "2024-01-03", 1.12),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    _write_definition(catalog, equity_id)
+    catalog.write_data([_currency_pair(fx_pair)])
+    provider = _AdjustedLastProvider(
+        {
+            equity_id: pd.Series(
+                [100.0, 100.0 / (1.0 - 0.01), 100.0],
+                index=pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC"),
+            )
+        }
+    )
+    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+
+    window = port.load_window(
+        RawBarRequest(
+            instrument_ids=(equity_id, fx_pair),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+    )
+
+    assert set(window.ohlcv) == {equity_id, fx_pair}
+    assert list(window.ohlcv[equity_id]["Close"]) == [100.0, 100.0, 100.0]
+    assert set(window.instruments) == {equity_id, fx_pair}
+    assert [(event.ex_date, event.amount) for event in window.distributions] == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
+    ]
+    coverage = {row["instrument_id"]: row for row in window.distribution_coverage}
+    assert coverage["SPY.ARCA"]["applicable"] is True
+    assert coverage["SPY.ARCA"]["event_count"] == 1
+    assert coverage["EUR/USD.IDEALPRO"]["applicable"] is False
+    assert coverage["EUR/USD.IDEALPRO"]["event_count"] == 0
+    assert len(provider.requests) == 1
+
+
+def test_catalog_port_load_window_completeness_passes_via_fill_seeded_definition(
+    tmp_path: Path,
+) -> None:
+    # Ordering is contract: the lazy fill runs FIRST and its Step-1 write seeds
+    # the definition, so completeness judged after filling must pass for an id
+    # the fill itself resolves.
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("AAPL.XNAS")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    provider = _ProviderPort(
+        [
+            _bar(bar_type, "2024-01-01", 10.0),
+            _bar(bar_type, "2024-01-02", 10.0),
+            _bar(bar_type, "2024-01-03", 10.0),
+        ]
+    )
+    adjusted_last = _AdjustedLastProvider(
+        {
+            instrument_id: pd.Series(
+                [10.0, 10.0, 10.0],
+                index=pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC"),
+            )
+        }
+    )
+    port = CatalogBackedDataPort(
+        catalog,
+        provider=provider,
+        distribution_provider=adjusted_last,
+        definition_seeder=lambda seeded_id: _write_definition(catalog, seeded_id),
+    )
+
+    window = port.load_window(
+        RawBarRequest(
+            instrument_ids=(instrument_id,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+    )
+
+    assert set(window.instruments) == {instrument_id}
+    assert window.distributions == ()
+
+
+def test_catalog_port_load_window_rejects_missing_definitions_as_authoring(
+    tmp_path: Path,
+) -> None:
+    # Ordering is contract: completeness is judged BEFORE distribution
+    # verification, so a missing definition surfaces as ONE authoring error
+    # naming every missing id — never as the environmental coverage-gap error.
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    first, second = _id("SPY.ARCA"), _id("QQQ.XNAS")
+    for instrument_id in (first, second):
+        bar_type = raw_bar_type(instrument_id, "1D")
+        _write_span(
+            catalog,
+            [
+                _bar(bar_type, "2024-01-01", 100.0),
+                _bar(bar_type, "2024-01-02", 100.0),
+            ],
+            start="2024-01-01",
+            end="2024-01-03",
+        )
+
+    with pytest.raises(MissingCatalogDefinitionsError) as excinfo:
+        CatalogBackedDataPort(catalog).load_window(
+            RawBarRequest(
+                instrument_ids=(first, second),
+                start="2024-01-01",
+                end="2024-01-03",
+            )
+        )
+
+    assert "SPY.ARCA" in str(excinfo.value)
+    assert "QQQ.XNAS" in str(excinfo.value)
+    assert not isinstance(excinfo.value, CatalogCoverageGapError)
+
+
+def test_catalog_port_load_window_raises_environmental_errors_unchanged(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+
+    with pytest.raises(CatalogCoverageGapError, match="catalog cannot serve"):
+        CatalogBackedDataPort(catalog).load_window(
+            RawBarRequest(
+                instrument_ids=(instrument_id,),
+                start="2024-01-01",
+                end="2024-01-04",
+            )
+        )
 
 
 def test_distribution_force_reverify_replaces_bounded_window_events(

@@ -65,45 +65,7 @@ class DistributionCoverageService:
             raise CatalogCoverageGapError(
                 "distribution coverage verification requires a bounded start and end"
             )
-        request_start = _timestamp_ns(start)
-        request_end = _timestamp_ns(end)
-        failures: list[str] = []
-        provider = _usable_provider(self.provider)
-        for instrument_id in _dedupe(instrument_ids):
-            applicability = self._applicability(instrument_id)
-            coverage_end = request_end
-            if applicability.applicable:
-                coverage_end = self._clamped_to_bar_frontier(
-                    instrument_id, start_ns=request_start, end_ns=request_end
-                )
-            missing = self._missing(instrument_id, request_start, coverage_end)
-            if not missing:
-                continue
-            if not applicability.applicable:
-                self._write_marker(
-                    instrument_id,
-                    start_ns=request_start,
-                    end_ns=request_end,
-                    applicable=False,
-                    event_count=0,
-                )
-                continue
-            if provider is None:
-                failures.append(_gap_message(instrument_id, missing))
-                continue
-            for start_ns, end_ns in missing:
-                self._verify_gap(
-                    provider,
-                    instrument_id,
-                    definition=applicability.definition,
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                )
-        if failures:
-            raise CatalogCoverageGapError(
-                "distribution coverage is missing for "
-                + "; ".join(sorted(failures))
-            )
+        self._gate_all(instrument_ids, _timestamp_ns(start), _timestamp_ns(end))
 
     def coverage_report(
         self,
@@ -116,35 +78,118 @@ class DistributionCoverageService:
             return ()
         request_start = _timestamp_ns(start)
         request_end = _timestamp_ns(end)
-        reports: list[dict[str, Any]] = []
-        for instrument_id in _dedupe(instrument_ids):
-            applicability = self._applicability(instrument_id)
-            coverage_end = request_end
-            if applicability.applicable:
-                coverage_end = self._clamped_to_bar_frontier(
-                    instrument_id, start_ns=request_start, end_ns=request_end
-                )
-            reports.append(
-                {
-                    "instrument_id": instrument_id.value,
-                    "applicable": applicability.applicable,
-                    "verified_start": _timestamp_text(request_start),
-                    "verified_end": _timestamp_text(coverage_end),
-                    "event_count": self._event_count(
-                        instrument_id,
-                        start_ns=request_start,
-                        end_ns=coverage_end,
-                    )
-                    if applicability.applicable
-                    else 0,
-                    "checked_at": self._checked_at(
-                        instrument_id,
-                        start_ns=request_start,
-                        end_ns=coverage_end,
-                    ),
-                }
+        return tuple(
+            self._report_row(self._assess(instrument_id, request_start, request_end))
+            for instrument_id in _dedupe(instrument_ids)
+        )
+
+    def verify_window(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        start: str | int | pd.Timestamp,
+        end: str | int | pd.Timestamp,
+    ) -> tuple[dict[str, Any], ...]:
+        """Gate and report in ONE pass (ADR-0012).
+
+        Each id's applicability and bar-frontier clamp are computed once and
+        serve both the verification and the returned coverage rows — the window
+        read never recomputes a verification answer it already has.
+        """
+        coverages = self._gate_all(
+            instrument_ids, _timestamp_ns(start), _timestamp_ns(end)
+        )
+        return tuple(self._report_row(coverage) for coverage in coverages)
+
+    def _gate_all(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        request_start: int,
+        request_end: int,
+    ) -> tuple["_IdCoverage", ...]:
+        provider = _usable_provider(self.provider)
+        coverages = tuple(
+            self._assess(instrument_id, request_start, request_end)
+            for instrument_id in _dedupe(instrument_ids)
+        )
+        failures = [
+            failure
+            for coverage in coverages
+            if (failure := self._gate(coverage, provider)) is not None
+        ]
+        if failures:
+            raise CatalogCoverageGapError(
+                "distribution coverage is missing for "
+                + "; ".join(sorted(failures))
             )
-        return tuple(reports)
+        return coverages
+
+    def _assess(
+        self, instrument_id: InstrumentId, request_start: int, request_end: int
+    ) -> "_IdCoverage":
+        applicability = self._applicability(instrument_id)
+        coverage_end = request_end
+        if applicability.applicable:
+            coverage_end = self._clamped_to_bar_frontier(
+                instrument_id, start_ns=request_start, end_ns=request_end
+            )
+        return _IdCoverage(
+            instrument_id=instrument_id,
+            applicability=applicability,
+            request_start=request_start,
+            coverage_end=coverage_end,
+        )
+
+    def _gate(
+        self,
+        coverage: "_IdCoverage",
+        provider: DistributionDataProviderPort | None,
+    ) -> str | None:
+        missing = self._missing(
+            coverage.instrument_id, coverage.request_start, coverage.coverage_end
+        )
+        if not missing:
+            return None
+        if not coverage.applicability.applicable:
+            self._write_marker(
+                coverage.instrument_id,
+                start_ns=coverage.request_start,
+                end_ns=coverage.coverage_end,
+                applicable=False,
+                event_count=0,
+            )
+            return None
+        if provider is None:
+            return _gap_message(coverage.instrument_id, missing)
+        for start_ns, end_ns in missing:
+            self._verify_gap(
+                provider,
+                coverage.instrument_id,
+                definition=coverage.applicability.definition,
+                start_ns=start_ns,
+                end_ns=end_ns,
+            )
+        return None
+
+    def _report_row(self, coverage: "_IdCoverage") -> dict[str, Any]:
+        return {
+            "instrument_id": coverage.instrument_id.value,
+            "applicable": coverage.applicability.applicable,
+            "verified_start": _timestamp_text(coverage.request_start),
+            "verified_end": _timestamp_text(coverage.coverage_end),
+            "event_count": self._event_count(
+                coverage.instrument_id,
+                start_ns=coverage.request_start,
+                end_ns=coverage.coverage_end,
+            )
+            if coverage.applicability.applicable
+            else 0,
+            "checked_at": self._checked_at(
+                coverage.instrument_id,
+                start_ns=coverage.request_start,
+                end_ns=coverage.coverage_end,
+            ),
+        }
 
     def force_reverify(
         self,
@@ -406,6 +451,20 @@ class DistributionCoverageService:
         if not checked_at_values:
             return None
         return _timestamp_text(min(checked_at_values))
+
+
+@dataclass(frozen=True)
+class _IdCoverage:
+    """One id's verification answer, computed once per pass.
+
+    The single-pass primitive behind gating and reporting: applicability and
+    the bar-frontier clamp are assessed here and reused, never recomputed.
+    """
+
+    instrument_id: InstrumentId
+    applicability: "_Applicability"
+    request_start: int
+    coverage_end: int
 
 
 @dataclass(frozen=True)

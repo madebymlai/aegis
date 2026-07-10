@@ -43,6 +43,16 @@ class GapFillProviderError(RuntimeError):
     """
 
 
+class MissingCatalogDefinitionsError(ValueError):
+    """A window read requested ids with no stored catalog definition.
+
+    An authoring error, never environmental: it names every missing id at
+    once and is deliberately NOT the runtime currency package's
+    missing-definition error — consumers must not collapse it into
+    unavailability (ADR-0011/0012).
+    """
+
+
 class ContinuousRootLegsNotFoundError(ValueError):
     """The catalog has no dated legs for a requested continuous root."""
 
@@ -104,6 +114,22 @@ class RawBarRequest:
     start: str
     end: str
     timeframe: str = "1D"
+
+
+@dataclass(frozen=True)
+class CatalogWindow:
+    """One coherent catalog read: the requested window's run-constant facts (ADR-0012).
+
+    OHLCV per requested id, the complete definitions (guaranteed — the read
+    fails loud naming every missing id before any verification runs), the
+    verified distributions, and the distribution coverage report (defaulted so
+    consumers that never read it never mention it).
+    """
+
+    ohlcv: dict[InstrumentId, pd.DataFrame]
+    instruments: dict[InstrumentId, "Instrument"]
+    distributions: tuple[Distribution, ...]
+    distribution_coverage: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -173,6 +199,50 @@ class CatalogBackedDataPort:
     # in without reshaping the port.
     resolver: RawBarTypeResolver = DeclaredMarkingResolver()
 
+    def load_window(self, request: RawBarRequest) -> CatalogWindow:
+        """One coherent read of the requested window (ADR-0012).
+
+        The internal ordering is contract, not style: the bar coverage-gate /
+        lazy-fill pass runs FIRST (a fill's Step-1 write may seed the very
+        definition completeness needs), definition completeness is judged
+        BEFORE distribution verification (a missing definition is an authoring
+        fault and must never surface as the environmental coverage-gap error),
+        and ONE verification pass serves both the returned distributions and
+        the coverage report.
+        """
+        ohlcv = self.load_raw_bars(request)
+        instruments = self._complete_definitions(request.instrument_ids)
+        distribution_coverage = self._coverage_service().verify_window(
+            request.instrument_ids, start=request.start, end=request.end
+        )
+        return CatalogWindow(
+            ohlcv=ohlcv,
+            instruments=instruments,
+            distributions=query_distribution_data(
+                self.catalog,
+                request.instrument_ids,
+                start=request.start,
+                end=request.end,
+            ),
+            distribution_coverage=distribution_coverage,
+        )
+
+    def _complete_definitions(
+        self, instrument_ids: tuple[InstrumentId, ...]
+    ) -> dict[InstrumentId, Instrument]:
+        definitions = catalog_definitions(self.catalog, instrument_ids)
+        missing = [
+            instrument_id.value
+            for instrument_id in instrument_ids
+            if instrument_id not in definitions
+        ]
+        if missing:
+            raise MissingCatalogDefinitionsError(
+                "the catalog window needs a stored definition for every requested "
+                f"id, but the catalog is missing: {sorted(missing)}"
+            )
+        return definitions
+
     def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
         frames: dict[InstrumentId, pd.DataFrame] = {}
         for instrument_id in request.instrument_ids:
@@ -187,6 +257,31 @@ class CatalogBackedDataPort:
                     for bar_type in marking.mark_bars
                 }
             )
+        return frames
+
+    def load_quote_frames(
+        self, request: RawBarRequest
+    ) -> dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]]:
+        """The ``(bid, ask)`` OHLCV frames for the quote-marked legs in *request*.
+
+        The research fill projection's feed: a quote-marked instrument's two
+        sided series, coverage-gated like ``load_raw_bars``; bar-marked legs
+        are simply absent.  Live never reads this — the fill projection is
+        derived research-side and never serialized (aegis-rd-tggo.5).
+        """
+        frames: dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = {}
+        for instrument_id in request.instrument_ids:
+            marking = self.resolver.resolve(instrument_id, request.timeframe)
+            for bar_type in marking.mark_bars:
+                self._ensure_covered(bar_type, request)
+            sided = marking.quote_ohlcv_frames(
+                {
+                    bar_type: self._query_bars(bar_type, request)
+                    for bar_type in marking.mark_bars
+                }
+            )
+            if sided is not None:
+                frames[instrument_id] = sided
         return frames
 
     def read_native_bars(self, request: RawBarRequest) -> dict[InstrumentId, list[Bar]]:
@@ -478,11 +573,13 @@ def _bar_cls() -> type:
 __all__ = [
     "CatalogBackedDataPort",
     "CatalogCoverageGapError",
+    "CatalogWindow",
     "ContinuousRootLegsNotFoundError",
     "ContinuousRootVenueMismatchError",
     "Distribution",
     "DistributionDataProviderPort",
     "GapFillProviderError",
+    "MissingCatalogDefinitionsError",
     "NautilusDataProviderPort",
     "RawBarRequest",
     "ResolvedContinuousRoot",
