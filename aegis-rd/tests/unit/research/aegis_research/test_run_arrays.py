@@ -33,7 +33,11 @@ _PNL_OPEN = [10.5, 20.5, 30.5]
 
 
 class _Native:
-    """Feature-keyed stand-in for a loaded source: ``get(feature=...)`` returns the panel."""
+    """Stand-in for a loaded source: ``get(feature=...)`` returns the named Array's frame.
+
+    The ``feature`` kwarg mirrors the real accessor's signature; the minted noun
+    for what it returns is Array.
+    """
 
     def __init__(self, frames: dict[str, pd.DataFrame]) -> None:
         self._frames = frames
@@ -98,18 +102,16 @@ def test_dual_series_conversion_applies_to_both_views() -> None:
 
 
 def test_the_same_conversion_produced_both_views() -> None:
-    # FX-equivalence: dividing each converted view by its native prices must
-    # recover one and the same rate series — the coherence claim on the value.
+    # FX-equivalence: one non-constant rate series ([1.1, 1.2, 1.3]) applied to
+    # both native views (signal [1, 2, 3]; pnl [10, 20, 30]) — the coherence
+    # claim on the value, pinned as literal per-bar products.
     rate = pd.Series([1.1, 1.2, 1.3], index=_INDEX)
     conversion = CurrencyConversion(rate_by_instrument={_AAPL: rate})
 
     arrays = prepare_run_arrays(_dual_result(currency_conversion=conversion))
 
-    signal_rate = arrays.signal.array("Close")[_AAPL] / pd.Series(
-        _SIGNAL_CLOSE, index=_INDEX
-    )
-    pnl_rate = arrays.pnl_close[_AAPL] / pd.Series(_PNL_CLOSE, index=_INDEX)
-    pd.testing.assert_series_equal(signal_rate, pnl_rate, check_names=False)
+    pd.testing.assert_frame_equal(arrays.signal.array("Close"), _frame([1.1, 2.4, 3.9]))
+    pd.testing.assert_frame_equal(arrays.pnl_close, _frame([11.0, 24.0, 39.0]))
 
 
 def test_pnl_calendar_with_divergent_values_fails_construction() -> None:
@@ -143,8 +145,8 @@ def test_pnl_calendar_out_of_order_fails_construction() -> None:
 
     error = excinfo.value
     assert error.array_name == "Close"
-    assert error.first_divergent == (str(_INDEX[0]), str(_INDEX[-1]))
-    assert error.last_divergent == (str(_INDEX[-1]), str(_INDEX[0]))
+    assert error.first_divergent == ("2024-01-01 00:00:00", "2024-01-03 00:00:00")
+    assert error.last_divergent == ("2024-01-03 00:00:00", "2024-01-01 00:00:00")
 
 
 def test_pnl_calendar_with_missing_rows_fails_construction() -> None:

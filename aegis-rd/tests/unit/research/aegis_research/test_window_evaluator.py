@@ -170,22 +170,23 @@ def test_evaluate_slices_windows_and_delegates_for_a_partly_invalid_chunk() -> N
     assert result is vbt.NoResult
 
 
-def test_dual_series_signal_drives_simulate_and_pnl_prices_the_portfolio() -> None:
-    """The regression net for the mixed-view bug (aegis-rd-cyms.3).
+# The regression net for the mixed-view bug (aegis-rd-cyms.3). On a dual-series
+# Run the strategy's ``simulate`` must receive the SIGNAL view (the frames its
+# indicators were precomputed on), while the portfolio prices P&L exclusively
+# from the P&L view. Before the fix the P&L-adjusted Close leaked into
+# ``simulate`` alongside signal-precomputed indicators. The two views carry
+# deliberately different drifts (1% vs 3%) so routing to the wrong view shows
+# up in total_return, not just in frame identity.
+_DUAL_N = 12
 
-    On a dual-series Run the strategy's ``simulate`` must receive the SIGNAL
-    view (the frames its indicators were precomputed on), while the portfolio
-    prices P&L exclusively from the P&L view. Before the fix the P&L-adjusted
-    Close leaked into ``simulate`` alongside signal-precomputed indicators.
-    """
-    n = 12
-    signal_close = _uptrend_close(n)  # 1% drift
-    index = signal_close.index
-    # Distinguishable P&L view: steeper drift, so pricing on the wrong view
-    # shows up in total_return, not just in frame identity.
-    pnl_levels = 50.0 * (1.03 ** np.arange(n))
-    pnl_close = pd.DataFrame({"SYN": pnl_levels}, index=index)
-    captured: dict[str, pd.DataFrame] = {}
+
+def _dual_series_evaluator(
+    captured: dict[str, pd.DataFrame],
+) -> tuple[WindowEvaluator, pd.DataFrame]:
+    signal_close = _uptrend_close(_DUAL_N)  # 1% drift
+    pnl_close = pd.DataFrame(
+        {"SYN": 50.0 * (1.03 ** np.arange(_DUAL_N))}, index=signal_close.index
+    )
 
     def _capturing_simulate(
         close_window: pd.DataFrame, indicator_window: Any, n_combos: int, **param_lists: Any
@@ -206,21 +207,31 @@ def test_dual_series_signal_drives_simulate_and_pnl_prices_the_portfolio() -> No
         store=empty_precompute(signal_close, 2, alpha=[0.5, 1.0]),
         extractors=dict(make_default_metric_registry().extractors),
     )
+    return evaluator, signal_close
 
-    frame = evaluator.evaluate(slice(0, n), alpha=[0.5, 1.0])
+
+def test_dual_series_simulate_receives_the_signal_view() -> None:
+    captured: dict[str, pd.DataFrame] = {}
+    evaluator, signal_close = _dual_series_evaluator(captured)
+
+    evaluator.evaluate(slice(0, _DUAL_N), alpha=[0.5, 1.0])
 
     # The strategy allocated from the signal view — the same frames its
     # indicators were precomputed on — not the P&L view.
     pd.testing.assert_frame_equal(captured["close_window"], signal_close)
-    # The portfolio priced P&L from the P&L view: full exposure earns the P&L
-    # series' return, not the signal series'. total_return is in percent.
-    pnl_return_pct = (pnl_levels[-1] / pnl_levels[0] - 1.0) * 100.0
-    signal_return_pct = (
-        signal_close.iloc[-1, 0] / signal_close.iloc[0, 0] - 1.0
-    ) * 100.0
+
+
+def test_dual_series_portfolio_prices_from_the_pnl_view() -> None:
+    captured: dict[str, pd.DataFrame] = {}
+    evaluator, _ = _dual_series_evaluator(captured)
+
+    frame = evaluator.evaluate(slice(0, _DUAL_N), alpha=[0.5, 1.0])
+
+    # Full exposure over 11 bars of the P&L series' 3% drift: 1.03**11 - 1,
+    # in percent — not the signal series' 1% drift (1.01**11 - 1 = 11.5668...%).
     total_return = frame.loc[(1.0,), "total_return"]
-    assert total_return == pytest.approx(pnl_return_pct, rel=1e-9)
-    assert total_return != pytest.approx(signal_return_pct, rel=1e-3)
+    assert total_return == pytest.approx(38.423387072444605)
+    assert total_return != pytest.approx(11.566834674911724, rel=1e-3)
 
 
 def test_evaluate_returns_no_result_for_empty_allocations() -> None:
