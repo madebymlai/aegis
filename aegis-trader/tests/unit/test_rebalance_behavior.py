@@ -319,27 +319,52 @@ def test_higher_vol_sleeve_is_scaled_down_before_netting() -> None:
     }
 
 
+def test_uncorrelated_sleeves_keep_the_zero_correlation_scale() -> None:
+    low, high = SleeveName("low"), SleeveName("high")
+    uncorrelated = {
+        low: {low: 0.01, high: 0.0},
+        high: {low: 0.0, high: 0.01},
+    }
+    harness = build_harness(
+        [
+            SleeveSpec("low", 0.5, {"LOW": 1.0}),
+            SleeveSpec("high", 0.5, {"HIGH": 1.0}),
+        ],
+        ledger=StagedLedger(covariances=[uncorrelated]),
+        book_vol_target=0.05,
+    )
+
+    result = harness.run()
+
+    assert signed_order_weights(result) == {
+        "LOW": pytest.approx(0.353553, abs=1e-6),
+        "HIGH": pytest.approx(0.353553, abs=1e-6),
+    }
+
+
 def test_correlated_sleeves_are_scaled_down_harder_than_uncorrelated() -> None:
-    def _covariance(rho: float) -> dict[SleeveName, dict[SleeveName, float]]:
-        low, high = SleeveName("low"), SleeveName("high")
-        return {
-            low: {low: 0.10**2, high: rho * 0.10 * 0.10},
-            high: {low: rho * 0.10 * 0.10, high: 0.10**2},
-        }
+    low, high = SleeveName("low"), SleeveName("high")
+    correlated = {
+        low: {low: 0.01, high: 0.009},
+        high: {low: 0.009, high: 0.01},
+    }
+    harness = build_harness(
+        [
+            SleeveSpec("low", 0.5, {"LOW": 1.0}),
+            SleeveSpec("high", 0.5, {"HIGH": 1.0}),
+        ],
+        ledger=StagedLedger(covariances=[correlated]),
+        book_vol_target=0.05,
+    )
 
-    def _gross(rho: float) -> float:
-        harness = build_harness(
-            [
-                SleeveSpec("low", 0.5, {"LOW": 1.0}),
-                SleeveSpec("high", 0.5, {"HIGH": 1.0}),
-            ],
-            ledger=StagedLedger(covariances=[_covariance(rho)]),
-            book_vol_target=0.05,
-        )
-        return sum(abs(weight) for weight in signed_order_weights(harness.run()).values())
+    result = harness.run()
 
-    assert _gross(0.0) == pytest.approx(0.7071067811865476, abs=1e-6)
-    assert _gross(0.9) == pytest.approx(0.5129891760425771, abs=1e-6)
+    # Correlation 0.9 raises book vol, so each sleeve lands below the 0.353553
+    # the identical uncorrelated staging yields (see the test above).
+    assert signed_order_weights(result) == {
+        "LOW": pytest.approx(0.256495, abs=1e-6),
+        "HIGH": pytest.approx(0.256495, abs=1e-6),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -679,8 +704,10 @@ def test_many_small_drifts_trip_the_aggregate_threshold() -> None:
                 1.0,
                 {"AAA": 0.20, "BBB": 0.20, "CCC": 0.20, "DDD": 0.20},
                 bands={
-                    symbol: DriftBand.symmetric(0.02)
-                    for symbol in ("AAA", "BBB", "CCC", "DDD")
+                    "AAA": DriftBand.symmetric(0.02),
+                    "BBB": DriftBand.symmetric(0.02),
+                    "CCC": DriftBand.symmetric(0.02),
+                    "DDD": DriftBand.symmetric(0.02),
                 },
             )
         ],
@@ -690,7 +717,10 @@ def test_many_small_drifts_trip_the_aggregate_threshold() -> None:
     ).run()
 
     assert signed_order_weights(result) == {
-        symbol: pytest.approx(-0.01) for symbol in ("AAA", "BBB", "CCC", "DDD")
+        "AAA": pytest.approx(-0.01),
+        "BBB": pytest.approx(-0.01),
+        "CCC": pytest.approx(-0.01),
+        "DDD": pytest.approx(-0.01),
     }
 
 
