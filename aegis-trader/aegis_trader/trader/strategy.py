@@ -45,7 +45,7 @@ from nautilus_trader.trading.strategy import Strategy
 
 from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, catalog_root, parquet_data_catalog
-from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 
 from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data import (
@@ -126,7 +126,7 @@ class RebalanceStrategy(Strategy):
         self,
         config: RebalanceStrategyConfig,
         *,
-        bar_type_resolver: RawBarTypeResolver = PreferLastResolver(),
+        bar_type_resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
     ) -> None:
         super().__init__(config)
         # The one raw bar-type resolution seam (aegis-rd-tggo.1): every

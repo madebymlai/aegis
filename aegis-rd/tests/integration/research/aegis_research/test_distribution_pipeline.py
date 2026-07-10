@@ -107,7 +107,7 @@ def _pipeline_total_return(
     monkeypatch.setattr(
         catalog_adapter,
         "catalog_data_port",
-        lambda _path: port,
+        lambda _path, resolver=None: port,
     )
     components = workspace / "research" / "components"
     _write_always_long_strategy(components / "strategies" / "always_long.py")

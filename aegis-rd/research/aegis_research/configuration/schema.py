@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
+from aegis_data.marking import split_mark_token
 from aegis_runtime import DriftBand, ExposureLimits
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -39,6 +40,11 @@ SIGNAL_EXECUTION_TIMINGS = set(get_args(SignalExecutionTiming))
 # VBT's Data.align_index / align_columns contract.
 MissingPolicy = Literal["nan", "drop", "raise"]
 MISSING_POLICIES = set(get_args(MissingPolicy))
+# Declared mark modes (aegis-rd-tggo.2): the closed LAST/MID/QUOTE set, spelled
+# as a token on the tradeable id (``UEQC.IBIS:QUOTE``) and parsed once at
+# config load. aegis-data's marking seam owns the grammar and the resolution.
+MarkModeName = Literal["LAST", "MID", "QUOTE"]
+MARK_MODES = set(get_args(MarkModeName))
 Degradation = Literal[
     "duplicate_index",
     "missing_rows",
@@ -111,6 +117,11 @@ class DataConfig:
     arrays: Annotated[list[ArrayToken], Field(min_length=1)] = field(kw_only=True)
     base_currency: str = "EUR"
     instruments: list[str] = field(default_factory=list)
+    # Parsed mark-mode declarations (aegis-rd-tggo.2): filled from the optional
+    # ``:MODE`` token on ``instruments`` entries (``UEQC.IBIS:QUOTE``), keyed by
+    # the bare id. The token IS the authoring surface — this field is its parsed
+    # form (present so a config lock round-trips), not a second place to declare.
+    mark_modes: dict[str, MarkModeName] = field(default_factory=dict)
     exchange: list[str] = field(default_factory=list)
     # Bare continuous-future root symbols (e.g. ``["ES", "KC"]``), not native ids: each
     # is materialised on demand as an adjusted continuous series (Path A), venue and
@@ -136,8 +147,43 @@ class DataConfig:
     @model_validator(mode="after")
     def _validate_conditional_requireds(self) -> DataConfig:
         """Cross-field requiredness for the native Nautilus catalog contract."""
+        _parse_mark_declarations(self)
         _require_catalog_ids(self)
         return self
+
+
+def _parse_mark_declarations(config: DataConfig) -> None:
+    """Split the optional ``:MODE`` token off each tradeable id (aegis-rd-tggo.2).
+
+    The mark mode is declared at the single point the instrument is named;
+    parsed once here into ``mark_modes`` so every downstream consumer keeps
+    seeing bare native ids.  A token that contradicts an already-recorded mode
+    fails closed; ``exchange`` legs are conversion-only and take no token.
+    """
+    declared: dict[str, str] = dict(config.mark_modes)
+    bare_ids: list[str] = []
+    for value in config.instruments:
+        spelled, mode = split_mark_token(value)
+        bare_ids.append(spelled)
+        if mode is None:
+            continue
+        recorded = declared.get(spelled)
+        if recorded is not None and recorded != mode.value:
+            raise ValueError(
+                f"conflicting mark modes for {spelled!r}: token declares "
+                f"{mode.value}, mark_modes records {recorded}"
+            )
+        declared[spelled] = mode.value
+    for value in config.exchange:
+        _, mode = split_mark_token(value)
+        if mode is not None:
+            raise ValueError(
+                f"exchange legs are conversion-only and take no mark-mode token: {value!r}"
+            )
+    # Frozen pydantic dataclass: the one sanctioned rewrite point, inside its
+    # own validator, before the config is seen anywhere else.
+    object.__setattr__(config, "instruments", bare_ids)
+    object.__setattr__(config, "mark_modes", declared)
 
 
 def _require_catalog_ids(config: DataConfig) -> None:

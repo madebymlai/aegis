@@ -195,7 +195,10 @@ def _render_data_section() -> str:
             "",
             "**`instruments`** — tradeable native Nautilus `InstrumentId` values in execution "
             "column order. These are parsed to `InstrumentId` at the catalog adapter edge and "
-            "remain typed through the runtime bundle.",
+            "remain typed through the runtime bundle. An entry may carry an optional declared "
+            "mark-mode token — `UEQC.IBIS:QUOTE` (quote-marked: BID/ASK bars, derived mid) or "
+            "`:MID` (bar-marked midpoint). Absent, the corpus defaults apply: LAST, with cash "
+            "FX bar-marked MID. Parsed once at config load into `mark_modes`.",
             "",
             "**`exchange`** — optional data-only native `InstrumentId` values requested from "
             "the same catalog/port but never exposed as tradeable bundle columns.",

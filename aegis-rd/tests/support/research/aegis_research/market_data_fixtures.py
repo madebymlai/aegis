@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from aegis_data.catalog import CatalogBackedDataPort, raw_bar_type
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode, RawBarTypeResolver
 from aegis_data.testing import FakeCatalog
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
@@ -230,6 +231,57 @@ def seed_catalog_ohlcv(
     return start_text, end_text
 
 
+def seed_catalog_quote(
+    catalog_path: Path,
+    value: str,
+    *,
+    bid_frame: pd.DataFrame,
+    ask_frame: pd.DataFrame,
+    start: str,
+    end: str,
+    currency: str = "EUR",
+) -> None:
+    """Seed a quote-marked instrument: definition + BID and ASK daily bars.
+
+    The thin-ETF corpus shape (aegis-rd-tggo.2): dense quotes, NO LAST series
+    and NO stored MID bar — the mid is derived at read time by the marking.
+    """
+    catalog_path.mkdir(parents=True, exist_ok=True)
+    catalog = ParquetDataCatalog(catalog_path)
+    current_id = instrument_id(value)
+    resolver = DeclaredMarkingResolver(declared={current_id: MarkMode.QUOTE})
+    bid_type, ask_type = resolver.resolve(current_id, "1D").mark_bars
+    catalog.write_data([equity_definition(current_id, currency)])
+    start_ts = pd.Timestamp(start, tz="UTC")
+    end_ts = pd.Timestamp(end, tz="UTC")
+    for bar_type, frame in ((bid_type, bid_frame), (ask_type, ask_frame)):
+        catalog.write_data(
+            [
+                _bar(
+                    bar_type,
+                    timestamp=timestamp,
+                    open_=row["Open"],
+                    high=row["High"],
+                    low=row["Low"],
+                    close=row["Close"],
+                    volume=row["Volume"],
+                )
+                for timestamp, row in frame.iterrows()
+            ],
+            start=start_ts.value,
+            end=end_ts.value,
+        )
+    mid_close = (bid_frame["Close"] + ask_frame["Close"]) / 2.0
+    _verify_zero_distribution_coverage(
+        catalog,
+        current_id,
+        panels={"Close": pd.DataFrame({current_id: mid_close})},
+        start=start_ts,
+        end=end_ts,
+        resolver=resolver,
+    )
+
+
 def _verify_zero_distribution_coverage(
     catalog: ParquetDataCatalog,
     instrument_id: InstrumentId,
@@ -237,6 +289,7 @@ def _verify_zero_distribution_coverage(
     panels: dict[str, pd.DataFrame],
     start: pd.Timestamp,
     end: pd.Timestamp,
+    resolver: RawBarTypeResolver | None = None,
 ) -> None:
     # ADR-0008: seeded synthetic catalogs must be self-describing for distributions
     # too, so RD integration tests stay warm and never query IBKR for fake symbols.
@@ -246,6 +299,7 @@ def _verify_zero_distribution_coverage(
         catalog,
         distribution_provider=_ZeroDistributionProvider(panels),
         clock_ns=lambda: start.value,
+        resolver=resolver if resolver is not None else DeclaredMarkingResolver(),
     ).distributions((instrument_id,), start=start, end=end)
     assert not events, f"synthetic corpus grew distributions for {instrument_id.value}"
 

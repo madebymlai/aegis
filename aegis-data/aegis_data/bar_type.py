@@ -75,10 +75,23 @@ def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
     corpus key is built, matching the IBKR provider's MIC-pinned definitions and
     fetched bars. ``LAST`` is used for tradeables, ``MID`` for cash FX (ADR-0007).
     """
+    corpus_id = mic_canonical_instrument_id(instrument_id)
+    return external_bar_type(corpus_id, timeframe, _price_type(corpus_id))
+
+
+def external_bar_type(
+    instrument_id: InstrumentId, timeframe: str, price_type: str
+) -> BarType:
+    """The corpus ``EXTERNAL`` ``BarType`` at an explicit price type.
+
+    The pure bar-type builder the marking resolver feeds (ADR-0007 amendment):
+    the price type is decided by the resolved mark mode — LAST/MID bar-marked,
+    BID+ASK for a quote-marked instrument — never re-derived by a consumer.
+    """
     step, unit = _parse(timeframe)
     corpus_id = mic_canonical_instrument_id(instrument_id)
     return BarType.from_str(
-        f"{corpus_id.value}-{step}-{unit}-{_price_type(corpus_id)}-EXTERNAL"
+        f"{corpus_id.value}-{step}-{unit}-{price_type}-EXTERNAL"
     )
 
 
@@ -141,6 +154,7 @@ def timeframe_to_ns(timeframe: str) -> int:
 __all__ = [
     "UnsupportedTimeframeError",
     "continuous_bar_type",
+    "external_bar_type",
     "mic_canonical_instrument_id",
     "raw_bar_type",
     "timeframe_to_ns",

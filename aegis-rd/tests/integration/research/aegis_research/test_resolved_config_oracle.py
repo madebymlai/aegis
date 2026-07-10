@@ -56,9 +56,12 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 # retired VBT-loader knobs (missing_columns, tz_localize, tz_convert,
 # skip_on_error, silence_warnings) left DataConfig, so the resolved document
 # shrank — a recorded reset, one bump.
+# Re-pinned 2026-07-10 for the declared mark mode (aegis-rd-tggo.2): DataConfig
+# grew ``mark_modes``, the parsed form of the ``:MODE`` token on tradeable ids
+# (``UEQC.IBIS:QUOTE``), so the resolved document carries the declaration.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "1f182e724b978bc9d88671a0b4bcb54da7d6c1d0a54c3339f4e11549e1c142e6",
-    "int_valued_caps": "0ce2826cd6ad1dfc82fb544d1ccb63aa36b11f2ee5f3391a2f2bd6c7c7ac5c38",
+    "canonical_grid": "3c9f40558a9f695a660323d7120a8dd9a58efa83230581c2c6c630afd544bc2b",
+    "int_valued_caps": "383fc2084f8be530b724357d3273863036af4baa655646edd1ad136719899959",
 }
 
 

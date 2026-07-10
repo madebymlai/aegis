@@ -57,6 +57,7 @@
         "XLE.XNAS",
         "XLU.XNAS"
       ],
+      "mark_modes": {},
       "missing_index": "raise",
       "path": "catalog",
       "quality": {
@@ -150,7 +151,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "5f867f897bf67ba4d2d16c6c8cfa5fd6457a0fd339d3cb9dca77ff5e39f8fa34",
+      "resolved_config_hash": "4d687570f8073749e96de1f3072f5a8af2b3f0d4df5dc05b824ecc3e45e6243e",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",

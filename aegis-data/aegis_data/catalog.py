@@ -15,7 +15,8 @@ from platformdirs import user_data_dir
 
 from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
 from aegis_data.distributions import Distribution, query_distribution_data
-from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
+from aegis_data.ohlcv import bars_to_ohlcv
 from aegis_data.roll import DatedContract
 
 if TYPE_CHECKING:
@@ -167,19 +168,26 @@ class CatalogBackedDataPort:
     # dependency, so deterministic callers cross this seam instead of building
     # the coverage service themselves.
     clock_ns: Callable[[], int] = _now_ns
-    # The one raw bar-type resolution seam (aegis-rd-tggo.1): every mark/fill
+    # The one raw bar-type resolution seam (aegis-rd-tggo): every mark/fill
     # read resolves its bar identity here, so a different marking policy plugs
     # in without reshaping the port.
-    resolver: RawBarTypeResolver = PreferLastResolver()
+    resolver: RawBarTypeResolver = DeclaredMarkingResolver()
 
     def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
+        frames: dict[InstrumentId, pd.DataFrame] = {}
         for instrument_id in request.instrument_ids:
-            for bar_type in self._mark_bars(instrument_id, request.timeframe):
+            marking = self.resolver.resolve(instrument_id, request.timeframe)
+            for bar_type in marking.mark_bars:
                 self._ensure_covered(bar_type, request)
-        return {
-            instrument_id: bars_to_ohlcv(bars)
-            for instrument_id, bars in self.read_native_bars(request).items()
-        }
+            # The marking owns the frame projection: a bar-marked instrument's
+            # own OHLCV, a quote-marked instrument's derived bid/ask mid.
+            frames[instrument_id] = marking.ohlcv_frame(
+                {
+                    bar_type: self._query_bars(bar_type, request)
+                    for bar_type in marking.mark_bars
+                }
+            )
+        return frames
 
     def read_native_bars(self, request: RawBarRequest) -> dict[InstrumentId, list[Bar]]:
         """The window's stored native ``Bar``\\ s per instrument — a pure warm read.
@@ -191,19 +199,23 @@ class CatalogBackedDataPort:
         past an instrument's life yields only the bars that exist, not a coverage error.
         """
         return {
-            instrument_id: list(
-                self.catalog.query(
-                    _bar_cls(),
-                    identifiers=[
-                        str(bar_type)
-                        for bar_type in self._mark_bars(instrument_id, request.timeframe)
-                    ],
-                    start=request.start,
-                    end=request.end,
-                )
-            )
+            instrument_id: [
+                bar
+                for bar_type in self._mark_bars(instrument_id, request.timeframe)
+                for bar in self._query_bars(bar_type, request)
+            ]
             for instrument_id in request.instrument_ids
         }
+
+    def _query_bars(self, bar_type: BarType, request: RawBarRequest) -> list[Bar]:
+        return list(
+            self.catalog.query(
+                _bar_cls(),
+                identifiers=[str(bar_type)],
+                start=request.start,
+                end=request.end,
+            )
+        )
 
     def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
         return self.resolver.resolve(instrument_id, timeframe).mark_bars
@@ -376,7 +388,11 @@ def parquet_data_catalog(path: str | Path | None = None) -> Any:
     return ParquetDataCatalog(root)
 
 
-def catalog_data_port(path: str | Path | None = None) -> CatalogBackedDataPort:
+def catalog_data_port(
+    path: str | Path | None = None,
+    *,
+    resolver: RawBarTypeResolver | None = None,
+) -> CatalogBackedDataPort:
     """The standard catalog-backed data port (ADR-0006/0008).
 
     Composition lives here — in the package that owns both the port *and* the IBKR
@@ -400,6 +416,7 @@ def catalog_data_port(path: str | Path | None = None) -> CatalogBackedDataPort:
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
+        resolver=resolver if resolver is not None else DeclaredMarkingResolver(),
     )
 
 
@@ -456,28 +473,6 @@ def _bar_cls() -> type:
     from nautilus_trader.model.data import Bar
 
     return Bar
-
-
-def bars_to_ohlcv(bars: Sequence[Any]) -> pd.DataFrame:
-    """Project native ``Bar``\\ s into the corpus OHLCV frame (UTC-naive index, float
-    columns).  The single home for the Bar→OHLCV column shape, shared by the port's
-    ``load_raw_bars`` and the continuous-future composer."""
-    rows: dict[str, list[float]] = {
-        "Open": [],
-        "High": [],
-        "Low": [],
-        "Close": [],
-        "Volume": [],
-    }
-    index: list[pd.Timestamp] = []
-    for bar in bars:
-        index.append(pd.Timestamp(bar.ts_event, tz="UTC").tz_localize(None))
-        rows["Open"].append(float(bar.open.as_double()))
-        rows["High"].append(float(bar.high.as_double()))
-        rows["Low"].append(float(bar.low.as_double()))
-        rows["Close"].append(float(bar.close.as_double()))
-        rows["Volume"].append(float(bar.volume.as_double()))
-    return pd.DataFrame(rows, index=pd.DatetimeIndex(index)).sort_index()
 
 
 __all__ = [

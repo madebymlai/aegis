@@ -26,7 +26,7 @@ from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.risk.config import RiskEngineConfig
 
-from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     NautilusDataProviderPort,
@@ -215,7 +215,7 @@ def run_book_backtest(
     )
     # The one raw bar-type resolution seam (aegis-rd-tggo.1), shared by the
     # wrangler, the equity recorder, and the strategy so they name identical bars.
-    resolver = PreferLastResolver()
+    resolver = DeclaredMarkingResolver()
     _add_instruments_and_bars(
         engine,
         market_data=market_data,

@@ -11,7 +11,7 @@ from nautilus_trader.model.objects import Quantity
 
 from aegis_data.rebasing import spread_rebasing
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.marking import PreferLastResolver
+from aegis_data.marking import DeclaredMarkingResolver
 from aegis_trader.domain.roll import (
     Halt,
     RequestBars,
@@ -46,7 +46,7 @@ class _RelayHarness:
     _mark_bars: Any = RebalanceStrategy._mark_bars
 
     def __init__(self) -> None:
-        self._bar_type_resolver = PreferLastResolver()
+        self._bar_type_resolver = DeclaredMarkingResolver()
         self.applied: list[tuple[str, object]] = []
         self._pipeline = _FakePipeline(self.applied)
         self._startup_result: StartupResult | None = None

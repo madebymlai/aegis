@@ -21,7 +21,7 @@ from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Currency, Quantity
-from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_trader.domain.sizing import InstrumentSizing
 
 
@@ -123,7 +123,7 @@ class NautilusMarketData:
         *,
         cache: CacheFacade,
         continuous: ContinuousReadPort | None = None,
-        resolver: RawBarTypeResolver = PreferLastResolver(),
+        resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
     ) -> None:
         self._cache = cache
         self._continuous = continuous

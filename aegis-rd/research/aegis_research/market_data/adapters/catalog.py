@@ -15,6 +15,7 @@ from aegis_data.catalog import (
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.distributions import Distribution
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_runtime.currency import (
     CurrencyConversion,
     MissingInstrumentDefinitionError,
@@ -57,11 +58,30 @@ def load_catalog_source(
     # (Data ADR-0011) become the RD unavailability error the orchestrator
     # collapses into failure Evidence; authoring errors (missing definitions,
     # root collisions, missing window edges) keep propagating.
-    data_port = port if port is not None else catalog_data_port(config.path)
+    data_port = (
+        port
+        if port is not None
+        else catalog_data_port(config.path, resolver=_declared_resolver(config))
+    )
     try:
         return _load_from_port(data_port, config)
     except (CatalogCoverageGapError, GapFillProviderError) as error:
         raise MarketDataUnavailableError(str(error)) from error
+
+
+def _declared_resolver(config: DataConfig) -> DeclaredMarkingResolver:
+    """The config's parsed mark declarations as the port's marking resolver.
+
+    One resolution per run: the declared token (parsed at config load) decides
+    each tradeable's mark bars; undeclared legs keep the corpus defaults (LAST;
+    cash FX bar-marked MID).
+    """
+    return DeclaredMarkingResolver(
+        declared={
+            InstrumentId.from_str(instrument_id): MarkMode(mode)
+            for instrument_id, mode in config.mark_modes.items()
+        }
+    )
 
 
 def _load_from_port(

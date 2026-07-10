@@ -33,6 +33,7 @@ from aegis_data.distributions import (
     write_distribution_data,
 )
 from aegis_data.ibkr import IbkrRequestError
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.roll import DatedContract
 from aegis_data.testing import FakeCatalog, bars, future
 
@@ -242,6 +243,85 @@ def test_catalog_port_backfills_missing_tail_with_update_catalog(tmp_path: Path)
     assert first[instrument_id]["Close"].tolist() == [10.0, 11.0]
     assert second[instrument_id]["Close"].tolist() == [10.0, 11.0]
     assert provider.requests == [bar_type]
+
+
+def test_catalog_port_serves_a_quote_marked_instrument_as_the_derived_mid(
+    tmp_path: Path,
+) -> None:
+    """A declared-QUOTE instrument loads the mid derived from its stored BID/ASK
+    bars — no MID-EXTERNAL series exists anywhere in the read (aegis-rd-tggo.2)."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("UEQC.XETR")
+    resolver = DeclaredMarkingResolver(declared={instrument_id: MarkMode.QUOTE})
+    bid_type, ask_type = resolver.resolve(instrument_id, "1D").mark_bars
+    _write_span(
+        catalog,
+        [_bar(bid_type, "2024-01-01", 100.0), _bar(ask_type, "2024-01-01", 101.0)],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    provider = _ProviderPort([])
+    port = CatalogBackedDataPort(catalog, provider=provider, resolver=resolver)
+
+    frames = port.load_raw_bars(
+        RawBarRequest(
+            instrument_ids=(instrument_id,),
+            start="2024-01-01",
+            end="2024-01-02",
+        )
+    )
+
+    assert frames[instrument_id]["Close"].tolist() == [100.5]
+    assert provider.requests == []
+
+
+def test_catalog_port_cold_fills_a_quote_marked_instrument_from_bid_and_ask(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("UEQC.XETR")
+    resolver = DeclaredMarkingResolver(declared={instrument_id: MarkMode.QUOTE})
+    bid_type, ask_type = resolver.resolve(instrument_id, "1D").mark_bars
+    provider = _QuoteProviderPort(
+        {
+            bid_type: [_bar(bid_type, "2024-01-01", 100.0)],
+            ask_type: [_bar(ask_type, "2024-01-01", 101.0)],
+        }
+    )
+    port = CatalogBackedDataPort(catalog, provider=provider, resolver=resolver)
+
+    frames = port.load_raw_bars(
+        RawBarRequest(
+            instrument_ids=(instrument_id,),
+            start="2024-01-01",
+            end="2024-01-02",
+        )
+    )
+
+    assert frames[instrument_id]["Close"].tolist() == [100.5]
+    assert provider.requests == [bid_type, ask_type]
+
+
+class _QuoteProviderPort:
+    """Provider fake serving distinct bars per requested bar type."""
+
+    def __init__(self, bars_by_type: dict[BarType, list[Bar]]) -> None:
+        self.bars_by_type = bars_by_type
+        self.requests: list[BarType] = []
+
+    def request_bars(
+        self,
+        bar_type: BarType,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> ServedBars:
+        self.requests.append(bar_type)
+        return ServedBars(tuple(self.bars_by_type[bar_type]), start)
 
 
 def test_catalog_data_port_factory_wires_fill_and_definition_seeder(tmp_path: Path) -> None:

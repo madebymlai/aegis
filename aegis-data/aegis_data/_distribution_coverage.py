@@ -16,11 +16,10 @@ from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import FuturesContract
 
-from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.catalog import (
     CatalogCoverageGapError,
     DistributionDataProviderPort,
-    bars_to_ohlcv,
     catalog_definitions,
     continuous_root_legs,
     gap_fill_boundary,
@@ -53,7 +52,7 @@ class DistributionCoverageService:
     catalog: Any
     provider: DistributionDataProviderPort | None = None
     clock_ns: Callable[[], int] = field(kw_only=True)
-    resolver: RawBarTypeResolver = field(kw_only=True, default=PreferLastResolver())
+    resolver: RawBarTypeResolver = field(kw_only=True, default=DeclaredMarkingResolver())
 
     def ensure_covered(
         self,
@@ -284,8 +283,16 @@ class DistributionCoverageService:
         start_ns: int,
         end_ns: int,
     ) -> pd.Series:
-        bars = self._bars(instrument_id, start_ns, end_ns)
-        return bars_to_ohlcv(bars)["Close"]
+        # The marking owns the close projection: a bar-marked instrument's own
+        # closes, a quote-marked instrument's derived bid/ask mid — the same
+        # series the corpus serves, so decode compares like with like.
+        marking = self.resolver.resolve(instrument_id, "1D")
+        return marking.ohlcv_frame(
+            {
+                bar_type: self._bars_for(bar_type, start_ns, end_ns)
+                for bar_type in marking.mark_bars
+            }
+        )["Close"]
 
     def _clamped_to_bar_frontier(
         self,
@@ -306,15 +313,19 @@ class DistributionCoverageService:
         start_ns: int,
         end_ns: int,
     ) -> list[Any]:
+        return [
+            bar
+            for bar_type in self.resolver.resolve(instrument_id, "1D").mark_bars
+            for bar in self._bars_for(bar_type, start_ns, end_ns)
+        ]
+
+    def _bars_for(self, bar_type: Any, start_ns: int, end_ns: int) -> list[Any]:
         from nautilus_trader.model.data import Bar
 
         return list(
             self.catalog.query(
                 Bar,
-                identifiers=[
-                    str(bar_type)
-                    for bar_type in self.resolver.resolve(instrument_id, "1D").mark_bars
-                ],
+                identifiers=[str(bar_type)],
                 start=start_ns,
                 end=end_ns,
             )

@@ -15,7 +15,7 @@ from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.wranglers import BarDataWrangler
 
-from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 
 _FX_PRICE_PRECISION = 5
 _FX_SIZE = 1_000_000
@@ -26,7 +26,7 @@ def wrangle_bars(
     ohlcv: pd.DataFrame,
     timeframe: str,
     *,
-    resolver: RawBarTypeResolver = PreferLastResolver(),
+    resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
 ) -> list[Bar]:
     """Wrangle an OHLCV frame into the instrument's ``Bar`` list at *timeframe*.
 
