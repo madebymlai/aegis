@@ -50,7 +50,6 @@ from research.aegis_research.optimization.source import (
     OptimizationSource,
 )
 from research.aegis_research.optimization.window_evaluator import WindowEvaluator
-from research.aegis_research.portfolios import count_non_executable_rows
 from research.aegis_research.resolved_book import ResolvedBook
 from research.aegis_research.run_splits import (
     HELD_OUT_SET,
@@ -139,9 +138,10 @@ def execute_optimization(
     param_names = selection_grid.param_levels
     # The seam cost of the Split structure: a pure function of window geometry
     # and the loaded-data calendar, independent of which candidates ran and of
-    # how the sweep was chunked.
+    # how the sweep was chunked. Which calendar governs is the evaluator's
+    # knowledge; the runner contributes only the run's window structure.
     non_executable_rows = sum(
-        count_non_executable_rows(window_index, arrays.signal.array("Close").index)
+        evaluator.non_executable_rows(window_index)
         for split in split_result.splits
         for window_index in (split.selection_index, split.held_out_index)
     )

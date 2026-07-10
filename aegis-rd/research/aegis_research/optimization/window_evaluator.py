@@ -4,9 +4,11 @@ A :class:`WindowEvaluator` carries everything one optimization sweep needs that
 is constant across windows — the signal-side source, the ResolvedBook the
 simulation trades under, the report config, the full-series price frames, the
 precomputed indicator store (which answers its own Invalid-Candidate set), and
-the metric extractors — and exposes a single ``evaluate(range_, **params)``
-that the splitter calls once per (split, set) with the window's ``range_``
-template and a chunk of Candidate parameter lists.
+the metric extractors — and exposes ``evaluate(range_, **params)``, which the
+splitter calls once per (split, set) with the window's ``range_`` template and
+a chunk of Candidate parameter lists, plus the seam-cost query
+``non_executable_rows(window_index)`` answered against the same market
+calendar the simulation masks by.
 
 Pulling this coordination out of the sweep closure gives it a seam: a chunk can
 be evaluated directly, so the range/key slicing and the all-Invalid short-circuit
@@ -35,7 +37,10 @@ from research.aegis_research.optimization.precompute import (
     candidate_keys,
 )
 from research.aegis_research.optimization.source import OptimizationSource
-from research.aegis_research.portfolios import simulate_portfolio_batch
+from research.aegis_research.portfolios import (
+    count_non_executable_rows,
+    simulate_portfolio_batch,
+)
 from research.aegis_research.resolved_book import ResolvedBook
 
 
@@ -86,6 +91,19 @@ class WindowEvaluator:
             allocations,
             metric_keys,
             param_names,
+        )
+
+    def non_executable_rows(self, window_index: pd.Index) -> int:
+        """The seam cost of one window: rows held (non-executable) under next-open rules.
+
+        Pure index geometry against the market calendar the evaluator already
+        owns — the full signal calendar, the same one the simulation masks
+        gap rows by — independent of allocation values and of how the sweep
+        was chunked. Raises ``ValueError`` if the calendar does not contain
+        every window row.
+        """
+        return count_non_executable_rows(
+            window_index, self.arrays.signal.array("Close").index
         )
 
     def _metrics_from_allocations(
