@@ -54,19 +54,6 @@ class DistributionCoverageService:
     clock_ns: Callable[[], int] = field(kw_only=True)
     resolver: RawBarTypeResolver = field(kw_only=True, default=DeclaredMarkingResolver())
 
-    def ensure_covered(
-        self,
-        instrument_ids: tuple[InstrumentId, ...],
-        *,
-        start: str | int | pd.Timestamp | None,
-        end: str | int | pd.Timestamp | None,
-    ) -> None:
-        if start is None or end is None:
-            raise CatalogCoverageGapError(
-                "distribution coverage verification requires a bounded start and end"
-            )
-        self._gate_all(instrument_ids, _timestamp_ns(start), _timestamp_ns(end))
-
     def coverage_report(
         self,
         instrument_ids: tuple[InstrumentId, ...],
