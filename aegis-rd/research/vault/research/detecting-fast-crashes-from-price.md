@@ -4,20 +4,15 @@ date: 2026-06-10
 topic: crisis-detection
 distilled-into:
 tags:
-  - note
-  - crisis-detection
-  - volatility
+  - article
 ---
 
 # Detecting Fast Crashes from Price
 
-> [!note] Status
-> Settled negative result, demoted from `research/` on 2026-07-10. The question this note answers - can a daily-computable signal fire early enough in a fast crash to act on? - was tested and closed: the flagship in-bar triggers (Yang-Zhang throttle, overnight gap) fired post-shock on the episodes that matter, so fast-crash coverage routes to *bought* gamma, not detection. That verdict lives in the surviving articles; this note is kept as the measured wall - the sourced argument any future crash-trigger proposal must climb before being re-run.
-
 > [!abstract] One-line takeaway
-> No daily signal *predicts* a fast V-shaped crash; the fastest honest signals live inside the daily bar - a Yang-Zhang range volatility and the raw overnight gap react a day or more before close-to-close vol and weeks before a 252-day trend - so the realistic edge is a *coincident* throttle that fires on day 0-1 of the shock, and the binding design constraint is the false-positive bill in calm years, with de-risking to cash better evidenced than rotating to a haven. Tested, the ceiling held: the flagship in-bar triggers fired post-shock on the episodes that matter, which routes fast-crash coverage to *bought* gamma (a tail sleeve) rather than detection - this note is the measured wall any future crash-trigger proposal must climb.
+> No daily signal *predicts* a fast V-shaped crash; the fastest honest signals live inside the daily bar - a Yang-Zhang range volatility and the raw overnight gap react a day or more before close-to-close vol and weeks before a 252-day trend - so the realistic edge is a *coincident* throttle that fires on day 0-1 of the shock, and the binding design constraint is the false-positive bill in calm years, with de-risking to cash better evidenced than rotating to a haven. Tested, the ceiling held: the flagship in-bar triggers fired post-shock on the episodes that matter, which routes fast-crash coverage to *bought* gamma (a tail sleeve) rather than detection - this article is the measured wall any future crash-trigger proposal must climb.
 
-A slow trend book is a *sustained-bear* instrument: a long-lookback core, sometimes with a haven leg, that harvests grinds like 2022. Its structural hole is the fast V-shaped shock. 2018 is the reference case - a year that stacked two fast reversals (February's volatility-ETP unwind, the Q4 selloff) on a rate shock where every major haven except the dollar fell,[^bespoke] so a slow core that entered the year long from 2017's melt-up was whipsawed before it could turn, and a haven rotation had nothing trending to rotate into. The question this note settles is narrow and falsifiable: is there a *daily-computable* signal that fires early enough in such a shock to cut the loss, and if so, what does "early" actually buy against a 252-day trend that lags by weeks?
+A slow trend book is a *sustained-bear* instrument: a long-lookback core, sometimes with a haven leg, that harvests grinds like 2022. Its structural hole is the fast V-shaped shock. 2018 is the reference case - a year that stacked two fast reversals (February's volatility-ETP unwind, the Q4 selloff) on a rate shock where every major haven except the dollar fell,[^bespoke] so a slow core that entered the year long from 2017's melt-up was whipsawed before it could turn, and a haven rotation had nothing trending to rotate into. The question this article settles is narrow and falsifiable: is there a *daily-computable* signal that fires early enough in such a shock to cut the loss, and if so, what does "early" actually buy against a 252-day trend that lags by weeks?
 
 The answer is sobering but usable. The early-warning literature, read honestly, says nothing on a daily horizon *predicts* a fast crash. What the data does allow is *faster detection* - and the speed gradient is real: the overnight gap and the daily high-low range register a shock before the day's close does, and any of these beats a 252-day trend by weeks. The edge on offer is reaction latency, not prediction, and the cleanest place to harvest latency is the open-high-low-close-volume bar itself.
 
@@ -25,7 +20,7 @@ The answer is sobering but usable. The early-warning literature, read honestly, 
 
 The cleanest test of the whole early-warning paradigm is Guttal and co-authors, who run the standard instability indicators across 115 years of the Dow and multiple indices.[^guttal] Their result is two-edged and decisive. Rising *variance* is a genuine leading signal: it preceded every major crash in the sample by at least three months with no false negatives. But it threw seven false alarms, and - critically - it "does not forecast *when* a crash might occur." The companion critical-slowing-down indicator (rising lag-1 autocorrelation), which works for ecological and climate tipping points, shows no usable trend before financial crashes; the authors conclude meltdowns are not forecastable critical transitions but stochastic shocks. The lesson transfers directly: a price-only signal that *leads* (rising variance) cannot time the crash and fires often and wrong, while a signal precise enough to act on does not lead. This is the same trap the whipsaw article found for regime filters - lagging, overfit, and whipsaw-prone - now shown to be a property of the price series itself.[^whipsaw]
 
-That sets the ceiling. The realistic goal is not to predict the crash but to *react inside it faster than a 252-day trend does*, and to pay an acceptable false-positive cost for that speed. The rest of this note is a speed ranking of the signals a daily bar can produce, from the fastest (inside-the-bar range and gap) to the slowest.
+That sets the ceiling. The realistic goal is not to predict the crash but to *react inside it faster than a 252-day trend does*, and to pay an acceptable false-positive cost for that speed. The rest of this article is a speed ranking of the signals a daily bar can produce, from the fastest (inside-the-bar range and gap) to the slowest.
 
 ## The fastest signals are inside the bar: range and gap
 

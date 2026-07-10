@@ -4,15 +4,10 @@ date: "2026-06-13"
 topic: strategy-taxonomy
 distilled-into:
 tags:
-  - note
-  - strategy-taxonomy
-  - reversal
+  - article
 ---
 
 # Short-Horizon Reversal in Small Cross-Sections
-
-> [!note] Status
-> Settled negative result, demoted from `research/` on 2026-07-10. Reversal was evaluated as the second candidate mechanism for the floor's concave pole and rejected on this book twice over (2026-06-13 diagnostics): the stream has the concave shape but negative drift - it pays the premium instead of collecting it, failing the income requirement - and the naive form loses net at a 10bps round-trip, exactly the cost wall the literature warns about. The two unchecked hypotheses (carry diversification, breadth floor) are moot while the mechanism fails the income gate. Kept as the wall against re-proposing reversal for the concave slot.
 
 > [!abstract] One-line takeaway
 > Short-horizon reversal is a second concave mechanism - paid to provide liquidity, earning most when fear is highest and losing in the same unwinds that break carry - so it does not diversify the carry sleeve, it doubles it. And its edge sits below the transaction-cost line for any naive implementation; only a conditioned, low-turnover version survives, and the breadth to rank a cross-section thins out fast at a dozen-odd instruments. It is a candidate concave sleeve with two hard gates to clear, not a free second income stream.
