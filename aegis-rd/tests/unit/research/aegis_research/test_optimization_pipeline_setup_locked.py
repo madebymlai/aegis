@@ -30,6 +30,7 @@ from research.aegis_research.optimization.run_data_contract import (
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
 )
+from tests.support.research.aegis_research.factories import make_run_arrays
 from tests.support.research.aegis_research.market_data_fixtures import (
     native_data_config_payload,
 )
@@ -52,11 +53,11 @@ _DATA_IDENTITY = {
 }
 
 
-class _FakeData:
-    def array(self, name: str) -> Any:
-        import pandas as pd
+def _arrays() -> Any:
+    import pandas as pd
 
-        return pd.DataFrame({0: [float(i) for i in range(120)]})
+    frame = pd.DataFrame({0: [float(i) for i in range(120)]})
+    return make_run_arrays(close=frame, open_=frame)
 
 
 def _run_evidence() -> RunEvidence:
@@ -166,7 +167,7 @@ def test_locked_setup_resolves_every_component_from_candidate(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
@@ -192,7 +193,7 @@ def test_locked_setup_performs_no_optimization(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
@@ -214,7 +215,7 @@ def test_locked_setup_records_reproduction_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
@@ -240,7 +241,7 @@ def test_unlocked_setup_has_no_lock_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
@@ -348,7 +349,7 @@ def test_locked_setup_records_overridden_params_in_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
@@ -383,7 +384,7 @@ def test_locked_setup_records_empty_overrides_when_no_params(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,

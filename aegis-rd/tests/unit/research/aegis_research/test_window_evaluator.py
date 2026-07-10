@@ -24,6 +24,7 @@ from research.aegis_research.optimization.window_evaluator import WindowEvaluato
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,
+    make_run_arrays,
 )
 
 
@@ -72,8 +73,7 @@ def _evaluator(
         source=_source(simulate),
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
         report=make_report_config(),
-        close=close,
-        open_=close,
+        arrays=make_run_arrays(close=close, open_=close),
         store=store if store is not None else empty_precompute(close, 2, alpha=[0.5, 1.0]),
         extractors=dict(make_default_metric_registry().extractors),
     )

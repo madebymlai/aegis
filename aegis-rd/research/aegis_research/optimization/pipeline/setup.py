@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
@@ -21,8 +19,8 @@ from research.aegis_research.configuration import (
     to_builtin,
 )
 from research.aegis_research.data import (
-    MarketDataBundle,
     MarketDataResult,
+    RunArrays,
 )
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.candidate_store_identity import (
@@ -57,24 +55,18 @@ from research.aegis_research.run_splits import RunSplitsResult, build_run_splits
 class SetupResult:
     """Typed hand-off from the pipeline setup stage.
 
-    Carries five identity/product fields per ADR-0015 step 2:
+    Carries four identity/product fields per ADR-0015 step 2:
     thread identities, recompute values. The store path (an identity all
     stages must agree on), the optimization source and split result (genuine
-    products of Lock resolution and source construction), and the close/open
-    price frames (products of setup's data preparation, not derivable
-    downstream). Strategy evidence is a derived property over the
-    optimization source — no separate stored copy.
+    products of Lock resolution and source construction), and the Run's
+    prepared Arrays (the coherent two-view value the sweep consumes, threaded
+    whole). Strategy evidence is a derived property over the optimization
+    source — no separate stored copy.
     """
 
     store_path: Path
     optimization_source: OptimizationSource
-    close: pd.DataFrame
-    open_: pd.DataFrame
-    # Prices the portfolio simulates P&L on. Equal to close/open_ for a single-series run;
-    # the future's ``pnl_adjustment`` series when one is declared, while close/open_ (the
-    # signal series) still drive the indicators.
-    pnl_close: pd.DataFrame
-    pnl_open: pd.DataFrame
+    arrays: RunArrays
     split_result: RunSplitsResult
 
     @property
@@ -91,12 +83,11 @@ def run_pipeline_setup(
     *,
     config: RunConfig,
     component_registry: FrozenComponentRegistry,
-    data: MarketDataBundle,
+    arrays: RunArrays,
     data_result: MarketDataResult,
     array_contract: DataArrayContract,
     metric_registry_fingerprint: str | None,
     run_evidence: RunEvidence,
-    pnl_data: MarketDataBundle | None = None,
 ) -> SetupResult:
     """Resolve the Lock, build the optimization source, and construct the evidence baseline."""
     # The public entry point rejects runs without an optimization block, so by the
@@ -117,17 +108,14 @@ def run_pipeline_setup(
     optimization_source = build_component_optimization_source(
         config,
         component_registry=component_registry,
-        data=data,
+        data=arrays.signal,
         resolved_component_params=resolved_component_params,
         force_locked=force_locked,
     )
-    close = data.array("Close")
-    open_ = data.array("Open")
-    # The signal series (close/open_) drives indicators and splits; the P&L series drives the
-    # portfolio. With no pnl_adjustment declared they are the same frame (single-series run).
-    pnl_close = pnl_data.array("Close") if pnl_data is not None else close
-    pnl_open = pnl_data.array("Open") if pnl_data is not None else open_
-    split_result = build_run_splits_result(close.index, config.optimization.split)
+    # Splits are built on the signal calendar — the same view Indicators run on.
+    split_result = build_run_splits_result(
+        arrays.signal.array("Close").index, config.optimization.split
+    )
     optimization_builtin = to_builtin(config.optimization)
     run_evidence.initialize_optimization(
         _optimization_evidence_baseline(
@@ -143,10 +131,7 @@ def run_pipeline_setup(
     return SetupResult(
         store_path=store_path,
         optimization_source=optimization_source,
-        close=close,
-        open_=open_,
-        pnl_close=pnl_close,
-        pnl_open=pnl_open,
+        arrays=arrays,
         split_result=split_result,
     )
 

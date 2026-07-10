@@ -14,6 +14,7 @@ from research.aegis_research.optimization.pipeline.setup import (
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
 )
+from tests.support.research.aegis_research.factories import make_run_arrays
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -27,11 +28,11 @@ _OHLCV_METADATA = default_metadata(
 )
 
 
-class _FakeData:
-    def array(self, name: str) -> Any:
-        import pandas as pd
+def _arrays() -> Any:
+    import pandas as pd
 
-        return pd.DataFrame({0: [float(i) for i in range(120)]})
+    frame = pd.DataFrame({0: [float(i) for i in range(120)]})
+    return make_run_arrays(close=frame, open_=frame)
 
 
 def _run_evidence() -> RunEvidence:
@@ -55,7 +56,7 @@ def test_pipeline_setup_returns_setup_result(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
@@ -67,8 +68,7 @@ def test_pipeline_setup_returns_setup_result(
     assert result.store_path == candidate_store_path(config)
     assert result.optimization_source is not None
     assert isinstance(result.strategy_evidence, dict)
-    assert result.close is not None
-    assert result.open_ is not None
+    assert result.arrays is not None
     assert result.split_result is not None
 
 
@@ -84,7 +84,7 @@ def test_pipeline_setup_evidence_baseline_shape(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,
@@ -102,54 +102,6 @@ def test_pipeline_setup_evidence_baseline_shape(
     assert result.strategy_evidence is result.optimization_source.evidence["strategy"]
 
 
-class _PnlFakeData:
-    def array(self, name: str) -> Any:
-        import pandas as pd
-
-        return pd.DataFrame({0: [float(i) + 1000.0 for i in range(120)]})
-
-
-def test_pipeline_setup_routes_pnl_series_to_pnl_prices(tmp_path: Path) -> None:
-    """A supplied P&L series drives pnl_close/pnl_open; the signal series still drives close/open_."""
-    resolved = build_resolved_run_config(tmp_path)
-    config = resolved.config
-    array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
-    result = run_pipeline_setup(
-        config=config,
-        component_registry=resolved.component_registry,
-        data=_FakeData(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
-        run_evidence=_run_evidence(),
-        pnl_data=_PnlFakeData(),
-    )
-
-    assert result.close.iloc[0, 0] == 0.0  # signal series (indicators)
-    assert result.pnl_close.iloc[0, 0] == 1000.0  # P&L series (portfolio)
-    assert result.pnl_open.iloc[0, 0] == 1000.0
-
-
-def test_pipeline_setup_pnl_prices_default_to_signal_without_pnl_data(tmp_path: Path) -> None:
-    """No P&L series → the portfolio simulates on the signal series (single-series default)."""
-    resolved = build_resolved_run_config(tmp_path)
-    config = resolved.config
-    array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
-    result = run_pipeline_setup(
-        config=config,
-        component_registry=resolved.component_registry,
-        data=_FakeData(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
-        run_evidence=_run_evidence(),
-    )
-
-    assert result.pnl_close is result.close
-    assert result.pnl_open is result.open_
-
 
 def test_pipeline_setup_store_path_matches_candidate_store(
     tmp_path: Path,
@@ -162,7 +114,7 @@ def test_pipeline_setup_store_path_matches_candidate_store(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
+        arrays=_arrays(),
         data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
         array_contract=array_contract,
         metric_registry_fingerprint=None,

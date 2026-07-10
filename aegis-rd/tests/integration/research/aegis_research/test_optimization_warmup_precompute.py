@@ -31,6 +31,7 @@ from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_ranking_config,
     make_report_config,
+    make_run_arrays,
     make_run_split_config,
 )
 
@@ -122,8 +123,7 @@ def _optimization(
 def _run(windows: list[int], *, optimization: OptimizationConfig | None = None) -> OptimizationResult:
     optimization = optimization or _optimization()
     return execute_optimization(
-        close=_uptrend_close(),
-        open_=_uptrend_close(),
+        arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_source(windows),
         optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
@@ -310,8 +310,7 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
 
     optimization = _optimization()
     result = execute_optimization(
-        close=close,
-        open_=close,
+        arrays=make_run_arrays(close=close, open_=close),
         source=_source(windows),
         optimization=optimization,
         portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),

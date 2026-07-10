@@ -22,12 +22,11 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, InstrumentId
-from aegis_runtime.currency import CurrencyConversion
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import PortfolioConfig, ReportConfig
+from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
@@ -44,10 +43,10 @@ from research.aegis_research.portfolios import simulate_portfolio_batch
 class WindowEvaluator:
     """Evaluate one Candidate chunk over one split window into a metric frame.
 
-    ``close``, ``open_`` and ``store`` are the full-series inputs; ``evaluate``
-    slices them to the window the splitter hands it. The market index passed to
-    the portfolio simulation is always the full loaded-data calendar
-    (``close.index``) so the seam mask can detect gaps in purged/embargoed
+    ``arrays`` (the Run's prepared views) and ``store`` are the full-series
+    inputs; ``evaluate`` slices them to the window the splitter hands it. The
+    market index passed to the portfolio simulation is always the full
+    loaded-data calendar so the seam mask can detect gaps in purged/embargoed
     windows. The Invalid-Candidate set is read from ``store.invalid_keys`` rather
     than carried as a separate field, so selection and held-out sweeps — which
     share one evaluator and one store — cannot drift in it or any other captured
@@ -57,8 +56,7 @@ class WindowEvaluator:
     source: OptimizationSource
     portfolio: PortfolioConfig
     report: ReportConfig
-    close: pd.DataFrame
-    open_: pd.DataFrame
+    arrays: RunArrays
     store: IndicatorPrecompute
     extractors: Mapping[str, ExtractorSpec]
     # Per-symbol trade fees (FX-conversion surcharge on non-base legs); None keeps
@@ -68,8 +66,6 @@ class WindowEvaluator:
     # every instrument at the sleeve-wide default.
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
     futures_roots: tuple[str, ...] = ()
-    distributions: tuple[Distribution, ...] = ()
-    currency_conversion: CurrencyConversion | None = None
 
     def evaluate(self, range_: slice, **params: Any) -> Any:
         """Metric frame for the Candidate chunk ``params`` over the window ``range_``."""
@@ -83,8 +79,8 @@ class WindowEvaluator:
             # by-key downstream via classify_candidates.
             return _nan_metric_frame(metric_keys, param_names, list(self.extractors))
 
-        close_window = self.close.iloc[range_]
-        open_window = self.open_.iloc[range_]
+        close_window = self.arrays.pnl_close.iloc[range_]
+        open_window = self.arrays.pnl_open.iloc[range_]
         indicator_window = self.store.window(range_, keys)
         allocations = self.source.simulate(
             close_window, indicator_window, n_combos, **combo_lists
@@ -111,13 +107,13 @@ class WindowEvaluator:
             allocations,
             self.portfolio,
             open_=open_window,
-            market_index=self.close.index,
+            market_index=self.arrays.pnl_close.index,
             periods_per_year=self.report.periods_per_year,
             fees_by_symbol=self.fees_by_symbol,
             instrument_bands=self.instrument_bands,
             futures_roots=self.futures_roots,
-            distributions=self.distributions,
-            currency_conversion=self.currency_conversion,
+            distributions=self.arrays.distributions,
+            currency_conversion=self.arrays.currency_conversion,
         )
         return central_metrics_from_grouped_accessors(
             pf, self.report, metric_keys, param_names, self.extractors

@@ -398,15 +398,10 @@ def make_setup_result(**overrides: Any) -> SetupResult:
     single field (or a subset) can construct the wrapper directly without
     reaching into the setup stage internals.
     """
-    close = pd.DataFrame({0: [1.0, 2.0]})
-    open_ = pd.DataFrame({0: [1.0, 2.0]})
     defaults: dict[str, Any] = {
         "store_path": Path("candidates.sqlite3"),
         "optimization_source": _fake_optimization_source(),
-        "close": close,
-        "open_": open_,
-        "pnl_close": close,
-        "pnl_open": open_,
+        "arrays": make_run_arrays(),
         "split_result": _fake_split_result(),
     }
     defaults.update(overrides)

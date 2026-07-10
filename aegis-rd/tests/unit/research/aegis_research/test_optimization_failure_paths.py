@@ -19,6 +19,7 @@ from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_ranking_config,
     make_report_config,
+    make_run_arrays,
     make_run_split_config,
 )
 
@@ -56,8 +57,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     optimization = _optimization_config()
     with pytest.raises(OptimizationRunnerError, match="no usable results"):
         execute_optimization(
-            close=close,
-            open_=close,
+            arrays=make_run_arrays(close=close, open_=close),
             source=source,
             optimization=optimization,
             portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
@@ -87,8 +87,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     optimization = _optimization_config()
     with pytest.raises(RuntimeError, match="pipeline blew up"):
         execute_optimization(
-            close=close,
-            open_=close,
+            arrays=make_run_arrays(close=close, open_=close),
             source=source,
             optimization=optimization,
             portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
@@ -121,8 +120,7 @@ def test_runner_rejects_param_names_reserved_for_result_coordinates(
     optimization = _optimization_config()
     with pytest.raises(OptimizationRunnerError, match="reserved"):
         execute_optimization(
-            close=close,
-            open_=close,
+            arrays=make_run_arrays(close=close, open_=close),
             source=source,
             optimization=optimization,
             portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),

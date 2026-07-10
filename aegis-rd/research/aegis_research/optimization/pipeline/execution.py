@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
-from aegis_data.distributions import Distribution
 from aegis_runtime.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -76,8 +75,6 @@ def run_pipeline_execution(
     setup: SetupResult,
     metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
-    currency_conversion: CurrencyConversion | None = None,
-    distributions: tuple[Distribution, ...] = (),
 ) -> ExecutionResult:
     """Execute the preflight gate and two-phase optimization sweep."""
     # The public entry point rejects runs without an optimization block, so by the
@@ -88,7 +85,7 @@ def run_pipeline_execution(
             params=setup.optimization_source.params,
             optimization=config.optimization,
             splits=setup.split_result.splits,
-            symbol_count=len(setup.close.columns),
+            symbol_count=len(setup.arrays.signal.array("Close").columns),
             has_open_prices=True,
         )
         run_evidence.record(EvidenceSection.PREFLIGHT, preflight)
@@ -99,10 +96,7 @@ def run_pipeline_execution(
 
     try:
         optimization_result = execute_optimization(
-            close=setup.close,
-            open_=setup.open_,
-            pnl_close=setup.pnl_close,
-            pnl_open=setup.pnl_open,
+            arrays=setup.arrays,
             source=setup.optimization_source,
             optimization=config.optimization,
             portfolio=config.portfolio,
@@ -110,11 +104,9 @@ def run_pipeline_execution(
             ranking=config.ranking,
             metric_registry=metric_registry,
             split_result=setup.split_result,
-            fees_by_symbol=_fx_fees(config, currency_conversion),
+            fees_by_symbol=_fx_fees(config, setup.arrays.currency_conversion),
             instrument_bands=resolve_instrument_bands(config),
             futures_roots=tuple(config.data.futures),
-            distributions=distributions,
-            currency_conversion=currency_conversion,
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)
