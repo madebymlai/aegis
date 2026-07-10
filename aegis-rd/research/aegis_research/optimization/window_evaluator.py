@@ -45,11 +45,14 @@ class WindowEvaluator:
 
     ``arrays`` (the Run's prepared views) and ``store`` are the full-series
     inputs; ``evaluate`` slices them to the window the splitter hands it. The
-    market index passed to the portfolio simulation is always the full
-    loaded-data calendar so the seam mask can detect gaps in purged/embargoed
-    windows. The Invalid-Candidate set is read from ``store.invalid_keys`` rather
-    than carried as a separate field, so selection and held-out sweeps — which
-    share one evaluator and one store — cannot drift in it or any other captured
+    signal view drives the strategy's ``simulate`` — the same frames its
+    indicators were precomputed on — while the P&L view prices only the
+    portfolio; on a single-series Run they are the same frame objects. The
+    market index passed to the portfolio simulation is always the full signal
+    calendar so the seam mask can detect gaps in purged/embargoed windows. The
+    Invalid-Candidate set is read from ``store.invalid_keys`` rather than
+    carried as a separate field, so selection and held-out sweeps — which share
+    one evaluator and one store — cannot drift in it or any other captured
     input.
     """
 
@@ -79,14 +82,17 @@ class WindowEvaluator:
             # by-key downstream via classify_candidates.
             return _nan_metric_frame(metric_keys, param_names, list(self.extractors))
 
-        close_window = self.arrays.pnl_close.iloc[range_]
-        open_window = self.arrays.pnl_open.iloc[range_]
+        signal_close_window = self.arrays.signal.array("Close").iloc[range_]
         indicator_window = self.store.window(range_, keys)
         allocations = self.source.simulate(
-            close_window, indicator_window, n_combos, **combo_lists
+            signal_close_window, indicator_window, n_combos, **combo_lists
         )
         return self._metrics_from_allocations(
-            close_window, open_window, allocations, metric_keys, param_names
+            self.arrays.pnl_close.iloc[range_],
+            self.arrays.pnl_open.iloc[range_],
+            allocations,
+            metric_keys,
+            param_names,
         )
 
     def _metrics_from_allocations(
@@ -107,7 +113,7 @@ class WindowEvaluator:
             allocations,
             self.portfolio,
             open_=open_window,
-            market_index=self.arrays.pnl_close.index,
+            market_index=self.arrays.signal.array("Close").index,
             periods_per_year=self.report.periods_per_year,
             fees_by_symbol=self.fees_by_symbol,
             instrument_bands=self.instrument_bands,
