@@ -18,7 +18,7 @@ from aegis_trader.domain.roll import (
     SubscribeBars,
     UnsubscribeBars,
 )
-from aegis_trader.bundles.book_sleeves import ContinuousRootDeclaration
+from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.trader.roll_desk import RollDesk
 

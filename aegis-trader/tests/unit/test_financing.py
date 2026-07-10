@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -18,6 +19,7 @@ from aegis_trader.domain.book_config import (
 )
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.financing import FinancingModule
+from tests.support.factories import assemble_test_book, make_bundle
 
 _SLEEVE = SleeveName("trend")
 _SHORT_ID = InstrumentId.from_str("SHORT.XNYS")
@@ -104,7 +106,7 @@ class _Exchange:
     def get_account(self) -> _Account:
         return self._own_account
 
-    def get_book(self, _instrument_id: InstrumentId) -> _Book:
+    def get_book(self, _instrument_id: InstrumentId) -> _Book | None:
         if self._mark is None:
             return None
         return _Book(self._mark)
@@ -309,22 +311,24 @@ def test_financing_module_attaches_once_to_starting_balance_venue_with_all_cost_
         base_currency="EUR",
         costs=_costs(margin_rates=(("EUR", 0.0324), ("USD", 0.0513))),
     )
-    sleeves = ((_SLEEVE, SimpleNamespace(direction="longonly")),)
+    assembled = assemble_test_book(
+        book,
+        {"trend.whl": make_bundle(direction="longonly")},
+    )
 
     _add_venues(
         engine,
-        book=book,
+        book=assembled,
         instruments=(_Instrument("AAA.XMIL"), _Instrument("BBB.XNYS")),
-        sleeves=sleeves,
         distributions=(),
         starting_cash=1_000_000.0,
     )
 
-    first_modules = engine.venues[0]["modules"]
-    second_modules = engine.venues[1]["modules"]
+    first_modules = cast(list[object], engine.venues[0]["modules"])
+    second_modules = cast(list[object], engine.venues[1]["modules"])
     assert sum(isinstance(module, FinancingModule) for module in first_modules) == 1
     assert all(not isinstance(module, FinancingModule) for module in second_modules)
     assert {
         balance.currency.code
-        for balance in engine.venues[0]["starting_balances"]
+        for balance in cast(list[Money], engine.venues[0]["starting_balances"])
     } == {"EUR", "USD"}

@@ -11,7 +11,7 @@ from aegis_data.continuous_contract_model import ContinuousContractModel
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.bundles.book_sleeves import ContinuousRootDeclaration
+from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.domain.roll import (
     Halt,
     RequestBars,

@@ -17,11 +17,15 @@ from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.pipeline import CompletedRebalancePeriod, RebalancePipeline
+from tests.support.factories import assemble_test_book
 
 _INSTRUMENT_ID = InstrumentId.from_str("GBUS.XLON")
 
 
 class _MarketData:
+    def currency_pair(self, _instrument_id: InstrumentId) -> None:
+        return None
+
     def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing | None:
         assert instrument_id == _INSTRUMENT_ID
         return InstrumentSizing(currency="GBp", size_increment=1.0)
@@ -133,8 +137,7 @@ def test_pipeline_collects_sizing_params_by_native_instrument_id() -> None:
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
-        book=book,
-        sleeve_to_bundle={book.sleeves[0].name: bundle},
+        book=assemble_test_book(book, {"uk.whl": bundle}),
         ledger=SleeveLedger(),
     )
 

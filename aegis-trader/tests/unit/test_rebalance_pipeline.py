@@ -34,6 +34,7 @@ from aegis_trader.trader.pipeline import (
     GateOutcome,
     RebalancePipeline,
 )
+from tests.support.factories import assemble_test_book
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
 _ES = InstrumentId.from_str("ES.XCME")  # synthetic continuous-root id (root "ES")
@@ -418,11 +419,15 @@ def _pipeline(
     book: BookConfig | None = None,
     bundle: ExecutionBundle | None = None,
 ) -> RebalancePipeline:
+    config = book or _book()
+    loaded_bundle = bundle or _FixedWeightBundle(0.5)
     return RebalancePipeline(
         book_state=book_state or _BookState(),
         market_data=market_data or _MarketData(),
-        book=book or _book(),
-        sleeve_to_bundle={_SLEEVE: bundle or _FixedWeightBundle(0.5)},
+        book=assemble_test_book(
+            config,
+            {config.sleeves[0].wheel_filename: loaded_bundle},
+        ),
         ledger=SleeveLedger(),
     )
 
@@ -472,8 +477,10 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=market_data,
-        book=_book(),
-        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
+        book=assemble_test_book(
+            _book(),
+            {"trend.whl": _ContinuousWeightBundle(0.5)},
+        ),
         ledger=SleeveLedger(),
     )
 
@@ -574,13 +581,7 @@ def test_rebalance_pipeline_does_not_expose_mutable_ledger() -> None:
     assert exposes_mutable_ledger is False
 
 
-def test_rebalance_pipeline_constructor_does_not_read_instrument_bands() -> None:
-    pipeline = _pipeline(bundle=_BandAccessFailsBundle(0.5))
-
-    assert pipeline.last_sleeve_weights == {}
-
-
-def test_rebalance_pipeline_uses_bands_built_by_startup_check() -> None:
+def test_rebalance_pipeline_uses_bands_proven_by_book_assembly() -> None:
     pipeline = _pipeline(
         book_state=_BookState({_INSTRUMENT_ID: 0.45}),
         bundle=_FixedWeightBundle(0.5, band=DriftBand.symmetric(0.10)),
@@ -601,8 +602,10 @@ def test_apply_roll_rebases_ledger_by_spread_event() -> None:
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
-        book=_book(),
-        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
+        book=assemble_test_book(
+            _book(),
+            {"trend.whl": _ContinuousWeightBundle(0.5)},
+        ),
         ledger=ledger,
     )
 
@@ -620,8 +623,10 @@ def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
-        book=_book(),
-        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
+        book=assemble_test_book(
+            _book(),
+            {"trend.whl": _ContinuousWeightBundle(0.5)},
+        ),
         ledger=ledger,
     )
 
@@ -680,37 +685,6 @@ def test_startup_check_passes_when_band_and_integrity_gates_pass() -> None:
     assert result.cash == 100_000.0
 
 
-def test_startup_check_halts_when_bundle_bands_overlap() -> None:
-    trend = SleeveName("trend")
-    carry = SleeveName("carry")
-    book = BookConfig(
-        sleeves=(
-            SleeveConfig(name=trend, wheel_filename="trend.whl", risk_share=0.5),
-            SleeveConfig(name=carry, wheel_filename="carry.whl", risk_share=0.5),
-        ),
-        base_currency="EUR",
-    )
-    pipeline = RebalancePipeline(
-        book_state=_BookState(),
-        market_data=_MarketData(),
-        book=book,
-        sleeve_to_bundle={
-            trend: _FixedWeightBundle(0.5),
-            carry: _FixedWeightBundle(0.5),
-        },
-        ledger=SleeveLedger(),
-    )
-
-    result = pipeline.startup_check()
-
-    assert result.should_halt is True
-    assert result.halt_gate == StartupGate.BAND_OWNERSHIP
-    assert result.halt_reason is not None
-    assert "PIPE.XNYS" in result.halt_reason
-    assert "carry" in result.halt_reason
-    assert "trend" in result.halt_reason
-
-
 def test_startup_check_halts_when_book_state_query_fails() -> None:
     result = _pipeline(book_state=_FailingNavBookState()).startup_check()
 
@@ -757,8 +731,13 @@ def _two_sleeve_pipeline(
             bars_by_instrument_id=bars,
             fresh_instrument_ids=frozenset({_INSTRUMENT_ID, _LSE_LEG}),
         ),
-        book=book,
-        sleeve_to_bundle={_SLEEVE: healthy_bundle, SleeveName("poison"): poison_bundle},
+        book=assemble_test_book(
+            book,
+            {
+                "trend.whl": healthy_bundle,
+                "poison.whl": poison_bundle,
+            },
+        ),
         ledger=SleeveLedger(),
     )
     startup_result = pipeline.startup_check()

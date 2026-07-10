@@ -3,8 +3,7 @@
 Every sleeve installed in one book is bound to an Execution Bundle that declares
 its own contract timeframe; the overlay tracks a single rebalance period, so all
 sleeves must agree on one.  A book whose sleeves declare mixed timeframes is a
-closed failure (the ``BOOK_TIMEFRAME`` startup gate), not a multi-timeframe
-simulation.
+closed failure during Book assembly, not a multi-timeframe simulation.
 
 This is a pure book invariant over the sleeves' declared timeframes — it does
 not touch bar identity, which is single sourced in ``aegis_data.bar_type``.
@@ -27,7 +26,7 @@ class MixedTimeframeError(ValueError):
         )
 
 
-def resolve_book_timeframe(timeframes: Iterable[str]) -> str:
+def _resolve_book_timeframe(timeframes: Iterable[str]) -> str:
     """The single timeframe the commingled book runs on; all sleeves must agree,
     or fail closed (the overlay tracks one rebalance period)."""
     unique = tuple(dict.fromkeys(timeframes))
@@ -38,5 +37,4 @@ def resolve_book_timeframe(timeframes: Iterable[str]) -> str:
 
 __all__ = [
     "MixedTimeframeError",
-    "resolve_book_timeframe",
 ]

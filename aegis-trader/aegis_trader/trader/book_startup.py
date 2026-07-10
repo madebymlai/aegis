@@ -8,21 +8,16 @@ from datetime import datetime, timedelta
 from typing import Protocol, TypeAlias
 
 from aegis_data.bar_type import timeframe_to_ns
-from aegis_runtime import ExecutionBundle
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.bundles.book_sleeves import (
-    ContinuousDeclarationConflictError,
+from aegis_trader.bundles.book import (
+    AssembledBook,
     ContinuousRootDeclaration,
-    union_continuous_declarations,
 )
 from aegis_trader.data.market_data import MarketDataPort
-from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.book_timeframe import MixedTimeframeError, resolve_book_timeframe
 from aegis_trader.domain.roll import Halt, RequestBars, RollIntent, RollIntentBatch, SubscribeBars
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
-from aegis_trader.domain.startup import StartupGate, StartupResult
-from aegis_trader.domain.types import SleeveName
+from aegis_trader.domain.startup import StartupResult
 from aegis_trader.portfolio import BookStatePort
 from aegis_trader.trader.pipeline import RebalancePipeline
 
@@ -67,8 +62,7 @@ class BootResult:
 def bootstrap(
     *,
     now: datetime,
-    book: BookConfig,
-    sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle],
+    book: AssembledBook,
     ledger: SleeveLedger,
     book_state: BookStatePort,
     market_data: MarketDataPort,
@@ -77,18 +71,10 @@ def bootstrap(
     warmup_cache_on_start: bool,
 ) -> BootResult | Halt:
     """Run the startup gates and return either the boot values or a typed halt."""
-    try:
-        timeframe = resolve_book_timeframe(
-            bundle.contract.timeframe for bundle in sleeve_to_bundle.values()
-        )
-    except MixedTimeframeError as exc:
-        return Halt(StartupGate.BOOK_TIMEFRAME, str(exc))
-
     pipeline = RebalancePipeline(
         book_state=book_state,
         market_data=market_data,
         book=book,
-        sleeve_to_bundle=sleeve_to_bundle,
         ledger=ledger,
     )
     startup_result = pipeline.startup_check()
@@ -97,36 +83,30 @@ def bootstrap(
 
     history_start = startup_history_start(
         now,
-        timeframe=timeframe,
-        lookback_bars=max(bundle.contract.lookback_bars for bundle in sleeve_to_bundle.values()),
+        timeframe=book.timeframe,
+        required_bar_window=book.required_bar_window,
     )
-    # Bootstrap sees every Sleeve bundle, so it owns the cross-Sleeve declaration
-    # union; Roll Desk receives already coherent declarations and owns only
-    # materialisation and roll lifecycle.
-    try:
-        declarations = union_continuous_declarations(tuple(sleeve_to_bundle.items()))
-    except ContinuousDeclarationConflictError as exc:
-        return Halt(StartupGate.CONTINUOUS_DECLARATION, str(exc))
     roll_intents = roll_desk.start(
-        timeframe=timeframe,
+        timeframe=book.timeframe,
         history_start=history_start,
         end=now,
         warmup=warmup_cache_on_start,
-        declarations=declarations,
+        declarations=book.continuous_declarations,
     )
     halt = _halt_from(roll_intents)
     if halt is not None:
         return halt
 
     intents: list[BootIntent] = list(roll_intents)
-    native_ids = _native_instrument_ids(sleeve_to_bundle)
-    for instrument_id in native_ids:
-        intents.append(SubscribeBars(instrument_id=instrument_id, timeframe=timeframe))
+    for instrument_id in book.loadable_instrument_ids:
+        intents.append(
+            SubscribeBars(instrument_id=instrument_id, timeframe=book.timeframe)
+        )
         if warmup_cache_on_start:
             intents.append(
                 RequestBars(
                     instrument_id=instrument_id,
-                    timeframe=timeframe,
+                    timeframe=book.timeframe,
                     start=history_start,
                     end=now,
                 )
@@ -136,7 +116,7 @@ def bootstrap(
 
     return BootResult(
         pipeline=pipeline,
-        timeframe=timeframe,
+        timeframe=book.timeframe,
         startup_result=startup_result,
         intents=tuple(intents),
     )
@@ -146,24 +126,11 @@ def startup_history_start(
     end: datetime,
     *,
     timeframe: str,
-    lookback_bars: int,
+    required_bar_window: int,
 ) -> datetime:
-    periods = max(lookback_bars + 1, 1) * _LIVE_WARMUP_CALENDAR_MULTIPLIER
+    periods = max(required_bar_window, 1) * _LIVE_WARMUP_CALENDAR_MULTIPLIER
     span_ns = timeframe_to_ns(timeframe) * periods
     return end - timedelta(microseconds=span_ns // 1000)
-
-
-def _native_instrument_ids(
-    sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle]
-) -> tuple[InstrumentId, ...]:
-    # Loadable ids: tradeable natives plus the FX conversion legs — the panel
-    # conversion reads the legs' bars over the same lookback (aegis-rd-reyj).
-    instrument_ids = {
-        instrument_id
-        for bundle in sleeve_to_bundle.values()
-        for instrument_id in bundle.contract.loadable_instrument_ids
-    }
-    return tuple(sorted(instrument_ids, key=lambda instrument_id: instrument_id.value))
 
 
 def _halt_from(intents: RollIntentBatch) -> Halt | None:

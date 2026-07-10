@@ -1,6 +1,6 @@
 # Aegis Trader package architecture: deep modules over the Nautilus kernel
 
-Status: accepted, amended 2026-06-20 (aegis-rd-8pt), 2026-06-23 (aegis-rd-r8b.8 — modes.py dissolves; IBKR config leaves the Trader; see amendment below)
+Status: accepted, amended 2026-06-20 (aegis-rd-8pt), 2026-06-23 (aegis-rd-r8b.8 — modes.py dissolves; IBKR config leaves the Trader; see amendment below), 2026-07-10 (aegis-rd-57aa — deep Book assembly)
 
 Aegis Trader is a NautilusTrader overlay (ADR-0001). Nautilus already provides the live/backtest kernel: `MessageBus`, `Cache`, `DataEngine`, `ExecutionEngine`, `RiskEngine`, `Portfolio`, and one `Strategy` event loop that runs across backtest, paper, and live. The Trader architecture therefore wraps Nautilus only where the wrapper hides Trader-specific depth. It does **not** create parallel execution or observability ports.
 
@@ -10,8 +10,9 @@ Aegis Trader is a NautilusTrader overlay (ADR-0001). Nautilus already provides t
 |---|---|---|---|
 | Market data | `data/market_data.py` | `MarketDataPort` + `NautilusMarketData` in one module | Cache-backed native bar windows, per-period freshness, instrument sizing, native quantity construction, and FX marks. |
 | Book state | `portfolio/book_state.py` | `BookStatePort` + `NautilusBookState` in one module | NAV/cash aggregation, cache health, and base-currency realized weights from Nautilus portfolio/cache reads. |
-| Bundle loading | `bundles/` | `BundleRegistryPort` with stub and entry-point implementations | Installed Execution Bundle discovery and wheel-label lookup. This is the only remaining justified port/adapter file split because it has multiple implementations. |
-| Rebalance orchestration | `trader/pipeline.py` | `RebalancePipeline` value-object API | Startup gates, Cache-backed market-data reads through ports, Execution Bundle calls, netting/gating, sizing, freshness filtering, and the `SleeveLedger`. Imports no Strategy or Nautilus event-loop types. |
+| Book assembly | `bundles/book.py` | `assemble_book(BookConfig, BundleRegistryPort) -> AssembledBook` | Sleeve resolution, deterministic loadable IDs, timeframe, warmup window, margin need, band ownership, and coherent continuous-root declarations. Structurally invalid Books fail before broker attachment. |
+| Bundle registry | `bundles/port.py`, `bundles/registry.py`, `bundles/stub.py` | `BundleRegistryPort` with stub and entry-point implementations | Installed Execution Bundle discovery and wheel-label lookup. This is the only remaining justified port/adapter file split because it has multiple implementations. |
+| Rebalance orchestration | `trader/pipeline.py` | `RebalancePipeline` value-object API | Account-integrity startup gate, Cache-backed market-data reads through ports, Execution Bundle calls, netting/gating, sizing, freshness filtering, and the `SleeveLedger`. Imports no Strategy or Nautilus event-loop types. |
 | Nautilus adapter | `trader/strategy.py`, `trader/node.py` | Native Nautilus `Strategy`; broker-neutral `TradingNode`/backtest config + the live run/stop lifecycle | Lifecycle, bar-driven period rollover, futures roll refresh, FX quote mirroring into Cache marks, translating `OrderIntent`s into Nautilus orders, RiskEngine config, the `trader start`/`stop` daemon, and structured `self.log` records. IBKR client/connection config is **not** here — it lives in the one IBKR adapter (`aegis-data/ibkr.py`); `node.py` carries no broker vocabulary. |
 
 ## Dependency rule
@@ -33,8 +34,8 @@ backtest.py         -> backtest engine + non-live RiskEngine config (was trader/
 
 `RebalancePipeline` is the deep module ADR-0003 originally intended:
 
-- `startup_check() -> StartupResult` runs cap-provenance and account-integrity gates. A failed gate returns a typed halt gate plus human reason; the Strategy logs it and idles before any order can be submitted.
-- Identity needs no pipeline resolver: each Execution Bundle declares its native Nautilus `InstrumentId`s, `union_native_instrument_ids` unions them across sleeves (`bundles/book_sleeves.py`), and IBKR's `InstrumentProvider.load_ids` resolves them at boot (root ADR-0007). The futures roll is driven by the Roll Desk over `aegis-data`'s `ContinuousContractModel` — live, keyed by `InstrumentId` — not by a pipeline resolution step.
+- `startup_check() -> StartupResult` runs the environment-dependent account-integrity gate. Structural Book invariants are already proven by `assemble_book`; a failed runtime gate returns a typed halt gate plus human reason, which the Strategy logs before idling.
+- Identity needs no pipeline resolver: `AssembledBook.loadable_instrument_ids` is the proven, sorted union from every Execution Bundle, and IBKR's `InstrumentProvider.load_ids` resolves it at boot (root ADR-0007). The futures roll is driven by the Roll Desk over `aegis-data`'s `ContinuousContractModel` — live, keyed by `InstrumentId` — not by a pipeline resolution step.
 - `rebalance_period(CompletedRebalancePeriod) -> RebalanceResult` reads completed-period windows and freshness through `MarketDataPort`, computes sleeve targets from Execution Bundles, builds the rebalance plan, sizes deltas, filters stale instruments, records the `SleeveLedger`, and returns `OrderIntent`s plus a `RebalanceSummary` carrying the real gate outcome.
 - The owned `SleeveLedger` supplies realized covariance for the next rebalance and end-of-run evidence (realized book skew and per-sleeve P&L attribution).
 
@@ -50,7 +51,8 @@ backtest.py         -> backtest engine + non-live RiskEngine config (was trader/
 
 ```
 aegis_trader/
-  bundles/                    # BundleRegistryPort + implementations, provenance
+  bundles/book.py             # deep Book assembly -> AssembledBook
+  bundles/{port,registry,stub}.py  # BundleRegistryPort + two adapters
   data/market_data.py          # MarketDataPort + NautilusMarketData
   domain/                      # pure algorithms and value types
   portfolio/book_state.py      # BookStatePort + NautilusBookState

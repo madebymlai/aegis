@@ -34,17 +34,12 @@ from aegis_data.catalog import (
     parquet_data_catalog,
 )
 
-from aegis_trader.bundles.book_sleeves import (
-    SleeveBundles,
-    load_book_sleeves,
-    union_loadable_instrument_ids,
-)
+from aegis_trader.bundles.book import AssembledBook, assemble_book
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
 from aegis_trader.data import wrangle_bars, wrangle_fx_quotes
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.book_timeframe import resolve_book_timeframe
 from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.portfolio.performance import (
     BookEquityRecorder,
@@ -189,45 +184,48 @@ def run_book_backtest(
     """
     book = load_book_config(book_path)
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    sleeves = load_book_sleeves(book, registry)
-    book_timeframe = resolve_book_timeframe(
-        bundle.contract.timeframe for _name, bundle in sleeves
-    )
-    instrument_ids = union_loadable_instrument_ids(sleeves)
+    assembled_book = assemble_book(book, registry)
     source = data_source or CatalogBacktestDataSource(
         catalog_path=catalog_path,
         provider=provider,
     )
     market_data = source.load(
-        instrument_ids,
-        timeframe=book_timeframe,
+        assembled_book.loadable_instrument_ids,
+        timeframe=assembled_book.timeframe,
         start=start,
         end=end,
     )
-    _validate_market_data(sleeves, market_data)
+    _validate_market_data(assembled_book, market_data)
 
     engine = BacktestEngine(
         build_backtest_engine_config(
             trader_id=trader_id,
-            bar_capacity=_cache_bar_capacity(sleeves),
+            bar_capacity=max(
+                DEFAULT_BACKTEST_BAR_CAPACITY,
+                assembled_book.required_bar_window,
+            ),
         )
     )
     financing_module = _add_venues(
         engine,
-        book=book,
+        book=assembled_book,
         instruments=tuple(market_data.instruments.values()),
-        sleeves=sleeves,
         distributions=market_data.distributions,
         starting_cash=starting_cash,
     )
     _add_instruments_and_bars(
         engine,
         market_data=market_data,
-        timeframe=book_timeframe,
+        timeframe=assembled_book.timeframe,
     )
     engine.sort_data()
-    _add_equity_recorder(engine, book=book, instrument_ids=instrument_ids, timeframe=book_timeframe)
-    _add_strategy(engine, book=book, sleeves=sleeves)
+    _add_equity_recorder(
+        engine,
+        book=book,
+        instrument_ids=assembled_book.loadable_instrument_ids,
+        timeframe=assembled_book.timeframe,
+    )
+    _add_strategy(engine, book=assembled_book)
 
     engine.run()
     financing_totals = (
@@ -310,8 +308,8 @@ def _catalog_instruments(
     return {instrument_id: loaded[instrument_id] for instrument_id in instrument_ids}
 
 
-def _validate_market_data(sleeves: SleeveBundles, market_data: BacktestMarketData) -> None:
-    for sleeve_name, bundle in sleeves:
+def _validate_market_data(book: AssembledBook, market_data: BacktestMarketData) -> None:
+    for sleeve_name, bundle in book.sleeves.items():
         contract = bundle.contract
         for instrument_id in contract.exchange:
             # A conversion leg with no data means every non-base-quoted delta is
@@ -374,39 +372,34 @@ def _validate_contract_frame(
         )
 
 
-def _cache_bar_capacity(sleeves: SleeveBundles) -> int:
-    required = max(bundle.contract.lookback_bars for _name, bundle in sleeves) + 1
-    return max(DEFAULT_BACKTEST_BAR_CAPACITY, required)
-
-
 def _add_venues(
     engine: BacktestEngine,
     *,
-    book: BookConfig,
+    book: AssembledBook,
     instruments: Sequence[Instrument],
-    sleeves: SleeveBundles,
     distributions: Sequence[Distribution],
     starting_cash: float,
 ) -> FinancingModule | None:
-    account_currencies = _account_currencies(book, instruments)
+    config = book.config
+    account_currencies = _account_currencies(config, instruments)
     native_venues = _instrument_venues(instruments)
     account_type = (
         AccountType.MARGIN
         if (
             len(native_venues) > 1
-            or _requires_margin_account(sleeves)
-            or book.costs.margin_interest.annual_debit_rates
+            or book.requires_margin
+            or config.costs.margin_interest.annual_debit_rates
         )
         else AccountType.CASH
     )
     starting_balances, balance_currencies = _starting_balances(
-        book,
+        config,
         account_currencies,
         starting_cash,
     )
-    financing_module = build_financing_module(book.costs)
+    financing_module = build_financing_module(config.costs)
     for index, native_venue in enumerate(native_venues):
-        cost_models = build_simulated_cost_models(book)
+        cost_models = build_simulated_cost_models(config)
         modules = [
             *([financing_module] if index == 0 and financing_module is not None else []),
             *build_dividend_modules(distributions),
@@ -518,18 +511,16 @@ def _add_equity_recorder(
 def _add_strategy(
     engine: BacktestEngine,
     *,
-    book: BookConfig,
-    sleeves: SleeveBundles,
+    book: AssembledBook,
 ) -> None:
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
-            book=book,
+            book=book.config,
             fill_time_in_force=None,
             warmup_cache_on_start=False,
         )
     )
-    for name, bundle in sleeves:
-        strategy.register_sleeve(name, bundle)
+    strategy.register_book(book)
     engine.add_strategy(strategy)
 
 
@@ -559,10 +550,6 @@ def _starting_balances(
 
 def _zero_balances(currencies: tuple[str, ...]) -> list[Money]:
     return [Money(0.0, Currency.from_str(currency)) for currency in currencies]
-
-
-def _requires_margin_account(sleeves: SleeveBundles) -> bool:
-    return any(bundle.direction in {"both", "shortonly"} for _name, bundle in sleeves)
 
 
 def _account_currencies(

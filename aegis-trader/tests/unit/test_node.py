@@ -14,7 +14,6 @@ import os
 import signal
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import pytest
 from nautilus_trader.common import Environment
@@ -25,30 +24,27 @@ from nautilus_trader.config import (
     TradingNodeConfig,
 )
 from nautilus_trader.model.enums import TimeInForce
-from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.catalog import catalog_root
-from aegis_runtime import DataContract, MissingIndexPolicy
 
-from aegis_trader.bundles.book_sleeves import (
-    load_book_sleeves,
-    union_loadable_instrument_ids,
-)
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.config import IBConnectionSettings
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.book_timeframe import MixedTimeframeError
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.node import (
     LIVE_FILL_TIME_IN_FORCE,
     TraderNotRunningError,
     build_live_node_config,
     build_live_risk_engine_config,
+    build_live_node,
     build_live_strategy,
     default_pid_file,
     run_node,
     stop_trader,
 )
+from tests.support.factories import assemble_test_book, make_bundle
 
 
 def _book() -> BookConfig:
@@ -59,17 +55,6 @@ def _book() -> BookConfig:
             ),
         ),
         base_currency="EUR",
-    )
-
-
-def _contract(*ids: str) -> DataContract:
-    return DataContract(
-        instrument_ids=tuple(InstrumentId.from_str(i) for i in ids),
-        required_arrays=("Close",),
-        base_currency="EUR",
-        timeframe="1D",
-        missing_index=MissingIndexPolicy.DROP,
-        lookback_bars=1,
     )
 
 
@@ -167,69 +152,6 @@ def test_importing_the_node_module_does_not_import_ibapi():
 
 
 # --------------------------------------------------------------------------- #
-# instrument-id (load_ids) derivation
-# --------------------------------------------------------------------------- #
-
-
-def test_union_loadable_instrument_ids_unions_and_sorts_declared_natives():
-    """``load_ids`` is the sorted union of the bundles' loadable ids — the
-    data-only FX ``exchange:`` conversion legs ride in alongside the tradeable
-    natives (aegis-rd-reyj), with no construction or currency derivation."""
-    fx_contract = DataContract(
-        instrument_ids=(InstrumentId.from_str("VUSA.XLON"),),
-        required_arrays=("Close",),
-        base_currency="EUR",
-        timeframe="1D",
-        missing_index=MissingIndexPolicy.DROP,
-        lookback_bars=1,
-        exchange=(InstrumentId.from_str("EUR/USD.IDEALPRO"),),
-    )
-    sleeves = (
-        (SleeveName("equity"), SimpleNamespace(contract=_contract("VUSA.XLON"))),
-        (SleeveName("fx_overlay"), SimpleNamespace(contract=fx_contract)),
-    )
-
-    ids = union_loadable_instrument_ids(sleeves)
-
-    assert [i.value for i in ids] == ["EUR/USD.IDEALPRO", "VUSA.XLON"]
-
-
-def test_union_loadable_instrument_ids_excludes_continuous_future_roots():
-    """A continuous-future root is declared on ``DataContract.futures``, not loaded as a
-    static native: its legs arrive dynamically via the chain.  The union (the node's
-    ``load_ids``) must carry only the declared native ids, never the bare roots."""
-    contract = DataContract(
-        instrument_ids=(
-            InstrumentId.from_str("VUSA.XLON"),
-            InstrumentId.from_str("ES.XCME"),
-        ),
-        required_arrays=("Close",),
-        base_currency="EUR",
-        timeframe="1D",
-        missing_index=MissingIndexPolicy.DROP,
-        lookback_bars=1,
-        futures=("ES",),
-        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
-    )
-    sleeves = ((SleeveName("equity"), SimpleNamespace(contract=contract)),)
-
-    ids = union_loadable_instrument_ids(sleeves)
-
-    # The continuous id ES.XCME (matching root ES) is excluded; only the true native rides.
-    assert [i.value for i in ids] == ["VUSA.XLON"]
-
-
-def test_load_book_sleeves_resolves_each_sleeve_via_the_registry():
-    book = _book()
-    bundle = SimpleNamespace(contract=_contract("VUSA.XLON"))
-    registry = StubBundleRegistry({"trend.whl": bundle})
-
-    sleeves = load_book_sleeves(book, registry)
-
-    assert sleeves == ((SleeveName("trend"), bundle),)
-
-
-# --------------------------------------------------------------------------- #
 # live strategy assembly
 # --------------------------------------------------------------------------- #
 
@@ -248,24 +170,66 @@ def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves(
         ),
         base_currency="EUR",
     )
-    sleeves = (
-        (SleeveName("trend"), SimpleNamespace(contract=_contract("VUSA.XLON"))),
-        (
-            SleeveName("fx_overlay"),
-            SimpleNamespace(contract=_contract("EUR/USD.IDEALPRO", "VUSA.XLON")),
-        ),
+    vusa = InstrumentId.from_str("VUSA.XLON")
+    eurusd = InstrumentId.from_str("EUR/USD.IDEALPRO")
+    msft = InstrumentId.from_str("MSFT.NASDAQ")
+    assembled = assemble_test_book(
+        book,
+        {
+            "trend.whl": make_bundle(native_instrument_ids=(vusa,)),
+            "fx_overlay.whl": make_bundle(
+                native_instrument_ids=(msft,),
+                exchange_instrument_ids=(eurusd,),
+            ),
+        },
     )
 
-    strategy = build_live_strategy(book, sleeves)
-    registered_ids = strategy._registered_instrument_ids()
+    strategy = build_live_strategy(assembled)
+    max_notionals = strategy.risk_engine_config_dict(100_000.0)[
+        "max_notional_per_order"
+    ]
 
     assert strategy.config.fill_time_in_force == TimeInForce.AT_THE_CLOSE
     assert strategy.config.warmup_cache_on_start is True
-    assert registered_ids == (
-        InstrumentId.from_str("EUR/USD.IDEALPRO"),
-        InstrumentId.from_str("VUSA.XLON"),
+    assert set(max_notionals) == {"EUR/USD.IDEALPRO", "MSFT.NASDAQ", "VUSA.XLON"}
+
+
+def test_build_live_node_rejects_an_invalid_book_before_broker_attachment(
+    monkeypatch,
+) -> None:
+    trend = SleeveName("trend")
+    carry = SleeveName("carry")
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=trend, wheel_filename="trend.whl", risk_share=0.5),
+            SleeveConfig(name=carry, wheel_filename="carry.whl", risk_share=0.5),
+        )
     )
-    assert registered_ids == union_loadable_instrument_ids(sleeves)
+    registry = StubBundleRegistry(
+        {
+            "trend.whl": make_bundle(timeframe="1D"),
+            "carry.whl": make_bundle(
+                timeframe="1H",
+                native_instrument_ids=(InstrumentId.from_str("MSFT.NASDAQ"),),
+            ),
+        }
+    )
+    broker_attachments: list[object] = []
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.attach_live_clients",
+        lambda *args: broker_attachments.append(args),
+    )
+    connection = IBConnectionSettings(
+        port=4002,
+        client_id=9,
+        account_id="DU1234567",
+        trader_id="BOOK-EU-01",
+    )
+
+    with pytest.raises(MixedTimeframeError):
+        build_live_node(book, connection, registry=registry)
+
+    assert broker_attachments == []
 
 
 # --------------------------------------------------------------------------- #

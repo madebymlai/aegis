@@ -41,6 +41,9 @@ include = ["aegis_trader*"]
 python_version = "3.12"
 files = ["aegis_trader", "tests"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 # nautilus_trader ships no type stubs, pandas' stubs aren't installed, and
 # aegis-runtime is resolved as an editable local wheel — none expose types to
 # mypy.  Suppress the missing-import noise without weakening checks on our own code.

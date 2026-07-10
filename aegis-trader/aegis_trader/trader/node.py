@@ -45,11 +45,7 @@ from nautilus_trader.persistence.config import DataCatalogConfig
 from aegis_data.catalog import catalog_root
 from aegis_data.ibkr import attach_live_clients
 
-from aegis_trader.bundles.book_sleeves import (
-    SleeveBundles,
-    load_book_sleeves,
-    union_loadable_instrument_ids,
-)
+from aegis_trader.bundles.book import AssembledBook, assemble_book
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import IBConnectionSettings, load_book_config
@@ -145,28 +141,26 @@ def build_live_node(
     is decided entirely by ``connection`` (its port).
     """
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    sleeves = load_book_sleeves(book, registry)
-    instrument_ids = union_loadable_instrument_ids(sleeves)
+    assembled_book = assemble_book(book, registry)
 
     node = TradingNode(config=build_live_node_config(trader_id=connection.trader_id))
-    attach_live_clients(node, connection, instrument_ids)
+    attach_live_clients(node, connection, assembled_book.loadable_instrument_ids)
     node.build()
-    node.trader.add_strategy(build_live_strategy(book, sleeves))
+    node.trader.add_strategy(build_live_strategy(assembled_book))
     return node
 
 
-def build_live_strategy(book: BookConfig, sleeves: SleeveBundles) -> RebalanceStrategy:
+def build_live_strategy(book: AssembledBook) -> RebalanceStrategy:
     """The live ``RebalanceStrategy`` for *book*: next-close ``AT_THE_CLOSE`` and
-    cache warmup on start, with each sleeve's bundle registered."""
+    cache warmup on start, with the assembled book registered."""
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
-            book=book,
+            book=book.config,
             fill_time_in_force=LIVE_FILL_TIME_IN_FORCE,
             warmup_cache_on_start=True,
         )
     )
-    for name, bundle in sleeves:
-        strategy.register_sleeve(name, bundle)
+    strategy.register_book(book)
     return strategy
 
 

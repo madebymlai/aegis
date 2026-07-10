@@ -45,9 +45,8 @@ from nautilus_trader.trading.strategy import Strategy
 
 from aegis_data.bar_type import raw_bar_type, timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, catalog_root, parquet_data_catalog
-from aegis_runtime import DataContract, ExecutionBundle
 
-from aegis_trader.bundles.book_sleeves import union_loadable_instrument_ids
+from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data import (
     MarketDataPort,
     NautilusMarketData,
@@ -107,6 +106,10 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     live model the same fill point (the close)."""
 
 
+class BookConfigMismatchError(ValueError):
+    """An assembled Book does not match the Strategy's configured Book Config."""
+
+
 class RebalanceStrategy(Strategy):
     """Commingled-book rebalance overlay — submits orders NEXT-CLOSE.
 
@@ -120,16 +123,11 @@ class RebalanceStrategy(Strategy):
 
     def __init__(self, config: RebalanceStrategyConfig) -> None:
         super().__init__(config)
-        self._book: BookConfig = config.book
-        # ── Slice 6 sleeve registry ──────────────────────────────────────
-        self._sleeve_to_bundle: dict[SleeveName, ExecutionBundle] = {}
-        self._sleeve_to_contract: dict[SleeveName, DataContract] = {}
+        self._assembled_book: AssembledBook | None = None
         # ── bar-driven cadence state ─────────────────────────────────────
         self._current_period: int | None = None
         # Rebalance-period width in ns; set from the book timeframe in on_start.
         self._period_ns: int = _NS_PER_DAY
-        # Book bar timeframe (one across sleeves); set in on_start.
-        self._book_timeframe: str | None = None
         # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
         # Slice 7: startup gates + global halt
@@ -148,16 +146,13 @@ class RebalanceStrategy(Strategy):
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def register_sleeve(
-        self, name: SleeveName, bundle: ExecutionBundle,
-    ) -> None:
-        """Register a sleeve with its backing ExecutionBundle.
-
-        Replaces the Slice 1 ``_bundle`` direct-set pattern — call this
-        before the engine starts for each sleeve declared in the BookConfig.
-        """
-        self._sleeve_to_bundle[name] = bundle
-        self._sleeve_to_contract[name] = bundle.contract
+    def register_book(self, book: AssembledBook) -> None:
+        """Register the one validated book this strategy is configured to trade."""
+        if book.config != self.config.book:
+            raise BookConfigMismatchError(
+                "assembled Book Config differs from the strategy's configured Book Config"
+            )
+        self._assembled_book = book
 
     @property
     def last_attribution(self) -> dict[SleeveName, float]:
@@ -189,13 +184,10 @@ class RebalanceStrategy(Strategy):
             raise RuntimeError("rebalance pipeline queried before on_start wired it")
         return self._pipeline
 
-    def _require_book_timeframe(self) -> str:
-        if self._book_timeframe is None:
-            raise RuntimeError("book timeframe queried before on_start resolved it")
-        return self._book_timeframe
-
-    def _registered_instrument_ids(self) -> tuple[InstrumentId, ...]:
-        return union_loadable_instrument_ids(tuple(self._sleeve_to_bundle.items()))
+    def _require_assembled_book(self) -> AssembledBook:
+        if self._assembled_book is None:
+            raise RuntimeError("assembled book queried before registration")
+        return self._assembled_book
 
     def _require_roll_desk(self) -> RollDesk:
         if self._roll_desk is None:
@@ -231,16 +223,19 @@ class RebalanceStrategy(Strategy):
     # ── Nautilus lifecycle ────────────────────────────────────────────────────
 
     def on_start(self) -> None:
-        if not self._sleeve_to_bundle:
-            self.log.warning("No sleeves registered; strategy will idle.")
+        if self._assembled_book is None:
+            self.log.warning("No book registered; strategy will idle.")
             return
 
-        base_ccy = Currency.from_str(self._book.base_currency)
+        assembled_book = self._require_assembled_book()
+        base_ccy = Currency.from_str(assembled_book.config.base_currency)
         self._book_state = NautilusBookState(
             portfolio=self.portfolio,
             cache=self.cache,
             base_currency=base_ccy,
-            covered_instrument_ids=frozenset(self._registered_instrument_ids()),
+            covered_instrument_ids=frozenset(
+                assembled_book.loadable_instrument_ids
+            ),
         )
         roll_desk = self._build_roll_desk()
         self._roll_desk = roll_desk
@@ -248,8 +243,7 @@ class RebalanceStrategy(Strategy):
 
         boot = bootstrap(
             now=self.clock.utc_now(),
-            book=self._book,
-            sleeve_to_bundle=self._sleeve_to_bundle,
+            book=assembled_book,
             ledger=self._sleeve_ledger,
             book_state=self._require_book_state(),
             market_data=self._require_market_data(),
@@ -262,15 +256,14 @@ class RebalanceStrategy(Strategy):
             return
 
         self._pipeline = boot.pipeline
-        self._book_timeframe = boot.timeframe
         self._period_ns = timeframe_to_ns(boot.timeframe)
         self._startup_result = boot.startup_result
         self._log_startup_pass(boot.startup_result)
-        instrument_ids = self._registered_instrument_ids()
+        instrument_ids = assembled_book.loadable_instrument_ids
         if self._apply_boot_intents(boot.intents):
             return
 
-        names = [s.value for s in self._sleeve_to_bundle]
+        names = [name.value for name in assembled_book.sleeves]
         self.log.info(
             f"RebalanceStrategy starting; sleeves={names}, "
             f"instrument_ids={[instrument_id.value for instrument_id in instrument_ids]}"
@@ -301,7 +294,7 @@ class RebalanceStrategy(Strategy):
         submits orders that will fill at the *new* period's close — one-bar
         execution lag.
         """
-        if not self._sleeve_to_bundle or self._is_halted:
+        if self._assembled_book is None or self._is_halted:
             return
 
         # Drives today's offset-0 append and any in-process roll before the cadence reads the
@@ -439,9 +432,10 @@ class RebalanceStrategy(Strategy):
 
     def _positive_risk_sleeve_names(self) -> tuple[SleeveName, ...]:
         """Return the sleeve universe shared by covariance and skew estimates."""
-        risk_shares = self._book.allocator_risk_shares()
+        config = self._require_assembled_book().config
+        risk_shares = config.allocator_risk_shares()
         return tuple(
-            sleeve.name for sleeve in self._book.sleeves if risk_shares[sleeve.name] > 0
+            sleeve.name for sleeve in config.sleeves if risk_shares[sleeve.name] > 0
         )
 
     def _record_book_skew(self) -> None:
@@ -483,7 +477,7 @@ class RebalanceStrategy(Strategy):
         if pipeline.observation_count < 2:
             return
 
-        risk_shares = self._book.allocator_risk_shares()
+        risk_shares = self._require_assembled_book().config.allocator_risk_shares()
         attribution = pipeline.attribution(risk_shares)
         self._last_attribution = attribution
 
@@ -521,7 +515,7 @@ class RebalanceStrategy(Strategy):
             nav=nav,
             instrument_ids=[
                 instrument_id.value
-                for instrument_id in self._registered_instrument_ids()
+                for instrument_id in self._require_assembled_book().loadable_instrument_ids
             ],
         )
 

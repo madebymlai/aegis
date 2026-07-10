@@ -27,9 +27,8 @@ from aegis_runtime.currency import (
     build_currency_conversion_from_codes,
 )
 
-from aegis_trader.bundles.bands import BundleBands, InstrumentBandError, build_instrument_bands
+from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data.market_data import MarketBar
-from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import check_account_integrity
 from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.roll import RollEvent
@@ -109,19 +108,18 @@ class RebalancePipeline:
         *,
         book_state: BookStatePort,
         market_data: MarketDataPort,
-        book: BookConfig,
-        sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle],
+        book: AssembledBook,
         ledger: SleeveLedger,
     ) -> None:
         self._book_state = book_state
         self._market_data = market_data
-        self._book = book
-        self._sleeve_to_bundle = sleeve_to_bundle
+        self._book = book.config
+        self._sleeves = book.sleeves
         self._ledger = ledger
-        self._bundle_bands: BundleBands | None = None
+        self._bundle_bands = book.bands
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         timeframe_by_instrument_id: dict[InstrumentId, str] = {}
-        for bundle in self._sleeve_to_bundle.values():
+        for bundle in self._sleeves.values():
             for instrument_id in self._contract_target_ids(bundle.contract):
                 timeframe_by_instrument_id.setdefault(
                     instrument_id, bundle.contract.timeframe
@@ -157,21 +155,7 @@ class RebalancePipeline:
 
     def startup_check(self) -> _startup.StartupResult:
         """Run startup gates and return the decision as a value object."""
-        band_result = self._band_ownership_startup_result()
-        if band_result is not None:
-            return band_result
         return self._account_integrity_startup_result()
-
-    def _band_ownership_startup_result(self) -> _startup.StartupResult | None:
-        try:
-            self._bundle_bands = build_instrument_bands(self._sleeve_to_bundle)
-        except InstrumentBandError as exc:
-            return _startup.StartupResult(
-                trading_enabled=False,
-                halt_gate=_startup.StartupGate.BAND_OWNERSHIP,
-                halt_reason=str(exc),
-            )
-        return None
 
     def _account_integrity_startup_result(self) -> _startup.StartupResult:
         try:
@@ -254,7 +238,7 @@ class RebalancePipeline:
         pending: dict[SleeveName, pd.DataFrame] = {}
         failures: list[SleeveComputeFailure] = []
         for sleeve in self._book.sleeves:
-            bundle = self._sleeve_to_bundle.get(sleeve.name)
+            bundle = self._sleeves.get(sleeve.name)
             if bundle is None:
                 continue
             try:
@@ -349,24 +333,18 @@ class RebalancePipeline:
         _nav: float,
         realized_weights: dict[InstrumentId, float],
     ) -> RebalancePlan:
-        bundle_bands = self._require_bundle_bands()
         return rebalance_plan(
             pending,
             self._book,
             realized_weights=realized_weights,
-            instrument_bands=bundle_bands.bands,
-            band_owners=bundle_bands.owner_by_instrument,
+            instrument_bands=self._bundle_bands.bands,
+            band_owners=self._bundle_bands.owner_by_instrument,
             realized_covariance=self._ledger.realized_covariance(
                 self._positive_risk_sleeve_names()
             ),
             previous_sleeve_weights=self._last_sleeve_weights,
             realized_drawdown=self._ledger.current_drawdown(_nav),
         )
-
-    def _require_bundle_bands(self) -> BundleBands:
-        if self._bundle_bands is None:
-            raise RuntimeError("instrument bands queried before startup_check built them")
-        return self._bundle_bands
 
     def _size_plan(
         self,
