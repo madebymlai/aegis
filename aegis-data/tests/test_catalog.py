@@ -9,7 +9,8 @@ import pytest
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
-from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.instruments import CurrencyPair, Equity
+from nautilus_trader.model.objects import Currency
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
@@ -100,6 +101,22 @@ class _AdjustedLastProvider:
     def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
         self.requests.append(kwargs)
         return self.adjusted_last[kwargs["instrument_id"]]
+
+
+def _currency_pair(instrument_id: InstrumentId) -> CurrencyPair:
+    base, quote = instrument_id.symbol.value.split("/")
+    return CurrencyPair(
+        instrument_id=instrument_id,
+        raw_symbol=Symbol(instrument_id.symbol.value),
+        base_currency=Currency.from_str(base),
+        quote_currency=Currency.from_str(quote),
+        price_precision=5,
+        size_precision=0,
+        price_increment=Price(1e-5, 5),
+        size_increment=Quantity.from_int(1),
+        ts_event=0,
+        ts_init=0,
+    )
 
 
 def _equity(instrument_id: InstrumentId) -> Equity:
@@ -304,6 +321,42 @@ def test_catalog_port_cold_fills_a_quote_marked_instrument_from_bid_and_ask(
 
     assert frames[instrument_id]["Close"].tolist() == [100.5]
     assert provider.requests == [bid_type, ask_type]
+
+
+def test_catalog_port_serves_sided_quote_frames_for_quote_marked_legs_only(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    quote_id = _id("UEQC.XETR")
+    last_id = _id("AAPL.XNAS")
+    resolver = DeclaredMarkingResolver(declared={quote_id: MarkMode.QUOTE})
+    bid_type, ask_type = resolver.resolve(quote_id, "1D").mark_bars
+    _write_span(
+        catalog,
+        [
+            _bar(bid_type, "2024-01-01", 100.0),
+            _bar(ask_type, "2024-01-01", 101.0),
+            _bar(raw_bar_type(last_id, "1D"), "2024-01-01", 10.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-02",
+    )
+    port = CatalogBackedDataPort(catalog, provider=_ProviderPort([]), resolver=resolver)
+
+    frames = port.load_quote_frames(
+        RawBarRequest(
+            instrument_ids=(quote_id, last_id),
+            start="2024-01-01",
+            end="2024-01-02",
+        )
+    )
+
+    assert set(frames) == {quote_id}
+    bid_frame, ask_frame = frames[quote_id]
+    assert bid_frame["Close"].tolist() == [100.0]
+    assert ask_frame["Close"].tolist() == [101.0]
 
 
 class _QuoteProviderPort:
@@ -854,6 +907,83 @@ def test_catalog_port_reports_continuous_root_distribution_coverage_not_applicab
     assert report[0]["applicable"] is False
     assert report[0]["event_count"] == 0
     assert report[0]["checked_at"] is not None
+
+
+def test_catalog_port_skips_distribution_verification_for_cash_fx(
+    tmp_path: Path,
+) -> None:
+    # A cash FX conversion leg in the id set is routine, not an error: no
+    # provider is wired, so an applicable-but-unverified id would fail loud —
+    # succeeding proves verification was never attempted for the pair.
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    fx_pair = _id("EUR/USD.IDEALPRO")
+    catalog.write_data([_currency_pair(fx_pair)])
+
+    events = CatalogBackedDataPort(catalog).distributions(
+        (fx_pair,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    assert events == ()
+
+
+def test_catalog_port_reports_cash_fx_distribution_coverage_not_applicable(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    fx_pair = _id("EUR/USD.IDEALPRO")
+    catalog.write_data([_currency_pair(fx_pair)])
+    port = CatalogBackedDataPort(catalog)
+    port.distributions(
+        (fx_pair,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    report = port.distribution_coverage_report(
+        (fx_pair,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+
+    assert report[0]["instrument_id"] == "EUR/USD.IDEALPRO"
+    assert report[0]["applicable"] is False
+    assert report[0]["event_count"] == 0
+    assert report[0]["checked_at"] is not None
+
+
+def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
+    tmp_path: Path,
+) -> None:
+    # The second read's clock runs EARLIER than the first's, and the report
+    # surfaces the oldest marker in the window — so an unchanged checked_at
+    # proves the second read wrote no duplicate marker.
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    fx_pair = _id("EUR/USD.IDEALPRO")
+    catalog.write_data([_currency_pair(fx_pair)])
+    window = {"start": "2024-01-01", "end": "2024-01-04"}
+    CatalogBackedDataPort(
+        catalog,
+        clock_ns=lambda: pd.Timestamp("2026-01-02", tz="UTC").value,
+    ).distributions((fx_pair,), **window)
+
+    CatalogBackedDataPort(
+        catalog,
+        clock_ns=lambda: pd.Timestamp("2026-01-01", tz="UTC").value,
+    ).distributions((fx_pair,), **window)
+
+    report = CatalogBackedDataPort(catalog).distribution_coverage_report(
+        (fx_pair,), **window
+    )
+    assert report[0]["applicable"] is False
+    assert report[0]["checked_at"] == "2026-01-02T00:00:00+00:00"
 
 
 def test_catalog_port_rejects_distribution_read_for_unresolved_instrument(

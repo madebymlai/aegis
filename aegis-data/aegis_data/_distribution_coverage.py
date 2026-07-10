@@ -14,7 +14,7 @@ import pandas as pd
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.instruments import FuturesContract
+from nautilus_trader.model.instruments import CurrencyPair, FuturesContract
 
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.catalog import (
@@ -188,7 +188,10 @@ class DistributionCoverageService:
     def _applicability(self, instrument_id: InstrumentId) -> "_Applicability":
         definition = catalog_definitions(self.catalog, [instrument_id]).get(instrument_id)
         if definition is not None:
-            if isinstance(definition, FuturesContract):
+            # A futures contract carries no distributions; a cash FX pair is a
+            # conversion leg, not an income-bearing asset. Both are routine in
+            # a window's id set, so neither is an error (they mark not-applicable).
+            if isinstance(definition, (FuturesContract, CurrencyPair)):
                 return _Applicability.not_applicable()
             return _Applicability.applicable_to(definition)
         if continuous_root_legs(self.catalog, instrument_id.symbol.value):
