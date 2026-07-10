@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from research.aegis_research.configuration import PortfolioConfig
-from tests.support.research.aegis_research.factories import simulate_single_book
+from tests.support.research.aegis_research.factories import make_single_book_portfolio
 
 
 def test_per_symbol_fees_charge_each_leg_its_own_rate_in_simulation() -> None:
@@ -16,10 +16,10 @@ def test_per_symbol_fees_charge_each_leg_its_own_rate_in_simulation() -> None:
     )
     config = PortfolioConfig(gross_cap=1.0, direction="both", fees=0.0)
 
-    cheap = simulate_single_book(
+    cheap = make_single_book_portfolio(
         close, allocations, config, fees_by_symbol=pd.Series({"A": 0.001, "B": 0.001})
     )
-    pricey = simulate_single_book(
+    pricey = make_single_book_portfolio(
         close, allocations, config, fees_by_symbol=pd.Series({"A": 0.001, "B": 0.10})
     )
 
@@ -42,8 +42,8 @@ def test_fixed_fee_charges_a_flat_amount_on_every_order() -> None:
         fill_timing="same_close", fixed_fee=2.0,
     )
 
-    without = simulate_single_book(close, allocations, free)
-    with_fixed = simulate_single_book(close, allocations, charged)
+    without = make_single_book_portfolio(close, allocations, free)
+    with_fixed = make_single_book_portfolio(close, allocations, charged)
 
     # With proportional fees off, every order's fee is exactly the flat 2.0 -
     # charged per order, not per traded value - while the free book pays nothing.

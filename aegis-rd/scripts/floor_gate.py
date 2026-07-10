@@ -4,7 +4,7 @@ On-demand port of the P1/P2 scratchpad harness (research/vault/runs/demeter/2026
 sections P1 "monthly gate" and P2 "floor re-verification"). Builds both poles' full-window
 daily return streams through the REAL component pipeline (load_run_config ->
 load_market_data_result -> currency conversion -> indicators -> strategy ->
-simulate_single_book), then reports the recalibrated gate at the floor's horizon.
+make_single_book_portfolio), then reports the recalibrated gate at the floor's horizon.
 
 Semantics settled by those sessions (do not "fix" without re-reading the diary):
 
@@ -50,7 +50,7 @@ from research.aegis_research.optimization.window_evaluation.resolved_book import
     _fx_adjusted_fees as fx_adjusted_fees,
 )
 from research.aegis_research.run_pipeline import _to_base_currency
-from tests.support.research.aegis_research.factories import simulate_single_book
+from tests.support.research.aegis_research.factories import make_single_book_portfolio
 
 DEFAULT_TREND_CONFIG = REPO_ROOT / "research/configs/atalanta/trend_floor.yaml"
 DEFAULT_CARRY_CONFIG = REPO_ROOT / "research/configs/demeter/carry_floor.yaml"
@@ -131,7 +131,7 @@ def build_pole_returns(config_path: Path, *, strategy_param_overrides: dict | No
         base_fee=config.portfolio.fees,
         fx_conversion_cost=config.portfolio.fx_conversion_cost,
     )
-    pf = simulate_single_book(
+    pf = make_single_book_portfolio(
         close,
         allocations,
         config.portfolio,

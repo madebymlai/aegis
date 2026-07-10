@@ -484,7 +484,7 @@ def make_candidate_portfolio(
 SINGLE_CANDIDATE_ID = "single"
 
 
-def simulate_single_book(
+def make_single_book_portfolio(
     close: pd.DataFrame,
     allocations: pd.DataFrame,
     config: PortfolioConfig,

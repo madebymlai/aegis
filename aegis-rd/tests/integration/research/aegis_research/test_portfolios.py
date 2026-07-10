@@ -18,7 +18,7 @@ from research.aegis_research.optimization.window_evaluation._simulation import (
 from tests.support.research.aegis_research.factories import (
     SINGLE_CANDIDATE_ID,
     make_portfolio_config,
-    simulate_single_book,
+    make_single_book_portfolio,
 )
 
 
@@ -49,7 +49,7 @@ def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     # Only the first bar and terminal-liquidation last bar produce orders;
     # the NaN rows in between do not rebalance.
@@ -72,7 +72,7 @@ def test_all_zero_allocations_row_in_non_terminal_location_closes_positions_at_c
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     assets = pf.assets
     assert assets.iloc[1].to_dict() == pytest.approx({(SINGLE_CANDIDATE_ID, "A"): 0.0, (SINGLE_CANDIDATE_ID, "B"): 0.0})
@@ -94,7 +94,7 @@ def test_full_a_to_full_b_switch_under_shared_cash_executes_single_rebalance() -
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     orders = pf.orders.records_readable
     third_bar = _orders_on(orders, "2024-01-03")
@@ -117,7 +117,7 @@ def test_symmetric_directional_band_holds_drift_inside_shared_gate() -> None:
         band_down=0.03,
     )
 
-    pf = simulate_single_book(close, allocations, config)
+    pf = make_single_book_portfolio(close, allocations, config)
 
     assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
@@ -138,7 +138,7 @@ def test_symmetric_directional_band_trades_drift_outside_shared_gate() -> None:
         band_down=0.01,
     )
 
-    pf = simulate_single_book(close, allocations, config)
+    pf = make_single_book_portfolio(close, allocations, config)
 
     assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-02", "2024-01-04"]
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
@@ -163,7 +163,7 @@ def test_band_breach_trades_to_interior_destination_fraction() -> None:
         band_destination_fraction=0.5,
     )
 
-    pf = simulate_single_book(close, allocations, config)
+    pf = make_single_book_portfolio(close, allocations, config)
 
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
     expected = gate(realized_before_gate, 0.5, 0.01, 0.01, 0.5)
@@ -186,7 +186,7 @@ def test_symmetric_directional_band_holds_at_inclusive_boundary() -> None:
         band_down=0.02,
     )
 
-    pf = simulate_single_book(close, allocations, config)
+    pf = make_single_book_portfolio(close, allocations, config)
 
     assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
     realized_before_gate = (50.0 * boundary_price) / (50.0 * boundary_price + 5_000.0)
@@ -267,7 +267,7 @@ def test_instrument_bands_gate_each_symbol_independently() -> None:
     # sleeve-wide default (0.01) and trades the same drift ES holds.
     instrument_bands = {es: DriftBand(up=0.03, down=0.03)}
 
-    pf = simulate_single_book(close, allocations, config, instrument_bands=instrument_bands)
+    pf = make_single_book_portfolio(close, allocations, config, instrument_bands=instrument_bands)
 
     second_bar = _orders_on(pf.orders.records_readable, "2024-01-02")
     assert set(second_bar["Column"]) == {(SINGLE_CANDIDATE_ID, spy)}
@@ -296,7 +296,7 @@ def _simulate_drift_rebalance(
         band_up=band_up,
         band_down=band_down,
     )
-    return simulate_single_book(close, allocations, config)
+    return make_single_book_portfolio(close, allocations, config)
 
 
 def test_shortonly_drift_resizes_short_to_target_through_shared_gate() -> None:
@@ -313,7 +313,7 @@ def test_shortonly_drift_resizes_short_to_target_through_shared_gate() -> None:
     allocations = pd.DataFrame({"A": [-0.5, -0.5, np.nan, np.nan]}, index=index)
 
     def realized_at_drift(band: float) -> tuple[float, list[str]]:
-        pf = simulate_single_book(
+        pf = make_single_book_portfolio(
             close,
             allocations,
             make_portfolio_config(
@@ -357,7 +357,7 @@ def test_terminal_liquidation_sells_all_held_positions_at_last_close() -> None:
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     final_assets = pf.assets.iloc[-1]
     final_cash = float(pf.cash.iloc[-1])
@@ -409,7 +409,7 @@ def test_signed_both_direction_run_opens_a_real_short_position() -> None:
         index=index,
     )
 
-    pf = simulate_single_book(
+    pf = make_single_book_portfolio(
         close,
         allocations,
         make_portfolio_config(fees=0, slippage=0, gross_cap=1.0, direction="both"),
@@ -531,7 +531,7 @@ def test_single_portfolio_rejects_book_breaching_gross_cap() -> None:
         fees=0, slippage=0, gross_cap=1.0, net_cap=1.0, direction="longonly"
     )
     with pytest.raises(ValueError, match="gross_cap"):
-        simulate_single_book(close, allocations, config)
+        make_single_book_portfolio(close, allocations, config)
 
 
 def test_market_neutral_run_book_is_net_zero_and_realized_matches_requested() -> None:
@@ -545,7 +545,7 @@ def test_market_neutral_run_book_is_net_zero_and_realized_matches_requested() ->
         index=index,
     )
 
-    pf = simulate_single_book(
+    pf = make_single_book_portfolio(
         close,
         allocations,
         make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
@@ -569,7 +569,7 @@ def test_default_longonly_run_holds_only_long_positions() -> None:
         index=index,
     )
 
-    pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     assets = pf.assets
     assert (assets.iloc[1] >= 0).all()
@@ -587,7 +587,7 @@ def test_split_gap_row_is_masked_before_pfo_and_no_orders_land_on_gap_affected_r
         index=split_index,
     )
 
-    pf = simulate_single_book(
+    pf = make_single_book_portfolio(
         close,
         allocations,
         make_portfolio_config(fees=0, slippage=0, direction="longonly"),
@@ -627,7 +627,7 @@ def test_portfolio_inputs_reject_symbol_mismatches_instead_of_dropping_columns()
     allocations["EXTRA"] = 0.0
 
     with pytest.raises(ValueError, match="columns"):
-        simulate_single_book(close, allocations, make_portfolio_config(direction="longonly"))
+        make_single_book_portfolio(close, allocations, make_portfolio_config(direction="longonly"))
 
 
 def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> None:
@@ -635,7 +635,7 @@ def test_portfolio_inputs_reject_index_mismatches_instead_of_dropping_rows() -> 
     allocations = allocations.iloc[:-1]
 
     with pytest.raises(ValueError, match="index"):
-        simulate_single_book(close, allocations, make_portfolio_config(direction="longonly"))
+        make_single_book_portfolio(close, allocations, make_portfolio_config(direction="longonly"))
 
 
 def test_long_only_book_is_byte_for_byte_unchanged_with_carry_on_by_default() -> None:
@@ -644,10 +644,10 @@ def test_long_only_book_is_byte_for_byte_unchanged_with_carry_on_by_default() ->
     # the non-zero default or explicitly zero.
     close, allocations = _two_symbol_inputs()
 
-    carry_on = simulate_single_book(
+    carry_on = make_single_book_portfolio(
         close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly")
     )
-    carry_off = simulate_single_book(
+    carry_off = make_single_book_portfolio(
         close,
         allocations,
         make_portfolio_config(
@@ -697,9 +697,9 @@ def test_short_leg_carry_drops_return_and_long_leg_is_never_charged() -> None:
         short_rebate_rate=0.0,
     )
 
-    short_on = _total_return(simulate_single_book(close, short_book, carry_on))
-    short_off = _total_return(simulate_single_book(close, short_book, carry_off))
-    long_on = _total_return(simulate_single_book(close, long_only_book, carry_on))
+    short_on = _total_return(make_single_book_portfolio(close, short_book, carry_on))
+    short_off = _total_return(make_single_book_portfolio(close, short_book, carry_off))
+    long_on = _total_return(make_single_book_portfolio(close, long_only_book, carry_on))
 
     assert short_on < short_off
     assert short_off == pytest.approx(0.0, abs=1e-9)
@@ -727,7 +727,7 @@ def test_levered_long_book_pays_margin_interest_on_negative_group_cash() -> None
         short_rebate_rate=0.0,
     )
 
-    total_return = _total_return(simulate_single_book(close, allocations, config))
+    total_return = _total_return(make_single_book_portfolio(close, allocations, config))
 
     assert total_return == pytest.approx(-0.0015, abs=1e-9)
 
@@ -754,7 +754,7 @@ def test_levered_pure_futures_book_pays_no_margin_interest() -> None:
     )
 
     total_return = _total_return(
-        simulate_single_book(close, allocations, config, futures_roots=("ES",))
+        make_single_book_portfolio(close, allocations, config, futures_roots=("ES",))
     )
 
     assert total_return == pytest.approx(0.0, abs=1e-9)
@@ -782,7 +782,7 @@ def test_mixed_spot_and_futures_book_charges_only_spot_cash_deficit() -> None:
     )
 
     total_return = _total_return(
-        simulate_single_book(close, allocations, config, futures_roots=("ES",))
+        make_single_book_portfolio(close, allocations, config, futures_roots=("ES",))
     )
 
     assert total_return == pytest.approx(-0.0006, abs=1e-9)
@@ -807,8 +807,8 @@ def test_all_false_futures_mask_is_a_margin_interest_noop() -> None:
         short_rebate_rate=0.0,
     )
 
-    mask_free = simulate_single_book(close, allocations, config)
-    all_false_mask = simulate_single_book(
+    mask_free = make_single_book_portfolio(close, allocations, config)
+    all_false_mask = make_single_book_portfolio(
         close, allocations, config, futures_roots=("ES",)
     )
 
@@ -833,7 +833,7 @@ def test_explicit_zero_margin_interest_rate_charges_nothing() -> None:
         short_rebate_rate=0.0,
     )
 
-    pf = simulate_single_book(close, allocations, config)
+    pf = make_single_book_portfolio(close, allocations, config)
     total_return = _total_return(pf)
 
     assert total_return == pytest.approx(0.0, abs=1e-9)
@@ -878,8 +878,8 @@ def test_unlevered_champion_shaped_book_is_bit_identical_with_margin_interest_en
         short_rebate_rate=0.0,
     )
 
-    priced_pf = simulate_single_book(close, allocations, priced)
-    zero_pf = simulate_single_book(close, allocations, zero)
+    priced_pf = make_single_book_portfolio(close, allocations, priced)
+    zero_pf = make_single_book_portfolio(close, allocations, zero)
 
     pd.testing.assert_series_equal(priced_pf.value, zero_pf.value)
 
@@ -993,7 +993,7 @@ def test_records_count_exit_trades_for_long_and_short_legs() -> None:
         index=index,
     )
 
-    pf = simulate_single_book(
+    pf = make_single_book_portfolio(
         close,
         allocations,
         make_portfolio_config(fees=0, slippage=0, gross_cap=1.0, direction="both"),
@@ -1155,7 +1155,7 @@ def test_batch_of_one_candidate_equals_single_group_by_true() -> None:
     )
     config = make_portfolio_config(fees=0, slippage=0, direction="longonly")
 
-    pf_single = simulate_single_book(
+    pf_single = make_single_book_portfolio(
         close, allocations, config, periods_per_year=252
     )
 
@@ -1191,7 +1191,7 @@ def test_single_book_market_index_missing_row_raises() -> None:
     )
 
     with pytest.raises(ValueError, match="market_index"):
-        simulate_single_book(
+        make_single_book_portfolio(
             close,
             allocations,
             make_portfolio_config(fees=0, slippage=0, direction="longonly"),
@@ -1229,7 +1229,7 @@ def _distinct_open_close_entry_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.
 def test_next_close_fill_timing_fills_at_next_bar_close() -> None:
     close, open_, allocations = _distinct_open_close_entry_inputs()
 
-    pf = simulate_single_book(
+    pf = make_single_book_portfolio(
         close,
         allocations,
         make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_close"),
@@ -1243,7 +1243,7 @@ def test_next_close_fill_timing_fills_at_next_bar_close() -> None:
 def test_next_open_fill_timing_fills_at_next_bar_open() -> None:
     close, open_, allocations = _distinct_open_close_entry_inputs()
 
-    pf = simulate_single_book(
+    pf = make_single_book_portfolio(
         close,
         allocations,
         make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_open"),
@@ -1257,7 +1257,7 @@ def test_next_open_fill_timing_fills_at_next_bar_open() -> None:
 def test_same_close_fill_timing_fills_at_current_bar_close() -> None:
     close, _open, allocations = _distinct_open_close_entry_inputs()
 
-    pf = simulate_single_book(
+    pf = make_single_book_portfolio(
         close,
         allocations,
         make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="same_close"),
@@ -1276,7 +1276,7 @@ def test_next_open_fill_timing_without_open_prices_raises() -> None:
     close, _open, allocations = _distinct_open_close_entry_inputs()
 
     with pytest.raises(ValueError, match=r"next_open.*[Oo]pen"):
-        simulate_single_book(
+        make_single_book_portfolio(
             close,
             allocations,
             make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_open"),
