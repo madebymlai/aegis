@@ -7,22 +7,23 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from aegis_data.catalog import CatalogBackedDataPort, raw_bar_type
+from aegis_data.testing import FakeCatalog
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-from research.aegis_research.configuration import DataConfig
-from research.aegis_research.data import (
-    MarketDataAdapterResult,
-    MarketDataResult,
-    load_market_data_result,
-)
+from research.aegis_research.configuration import DataConfig, merge_data_arrays
+from research.aegis_research.data import MarketDataResult
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,
     native_from_array_dict,
 )
+from research.aegis_research.market_data.contracts import MarketDataLoad
+from research.aegis_research.market_data.diagnostics import observe_source
+from research.aegis_research.market_data.metadata import describe
+from research.aegis_research.market_data.quality import evaluate
 
 DEFAULT_INSTRUMENT_ID_VALUES = ("SYN.XNAS", "SYN2.XNAS")
 ETF_INSTRUMENT_ID_VALUES = (
@@ -100,6 +101,46 @@ def deterministic_ohlcv_panels(
     }
 
 
+def result_from_load(
+    config: DataConfig,
+    load: MarketDataLoad,
+    *,
+    required_arrays: tuple[str, ...] | None = None,
+) -> MarketDataResult:
+    """Drive a hand-built load through the leaf modules — observe → judge →
+    describe, the orchestrator's fixed sequence (ADR-0005).
+
+    The seam for loader-unreachable shapes: scenarios the real catalog loader
+    cannot emit (synthetic natives, custom index evidence, degenerate loads)
+    are exercised against the leaf interfaces directly.  Loader-reachable
+    scenarios belong at the port seam via ``load_market_data_result(port=...)``.
+    """
+    requested = config.effective_arrays
+    required = merge_data_arrays(requested, required_arrays or ())
+    observation, diagnostics = observe_source(config, load, requested_arrays=requested)
+    quality = evaluate(
+        config, diagnostics, required_arrays=required, index_evidence=load.evidence
+    )
+    metadata = describe(
+        config,
+        source=load,
+        observation=observation,
+        diagnostics=diagnostics,
+        quality=quality,
+        required_arrays=required,
+    )
+    return MarketDataResult(
+        native_data=load.native_data,
+        metadata=metadata,
+        diagnostics=diagnostics,
+        quality=quality,
+        pnl_native_data=load.pnl_native_data,
+        currency_conversion=load.currency_conversion,
+        adjustment_mode=load.adjustment_mode,
+        distributions=load.distributions,
+    )
+
+
 def loaded_market_data_result(
     config: DataConfig,
     *,
@@ -116,12 +157,83 @@ def loaded_market_data_result(
         {name: panels[name] for name in config.effective_arrays if name in panels},
         config,
     )
-    adapter_result = MarketDataAdapterResult(
-        native_data=native_data,
-        evidence=index_evidence(panels["Close"].index, source="test_fixture"),
-        provider_metadata={"class": "tests.market_data_fixture"},
+    return result_from_load(
+        config,
+        MarketDataLoad(
+            native_data=native_data,
+            evidence=index_evidence(panels["Close"].index, source="test_fixture"),
+            provider_metadata={"class": "tests.market_data_fixture"},
+        ),
     )
-    return load_market_data_result(config, adapter=lambda _config: adapter_result)
+
+
+class _UnservableCatalog(FakeCatalog):
+    """A catalog that reports every requested window as missing, so the real
+    port's coverage gate judges it unservable."""
+
+    def get_missing_intervals_for_request(
+        self, start: int, end: int, *_args: object, **_kwargs: object
+    ) -> list[tuple[int, int]]:
+        return [(start, end)]
+
+
+def unservable_port() -> CatalogBackedDataPort:
+    """A real port over a catalog that cannot serve any window (no provider):
+    every load ends in the coverage gate's verdict."""
+    return CatalogBackedDataPort(_UnservableCatalog(instruments=[], bars={}))
+
+
+def seed_catalog_frames(
+    catalog_path: Path,
+    frames: dict[str, pd.DataFrame],
+    *,
+    start: str,
+    end: str,
+    currency: str = "USD",
+) -> None:
+    """Seed a real catalog from explicit per-instrument OHLCV frames.
+
+    Unlike :func:`seed_catalog_ohlcv` the frames are the scenario — calendar
+    gaps and custom values survive into the corpus — so port-altitude quality
+    tests can stage real data defects behind the production port. Coverage is
+    claimed over ``[start, end]`` and distribution coverage is verified with a
+    zero-event source, so a warm read through ``CatalogBackedDataPort`` needs
+    no provider.
+    """
+    catalog_path.mkdir(parents=True, exist_ok=True)
+    catalog = ParquetDataCatalog(catalog_path)
+    start_ts = pd.Timestamp(start, tz="UTC")
+    end_ts = pd.Timestamp(end, tz="UTC")
+    close_panel = pd.DataFrame(
+        {instrument_id(value): frame["Close"] for value, frame in frames.items()}
+    )
+    for value, frame in frames.items():
+        current_id = instrument_id(value)
+        catalog.write_data([equity_definition(current_id, currency)])
+        bar_type = raw_bar_type(current_id, "1D")
+        catalog.write_data(
+            [
+                _bar(
+                    bar_type,
+                    timestamp=timestamp,
+                    open_=row["Open"],
+                    high=row["High"],
+                    low=row["Low"],
+                    close=row["Close"],
+                    volume=row["Volume"],
+                )
+                for timestamp, row in frame.iterrows()
+            ],
+            start=start_ts.value,
+            end=end_ts.value,
+        )
+        _verify_zero_distribution_coverage(
+            catalog,
+            current_id,
+            panels={"Close": close_panel},
+            start=start_ts,
+            end=end_ts,
+        )
 
 
 def seed_catalog_ohlcv(

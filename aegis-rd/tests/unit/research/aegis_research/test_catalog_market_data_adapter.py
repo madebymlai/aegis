@@ -124,7 +124,7 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
 
     result = load_market_data_result(
         config,
-        adapter=lambda current: load_catalog_source(current, port=port),
+        port=port,
     )
 
     bundle = market_data_bundle(result)
@@ -184,7 +184,7 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
 
     result = load_market_data_result(
         config,
-        adapter=lambda current: load_catalog_source(current, port=port),
+        port=port,
     )
 
     bundle = market_data_bundle(result)
@@ -297,7 +297,7 @@ def test_catalog_adapter_returns_no_adjustment_mode_without_futures() -> None:
 
     result = load_market_data_result(
         config,
-        adapter=lambda current: load_catalog_source(current, port=port),
+        port=port,
     )
 
     assert result.adjustment_mode is None
@@ -444,7 +444,7 @@ def test_catalog_adapter_records_distribution_coverage_in_quality_metadata(
 
     result = load_market_data_result(
         config,
-        adapter=lambda current: load_catalog_source(current, port=port),
+        port=port,
     )
 
     coverage = result.metadata.provenance.provider_metadata["distribution_coverage"]
@@ -545,7 +545,7 @@ def test_catalog_adapter_drop_policy_intersects_mixed_exchange_calendars() -> No
 
     result = load_market_data_result(
         config,
-        adapter=lambda current: load_catalog_source(current, port=port),
+        port=port,
     )
 
     close = market_data_bundle(result).array("Close")
