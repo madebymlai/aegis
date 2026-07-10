@@ -10,13 +10,13 @@ from dataclasses import dataclass
 
 import pandas as pd
 from aegis_data.distributions import Distribution
+from aegis_runtime.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import (
     RunConfig,
 )
 from research.aegis_research.drift_bands import resolve_instrument_bands
-from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_evidence import result_evidence
 from research.aegis_research.optimization.evidence_ledger import (

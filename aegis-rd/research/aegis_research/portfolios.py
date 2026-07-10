@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, debit_interest, gate, validate_exposure
+from aegis_runtime.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 from numba import njit
 from vectorbtpro import vbt
@@ -18,7 +19,6 @@ from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
-from aegis_runtime.currency import CurrencyConversion
 from research.aegis_research.market_data.identity import as_instrument_id
 
 _SINGLE_CANDIDATE_ID = "single"

@@ -4,10 +4,15 @@ date: "2026-06-11"
 topic: regime-transitions
 distilled-into:
 tags:
-  - article
+  - note
+  - regime-transitions
+  - havens
 ---
 
 # Havens at Regime Turning Points
+
+> [!note] Status
+> Settled transition-taxonomy record, demoted from `research/` on 2026-07-10. All four hypotheses are closed (see checkboxes): the practitioner turn ordering was refuted as ordered, the demotion-lag mechanism held coarsely, and the dollar-anchor-at-the-seam design was supported three ways - a project finding that now lives with the aegis haven-basket work. Kept for the generic residue nothing else covers: the historical case taxonomy (duration confirms the new regime last), the regime-conditional vs regime-robust haven sort, and the momentum-lag arithmetic (a trailing rank lags a flip by roughly half its lookback).
 
 > [!abstract] One-line takeaway
 > Inside a stable growth/inflation regime each canonical haven has a known job, but at the transition between regimes the only loosely reliable regularity is an ordering - commodities and the dollar turn first, duration turns last - and that ordering is exactly backwards for an allocation rule, because the haven whose role is most regime-conditional (long duration) is also the one that confirms the flip latest, while a 6/12-month momentum rank does not register the new regime until months after it has begun.

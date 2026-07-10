@@ -409,8 +409,8 @@ __all__ = [
     "DEFAULT_BLEND_WEIGHT",
     "DEFAULT_BOOK_VOL",
     "DEFAULT_RISK_AVERSION",
+    "carry_utility_rho_sensitivity_from_curve",
     "composite_allocator_utility",
     "composite_book_utility",
-    "carry_utility_rho_sensitivity_from_curve",
     "downside_correlation",
 ]

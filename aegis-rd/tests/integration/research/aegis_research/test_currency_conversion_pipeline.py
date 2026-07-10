@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 from aegis_data.distributions import Distribution, write_distribution_data
+from aegis_runtime.currency import MissingFxPairError
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from research.aegis_research.data import load_market_data_result
-from aegis_runtime.currency import MissingFxPairError
 from research.aegis_research.market_data.panels import market_data_bundle
 from tests.support.research.aegis_research.factories import make_data_config
 from tests.support.research.aegis_research.market_data_fixtures import (

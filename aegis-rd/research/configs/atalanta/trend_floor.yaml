@@ -1,10 +1,22 @@
 name: atalanta_trend_buy_hold_spread
 schema_version: 10
 output_dir: runs/atalanta/trend-buy-hold-spread
-lock: 20260629T000858802034Z_atalanta_trend_buy_hold_spread
+lock: 20260709T232701314885Z_atalanta_trend_buy_hold_spread
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # ATALANTA — the definitive convex trend sleeve (the floor's long-gamma "drawdown payer").
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# COMMODITY LEG PROMOTED 2026-07-10: ICOM (naive front-month BCOM) -> WCOA (WisdomTree optimised-roll).
+# Promotion decided on a 6-split matched window (2018..2024-12-31): convexity 0.4252 vs ICOM 0.4451 -
+# a statistical WASH (paired t=-1.08, n=6) - with WCOA a real edge on the SECONDARIES (Sharpe, maxDD,
+# best on the worst reversal/whipsaw split). A JUDGMENT-CALL promotion: WCOA TIES (does not beat) the
+# ranked convexity primary, so this is a deliberate choice to bank the drawdown/Sharpe/whipsaw edge at
+# neutral convexity (not a rule-based auto-replace).
+# LOCKED on the FULL window (2018..2026-07-01, 7 splits): convexity 0.4183 (convex on all 7 splits),
+# Sharpe 1.323 (past #80's 1.15 target), maxDD 6.61. `end` extended to 2026 (not trimmed) - the valid
+# 2025-26 fetch range sidesteps the empty-top-up clash, and the extra year adds statistical power to
+# the marginal promotion. WCOA's 5 old LSE-calendar gaps are ffilled in the catalog (0.3% of bars);
+# an INCREMENTAL top-up appends and preserves them - only a full catalog rebuild would drop the ffill.
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # Role ([[the-tiered-strategy-roster]]): the FLOOR-tier long-gamma pole — bleeds a little in calm,
 # pays out in dislocation, buying the income engine time to recover. Ranked on convexity, never
@@ -28,7 +40,7 @@ lock: 20260629T000858802034Z_atalanta_trend_buy_hold_spread
 #    convexity ENGINES (drop-one-name +0.105 / +0.119), hedging different crisis quadrants:
 #       IDTL.LSEETF  US Treasury 20+yr   deflation/flight-to-safety leg (long) + the SHORT-bond leg
 #       IGLN.LSEETF  gold                generic/deflation/geopolitical crisis hedge (long-only)
-#       ICOM.LSEETF  broad commodity     inflation-crisis hedge (long-only)
+#       WCOA.LSEETF  broad commodity     inflation-crisis hedge (long-only, optimised-roll)
 #    Breakout (binary Donchian 0.11, continuous Carver 0.18) and the endpoint score all LOST to the
 #    regression slope on convexity; uranium/leveraged/CTA universes are blocked on data (youth,
 #    null-Close illiquidity, non-existence) — see archived configs.
@@ -39,7 +51,7 @@ lock: 20260629T000858802034Z_atalanta_trend_buy_hold_spread
 #    baked, not left to the ranker.
 #  - STRATEGY: keystone_shortmute — hysteretic Schmitt-trigger sign (sticky, low turnover) +
 #    continuous magnitude (convex) + FORGO cash-when-flat (gross <= 1). IDTL is shorted on a confirmed
-#    down-trend (borrow-gated, parity-safe); IGLN/ICOM forgo to cash. enter/exit dead-zone fixed.
+#    down-trend (borrow-gated, parity-safe); IGLN/WCOA forgo to cash. enter/exit dead-zone fixed.
 #  - SHORT CAP: the IDTL short *reading* is one-sided-capped at short_cap=0.10 (annualized-score
 #    units), longs uncapped, freed gross -> cash. The short at full size is mostly left-tail whipsaw
 #    (worst-split drawdown 13.45->6.85 when capped) while a small capped short keeps the crisis-
@@ -56,11 +68,11 @@ lock: 20260629T000858802034Z_atalanta_trend_buy_hold_spread
 # EUR/USD; warm thereafter.
 data:
   base_currency: EUR
-  instruments: [IDTL.LSEETF, IGLN.LSEETF, ICOM.LSEETF]
+  instruments: [IDTL.LSEETF, IGLN.LSEETF, WCOA.LSEETF]
   exchange: [EUR/USD.IDEALPRO]
   arrays: [OHLCV]
   start: '2018-01-01'
-  end: '2025-01-01'
+  end: '2026-07-01'
   timeframe: 1D
   missing_index: drop
 
@@ -83,7 +95,7 @@ portfolio:
   base_currency: EUR
   gross_cap: 2.0  # raised 2026-07-05 (B1): ceiling only - sleeve weights unchanged; lets the book allocator re-lever the diversification dividend (GH #79 B1, #80)
   net_cap: 2.0    # raised with gross (B1): ceiling only
-  # both: long IGLN/ICOM + borrow-gated IDTL short. Short borrow carry priced by the portfolio (ADR-0008).
+  # both: long IGLN/WCOA + borrow-gated IDTL short. Short borrow carry priced by the portfolio (ADR-0008).
   direction: both
   init_cash: 5000.0
   fees: 0.0005
