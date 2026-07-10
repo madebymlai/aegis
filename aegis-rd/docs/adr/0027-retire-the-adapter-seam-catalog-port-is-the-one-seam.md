@@ -85,6 +85,11 @@ still carried remote/VBT-loader vocabulary and knobs.
   `data_unavailable` Evidence (GH #75 closed at the aegis-data end).
 - Historical `market_data.v3` artifacts keep their bytes; no reader shim is
   built (forward-first). Old Runs stay verifiable against their own schema.
+- **Failure evidence now quotes the port error verbatim** (`error_summary`,
+  quality reasons) — deliberately inverting the remote-era rule that provider
+  error text never entered metadata. That rule guarded remote credentials in
+  `fetch_kwargs`; the catalog path carries none, and the gate's exact missing
+  intervals are the verdict a researcher needs in the artifact.
 - Net seams across both repos went down by two (the adapter Protocol and the
   registry); the port is both production wiring and the test seam.
 

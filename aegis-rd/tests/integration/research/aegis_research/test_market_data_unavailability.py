@@ -20,12 +20,17 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
 
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import load_market_data_result
+from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.contracts import (
     QUALITY_DATA_UNAVAILABLE,
     MarketDataUnavailableError,
 )
 from tests.support.research.aegis_research.factories import make_data_config
+from tests.support.research.aegis_research.market_data_fixtures import (
+    UnservableCatalog,
+)
 
 _AAPL = InstrumentId.from_str("AAPL.XNAS")
 
@@ -57,16 +62,6 @@ def _frame(days: list[str], close: list[float]) -> pd.DataFrame:
     )
 
 
-class _GappyCatalog(FakeCatalog):
-    """A catalog that reports the whole requested window as missing, so the real
-    port's coverage gate judges it unservable (no provider wired: pure gap)."""
-
-    def get_missing_intervals_for_request(
-        self, start: int, end: int, *_args: object, **_kwargs: object
-    ) -> list[tuple[int, int]]:
-        return [(start, end)]
-
-
 class _BrokenProvider:
     """A Gap-Fill Provider whose fetch faults environmentally (gateway drop)."""
 
@@ -74,7 +69,7 @@ class _BrokenProvider:
         raise RuntimeError("gateway dropped mid-fetch")
 
 
-def _config() -> object:
+def _config() -> DataConfig:
     return make_data_config(
         arrays=["Close"],
         base_currency="USD",
@@ -85,7 +80,7 @@ def _config() -> object:
 
 
 def test_coverage_gap_collapses_to_a_data_unavailable_verdict() -> None:
-    port = CatalogBackedDataPort(_GappyCatalog(instruments=[_equity(_AAPL)], bars={}))
+    port = CatalogBackedDataPort(UnservableCatalog(instruments=[_equity(_AAPL)], bars={}))
 
     result = load_market_data_result(_config(), port=port)
 
@@ -98,14 +93,13 @@ def test_coverage_gap_collapses_to_a_data_unavailable_verdict() -> None:
     assert provenance.source_metadata["error_type"] == "MarketDataUnavailableError"
     assert "missing=" in provenance.source_metadata["error_summary"]
     assert provenance.index_evidence["source"] == QUALITY_DATA_UNAVAILABLE
-    assert [d.load_status for d in result.metadata.diagnostics] == [
-        QUALITY_DATA_UNAVAILABLE
-    ]
+    assert len(result.metadata.diagnostics) == 1
+    assert result.metadata.diagnostics[0].load_status == QUALITY_DATA_UNAVAILABLE
 
 
 def test_broken_fetch_collapses_to_the_same_data_unavailable_verdict() -> None:
     port = CatalogBackedDataPort(
-        _GappyCatalog(instruments=[_equity(_AAPL)], bars={}),
+        UnservableCatalog(instruments=[_equity(_AAPL)], bars={}),
         provider=_BrokenProvider(),
     )
 
@@ -117,7 +111,7 @@ def test_broken_fetch_collapses_to_the_same_data_unavailable_verdict() -> None:
 
 
 def test_authoring_errors_keep_propagating_uncaught() -> None:
-    port = CatalogBackedDataPort(_GappyCatalog(instruments=[], bars={}))
+    port = CatalogBackedDataPort(UnservableCatalog(instruments=[], bars={}))
 
     with pytest.raises(ValueError, match="start is required"):
         load_market_data_result(make_data_config(start=None), port=port)
@@ -172,9 +166,7 @@ def test_the_port_passthrough_drives_the_production_wiring() -> None:
 def test_the_loader_wraps_only_port_environmental_errors() -> None:
     """The triage boundary: the catalog loader converts the port's environmental
     errors into the RD unavailability error; nothing else is disguised."""
-    from research.aegis_research.market_data.adapters.catalog import load_catalog_source
-
-    port = CatalogBackedDataPort(_GappyCatalog(instruments=[_equity(_AAPL)], bars={}))
+    port = CatalogBackedDataPort(UnservableCatalog(instruments=[_equity(_AAPL)], bars={}))
 
     with pytest.raises(MarketDataUnavailableError) as excinfo:
         load_catalog_source(_config(), port=port)

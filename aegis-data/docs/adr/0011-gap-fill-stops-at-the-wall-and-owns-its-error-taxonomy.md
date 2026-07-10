@@ -65,6 +65,15 @@ failure without importing the IBKR adapter — against the port's DIP promise.
   requesting a too-wide window re-checks that head once per fill attempt —
   one bounded empty request each time. Unavailability stays a judged verdict,
   not a cached fact.
+- **The wall's precision is one chunk (≤365 days).** ``served_from`` is the
+  oldest *data-bearing chunk's* start, not the first bar: that whole span was
+  queried and the source answered with everything it has, so the claim is
+  honest in the verified-against-source sense — the same semantics that keep
+  holiday/weekend heads covered. The cost: a window starting inside the wall
+  chunk but before the first bar is served short without a gap verdict (the
+  Run's coverage facet still records the actual span). Claiming from the
+  first bar instead would raise false gap verdicts for non-trading-day heads
+  at the wall chunk — rejected.
 - Consumers (aegis-rd's market-data loader) can wrap exactly two port errors
   to build their failure contract (aegis-rd-1gef.3) without importing any
   vendor module.

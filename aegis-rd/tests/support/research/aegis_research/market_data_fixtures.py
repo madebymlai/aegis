@@ -167,9 +167,9 @@ def loaded_market_data_result(
     )
 
 
-class _UnservableCatalog(FakeCatalog):
+class UnservableCatalog(FakeCatalog):
     """A catalog that reports every requested window as missing, so the real
-    port's coverage gate judges it unservable."""
+    port's coverage gate judges it unservable (no provider wired: pure gap)."""
 
     def get_missing_intervals_for_request(
         self, start: int, end: int, *_args: object, **_kwargs: object
@@ -180,7 +180,7 @@ class _UnservableCatalog(FakeCatalog):
 def unservable_port() -> CatalogBackedDataPort:
     """A real port over a catalog that cannot serve any window (no provider):
     every load ends in the coverage gate's verdict."""
-    return CatalogBackedDataPort(_UnservableCatalog(instruments=[], bars={}))
+    return CatalogBackedDataPort(UnservableCatalog(instruments=[], bars={}))
 
 
 def seed_catalog_frames(

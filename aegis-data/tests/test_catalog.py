@@ -406,10 +406,9 @@ def test_catalog_port_persists_partial_fill_and_raises_gap_at_the_wall(
 
     assert "missing=" in str(excinfo.value)
     warmed = port.read_native_bars(request)[instrument_id]
-    assert [pd.Timestamp(bar.ts_event, tz="UTC").date().isoformat() for bar in warmed] == [
-        "2024-01-04",
-        "2024-01-05",
-    ]
+    assert len(warmed) == 2
+    assert pd.Timestamp(warmed[0].ts_event, tz="UTC") == pd.Timestamp("2024-01-04", tz="UTC")
+    assert pd.Timestamp(warmed[1].ts_event, tz="UTC") == pd.Timestamp("2024-01-05", tz="UTC")
 
 
 def test_catalog_port_translates_a_provider_failure_into_a_port_error(

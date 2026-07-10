@@ -107,11 +107,11 @@ def test_request_bars_walks_a_wide_window_backward_in_yearly_chunks() -> None:
         end=pd.Timestamp("2018-01-01", tz="UTC"),
     )
 
-    windows = [(call["start_date_time"], call["end_date_time"]) for call in fake.bar_calls]
-    assert windows == [
-        (datetime(2017, 1, 1), datetime(2018, 1, 1)),
-        (datetime(2016, 6, 1), datetime(2016, 12, 31, 23, 59, 59)),
-    ]
+    assert len(fake.bar_calls) == 2
+    assert fake.bar_calls[0]["start_date_time"] == datetime(2017, 1, 1)
+    assert fake.bar_calls[0]["end_date_time"] == datetime(2018, 1, 1)
+    assert fake.bar_calls[1]["start_date_time"] == datetime(2016, 6, 1)
+    assert fake.bar_calls[1]["end_date_time"] == datetime(2016, 12, 31, 23, 59, 59)
     assert list(out.bars) == [oldest_chunk_bar, newest_chunk_bar]
     assert out.served_from == pd.Timestamp("2016-06-01", tz="UTC")
     # One session serves the whole walk — connect/close wrap the walk, not each chunk.
@@ -149,6 +149,9 @@ def test_request_bars_stops_cleanly_at_the_no_data_wall() -> None:
     # Coverage is served only from the oldest data-bearing chunk, so the port
     # leaves the pre-wall head unclaimed and the coverage gate judges it.
     assert out.served_from == pd.Timestamp("2016-01-01 23:59:59", tz="UTC")
+
+
+def test_request_bars_can_pass_expired_future_contracts() -> None:
     sentinel_bars = [object()]
     fake = _FakeHistoricClient(bars=sentinel_bars, instruments=[])
     provider = IbkrHistoricalProvider(
