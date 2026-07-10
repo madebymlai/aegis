@@ -439,6 +439,37 @@ def test_catalog_port_translates_a_provider_failure_into_a_port_error(
     assert isinstance(excinfo.value.__cause__, IbkrRequestError)
 
 
+def test_gap_fill_failure_bounds_the_vendor_prose(tmp_path: Path) -> None:
+    """The persisted message is the port's interface: it names the fault in one
+    bounded line (type + the cause's first line, truncated); the full vendor
+    error stays on the chained cause for logs."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    vendor_prose = "gateway fault " + "x" * 400 + "\nraw vendor stack line two"
+
+    class _VerboseProvider:
+        def request_bars(self, bar_type: BarType, **kwargs: Any) -> ServedBars:
+            raise RuntimeError(vendor_prose)
+
+    port = CatalogBackedDataPort(catalog, provider=_VerboseProvider())
+
+    with pytest.raises(GapFillProviderError) as excinfo:
+        port.load_raw_bars(
+            RawBarRequest(
+                instrument_ids=(_id("AAPL.NASDAQ"),), start="2024-01-01", end="2024-01-05"
+            )
+        )
+
+    message = str(excinfo.value)
+    assert "RuntimeError" in message
+    assert "gateway fault" in message
+    assert "\n" not in message
+    assert "line two" not in message
+    assert len(message) < 320
+    assert str(excinfo.value.__cause__) == vendor_prose
+
+
 def test_catalog_port_translates_a_definition_seeder_failure_into_a_port_error(
     tmp_path: Path,
 ) -> None:

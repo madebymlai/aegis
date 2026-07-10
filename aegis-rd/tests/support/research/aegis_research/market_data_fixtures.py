@@ -14,16 +14,17 @@ from nautilus_trader.model.instruments import CurrencyPair, Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-from research.aegis_research.configuration import DataConfig, merge_data_arrays
+from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import MarketDataResult
 from research.aegis_research.market_data.adapters._support import (
     index_evidence,
     native_from_array_dict,
 )
 from research.aegis_research.market_data.contracts import MarketDataLoad
-from research.aegis_research.market_data.diagnostics import observe_source
-from research.aegis_research.market_data.metadata import describe
-from research.aegis_research.market_data.quality import evaluate
+
+# The orchestrator's own assembly, crossed by leaf-altitude tests for
+# hand-built loads — one owner for observe → judge → describe, no drift.
+from research.aegis_research.market_data.loading import result_from_load
 
 DEFAULT_INSTRUMENT_ID_VALUES = ("SYN.XNAS", "SYN2.XNAS")
 ETF_INSTRUMENT_ID_VALUES = (
@@ -99,46 +100,6 @@ def deterministic_ohlcv_panels(
         "Close": pd.DataFrame(close, index=index, columns=columns),
         "Volume": pd.DataFrame(volume, index=index, columns=columns),
     }
-
-
-def result_from_load(
-    config: DataConfig,
-    load: MarketDataLoad,
-    *,
-    required_arrays: tuple[str, ...] | None = None,
-) -> MarketDataResult:
-    """Drive a hand-built load through the leaf modules — observe → judge →
-    describe, the orchestrator's fixed sequence (ADR-0005).
-
-    The seam for loader-unreachable shapes: scenarios the real catalog loader
-    cannot emit (synthetic natives, custom index evidence, degenerate loads)
-    are exercised against the leaf interfaces directly.  Loader-reachable
-    scenarios belong at the port seam via ``load_market_data_result(port=...)``.
-    """
-    requested = config.effective_arrays
-    required = merge_data_arrays(requested, required_arrays or ())
-    observation, diagnostics = observe_source(config, load, requested_arrays=requested)
-    quality = evaluate(
-        config, diagnostics, required_arrays=required, index_evidence=load.evidence
-    )
-    metadata = describe(
-        config,
-        source=load,
-        observation=observation,
-        diagnostics=diagnostics,
-        quality=quality,
-        required_arrays=required,
-    )
-    return MarketDataResult(
-        native_data=load.native_data,
-        metadata=metadata,
-        diagnostics=diagnostics,
-        quality=quality,
-        pnl_native_data=load.pnl_native_data,
-        currency_conversion=load.currency_conversion,
-        adjustment_mode=load.adjustment_mode,
-        distributions=load.distributions,
-    )
 
 
 def loaded_market_data_result(
@@ -245,45 +206,28 @@ def seed_catalog_ohlcv(
     seed: int = 0,
     currency: str = "EUR",
 ) -> tuple[str, str]:
-    catalog_path.mkdir(parents=True, exist_ok=True)
-    catalog = ParquetDataCatalog(catalog_path)
+    # A projection over seed_catalog_frames: deterministic panels become
+    # per-instrument frames; one write-and-verify path serves both seeders.
     panels = deterministic_ohlcv_panels(
         instrument_id_values,
         periods=periods,
         start=start,
         seed=seed,
     )
+    frames = {
+        value: pd.DataFrame(
+            {name: panels[name][instrument_id(value)] for name in OHLCV_ARRAY_NAMES}
+        )
+        for value in instrument_id_values
+    }
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = start_ts + pd.Timedelta(days=periods)
-    for current_id in instrument_ids(instrument_id_values):
-        # The shared corpus holds a definition for every instrument with bars (ADR-0008);
-        # currency conversion reads each leg's quote currency from it.
-        catalog.write_data([equity_definition(current_id, currency)])
-        bar_type = raw_bar_type(current_id, "1D")
-        catalog.write_data(
-            [
-                _bar(
-                    bar_type,
-                    timestamp=timestamp,
-                    open_=panels["Open"].at[timestamp, current_id],
-                    high=panels["High"].at[timestamp, current_id],
-                    low=panels["Low"].at[timestamp, current_id],
-                    close=panels["Close"].at[timestamp, current_id],
-                    volume=panels["Volume"].at[timestamp, current_id],
-                )
-                for timestamp in panels["Close"].index
-            ],
-            start=start_ts.value,
-            end=end_ts.value,
-        )
-        _verify_zero_distribution_coverage(
-            catalog,
-            current_id,
-            panels=panels,
-            start=start_ts,
-            end=end_ts,
-        )
-    return start_ts.date().isoformat(), end_ts.date().isoformat()
+    start_text = start_ts.date().isoformat()
+    end_text = end_ts.date().isoformat()
+    seed_catalog_frames(
+        catalog_path, frames, start=start_text, end=end_text, currency=currency
+    )
+    return start_text, end_text
 
 
 def _verify_zero_distribution_coverage(

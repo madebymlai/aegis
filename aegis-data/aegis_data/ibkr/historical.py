@@ -154,7 +154,6 @@ class IbkrHistoricalProvider:
         instrument_kwargs: Mapping[str, Any],
     ) -> ServedBars:
         bars: list[Bar] = []
-        served_from = end
         for chunk_start, chunk_end in _backward_windows(start, end):
             pulled = await asyncio.wait_for(
                 session.request_bars(
@@ -169,9 +168,12 @@ class IbkrHistoricalProvider:
                 timeout=self.call_deadline,
             )
             if not pulled:
-                return ServedBars(tuple(bars), served_from)
+                # The wall.  Its truth boundary is day-precise for free: the
+                # oldest data-bearing chunk was queried in full, so its first
+                # bar IS where the source's history begins — everything from
+                # that instant on was served, nothing before it exists.
+                return ServedBars(tuple(bars), _first_bar_instant(bars, end))
             bars = list(pulled) + bars
-            served_from = chunk_start
         return ServedBars(tuple(bars), start)
 
     def request_instruments(
@@ -323,6 +325,14 @@ _FETCH_CHUNK_SPAN = pd.Timedelta(days=365)
 # Adjacent chunks abut one second apart — IB requests are second-granular, and no
 # bar the corpus serves (daily) can fall inside the crack.
 _CHUNK_GAP = pd.Timedelta(seconds=1)
+
+
+def _first_bar_instant(bars: Sequence[Bar], fallback: pd.Timestamp) -> pd.Timestamp:
+    """Where served history begins: the oldest pulled bar's event time, or
+    *fallback* when nothing was pulled at all (nothing is claimed either way)."""
+    if not bars:
+        return fallback
+    return pd.Timestamp(bars[0].ts_event, tz="UTC")
 
 
 def _backward_windows(

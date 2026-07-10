@@ -20,6 +20,7 @@ from research.aegis_research.market_data import metadata as _metadata
 from research.aegis_research.market_data import quality as _judge
 from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.contracts import (
+    MarketDataLoad,
     MarketDataResult,
     MarketDataUnavailableError,
     failed_market_data_load,
@@ -69,16 +70,30 @@ def load_market_data_result(
     production wires — threaded to the catalog loader; omitted, the standard
     port is composed inside aegis-data.
     """
-    requested = config.effective_arrays
-    required = merge_data_arrays(requested, required_arrays or ())
-
     try:
         source = load_catalog_source(config, port=port)
     except MarketDataUnavailableError as error:
         # The failure rides the same observe -> judge -> describe sequence as
         # success, so an unavailable window becomes judged Run Evidence.
         source = failed_market_data_load(error)
+    return result_from_load(config, source, required_arrays=required_arrays)
 
+
+def result_from_load(
+    config: DataConfig,
+    source: MarketDataLoad,
+    *,
+    required_arrays: tuple[str, ...] | None = None,
+) -> MarketDataResult:
+    """Assemble a :class:`MarketDataResult` from one load outcome — the fixed
+    observe → judge → describe sequence (ADR-0005), owned here once.
+
+    Internal seam, not part of the facade: leaf-altitude tests cross it with
+    hand-built loads (shapes the catalog loader cannot emit) so the sequence
+    can never drift between production and test support.
+    """
+    requested = config.effective_arrays
+    required = merge_data_arrays(requested, required_arrays or ())
     observation, diagnostics = _observe.observe_source(
         config, source, requested_arrays=requested
     )

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -320,14 +321,12 @@ class CatalogBackedDataPort:
         if self.provider is None:
             raise _coverage_gap(bar_type, missing)
         for start_ns, end_ns in missing:
-            try:
+            with gap_fill_boundary(str(bar_type)):
                 served = self.provider.request_bars(
                     bar_type,
                     start=pd.Timestamp(start_ns, tz="UTC"),
                     end=pd.Timestamp(end_ns, tz="UTC"),
                 )
-            except Exception as exc:
-                raise gap_fill_failure(str(bar_type), exc) from exc
             if served.bars:
                 # Claim coverage only from where the source's history actually
                 # reached (#75): a pre-wall head stays missing for the gate below,
@@ -347,10 +346,8 @@ class CatalogBackedDataPort:
         # The fill served this instrument's bars; persist its definition too so the
         # shared corpus never holds bars without a definition (ADR-0008).
         if self.definition_seeder is not None:
-            try:
+            with gap_fill_boundary(str(bar_type)):
                 self.definition_seeder(bar_type.instrument_id)
-            except Exception as exc:
-                raise gap_fill_failure(str(bar_type), exc) from exc
 
     def _missing_intervals(
         self, bar_type: BarType, request: RawBarRequest
@@ -406,12 +403,37 @@ def catalog_data_port(path: str | Path | None = None) -> CatalogBackedDataPort:
     )
 
 
-def gap_fill_failure(subject: str, exc: Exception) -> GapFillProviderError:
-    """The port-level translation of a provider fault, named by its subject."""
+# The persisted failure message is the port's interface: one bounded line in
+# port vocabulary. The full vendor error rides only the chained cause (logs),
+# never a shared Evidence artifact.
+_CAUSE_SUMMARY_LIMIT = 200
+
+
+@contextmanager
+def gap_fill_boundary(subject: str) -> Iterator[None]:
+    """The port's one translation rule for Ensure Coverage: a provider fault
+    becomes :class:`GapFillProviderError` named by *subject*; the coverage
+    gate's own verdicts pass through untouched."""
+    try:
+        yield
+    except CatalogCoverageGapError:
+        raise
+    except Exception as exc:
+        raise _gap_fill_failure(subject, exc) from exc
+
+
+def _gap_fill_failure(subject: str, exc: Exception) -> GapFillProviderError:
     return GapFillProviderError(
         f"the gap-fill provider could not serve {subject}: "
-        f"{type(exc).__name__}: {exc}"
+        f"{type(exc).__name__}: {_cause_summary(exc)}"
     )
+
+
+def _cause_summary(exc: Exception) -> str:
+    first_line = str(exc).splitlines()[0] if str(exc) else ""
+    if len(first_line) <= _CAUSE_SUMMARY_LIMIT:
+        return first_line
+    return first_line[:_CAUSE_SUMMARY_LIMIT] + "…"
 
 
 def _coverage_gap(

@@ -118,19 +118,27 @@ def test_request_bars_walks_a_wide_window_backward_in_yearly_chunks() -> None:
     assert fake.events == ["connect", "aclose"]
 
 
+class _StampedBar:
+    def __init__(self, day: str) -> None:
+        self.ts_event = pd.Timestamp(day, tz="UTC").value
+
+
 def test_request_bars_stops_cleanly_at_the_no_data_wall() -> None:
     """GH #75: a chunk with no bars is the no-data wall — history simply does not
     reach back that far (TLT pre-2016, SPTL pre-2017).  The walk stops there instead
     of stepping further into pre-listing history chunk by timed-out chunk, and the
     bars already pulled are still returned."""
     listing_date = pd.Timestamp("2016-06-15", tz="UTC")
-    bar = object()
+    first_bar = _StampedBar("2016-06-15")
+    newer_bar = _StampedBar("2017-03-01")
 
     class _Walled(_FakeHistoricClient):
         async def request_bars(self, **kwargs: Any) -> list[Any]:
             self.bar_calls.append(kwargs)
             chunk_end = pd.Timestamp(kwargs["end_date_time"], tz="UTC")
-            return [bar] if chunk_end >= listing_date else []
+            if chunk_end < listing_date:
+                return []
+            return [newer_bar] if len(self.bar_calls) == 1 else [first_bar]
 
     fake = _Walled(bars=[], instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
@@ -145,10 +153,12 @@ def test_request_bars_stops_cleanly_at_the_no_data_wall() -> None:
     # Two chunks with data, then the first empty chunk ends the walk — the two
     # remaining pre-wall years are never requested.
     assert len(fake.bar_calls) == 3
-    assert list(out.bars) == [bar, bar]
-    # Coverage is served only from the oldest data-bearing chunk, so the port
-    # leaves the pre-wall head unclaimed and the coverage gate judges it.
-    assert out.served_from == pd.Timestamp("2016-01-01 23:59:59", tz="UTC")
+    assert list(out.bars) == [first_bar, newer_bar]
+    # At the wall the truth boundary is day-precise for free: the oldest
+    # data-bearing chunk was queried in full, so its first bar IS where the
+    # source's history begins.  Coverage is served from that instant; the
+    # pre-history head stays unclaimed and the coverage gate judges it exactly.
+    assert out.served_from == pd.Timestamp("2016-06-15", tz="UTC")
 
 
 def test_request_bars_can_pass_expired_future_contracts() -> None:

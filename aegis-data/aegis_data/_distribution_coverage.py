@@ -23,7 +23,7 @@ from aegis_data.catalog import (
     bars_to_ohlcv,
     catalog_definitions,
     continuous_root_legs,
-    gap_fill_failure,
+    gap_fill_boundary,
 )
 from aegis_data.distributions import (
     query_distribution_data,
@@ -252,7 +252,9 @@ class DistributionCoverageService:
                 f"{instrument_id.value}: fewer than two TRADES closes in "
                 f"{_range_text(start_ns, end_ns)}"
             )
-        try:
+        # No vendor type crosses the port: an adjusted-last fetch fault during
+        # Ensure Coverage is the same environmental failure as a bar-fill fault.
+        with gap_fill_boundary(f"distributions for {instrument_id.value}"):
             events = request_distribution_data(
                 provider,
                 instrument_id,
@@ -261,14 +263,6 @@ class DistributionCoverageService:
                 end=pd.Timestamp(end_ns, tz="UTC"),
                 currency=_definition_currency(definition),
             )
-        except CatalogCoverageGapError:
-            raise
-        except Exception as exc:
-            # No vendor type crosses the port: an adjusted-last fetch fault during
-            # Ensure Coverage is the same environmental failure as a bar-fill fault.
-            raise gap_fill_failure(
-                f"distributions for {instrument_id.value}", exc
-            ) from exc
         replace_distribution_data(
             self.catalog,
             instrument_id,
