@@ -10,7 +10,7 @@ observe (:mod:`diagnostics`), judge (:mod:`quality`), describe
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from research.aegis_research.configuration import DataConfig, merge_data_arrays
 from research.aegis_research.market_data import diagnostics as _observe
@@ -21,9 +21,14 @@ from research.aegis_research.market_data.adapters.catalog import load_catalog_so
 from research.aegis_research.market_data.contracts import (
     MarketDataAdapter,
     MarketDataResult,
+    MarketDataUnavailableError,
     RemoteDataPullError,
+    failed_market_data_load,
     provider_failed_adapter_result,
 )
+
+if TYPE_CHECKING:
+    from aegis_data.catalog import CatalogBackedDataPort
 
 close_from_ohlcv = _features.close_from_ohlcv
 array_from_ohlcv = _features.array_from_ohlcv
@@ -46,8 +51,10 @@ __all__ = [
 ]
 
 
-def load_market_data(config: DataConfig) -> Any:
-    result = load_market_data_result(config)
+def load_market_data(
+    config: DataConfig, *, port: CatalogBackedDataPort | None = None
+) -> Any:
+    result = load_market_data_result(config, port=port)
     result.assert_usable()
     return result.native_data
 
@@ -57,16 +64,27 @@ def load_market_data_result(
     *,
     required_arrays: tuple[str, ...] | None = None,
     adapter: MarketDataAdapter | None = None,
+    port: CatalogBackedDataPort | None = None,
 ) -> MarketDataResult:
-    """Load catalog data, then apply Aegis evidence/quality contracts."""
+    """Load catalog data, then apply Aegis evidence/quality contracts.
+
+    ``port`` is the one injection seam — the same ``CatalogBackedDataPort``
+    production wires — threaded to the catalog loader; omitted, the standard
+    port is composed inside aegis-data.
+    """
     requested = config.effective_arrays
     required = merge_data_arrays(requested, required_arrays or ())
-    load_data = load_catalog_source if adapter is None else adapter
 
     try:
-        source = load_data(config)
+        source = (
+            load_catalog_source(config, port=port) if adapter is None else adapter(config)
+        )
     except RemoteDataPullError as error:
         source = provider_failed_adapter_result(error)
+    except MarketDataUnavailableError as error:
+        # The failure rides the same observe -> judge -> describe sequence as
+        # success, so an unavailable window becomes judged Run Evidence.
+        source = failed_market_data_load(error)
 
     observation, diagnostics = _observe.observe_source(
         config, source, requested_arrays=requested

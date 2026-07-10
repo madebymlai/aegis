@@ -14,10 +14,12 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data.contracts import (
+    QUALITY_DATA_UNAVAILABLE,
     QUALITY_DEGRADED_ALLOWED,
     QUALITY_HEALTHY,
     QUALITY_PROVIDER_FAILED,
     QUALITY_REJECTED,
+    UNAVAILABLE_REASON_KEY,
     DataDiagnostics,
     MarketDataQuality,
 )
@@ -34,6 +36,22 @@ def evaluate(
     warnings: list[str] = []
     degradations: set[str] = set()
     allowed: set[str] = set(config.quality.allowed_degradations)
+
+    unavailable = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.configured
+        and diagnostic.provider_status == QUALITY_DATA_UNAVAILABLE
+    ]
+    if unavailable:
+        return MarketDataQuality(
+            state=QUALITY_DATA_UNAVAILABLE,
+            reasons=(
+                index_evidence.get(UNAVAILABLE_REASON_KEY)
+                or "market data is unavailable for the requested window",
+            ),
+            allowed_degradations=tuple(config.quality.allowed_degradations),
+        )
 
     provider_failed = [
         diagnostic

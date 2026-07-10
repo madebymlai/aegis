@@ -7,6 +7,8 @@ from collections.abc import Sequence
 import pandas as pd
 from aegis_data.catalog import (
     CatalogBackedDataPort,
+    CatalogCoverageGapError,
+    GapFillProviderError,
     RawBarRequest,
     catalog_data_port,
 )
@@ -31,6 +33,7 @@ from research.aegis_research.market_data.adapters._support import (
 from research.aegis_research.market_data.contracts import (
     CONTINUOUS_ROOT_IDS_KEY,
     MarketDataAdapterResult,
+    MarketDataUnavailableError,
 )
 from research.aegis_research.market_data.identity import instrument_ids
 
@@ -48,7 +51,22 @@ def load_catalog_source(
     # port (unconditional, ungated); a warm read never connects. The concrete
     # provider is wired inside aegis-data's factory, so this module depends only on
     # the CatalogBackedDataPort abstraction (DIP).
+    #
+    # This module is the only one that talks to the port, so it owns the
+    # environmental-vs-authoring triage: the port's two environmental errors
+    # (Data ADR-0011) become the RD unavailability error the orchestrator
+    # collapses into failure Evidence; authoring errors (missing definitions,
+    # root collisions, missing window edges) keep propagating.
     data_port = port if port is not None else catalog_data_port(config.path)
+    try:
+        return _load_from_port(data_port, config)
+    except (CatalogCoverageGapError, GapFillProviderError) as error:
+        raise MarketDataUnavailableError(str(error)) from error
+
+
+def _load_from_port(
+    data_port: CatalogBackedDataPort, config: DataConfig
+) -> MarketDataAdapterResult:
     start = _required_window_edge(config.start, "start")
     end = _required_window_edge(config.end, "end")
     raw_frames = data_port.load_raw_bars(

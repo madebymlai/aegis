@@ -25,6 +25,7 @@ from research.aegis_research.market_data.adapters.catalog import (
     ContinuousRootCollisionError,
     load_catalog_source,
 )
+from research.aegis_research.market_data.contracts import MarketDataUnavailableError
 from research.aegis_research.market_data.panels import market_data_bundle
 from tests.support.research.aegis_research.factories import make_data_config
 
@@ -470,8 +471,14 @@ def test_catalog_adapter_fails_loud_without_distribution_provider(
         path=str(catalog_path),
     )
 
-    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
+    # The port's coverage verdict is environmental, so the loader surfaces it in
+    # RD vocabulary — still loud, with the port's judgement chained and quoted.
+    with pytest.raises(
+        MarketDataUnavailableError, match="distribution coverage is missing"
+    ) as excinfo:
         load_catalog_source(config, port=CatalogBackedDataPort(catalog))
+
+    assert isinstance(excinfo.value.__cause__, CatalogCoverageGapError)
 
 
 def _id(value: str) -> InstrumentId:

@@ -27,12 +27,28 @@ QUALITY_HEALTHY = "healthy"
 QUALITY_DEGRADED_ALLOWED = "degraded_allowed"
 QUALITY_REJECTED = "rejected"
 QUALITY_PROVIDER_FAILED = "provider_failed"
+QUALITY_DATA_UNAVAILABLE = "data_unavailable"
+# Carried in the failed load's index evidence so the judge — which reads only
+# diagnostics and evidence, never the load itself — can put the gate's exact
+# judgement (which intervals cannot be served) into the verdict's reasons.
+UNAVAILABLE_REASON_KEY = "unavailable_reason"
 
 
 class RemoteDataPullError(ValueError):
     def __init__(self, source: str, message: str) -> None:
         self.source = source
         super().__init__(f"Failed to pull {source} data: {message}")
+
+
+class MarketDataUnavailableError(RuntimeError):
+    """The Run's market data cannot be served for environmental reasons.
+
+    Raised by the catalog loader when the port judges the requested window
+    unservable (a coverage gap after backfill) or the gap fill itself faults
+    (gateway drop, dead vendor call), with the port error chained as the cause.
+    The loading orchestrator catches exactly this error and collapses it into
+    failure Evidence — authoring errors are never wrapped and keep crashing.
+    """
 
 
 class MarketDataQualityError(ValueError):
@@ -65,7 +81,9 @@ class MarketDataQuality:
 
 
 @dataclass(frozen=True)
-class MarketDataAdapterResult:
+class MarketDataLoad:
+    """One load outcome — the internal handoff observe → judge → describe read."""
+
     native_data: Any
     source_metadata: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
@@ -83,11 +101,10 @@ class MarketDataAdapterResult:
     adjustment_mode: ContinuousFutureAdjustmentType | None = None
     # Listed-ETF cash events read from the same Nautilus catalog as bars.
     distributions: tuple[Distribution, ...] = ()
-    # Set only by ``provider_failed_adapter_result``: adapters raise
-    # ``RemoteDataPullError``, they never return a failed result. Carrying the
-    # failure as data lets the one observe → judge → describe sequence handle
-    # both outcomes.
-    failure: RemoteDataPullError | None = None
+    # Set only by the failed-load constructors: loaders raise, they never
+    # return a failed load. Carrying the failure as data lets the one
+    # observe → judge → describe sequence handle both outcomes.
+    failure: Exception | None = None
 
     @property
     def provider_class(self) -> str | None:
@@ -98,6 +115,25 @@ class MarketDataAdapterResult:
         if self.native_data is None:
             return False
         return supports_update(self.native_data)
+
+
+# Transitional alias: the retired adapter seam's name for the handoff, kept
+# importable until the seam's deletion (aegis-rd-1gef.5).
+MarketDataAdapterResult = MarketDataLoad
+
+
+def failed_market_data_load(error: MarketDataUnavailableError) -> MarketDataLoad:
+    """The degenerate load an unavailable window collapses to: no native data,
+    data-unavailable index evidence carrying the gate's judgement, the error as
+    data."""
+    return MarketDataLoad(
+        native_data=None,
+        evidence={
+            "source": QUALITY_DATA_UNAVAILABLE,
+            UNAVAILABLE_REASON_KEY: str(error),
+        },
+        failure=error,
+    )
 
 
 def provider_failed_adapter_result(error: RemoteDataPullError) -> MarketDataAdapterResult:
