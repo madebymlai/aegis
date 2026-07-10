@@ -10,16 +10,19 @@ These are test-support only — no production code changes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
-from aegis_runtime import MarketDataBundle
+from aegis_data.distributions import Distribution
+from aegis_runtime import DriftBand, InstrumentId, MarketDataBundle
+from aegis_runtime.currency import CurrencyConversion
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry.contracts import (
+    SYMBOL_LEVEL,
     ComponentDefinition,
     ComponentFamily,
     ComponentSourceIdentity,
@@ -475,4 +478,53 @@ def make_candidate_portfolio(
     book = ResolvedBook(config if config is not None else make_portfolio_config())
     return simulate_portfolio_batch(
         close, allocations, book, periods_per_year=periods_per_year, **sim_kwargs
+    )
+
+
+SINGLE_CANDIDATE_ID = "single"
+
+
+def simulate_single_book(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: PortfolioConfig,
+    *,
+    open_: pd.DataFrame | None = None,
+    market_index: pd.Index | None = None,
+    periods_per_year: int = 252,
+    fees_by_symbol: pd.Series | None = None,
+    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    futures_roots: tuple[str, ...] = (),
+    distributions: Sequence[Distribution] | None = None,
+    currency_conversion: CurrencyConversion | None = None,
+) -> vbt.Portfolio:
+    """Simulate one plain-symbol book through the batched path.
+
+    Test support for carry/mechanics assertions: wraps ``allocations`` into a
+    one-candidate MultiIndex (``SINGLE_CANDIDATE_ID``) and the loose book facts
+    into a :class:`ResolvedBook`, then delegates to the internal simulation
+    seam. Not a production interface — the batch entry is the only production
+    path.
+    """
+    columns = pd.MultiIndex.from_product(
+        [[SINGLE_CANDIDATE_ID], allocations.columns],
+        names=["candidate_id", SYMBOL_LEVEL],
+    )
+    alloc_mi = pd.DataFrame(
+        allocations.to_numpy(), index=allocations.index, columns=columns
+    )
+    return simulate_portfolio_batch(
+        close,
+        alloc_mi,
+        ResolvedBook(
+            config=config,
+            fees_by_symbol=fees_by_symbol,
+            instrument_bands=instrument_bands,
+            futures_roots=futures_roots,
+        ),
+        open_=open_,
+        market_index=market_index,
+        periods_per_year=periods_per_year,
+        distributions=distributions,
+        currency_conversion=currency_conversion,
     )

@@ -405,10 +405,10 @@ def masking_check(audit, repo):
 
         from research.aegis_research.optimization.window_evaluation._simulation import (
             count_non_executable_rows,
-            simulate_single_book,
         )
         from tests.support.research.aegis_research.factories import (
             make_portfolio_config,
+            simulate_single_book,
         )
         market = pd.date_range("2020-01-01", periods=6, freq="D")
         # allocations skip the 3rd market bar -> a gap the mask must catch.

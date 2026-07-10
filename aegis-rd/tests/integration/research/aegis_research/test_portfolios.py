@@ -11,13 +11,15 @@ from vectorbtpro.portfolio.enums import OrderStatusInfo
 from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.optimization.window_evaluation._simulation import (
-    _SINGLE_CANDIDATE_ID,
     distribution_cash_dividends,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
+)
+from tests.support.research.aegis_research.factories import (
+    SINGLE_CANDIDATE_ID,
+    make_portfolio_config,
     simulate_single_book,
 )
-from tests.support.research.aegis_research.factories import make_portfolio_config
 
 
 def _order_time_column(orders: pd.DataFrame) -> str:
@@ -55,8 +57,8 @@ def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
     assert _order_dates(orders) == ["2024-01-01", "2024-01-04"]
     # Positions persist through NaN rows.
     holdings_before_terminal = pf.assets.iloc[-2]
-    assert holdings_before_terminal[(_SINGLE_CANDIDATE_ID, "A")] > 0
-    assert holdings_before_terminal[(_SINGLE_CANDIDATE_ID, "B")] > 0
+    assert holdings_before_terminal[(SINGLE_CANDIDATE_ID, "A")] > 0
+    assert holdings_before_terminal[(SINGLE_CANDIDATE_ID, "B")] > 0
 
 
 def test_all_zero_allocations_row_in_non_terminal_location_closes_positions_at_close() -> None:
@@ -73,7 +75,7 @@ def test_all_zero_allocations_row_in_non_terminal_location_closes_positions_at_c
     pf = simulate_single_book(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
 
     assets = pf.assets
-    assert assets.iloc[1].to_dict() == pytest.approx({(_SINGLE_CANDIDATE_ID, "A"): 0.0, (_SINGLE_CANDIDATE_ID, "B"): 0.0})
+    assert assets.iloc[1].to_dict() == pytest.approx({(SINGLE_CANDIDATE_ID, "A"): 0.0, (SINGLE_CANDIDATE_ID, "B"): 0.0})
     orders = pf.orders.records_readable
     second_bar_orders = _orders_on(orders, "2024-01-02")
     assert set(second_bar_orders["Side"]) == {"Sell"}
@@ -97,9 +99,9 @@ def test_full_a_to_full_b_switch_under_shared_cash_executes_single_rebalance() -
     orders = pf.orders.records_readable
     third_bar = _orders_on(orders, "2024-01-03")
     sides_by_symbol = {row["Column"]: row["Side"] for _, row in third_bar.iterrows()}
-    assert sides_by_symbol == {(_SINGLE_CANDIDATE_ID, "A"): "Sell", (_SINGLE_CANDIDATE_ID, "B"): "Buy"}
-    assert pf.assets.iloc[2][(_SINGLE_CANDIDATE_ID, "A")] == pytest.approx(0.0)
-    assert pf.assets.iloc[2][(_SINGLE_CANDIDATE_ID, "B")] > 0
+    assert sides_by_symbol == {(SINGLE_CANDIDATE_ID, "A"): "Sell", (SINGLE_CANDIDATE_ID, "B"): "Buy"}
+    assert pf.assets.iloc[2][(SINGLE_CANDIDATE_ID, "A")] == pytest.approx(0.0)
+    assert pf.assets.iloc[2][(SINGLE_CANDIDATE_ID, "B")] > 0
 
 
 def test_symmetric_directional_band_holds_drift_inside_shared_gate() -> None:
@@ -119,7 +121,7 @@ def test_symmetric_directional_band_holds_drift_inside_shared_gate() -> None:
 
     assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
-    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    realized = pf.get_allocations(group_by=None).loc[index[1], (SINGLE_CANDIDATE_ID, "A")]
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.03, 0.03))
 
 
@@ -140,7 +142,7 @@ def test_symmetric_directional_band_trades_drift_outside_shared_gate() -> None:
 
     assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-02", "2024-01-04"]
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
-    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    realized = pf.get_allocations(group_by=None).loc[index[1], (SINGLE_CANDIDATE_ID, "A")]
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.01, 0.01))
 
 
@@ -166,7 +168,7 @@ def test_band_breach_trades_to_interior_destination_fraction() -> None:
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
     expected = gate(realized_before_gate, 0.5, 0.01, 0.01, 0.5)
     assert expected == pytest.approx(0.505)
-    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    realized = pf.get_allocations(group_by=None).loc[index[1], (SINGLE_CANDIDATE_ID, "A")]
     assert realized == pytest.approx(expected)
 
 
@@ -188,7 +190,7 @@ def test_symmetric_directional_band_holds_at_inclusive_boundary() -> None:
 
     assert _order_dates(pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
     realized_before_gate = (50.0 * boundary_price) / (50.0 * boundary_price + 5_000.0)
-    realized = pf.get_allocations(group_by=None).loc[index[1], (_SINGLE_CANDIDATE_ID, "A")]
+    realized = pf.get_allocations(group_by=None).loc[index[1], (SINGLE_CANDIDATE_ID, "A")]
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.02, 0.02))
 
 
@@ -199,7 +201,7 @@ def test_asymmetric_band_down_gates_adds_more_than_trims() -> None:
     assert _order_dates(add_pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
     add_realized_before_gate = (50.0 * 90.0) / (50.0 * 90.0 + 5_000.0)
     add_realized = add_pf.get_allocations(group_by=None).loc[
-        pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
+        pd.Timestamp("2024-01-02"), (SINGLE_CANDIDATE_ID, "A")
     ]
     assert add_realized == pytest.approx(gate(add_realized_before_gate, 0.5, 0.01, 0.03))
 
@@ -210,7 +212,7 @@ def test_asymmetric_band_down_gates_adds_more_than_trims() -> None:
     ]
     trim_realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
     trim_realized = trim_pf.get_allocations(group_by=None).loc[
-        pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
+        pd.Timestamp("2024-01-02"), (SINGLE_CANDIDATE_ID, "A")
     ]
     assert trim_realized == pytest.approx(gate(trim_realized_before_gate, 0.5, 0.01, 0.03))
 
@@ -226,14 +228,14 @@ def test_asymmetric_band_up_gates_trims_more_than_adds() -> None:
     ]
     add_realized_before_gate = (50.0 * 90.0) / (50.0 * 90.0 + 5_000.0)
     add_realized = add_pf.get_allocations(group_by=None).loc[
-        pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
+        pd.Timestamp("2024-01-02"), (SINGLE_CANDIDATE_ID, "A")
     ]
     assert add_realized == pytest.approx(gate(add_realized_before_gate, 0.5, 0.03, 0.01))
 
     assert _order_dates(trim_pf.orders.records_readable) == ["2024-01-01", "2024-01-04"]
     trim_realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
     trim_realized = trim_pf.get_allocations(group_by=None).loc[
-        pd.Timestamp("2024-01-02"), (_SINGLE_CANDIDATE_ID, "A")
+        pd.Timestamp("2024-01-02"), (SINGLE_CANDIDATE_ID, "A")
     ]
     assert trim_realized == pytest.approx(gate(trim_realized_before_gate, 0.5, 0.03, 0.01))
 
@@ -268,11 +270,11 @@ def test_instrument_bands_gate_each_symbol_independently() -> None:
     pf = simulate_single_book(close, allocations, config, instrument_bands=instrument_bands)
 
     second_bar = _orders_on(pf.orders.records_readable, "2024-01-02")
-    assert set(second_bar["Column"]) == {(_SINGLE_CANDIDATE_ID, spy)}
+    assert set(second_bar["Column"]) == {(SINGLE_CANDIDATE_ID, spy)}
     assert set(second_bar["Side"]) == {"Buy"}
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
     realized = pf.get_allocations(group_by=None).loc[
-        index[1], (_SINGLE_CANDIDATE_ID, es)
+        index[1], (SINGLE_CANDIDATE_ID, es)
     ]
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.03, 0.03))
 
@@ -324,7 +326,7 @@ def test_shortonly_drift_resizes_short_to_target_through_shared_gate() -> None:
             ),
         )
         realized = pf.get_allocations(group_by=None).loc[
-            index[1], (_SINGLE_CANDIDATE_ID, "A")
+            index[1], (SINGLE_CANDIDATE_ID, "A")
         ]
         return realized, _order_dates(pf.orders.records_readable)
 
@@ -360,12 +362,12 @@ def test_terminal_liquidation_sells_all_held_positions_at_last_close() -> None:
     final_assets = pf.assets.iloc[-1]
     final_cash = float(pf.cash.iloc[-1])
     final_equity = float(pf.value.iloc[-1])
-    assert final_assets.to_dict() == pytest.approx({(_SINGLE_CANDIDATE_ID, "A"): 0.0, (_SINGLE_CANDIDATE_ID, "B"): 0.0})
+    assert final_assets.to_dict() == pytest.approx({(SINGLE_CANDIDATE_ID, "A"): 0.0, (SINGLE_CANDIDATE_ID, "B"): 0.0})
     assert final_cash == pytest.approx(final_equity)
     orders = pf.orders.records_readable
     last_bar = _orders_on(orders, "2024-01-04")
     assert set(last_bar["Side"]) == {"Sell"}
-    assert set(last_bar["Column"]) == {(_SINGLE_CANDIDATE_ID, "A"), (_SINGLE_CANDIDATE_ID, "B")}
+    assert set(last_bar["Column"]) == {(SINGLE_CANDIDATE_ID, "A"), (SINGLE_CANDIDATE_ID, "B")}
 
 
 def test_batched_three_candidate_run_preserves_candidate_identity_in_pfo_columns() -> None:
@@ -414,10 +416,10 @@ def test_signed_both_direction_run_opens_a_real_short_position() -> None:
     )
 
     assets = pf.assets
-    assert assets.iloc[1][(_SINGLE_CANDIDATE_ID, "A")] > 0
-    assert assets.iloc[1][(_SINGLE_CANDIDATE_ID, "B")] < 0
+    assert assets.iloc[1][(SINGLE_CANDIDATE_ID, "A")] > 0
+    assert assets.iloc[1][(SINGLE_CANDIDATE_ID, "B")] < 0
     realized = pf.get_allocations(group_by=False)
-    assert realized.iloc[1][(_SINGLE_CANDIDATE_ID, "B")] < 0
+    assert realized.iloc[1][(SINGLE_CANDIDATE_ID, "B")] < 0
 
 
 def test_batch_rejects_candidate_breaching_net_cap_and_names_it() -> None:
@@ -551,8 +553,8 @@ def test_market_neutral_run_book_is_net_zero_and_realized_matches_requested() ->
 
     realized = pf.get_allocations(group_by=None)
     fill_row = realized.loc[index[0]]
-    assert fill_row[(_SINGLE_CANDIDATE_ID, "A")] == pytest.approx(1.0, abs=2e-5)
-    assert fill_row[(_SINGLE_CANDIDATE_ID, "B")] == pytest.approx(-1.0, abs=2e-5)
+    assert fill_row[(SINGLE_CANDIDATE_ID, "A")] == pytest.approx(1.0, abs=2e-5)
+    assert fill_row[(SINGLE_CANDIDATE_ID, "B")] == pytest.approx(-1.0, abs=2e-5)
     assert fill_row.sum() == pytest.approx(0.0, abs=1e-9)
 
 
@@ -1000,7 +1002,7 @@ def test_records_count_exit_trades_for_long_and_short_legs() -> None:
     exit_trades = pf.exit_trades.records_readable
     assert len(exit_trades) == 2
     exit_symbols = [row["Column"] for _, row in exit_trades.iterrows()]
-    assert set(exit_symbols) == {(_SINGLE_CANDIDATE_ID, "A"), (_SINGLE_CANDIDATE_ID, "B")}
+    assert set(exit_symbols) == {(SINGLE_CANDIDATE_ID, "A"), (SINGLE_CANDIDATE_ID, "B")}
 
 
 def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, PortfolioConfig]:
@@ -1158,14 +1160,14 @@ def test_batch_of_one_candidate_equals_single_group_by_true() -> None:
     )
 
     columns = pd.MultiIndex.from_product(
-        [[_SINGLE_CANDIDATE_ID], close.columns],
+        [[SINGLE_CANDIDATE_ID], close.columns],
         names=["candidate_id", "symbol"],
     )
     alloc_mi = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
-    alloc_mi.loc[index[0], (_SINGLE_CANDIDATE_ID, "A")] = 0.5
-    alloc_mi.loc[index[0], (_SINGLE_CANDIDATE_ID, "B")] = 0.5
-    alloc_mi.loc[index[10], (_SINGLE_CANDIDATE_ID, "A")] = 0.2
-    alloc_mi.loc[index[10], (_SINGLE_CANDIDATE_ID, "B")] = 0.8
+    alloc_mi.loc[index[0], (SINGLE_CANDIDATE_ID, "A")] = 0.5
+    alloc_mi.loc[index[0], (SINGLE_CANDIDATE_ID, "B")] = 0.5
+    alloc_mi.loc[index[10], (SINGLE_CANDIDATE_ID, "A")] = 0.2
+    alloc_mi.loc[index[10], (SINGLE_CANDIDATE_ID, "B")] = 0.8
 
     pf_batch = simulate_portfolio_batch(
         close, alloc_mi, ResolvedBook(config),

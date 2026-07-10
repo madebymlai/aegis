@@ -24,7 +24,6 @@ from research.aegis_research.optimization.window_evaluation.resolved_book import
     ResolvedBook,
 )
 
-_SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
 # of ``(net_rate / periods_per_year) * close``. ``* live position`` gives drifted notional,
 # only-while-open, and the cost-on-short / credit-on-long sign for free — hence the long-leg
@@ -584,51 +583,6 @@ def _distribution_amount(
         return distribution.amount
     rate = currency_conversion.rate_for(distribution.instrument_id, index)
     return distribution.amount * float(rate.loc[ex_date])
-
-
-def simulate_single_book(
-    close: pd.DataFrame,
-    allocations: pd.DataFrame,
-    config: PortfolioConfig,
-    *,
-    open_: pd.DataFrame | None = None,
-    market_index: pd.Index | None = None,
-    periods_per_year: int = 252,
-    fees_by_symbol: pd.Series | None = None,
-    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
-    futures_roots: tuple[str, ...] = (),
-    distributions: Sequence[Distribution] | None = None,
-    currency_conversion: CurrencyConversion | None = None,
-) -> vbt.Portfolio:
-    """Test-support wrapper: simulate one book through the batched path.
-
-    Wraps plain-symbol ``allocations`` into a one-candidate MultiIndex and the
-    loose book facts into a :class:`ResolvedBook`, then delegates to
-    ``simulate_portfolio_batch``.  Only for carry/mechanics tests that need
-    plain symbol columns — not a production interface.
-    """
-    columns = pd.MultiIndex.from_product(
-        [[_SINGLE_CANDIDATE_ID], allocations.columns],
-        names=["candidate_id", SYMBOL_LEVEL],
-    )
-    alloc_mi = pd.DataFrame(
-        allocations.to_numpy(), index=allocations.index, columns=columns
-    )
-    return simulate_portfolio_batch(
-        close,
-        alloc_mi,
-        ResolvedBook(
-            config=config,
-            fees_by_symbol=fees_by_symbol,
-            instrument_bands=instrument_bands,
-            futures_roots=futures_roots,
-        ),
-        open_=open_,
-        market_index=market_index,
-        periods_per_year=periods_per_year,
-        distributions=distributions,
-        currency_conversion=currency_conversion,
-    )
 
 
 def simulate_portfolio_batch(

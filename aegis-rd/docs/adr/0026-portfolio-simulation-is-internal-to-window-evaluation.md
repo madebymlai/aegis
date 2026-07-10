@@ -47,8 +47,8 @@ run-constant book facts are one value.
   Exposure Validation wiring test root ADR-0008 mandates) never crosses `evaluate`.
   Surfacing book internals through the metric channel would widen the real interface to
   accommodate tests, so those tests cross the internal seam deliberately — the underscore
-  visible at every crossing import. `simulate_single_book` remains that seam's test-support
-  wrapper; metrics tests that only need a Portfolio use the `make_candidate_portfolio`
+  visible at every crossing import. `simulate_single_book` is test support and lives in `tests/support`
+  beside the factories (it has no production caller); metrics tests that only need a Portfolio use the `make_candidate_portfolio`
   support factory and never name the sim module.
 - **Seam cost is a query on the evaluator.** `non_executable_rows(window_index)` answers
   one window's held-row count against the market calendar the evaluator already owns — the
