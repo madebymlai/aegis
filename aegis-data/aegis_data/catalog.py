@@ -30,6 +30,16 @@ class CatalogCoverageGapError(ValueError):
     """Raised when the Nautilus catalog cannot serve the requested window."""
 
 
+class GapFillProviderError(RuntimeError):
+    """The Gap-Fill Provider failed environmentally during Ensure Coverage.
+
+    The port's second environmental error (beside :class:`CatalogCoverageGapError`):
+    a gateway drop, request timeout, or dead vendor call while filling a gap.  The
+    port translates whatever the provider raised into this one type — no vendor
+    error crosses the port contract — with the original chained as the cause.
+    """
+
+
 class ContinuousRootLegsNotFoundError(ValueError):
     """The catalog has no dated legs for a requested continuous root."""
 
@@ -295,11 +305,14 @@ class CatalogBackedDataPort:
         if self.provider is None:
             raise _coverage_gap(bar_type, missing)
         for start_ns, end_ns in missing:
-            served = self.provider.request_bars(
-                bar_type,
-                start=pd.Timestamp(start_ns, tz="UTC"),
-                end=pd.Timestamp(end_ns, tz="UTC"),
-            )
+            try:
+                served = self.provider.request_bars(
+                    bar_type,
+                    start=pd.Timestamp(start_ns, tz="UTC"),
+                    end=pd.Timestamp(end_ns, tz="UTC"),
+                )
+            except Exception as exc:
+                raise gap_fill_failure(str(bar_type), exc) from exc
             if served.bars:
                 # Claim coverage only from where the source's history actually
                 # reached (#75): a pre-wall head stays missing for the gate below,
@@ -319,7 +332,10 @@ class CatalogBackedDataPort:
         # The fill served this instrument's bars; persist its definition too so the
         # shared corpus never holds bars without a definition (ADR-0008).
         if self.definition_seeder is not None:
-            self.definition_seeder(bar_type.instrument_id)
+            try:
+                self.definition_seeder(bar_type.instrument_id)
+            except Exception as exc:
+                raise gap_fill_failure(str(bar_type), exc) from exc
 
     def _missing_intervals(
         self, bar_type: BarType, request: RawBarRequest
@@ -375,6 +391,14 @@ def catalog_data_port(path: str | Path | None = None) -> CatalogBackedDataPort:
     )
 
 
+def gap_fill_failure(subject: str, exc: Exception) -> GapFillProviderError:
+    """The port-level translation of a provider fault, named by its subject."""
+    return GapFillProviderError(
+        f"the gap-fill provider could not serve {subject}: "
+        f"{type(exc).__name__}: {exc}"
+    )
+
+
 def _coverage_gap(
     bar_type: BarType, intervals: Sequence[tuple[int, int]]
 ) -> CatalogCoverageGapError:
@@ -426,6 +450,7 @@ __all__ = [
     "ContinuousRootVenueMismatchError",
     "Distribution",
     "DistributionDataProviderPort",
+    "GapFillProviderError",
     "NautilusDataProviderPort",
     "RawBarRequest",
     "ResolvedContinuousRoot",

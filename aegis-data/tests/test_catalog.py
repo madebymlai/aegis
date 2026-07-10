@@ -19,6 +19,7 @@ from aegis_data.catalog import (
     CatalogCoverageGapError,
     ContinuousRootLegsNotFoundError,
     ContinuousRootVenueMismatchError,
+    GapFillProviderError,
     RawBarRequest,
     ServedBars,
     catalog_data_port,
@@ -31,6 +32,7 @@ from aegis_data.distributions import (
     query_distribution_data,
     write_distribution_data,
 )
+from aegis_data.ibkr import IbkrRequestError
 from aegis_data.roll import DatedContract
 from aegis_data.testing import FakeCatalog, bars, future
 
@@ -408,6 +410,100 @@ def test_catalog_port_persists_partial_fill_and_raises_gap_at_the_wall(
         "2024-01-04",
         "2024-01-05",
     ]
+
+
+def test_catalog_port_translates_a_provider_failure_into_a_port_error(
+    tmp_path: Path,
+) -> None:
+    """No vendor type crosses the port: a Gap-Fill Provider failure during Ensure
+    Coverage (gateway drop, timeout, stuck qualification) surfaces to the port
+    caller as ``GapFillProviderError`` naming the fetch, with the vendor error
+    chained as the cause."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("AAPL.NASDAQ")
+
+    class _BrokenProvider:
+        def request_bars(self, bar_type: BarType, **kwargs: Any) -> ServedBars:
+            raise IbkrRequestError("IBKR could not fetch historical bars: ib down")
+
+    port = CatalogBackedDataPort(catalog, provider=_BrokenProvider())
+    request = RawBarRequest(
+        instrument_ids=(instrument_id,), start="2024-01-01", end="2024-01-05"
+    )
+
+    with pytest.raises(GapFillProviderError, match="AAPL.XNAS") as excinfo:
+        port.load_raw_bars(request)
+
+    assert not isinstance(excinfo.value, IbkrRequestError)
+    assert isinstance(excinfo.value.__cause__, IbkrRequestError)
+
+
+def test_catalog_port_translates_a_definition_seeder_failure_into_a_port_error(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("AAPL.NASDAQ")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    provider = _ProviderPort(
+        [_bar(bar_type, "2024-01-02", 10.0), _bar(bar_type, "2024-01-03", 11.0)]
+    )
+
+    def _broken_seeder(_: InstrumentId) -> None:
+        raise IbkrRequestError("IBKR could not fetch instrument definitions: ib down")
+
+    port = CatalogBackedDataPort(
+        catalog, provider=provider, definition_seeder=_broken_seeder
+    )
+
+    with pytest.raises(GapFillProviderError) as excinfo:
+        port.load_raw_bars(
+            RawBarRequest(
+                instrument_ids=(instrument_id,), start="2024-01-02", end="2024-01-03"
+            )
+        )
+
+    assert isinstance(excinfo.value.__cause__, IbkrRequestError)
+
+
+def test_catalog_port_translates_a_distribution_fetch_failure_into_a_port_error(
+    tmp_path: Path,
+) -> None:
+    """The adjusted-last fetch during Ensure Coverage is the same environmental
+    failure as a bar-fill fault: it surfaces as ``GapFillProviderError``, never as
+    the vendor error — while the coverage gate's own verdicts pass through."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("SPY.ARCA")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bar_type, "2024-01-01", 100.0),
+            _bar(bar_type, "2024-01-02", 100.0),
+            _bar(bar_type, "2024-01-03", 100.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    _write_definition(catalog, instrument_id)
+
+    class _BrokenAdjustedLast:
+        def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
+            raise IbkrRequestError("IBKR could not fetch ADJUSTED_LAST closes: ib down")
+
+    port = CatalogBackedDataPort(
+        catalog, distribution_provider=_BrokenAdjustedLast()
+    )
+
+    with pytest.raises(GapFillProviderError, match="SPY.ARCA") as excinfo:
+        port.distributions((instrument_id,), start="2024-01-01", end="2024-01-04")
+
+    assert isinstance(excinfo.value.__cause__, IbkrRequestError)
 
 
 def test_catalog_port_rejects_unverified_distribution_events(tmp_path: Path) -> None:
