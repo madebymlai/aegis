@@ -8,14 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pandas as pd
-from aegis_runtime.currency import CurrencyConversion
-from nautilus_trader.model.identifiers import InstrumentId
-
 from research.aegis_research.configuration import (
     RunConfig,
 )
-from research.aegis_research.drift_bands import resolve_instrument_bands
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_evidence import result_evidence
 from research.aegis_research.optimization.evidence_ledger import (
@@ -33,7 +28,7 @@ from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
-from research.aegis_research.portfolios import fx_adjusted_fees
+from research.aegis_research.resolved_book import ResolvedBook
 
 
 @dataclass(frozen=True)
@@ -41,32 +36,6 @@ class ExecutionResult:
     """Typed hand-off from the pipeline execution stage."""
 
     optimization_result: OptimizationResult
-
-
-def _fx_fees(config: RunConfig, currency_conversion: CurrencyConversion | None) -> pd.Series:
-    """Per-instrument trade fees for the book.
-
-    ``fx_adjusted_fees`` is the single fee builder: it returns the base fee for
-    every leg and adds the FX surcharge only to non-base legs, so a zero-cost or
-    single-currency book gets a uniform no-op series - no branch, no special case.
-    A leg is non-base by its currency *derived from the resolved Instrument* (the
-    conversion's ``currency_by_instrument_id``), never a configured field; a
-    single-currency book has no conversion, so every leg reads as base.
-    """
-    portfolio = config.portfolio
-    instrument_ids = tuple(InstrumentId.from_str(value) for value in config.data.instruments)
-    currency_by_instrument_id = (
-        currency_conversion.currency_by_instrument_id
-        if currency_conversion is not None
-        else dict.fromkeys(instrument_ids, portfolio.base_currency)
-    )
-    return fx_adjusted_fees(
-        instrument_ids,
-        currency_by_instrument_id,
-        portfolio.base_currency,
-        base_fee=portfolio.fees,
-        fx_conversion_cost=portfolio.fx_conversion_cost,
-    )
 
 
 def run_pipeline_execution(
@@ -99,14 +68,11 @@ def run_pipeline_execution(
             arrays=setup.arrays,
             source=setup.optimization_source,
             optimization=config.optimization,
-            portfolio=config.portfolio,
+            book=ResolvedBook.resolve(config, setup.arrays.currency_conversion),
             report=config.report,
             ranking=config.ranking,
             metric_registry=metric_registry,
             split_result=setup.split_result,
-            fees_by_symbol=_fx_fees(config, setup.arrays.currency_conversion),
-            instrument_bands=resolve_instrument_bands(config),
-            futures_roots=tuple(config.data.futures),
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)

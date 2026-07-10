@@ -16,6 +16,7 @@ from research.aegis_research.portfolios import (
     simulate_portfolio_batch,
     simulate_single_book,
 )
+from research.aegis_research.resolved_book import ResolvedBook
 from tests.support.research.aegis_research.factories import make_portfolio_config
 
 
@@ -381,7 +382,7 @@ def test_batched_three_candidate_run_preserves_candidate_identity_in_pfo_columns
     allocations.loc[index[0], :] = 0.5
 
     pf = simulate_portfolio_batch(
-        close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+        close, allocations, ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
         periods_per_year=252,
     )
 
@@ -439,7 +440,7 @@ def test_batch_rejects_candidate_breaching_net_cap_and_names_it() -> None:
         fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"
     )
     with pytest.raises(ValueError, match="cand-net-long"):
-        simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+        simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
 
 def test_batch_accepts_partial_nan_sparse_allocation_updates() -> None:
@@ -461,7 +462,7 @@ def test_batch_accepts_partial_nan_sparse_allocation_updates() -> None:
     pf = simulate_portfolio_batch(
         close,
         allocations,
-        make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+        ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
         periods_per_year=252,
     )
 
@@ -488,7 +489,7 @@ def test_batch_rejects_longonly_candidate_with_a_negative_weight() -> None:
         fees=0, slippage=0, gross_cap=1.0, net_cap=1.0, direction="longonly"
     )
     with pytest.raises(ValueError, match="longonly"):
-        simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+        simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
 
 def test_batch_accepts_valid_market_neutral_book_within_caps() -> None:
@@ -508,7 +509,7 @@ def test_batch_accepts_valid_market_neutral_book_within_caps() -> None:
     config = make_portfolio_config(
         fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"
     )
-    pf = simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+    pf = simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
     assert isinstance(pf, vbt.Portfolio)
 
@@ -953,13 +954,13 @@ def test_distribution_cash_increases_long_total_return() -> None:
     )
 
     without = _total_return(
-        simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+        simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
     )
     with_distribution = _total_return(
         simulate_portfolio_batch(
             close,
             allocations,
-            config,
+            ResolvedBook(config),
             periods_per_year=252,
             distributions=[distribution],
         )
@@ -1049,7 +1050,7 @@ def test_underfilled_leveraged_book_fills_cleanly_with_surplus_buying_power() ->
     # formerly under-filled leveraged book now fills exactly: zero NoCash
     # rejections, realized weights == requested at the mid-run rebalance.
     close, allocations, config = _underfilled_leverage_inputs()
-    pf = simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+    pf = simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
     # No NoCash rejections in the logs.
     records = pf.logs.records
@@ -1082,7 +1083,9 @@ def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
 
     pf = simulate_portfolio_batch(
         close, allocations,
-        make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
+        ResolvedBook(
+            make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both")
+        ),
         periods_per_year=252,
     )
     assert isinstance(pf, vbt.Portfolio)
@@ -1116,7 +1119,7 @@ def test_batch_nocash_tripwire_is_invoked_and_error_propagates(monkeypatch) -> N
     monkeypatch.setattr(portfolios_module, "_assert_no_nocash_rejection", _spy_guard)
 
     with pytest.raises(ValueError, match="NoCash"):
-        simulate_portfolio_batch(close, allocations, config, periods_per_year=252)
+        simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
     assert len(calls) == 1
 
@@ -1165,7 +1168,7 @@ def test_batch_of_one_candidate_equals_single_group_by_true() -> None:
     alloc_mi.loc[index[10], (_SINGLE_CANDIDATE_ID, "B")] = 0.8
 
     pf_batch = simulate_portfolio_batch(
-        close, alloc_mi, config,
+        close, alloc_mi, ResolvedBook(config),
         periods_per_year=252,
     )
 
@@ -1296,6 +1299,6 @@ def test_batch_exposure_gate_names_the_breaching_candidate() -> None:
         simulate_portfolio_batch(
             close,
             allocations,
-            make_portfolio_config(direction="longonly"),
+            ResolvedBook(make_portfolio_config(direction="longonly")),
             periods_per_year=252,
         )

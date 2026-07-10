@@ -25,6 +25,7 @@ from research.aegis_research.optimization.precompute import (
 from research.aegis_research.optimization.ranking import OptimizationResult
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.resolved_book import ResolvedBook
 from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
@@ -126,7 +127,7 @@ def _run(windows: list[int], *, optimization: OptimizationConfig | None = None) 
         arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_source(windows),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
@@ -313,7 +314,7 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
         arrays=make_run_arrays(close=close, open_=close),
         source=_source(windows),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),

@@ -20,6 +20,7 @@ from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.market_data.identity import as_instrument_id
+from research.aegis_research.resolved_book import ResolvedBook
 
 _SINGLE_CANDIDATE_ID = "single"
 # Short borrow carry mechanism (ADR-0008): a per-bar, short-masked ``cash_dividends`` array
@@ -342,15 +343,12 @@ def _instrument_root(value: object) -> str:
 def _build_portfolio(
     price_frame: pd.DataFrame,
     allocations: pd.DataFrame,
-    config: PortfolioConfig,
+    book: ResolvedBook,
     *,
     open_frame: pd.DataFrame | None,
     market_index: pd.Index | None,
     group_by: Any,
     periods_per_year: int,
-    fees_by_symbol: pd.Series | None = None,
-    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
-    futures_roots: Sequence[str] = (),
     distributions: Sequence[Distribution] | None = None,
     currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
@@ -360,6 +358,7 @@ def _build_portfolio(
     cash, builds the PFO, runs ``from_optimizer``, and asserts no NoCash
     rejection occurred.
     """
+    config = book.config
     masked = _apply_non_executable_mask(allocations, market_index=market_index)
     # Terminal liquidation: zero the final row so runs end in realized cash.
     if not masked.empty:
@@ -371,14 +370,16 @@ def _build_portfolio(
         unique_only=False,
     )
     exec_kwargs = _execution_settings(config.fill_timing, open_frame)
-    band_up, band_down, band_destination = _band_arrays(masked, config, instrument_bands)
+    band_up, band_down, band_destination = _band_arrays(
+        masked, config, book.instrument_bands
+    )
     # The gate reads targets from our own copy of the allocations: ``order_mode``
     # overwrites its internal ``size`` array with resolved order amounts before the
     # pre-order-segment callback runs.
     target_alloc = np.ascontiguousarray(masked.to_numpy(), dtype=np.float64)
     margin_day_offsets = _margin_day_offsets(price_frame.index)
     last_margin_accrual_i = np.zeros(_candidate_group_count(masked.columns), dtype=np.int64)
-    futures_mask = _futures_mask(masked.columns, futures_roots)
+    futures_mask = _futures_mask(masked.columns, book.futures_roots)
     cash_dividends = short_masked_cash_dividends(
         price_frame, allocations, config, periods_per_year=periods_per_year
     ) + distribution_cash_dividends(
@@ -412,7 +413,7 @@ def _build_portfolio(
         cash_sharing=True,
         call_seq="auto",
         group_by=group_by,
-        fees=_resolve_fees(price_frame, config, fees_by_symbol),
+        fees=_resolve_fees(price_frame, config, book.fees_by_symbol),
         fixed_fees=config.fixed_fee,
         slippage=config.slippage,
         init_cash=config.init_cash,
@@ -583,37 +584,6 @@ def _distribution_amount(
     return distribution.amount * float(rate.loc[ex_date])
 
 
-def fx_adjusted_fees(
-    instrument_ids: Sequence[InstrumentId],
-    currency_by_instrument_id: Mapping[InstrumentId, str],
-    base_currency: str,
-    base_fee: float,
-    fx_conversion_cost: float,
-) -> pd.Series:
-    """Per-instrument trade fee, adding the FX conversion cost to foreign legs.
-
-    A foreign leg (one whose currency is not the book's base) crosses an FX
-    spread on every trade - the EUR->ccy buy and the ccy->EUR sell - so it pays
-    ``base_fee + fx_conversion_cost``; a base-currency leg pays ``base_fee``.
-    """
-    fees = {
-        instrument_id: base_fee
-        + (
-            fx_conversion_cost
-            if _requires_conversion(
-                currency_by_instrument_id[instrument_id], base_currency
-            )
-            else 0.0
-        )
-        for instrument_id in instrument_ids
-    }
-    return pd.Series(fees)
-
-
-def _requires_conversion(quote_currency: str, base_currency: str) -> bool:
-    return quote_currency.upper() != base_currency.upper()
-
-
 def simulate_single_book(
     close: pd.DataFrame,
     allocations: pd.DataFrame,
@@ -624,15 +594,16 @@ def simulate_single_book(
     periods_per_year: int = 252,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
-    futures_roots: Sequence[str] = (),
+    futures_roots: tuple[str, ...] = (),
     distributions: Sequence[Distribution] | None = None,
     currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
     """Test-support wrapper: simulate one book through the batched path.
 
-    Wraps plain-symbol ``allocations`` into a one-candidate MultiIndex, then
-    delegates to ``simulate_portfolio_batch``.  Only for carry/mechanics tests
-    that need plain symbol columns — not a production interface.
+    Wraps plain-symbol ``allocations`` into a one-candidate MultiIndex and the
+    loose book facts into a :class:`ResolvedBook`, then delegates to
+    ``simulate_portfolio_batch``.  Only for carry/mechanics tests that need
+    plain symbol columns — not a production interface.
     """
     columns = pd.MultiIndex.from_product(
         [[_SINGLE_CANDIDATE_ID], allocations.columns],
@@ -644,13 +615,15 @@ def simulate_single_book(
     return simulate_portfolio_batch(
         close,
         alloc_mi,
-        config,
+        ResolvedBook(
+            config=config,
+            fees_by_symbol=fees_by_symbol,
+            instrument_bands=instrument_bands,
+            futures_roots=futures_roots,
+        ),
         open_=open_,
         market_index=market_index,
         periods_per_year=periods_per_year,
-        fees_by_symbol=fees_by_symbol,
-        instrument_bands=instrument_bands,
-        futures_roots=futures_roots,
         distributions=distributions,
         currency_conversion=currency_conversion,
     )
@@ -659,18 +632,15 @@ def simulate_single_book(
 def simulate_portfolio_batch(
     close: pd.DataFrame,
     allocations: pd.DataFrame,
-    config: PortfolioConfig,
+    book: ResolvedBook,
     *,
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     periods_per_year: int,
-    fees_by_symbol: pd.Series | None = None,
-    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
-    futures_roots: Sequence[str] = (),
     distributions: Sequence[Distribution] | None = None,
     currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
-    """Simulate a batch of candidate portfolios."""
+    """Simulate a batch of candidate portfolios under the ResolvedBook's terms."""
     _validate_candidate_columns(allocations.columns, field_name="allocations")
     expanded_close = expand_market_frame_to_candidate_columns(
         close,
@@ -683,7 +653,7 @@ def simulate_portfolio_batch(
     # a Candidate is; the offender phrasing is supplied here).
     validate_exposure(
         allocations,
-        config.exposure_limits,
+        book.config.exposure_limits,
         group_by=allocations.columns.droplevel(SYMBOL_LEVEL),
         describe_group=lambda candidate: f"candidate {candidate!r}",
     )
@@ -697,14 +667,11 @@ def simulate_portfolio_batch(
     return _build_portfolio(
         expanded_close,
         allocations,
-        config,
+        book,
         open_frame=expanded_open,
         market_index=market_index,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
         periods_per_year=periods_per_year,
-        fees_by_symbol=fees_by_symbol,
-        instrument_bands=instrument_bands,
-        futures_roots=futures_roots,
         distributions=distributions,
         currency_conversion=currency_conversion,
     )

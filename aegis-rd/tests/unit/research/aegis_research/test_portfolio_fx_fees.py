@@ -2,43 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from nautilus_trader.model.identifiers import InstrumentId
-from pandas.testing import assert_series_equal
 
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.portfolios import (
-    fx_adjusted_fees,
-    simulate_single_book,
-)
-
-
-def test_foreign_legs_pay_the_conversion_cost_base_legs_do_not() -> None:
-    vool = _id("VOOL.DE")
-    sgln = _id("SGLN.L")
-    fees = fx_adjusted_fees(
-        instrument_ids=[vool, sgln],
-        currency_by_instrument_id={vool: "EUR", sgln: "USD"},
-        base_currency="EUR",
-        base_fee=0.0005,
-        fx_conversion_cost=0.0003,
-    )
-
-    expected = pd.Series({vool: 0.0005, sgln: 0.0008})
-    assert_series_equal(fees, expected)
-
-
-def test_gbp_minor_unit_leg_is_foreign_and_pays_the_conversion_cost() -> None:
-    gbus = _id("GBUS.L")
-    fees = fx_adjusted_fees(
-        instrument_ids=[gbus],
-        currency_by_instrument_id={gbus: "GBp"},
-        base_currency="EUR",
-        base_fee=0.0005,
-        fx_conversion_cost=0.0003,
-    )
-
-    expected = pd.Series({gbus: 0.0008})
-    assert_series_equal(fees, expected)
+from research.aegis_research.portfolios import simulate_single_book
 
 
 def test_per_symbol_fees_charge_each_leg_its_own_rate_in_simulation() -> None:
@@ -85,7 +51,3 @@ def test_fixed_fee_charges_a_flat_amount_on_every_order() -> None:
     assert len(with_fixed.orders.fees) >= 1
     assert with_fixed.orders.fees.min() == pytest.approx(2.0)
     assert with_fixed.orders.fees.max() == pytest.approx(2.0)
-
-
-def _id(value: str) -> InstrumentId:
-    return InstrumentId.from_str(value)

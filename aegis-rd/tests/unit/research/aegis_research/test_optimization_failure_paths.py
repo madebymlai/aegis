@@ -13,6 +13,7 @@ from research.aegis_research.optimization.runner import (
     execute_optimization,
 )
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.resolved_book import ResolvedBook
 from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
@@ -60,7 +61,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
             arrays=make_run_arrays(close=close, open_=close),
             source=source,
             optimization=optimization,
-            portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+            book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
             report=make_report_config(),
             ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),
@@ -90,7 +91,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
             arrays=make_run_arrays(close=close, open_=close),
             source=source,
             optimization=optimization,
-            portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+            book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
             report=make_report_config(),
             ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),
@@ -123,7 +124,7 @@ def test_runner_rejects_param_names_reserved_for_result_coordinates(
             arrays=make_run_arrays(close=close, open_=close),
             source=source,
             optimization=optimization,
-            portfolio=make_portfolio_config(fees=0, slippage=0, direction="longonly"),
+            book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
             report=make_report_config(),
             ranking=make_ranking_config(metric="total_return"),
             metric_registry=make_default_metric_registry(),

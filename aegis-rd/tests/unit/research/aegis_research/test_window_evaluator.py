@@ -22,6 +22,7 @@ from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.source import OptimizationSource
 from research.aegis_research.optimization.window_evaluator import WindowEvaluator
+from research.aegis_research.resolved_book import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,
@@ -72,7 +73,9 @@ def _evaluator(
 ) -> WindowEvaluator:
     return WindowEvaluator(
         source=_source(simulate),
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(
+            make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")
+        ),
         report=make_report_config(),
         arrays=make_run_arrays(close=close, open_=close),
         store=store if store is not None else empty_precompute(close, 2, alpha=[0.5, 1.0]),
@@ -196,7 +199,9 @@ def _dual_series_evaluator(
 
     evaluator = WindowEvaluator(
         source=_source(_capturing_simulate),
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(
+            make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")
+        ),
         report=make_report_config(),
         arrays=make_run_arrays(
             close=signal_close,

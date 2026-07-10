@@ -27,6 +27,7 @@ from research.aegis_research.optimization.ranking import (
 )
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.resolved_book import ResolvedBook
 from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
@@ -94,7 +95,7 @@ def _run(alphas: list[float]) -> OptimizationResult:
         arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_source(alphas),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
@@ -126,7 +127,7 @@ def test_runner_consumes_the_injected_splitter_and_addresses_sets_by_role() -> N
         arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_source([0.2, 0.5, 1.0]),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
@@ -318,7 +319,7 @@ def _run_warmup(windows: list[int]) -> OptimizationResult:
         arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_warmup_source(windows),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
@@ -420,7 +421,7 @@ def test_runner_records_exact_non_executable_rows_for_purged_kfold_split() -> No
         arrays=make_run_arrays(close=close, open_=close),
         source=_source([0.2, 0.5, 1.0]),
         optimization=purged_opt,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
         ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),

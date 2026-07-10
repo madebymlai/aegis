@@ -1,12 +1,12 @@
 """Per-window evaluation of one Candidate chunk.
 
 A :class:`WindowEvaluator` carries everything one optimization sweep needs that
-is constant across windows — the signal-side source, the portfolio policy, the
-report config, the full-series price frames, the precomputed indicator store
-(which answers its own Invalid-Candidate set), and the metric extractors — and
-exposes a single ``evaluate(range_, **params)`` that the splitter calls once per
-(split, set) with the window's ``range_`` template and a chunk of Candidate
-parameter lists.
+is constant across windows — the signal-side source, the ResolvedBook the
+simulation trades under, the report config, the full-series price frames, the
+precomputed indicator store (which answers its own Invalid-Candidate set), and
+the metric extractors — and exposes a single ``evaluate(range_, **params)``
+that the splitter calls once per (split, set) with the window's ``range_``
+template and a chunk of Candidate parameter lists.
 
 Pulling this coordination out of the sweep closure gives it a seam: a chunk can
 be evaluated directly, so the range/key slicing and the all-Invalid short-circuit
@@ -22,10 +22,9 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from aegis_runtime import DriftBand, InstrumentId
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration import PortfolioConfig, ReportConfig
+from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
@@ -37,6 +36,7 @@ from research.aegis_research.optimization.precompute import (
 )
 from research.aegis_research.optimization.source import OptimizationSource
 from research.aegis_research.portfolios import simulate_portfolio_batch
+from research.aegis_research.resolved_book import ResolvedBook
 
 
 @dataclass(frozen=True)
@@ -57,18 +57,11 @@ class WindowEvaluator:
     """
 
     source: OptimizationSource
-    portfolio: PortfolioConfig
+    book: ResolvedBook
     report: ReportConfig
     arrays: RunArrays
     store: IndicatorPrecompute
     extractors: Mapping[str, ExtractorSpec]
-    # Per-symbol trade fees (FX-conversion surcharge on non-base legs); None keeps
-    # the scalar-fee path, byte-identical to a single-currency book.
-    fees_by_symbol: pd.Series | None = None
-    # Resolved instrument → DriftBand map (the same one the bundle carries); None gates
-    # every instrument at the sleeve-wide default.
-    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
-    futures_roots: tuple[str, ...] = ()
 
     def evaluate(self, range_: slice, **params: Any) -> Any:
         """Metric frame for the Candidate chunk ``params`` over the window ``range_``."""
@@ -111,13 +104,10 @@ class WindowEvaluator:
         pf = simulate_portfolio_batch(
             close_window,
             allocations,
-            self.portfolio,
+            self.book,
             open_=open_window,
             market_index=self.arrays.signal.array("Close").index,
             periods_per_year=self.report.periods_per_year,
-            fees_by_symbol=self.fees_by_symbol,
-            instrument_bands=self.instrument_bands,
-            futures_roots=self.futures_roots,
             distributions=self.arrays.distributions,
             currency_conversion=self.arrays.currency_conversion,
         )

@@ -26,14 +26,11 @@ import dataclasses
 from collections.abc import Mapping
 from typing import Any
 
-import pandas as pd
-from aegis_runtime import DriftBand, InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
 
 from research.aegis_research.configuration import (
     OptimizationConfig,
-    PortfolioConfig,
     RankingConfig,
     ReportConfig,
 )
@@ -54,6 +51,7 @@ from research.aegis_research.optimization.source import (
 )
 from research.aegis_research.optimization.window_evaluator import WindowEvaluator
 from research.aegis_research.portfolios import count_non_executable_rows
+from research.aegis_research.resolved_book import ResolvedBook
 from research.aegis_research.run_splits import (
     HELD_OUT_SET,
     SELECTION_SET,
@@ -70,14 +68,11 @@ def execute_optimization(
     arrays: RunArrays,
     source: OptimizationSource,
     optimization: OptimizationConfig,
-    portfolio: PortfolioConfig,
+    book: ResolvedBook,
     report: ReportConfig,
     ranking: RankingConfig,
     metric_registry: FrozenMetricRegistry,
     split_result: RunSplitsResult,
-    fees_by_symbol: pd.Series | None = None,
-    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
-    futures_roots: tuple[str, ...] = (),
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
     if ranking.metric not in metric_registry:
@@ -113,14 +108,11 @@ def execute_optimization(
     # captured input.
     evaluator = WindowEvaluator(
         source=source,
-        portfolio=portfolio,
+        book=book,
         report=report,
         arrays=arrays,
         store=store,
         extractors=extractors,
-        fees_by_symbol=fees_by_symbol,
-        instrument_bands=instrument_bands,
-        futures_roots=futures_roots,
     )
 
     # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
