@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pytest
-from aegis_data.bar_type import mic_canonical_instrument_id
+from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
 from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
-from aegis_data.distributions import Distribution
-from aegis_data.testing import bars
+from aegis_data.testing import FakeCatalog, bars, future
 from aegis_runtime.currency import MissingFxPairError
+from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
-from nautilus_trader.model.instruments import CurrencyPair, Equity, Instrument
+from nautilus_trader.model.instruments import CurrencyPair, Equity, FuturesContract, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
@@ -61,44 +59,52 @@ def _definition(instrument_id: InstrumentId) -> Instrument:
     )
 
 
-@dataclass
-class _RecordingCatalogPort:
-    frames: dict[InstrumentId, pd.DataFrame]
-    distribution_events: tuple[Distribution, ...] = ()
-    requested_ids: tuple[InstrumentId, ...] = ()
-    distribution_requests: list[tuple[tuple[InstrumentId, ...], str, str]] = field(
-        default_factory=list
+class _RecordingFakeCatalog(FakeCatalog):
+    """FakeCatalog that records which bar identifiers the port reads.
+
+    The port itself is never faked — the fake sits beneath a real
+    ``CatalogBackedDataPort``, so the adapter tests inherit production port
+    behavior (window read, completeness, applicability) for free.
+    """
+
+    def __init__(self, instruments: list[Instrument], bars: dict[str, list[Bar]]) -> None:
+        super().__init__(instruments, bars)
+        self.queried_bar_identifiers: list[str] = []
+
+    def query(
+        self,
+        data_cls: type,
+        identifiers: list[str] | None = None,
+        start: object = None,
+        end: object = None,
+        **kwargs: object,
+    ) -> list:
+        if data_cls is Bar:
+            self.queried_bar_identifiers.extend(identifiers or [])
+        return super().query(data_cls, identifiers, start, end, **kwargs)
+
+
+def _fake_port(
+    frames: dict[InstrumentId, pd.DataFrame],
+    *,
+    legs: list[FuturesContract] | None = None,
+) -> tuple[CatalogBackedDataPort, _RecordingFakeCatalog]:
+    """A real port over a fake catalog seeded with *frames* and their definitions.
+
+    ``legs`` seeds dated futures-contract definitions so a continuous root's
+    coverage-report diagnostic can resolve its legs.
+    """
+    catalog = _RecordingFakeCatalog(
+        instruments=[
+            *(_definition(mic_canonical_instrument_id(iid)) for iid in frames),
+            *(legs or []),
+        ],
+        bars={
+            str(raw_bar_type(iid, "1D")): bars(iid, frame)
+            for iid, frame in frames.items()
+        },
     )
-
-    def load_raw_bars(self, request) -> dict[InstrumentId, pd.DataFrame]:
-        self.requested_ids = tuple(request.instrument_ids)
-        return self.frames
-
-    def instruments(
-        self, instrument_ids: Sequence[InstrumentId]
-    ) -> dict[InstrumentId, Instrument]:
-        return {
-            instrument_id: _definition(instrument_id) for instrument_id in instrument_ids
-        }
-
-    def distributions(
-        self,
-        instrument_ids: Sequence[InstrumentId],
-        *,
-        start: str,
-        end: str,
-    ) -> tuple[Distribution, ...]:
-        self.distribution_requests.append((tuple(instrument_ids), start, end))
-        return self.distribution_events
-
-    def distribution_coverage_report(
-        self,
-        instrument_ids: Sequence[InstrumentId],
-        *,
-        start: str,
-        end: str,
-    ) -> tuple[dict[str, object], ...]:
-        return ()
+    return CatalogBackedDataPort(catalog), catalog
 
 
 def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_columns() -> None:
@@ -106,8 +112,8 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
     esz6 = _id("ESZ6.XCME")
     eurusd = _id("EUR/USD.IDEALPRO")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port = _RecordingCatalogPort(
-        frames={
+    port, catalog = _fake_port(
+        {
             aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0]),
             esz6: _frame(index, close=[20.0, 21.0], volume=[200.0, 210.0]),
             eurusd: _frame(index, close=[1.1, 1.2], volume=[0.0, 0.0]),
@@ -128,11 +134,13 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
     )
 
     bundle = market_data_bundle(result)
-    assert port.requested_ids == (
-        aapl,
-        esz6,
-        eurusd,
-    )
+    # The exchange leg is read from the catalog (its MID bar) but never surfaces
+    # as a tradeable column.
+    assert set(catalog.queried_bar_identifiers) == {
+        "AAPL.XNAS-1-DAY-LAST-EXTERNAL",
+        "ESZ6.XCME-1-DAY-LAST-EXTERNAL",
+        "EUR/USD.IDEALPRO-1-DAY-MID-EXTERNAL",
+    }
     assert list(bundle.array("Close").columns) == [aapl, esz6]
     assert bundle.array("Close").iloc[:, 0].tolist() == [10.0, 11.0]
     assert result.metadata.request.requested_instrument_ids == [aapl, esz6]
@@ -141,7 +149,13 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
         "ESZ6.XCME",
     ]
     assert result.metadata.provenance.index_evidence["source"] == "nautilus_catalog"
-    assert result.metadata.provenance.port_metadata == {"source": "nautilus_data_provider_port"}
+    port_metadata = result.metadata.provenance.port_metadata
+    assert port_metadata["source"] == "nautilus_data_provider_port"
+    # The window's coverage report is Run evidence — the FX leg rides the same
+    # id set and lands as a not-applicable row, with no caller filtering.
+    coverage = {row["instrument_id"]: row for row in port_metadata["distribution_coverage"]}
+    assert coverage["EUR/USD.IDEALPRO"]["applicable"] is False
+    assert coverage["EUR/USD.IDEALPRO"]["event_count"] == 0
     assert result.distributions == ()
 
 
@@ -151,8 +165,9 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
     aapl = _id("AAPL.NASDAQ")
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port = _RecordingCatalogPort(
-        frames={aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    port, catalog = _fake_port(
+        {aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])},
+        legs=[future("ESH4.XCME", "2024-03-15")],
     )
     continuous = {es: _frame(index, close=[5000.0, 5010.0], volume=[1.0, 2.0])}
 
@@ -189,13 +204,21 @@ def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
 
     bundle = market_data_bundle(result)
     # Continuous roots are synthetic — never raw-requested from the catalog.
-    assert port.requested_ids == (aapl,)
+    assert set(catalog.queried_bar_identifiers) == {"AAPL.XNAS-1-DAY-LAST-EXTERNAL"}
     assert seen_roots == ["ES"]
     # The continuous root is a first-class tradeable column, ordered after raw instruments.
     assert list(bundle.array("Close").columns) == [aapl, es]
     assert bundle.array("Close")[es].tolist() == [5000.0, 5010.0]
     assert bundle.array("Volume")[es].tolist() == [1.0, 2.0]
     assert result.metadata.provenance.source_metadata["continuous_root_ids"] == ["ES.XCME"]
+    # The root can never enter the window request (no raw bars), but its
+    # not-applicable coverage row still reaches Run evidence through the port's
+    # coverage-report diagnostic query.
+    coverage = {
+        row["instrument_id"]: row
+        for row in result.metadata.provenance.port_metadata["distribution_coverage"]
+    }
+    assert coverage["ES.XCME"]["applicable"] is False
     # The recorded fact IS the value supplied to materialisation — selected once,
     # never a separately re-read constant.
     assert seen_modes == [DEFAULT_ADJUSTMENT_MODE]
@@ -211,8 +234,9 @@ def test_catalog_adapter_converts_a_non_base_continuous_root_through_exchange_fx
     es = _id("ES.XCME")
     eurusd = _id("EUR/USD.IDEALPRO")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port = _RecordingCatalogPort(
-        frames={eurusd: _frame(index, close=[1.25, 1.20], volume=[0.0, 0.0])}
+    port, _catalog = _fake_port(
+        {eurusd: _frame(index, close=[1.25, 1.20], volume=[0.0, 0.0])},
+        legs=[future("ESH4.XCME", "2024-03-15")],
     )
 
     class FakeContinuousModel:
@@ -255,7 +279,7 @@ def test_catalog_adapter_fails_loud_for_a_non_base_continuous_root_without_fx(
     exactly as a non-base native instrument does."""
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port = _RecordingCatalogPort(frames={})
+    port, _catalog = _fake_port({})
 
     class FakeContinuousModel:
         quote_currency = "USD"
@@ -284,8 +308,8 @@ def test_catalog_adapter_fails_loud_for_a_non_base_continuous_root_without_fx(
 def test_catalog_adapter_returns_no_adjustment_mode_without_futures() -> None:
     aapl = _id("AAPL.NASDAQ")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port = _RecordingCatalogPort(
-        frames={aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    port, _catalog = _fake_port(
+        {aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
     )
     config = make_data_config(
         arrays=["Close", "Volume"],
@@ -310,7 +334,9 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
     # column on merge — fail loud instead.
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port = _RecordingCatalogPort(frames={es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])})
+    port, _catalog = _fake_port(
+        {es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])}
+    )
 
     class FakeContinuousModel:
         quote_currency = "USD"
@@ -336,38 +362,11 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
         load_catalog_source(config, port=port)
 
 
-def test_catalog_adapter_reads_distributions_through_the_port() -> None:
-    aapl = _id("AAPL.NASDAQ")
-    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    distribution = Distribution.from_ex_date(
-        aapl,
-        "2024-01-02",
-        amount=0.42,
-        currency="USD",
-    )
-    port = _RecordingCatalogPort(
-        frames={aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])},
-        distribution_events=(distribution,),
-    )
-    config = make_data_config(
-        arrays=["Close", "Volume"],
-        base_currency="USD",
-        instruments=["AAPL.NASDAQ"],
-        start="2024-01-01",
-        end="2024-01-03",
-    )
-
-    result = load_catalog_source(config, port=port)
-
-    assert result.distributions == (distribution,)
-    assert port.distribution_requests == [((aapl,), "2024-01-01", "2024-01-03")]
-
-
 def test_catalog_adapter_accepts_declared_empty_distributions() -> None:
     aapl = _id("AAPL.NASDAQ")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port = _RecordingCatalogPort(
-        frames={aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    port, _catalog = _fake_port(
+        {aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
     )
     config = make_data_config(
         arrays=["Close", "Volume"],
@@ -380,7 +379,6 @@ def test_catalog_adapter_accepts_declared_empty_distributions() -> None:
     result = load_catalog_source(config, port=port)
 
     assert result.distributions == ()
-    assert port.distribution_requests == [((aapl,), "2024-01-01", "2024-01-03")]
 
 
 class _AdjustedLastProvider:
@@ -528,8 +526,8 @@ def test_catalog_adapter_drop_policy_intersects_mixed_exchange_calendars() -> No
     xbru = _id("XAT1.XBRU")
     lse_index = pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-04"])
     xbru_index = pd.DatetimeIndex(["2024-01-01", "2024-01-03", "2024-01-04"])
-    port = _RecordingCatalogPort(
-        frames={
+    port, _catalog = _fake_port(
+        {
             lse: _frame(lse_index, close=[10.0, 11.0, 12.0], volume=[100.0, 110.0, 120.0]),
             xbru: _frame(xbru_index, close=[20.0, 21.0, 22.0], volume=[200.0, 210.0, 220.0]),
         }

@@ -14,11 +14,9 @@ from aegis_data.catalog import (
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
-from aegis_data.distributions import Distribution
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_runtime.currency import (
     CurrencyConversion,
-    MissingInstrumentDefinitionError,
     build_currency_conversion_from_codes,
 )
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
@@ -56,8 +54,8 @@ def load_catalog_source(
     # This module is the only one that talks to the port, so it owns the
     # environmental-vs-authoring triage: the port's two environmental errors
     # (Data ADR-0011) become the RD unavailability error the orchestrator
-    # collapses into failure Evidence; authoring errors (missing definitions,
-    # root collisions, missing window edges) keep propagating.
+    # collapses into failure Evidence; authoring errors (the port's missing-
+    # definitions error, root collisions, missing window edges) keep propagating.
     data_port = (
         port
         if port is not None
@@ -89,7 +87,9 @@ def _load_from_port(
 ) -> MarketDataLoad:
     start = _required_window_edge(config.start, "start")
     end = _required_window_edge(config.end, "end")
-    raw_frames = data_port.load_raw_bars(
+    # Data ADR-0012: the whole native window — bars, complete definitions,
+    # verified distributions, coverage report — is ONE coherent port read.
+    window = data_port.load_window(
         RawBarRequest(
             instrument_ids=instrument_ids(config.native_instrument_ids),
             start=start,
@@ -97,6 +97,7 @@ def _load_from_port(
             timeframe=config.timeframe,
         )
     )
+    raw_frames = window.ohlcv
     # Continuous-future roots are synthetic: aegis-data materialises each model as an
     # adjusted series on demand and hands it back as an OHLCV frame keyed by its root id.
     # The effective mode is resolved ONCE here and the same enum flows into every
@@ -127,20 +128,21 @@ def _load_from_port(
     # tradeable native_data above (no weights/signals/positions); here they become a
     # conversion view instead — native prices in the catalog, base prices per consumer.
     currency_conversion = _currency_conversion(
-        config, data_port, raw_frames, continuous_currencies
-    )
-    distributions = _distribution_data(
-        data_port,
-        tradeable_instrument_ids,
-        start=start,
-        end=end,
+        config, window.instruments, raw_frames, continuous_currencies
     )
     port_metadata: dict[str, object] = {"source": "nautilus_data_provider_port"}
-    distribution_coverage = _distribution_coverage_report(
-        data_port,
-        tradeable_instrument_ids,
-        start=start,
-        end=end,
+    # A synthetic root has no raw bars, so it can never enter the window
+    # request — but its not-applicable coverage rows are real Run evidence,
+    # read through the port's coverage-report diagnostic query.
+    distribution_coverage = (
+        *window.distribution_coverage,
+        *(
+            data_port.distribution_coverage_report(
+                tuple(continuous_frames), start=start, end=end
+            )
+            if continuous_frames
+            else ()
+        ),
     )
     if distribution_coverage:
         port_metadata["distribution_coverage"] = distribution_coverage
@@ -163,29 +165,8 @@ def _load_from_port(
         port_metadata=port_metadata,
         currency_conversion=currency_conversion,
         adjustment_mode=adjustment_mode,
-        distributions=distributions,
+        distributions=window.distributions,
     )
-
-
-def _distribution_data(
-    data_port: CatalogBackedDataPort,
-    instrument_ids: tuple[InstrumentId, ...],
-    *,
-    start: str,
-    end: str,
-) -> tuple[Distribution, ...]:
-    # ADR-0008: RD receives distributions only through the verified catalog port.
-    return data_port.distributions(instrument_ids, start=start, end=end)
-
-
-def _distribution_coverage_report(
-    data_port: CatalogBackedDataPort,
-    instrument_ids: tuple[InstrumentId, ...],
-    *,
-    start: str,
-    end: str,
-) -> tuple[dict[str, object], ...]:
-    return data_port.distribution_coverage_report(instrument_ids, start=start, end=end)
 
 
 def _continuous_frames(
@@ -221,25 +202,27 @@ def _continuous_frames(
 
 def _currency_conversion(
     config: DataConfig,
-    data_port: CatalogBackedDataPort,
+    definitions: dict[InstrumentId, Instrument],
     raw_frames: dict[InstrumentId, pd.DataFrame],
     continuous_currencies: dict[InstrumentId, str],
 ) -> CurrencyConversion | None:
-    """Build the non-base → base conversion from resolved instruments + exchange FX.
+    """Build the non-base → base conversion from the window's instruments + exchange FX.
 
     Every tradeable leg's currency is read from its resolved catalog ``Instrument``
-    (never configured) and matched to a declared ``exchange:`` FX pair. A synthetic
-    continuous root joins through its leg-derived quote currency — no synthetic
-    ``Instrument`` is minted — so a non-base continuous future converts exactly like
-    a non-base native. Any non-base leg with no matching pair fails loud — whether
-    the pair is simply absent or no ``exchange:`` was declared at all — so a
-    multi-currency book can never run silently unconverted.
+    (never configured) and matched to a declared ``exchange:`` FX pair. The window's
+    completeness guarantee (Data ADR-0012) means every tradeable and ``exchange:`` id
+    is present in *definitions* — a missing one already failed the window read with
+    the port's authoring error. A synthetic continuous root joins through its
+    leg-derived quote currency — no synthetic ``Instrument`` is minted — so a
+    non-base continuous future converts exactly like a non-base native. Any non-base
+    leg with no matching pair fails loud — whether the pair is simply absent or no
+    ``exchange:`` was declared at all — so a multi-currency book can never run
+    silently unconverted.
     """
     tradeable_ids = instrument_ids(config.instruments)
     exchange_ids = instrument_ids(config.exchange)
     if not tradeable_ids and not exchange_ids and not continuous_currencies:
         return None
-    definitions = _resolve_definitions(data_port, (*tradeable_ids, *exchange_ids))
     return build_currency_conversion_from_codes(
         currency_by_instrument_id={
             **{
@@ -260,20 +243,6 @@ def _currency_conversion(
         },
         base_currency=config.base_currency,
     )
-
-
-def _resolve_definitions(
-    data_port: CatalogBackedDataPort,
-    requested: tuple[InstrumentId, ...],
-) -> dict[InstrumentId, Instrument]:
-    loaded = data_port.instruments(requested)
-    missing = [instrument_id.value for instrument_id in requested if instrument_id not in loaded]
-    if missing:
-        raise MissingInstrumentDefinitionError(
-            "currency conversion needs a catalog instrument definition for every tradeable "
-            f"and exchange: id, but the catalog is missing definitions for: {sorted(missing)}"
-        )
-    return loaded
 
 
 def _array_panels(

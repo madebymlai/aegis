@@ -167,6 +167,10 @@ class FakeCatalog:
     ) -> list:
         return []
 
+    def get_intervals(self, *_args: object, **_kwargs: object) -> list:
+        # No marker intervals stored: coverage reports read checked_at as None.
+        return []
+
 
 def es_port(
     *, leg_currencies: dict[str, str] | None = None
