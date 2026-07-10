@@ -360,7 +360,7 @@ class _MarketData:
 def _book(
     *,
     per_name_cap: float | None = None,
-    gross_cap: float | None = None,
+    gross_cap: float = 1.0,
 ) -> BookConfig:
     return BookConfig(
         sleeves=(
@@ -369,7 +369,6 @@ def _book(
         base_currency="EUR",
         per_name_cap=per_name_cap,
         gross_cap=gross_cap,
-        max_book_gross=1.0 if gross_cap is None else gross_cap,
     )
 
 
@@ -670,7 +669,7 @@ def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
     assert "unfixable" in result.halt_reason
 
 
-def test_startup_check_passes_when_cap_and_integrity_gates_pass() -> None:
+def test_startup_check_passes_when_band_and_integrity_gates_pass() -> None:
     result = _pipeline().startup_check()
 
     assert result.trading_enabled is True
@@ -679,16 +678,6 @@ def test_startup_check_passes_when_cap_and_integrity_gates_pass() -> None:
     assert result.halt_reason is None
     assert result.nav == 100_000.0
     assert result.cash == 100_000.0
-
-
-def test_startup_check_halts_when_book_cap_exceeds_bundle_cap() -> None:
-    result = _pipeline(book=_book(per_name_cap=1.5)).startup_check()
-
-    assert result.should_halt is True
-    assert result.halt_gate == StartupGate.CAP_PROVENANCE
-    assert result.halt_reason == (
-        "book per_name_cap (1.5) exceeds sleeve 'trend' bundle gross_cap (1.0)"
-    )
 
 
 def test_startup_check_halts_when_bundle_bands_overlap() -> None:

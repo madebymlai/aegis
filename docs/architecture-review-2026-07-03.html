@@ -302,7 +302,7 @@ flowchart LR
               <pre class="mermaid">
 flowchart TB
   S["Strategy.on_start"] --> B["bootstrap"]
-  B --> P["pipeline startup_check<br/>band ownership · cap provenance · account integrity"]
+  B --> P["pipeline startup_check<br/>band ownership · account integrity"]
   B --> R["RollDesk.start<br/>continuous identity gate"]
   B -->|"Halt or BootResult — isinstance check"| S
   linkStyle 3 stroke:#dc2626,stroke-width:2px

@@ -74,8 +74,7 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         base_currency = "EUR"
         book_vol_target = 0.12
         sleeve_reversion_fraction = 0.5
-        max_book_gross = 1.0
-        gross_cap = 2.0
+        gross_cap = 1.0
         net_cap = 0.5
         per_name_cap = 0.1
         aggregate_drift_threshold = 0.5
@@ -119,8 +118,7 @@ def test_full_book_round_trips_to_hand_built_config(tmp_path):
         base_currency="EUR",
         book_vol_target=0.12,
         sleeve_reversion_fraction=0.5,
-        max_book_gross=1.0,
-        gross_cap=2.0,
+        gross_cap=1.0,
         net_cap=0.5,
         per_name_cap=0.1,
         aggregate_drift_threshold=0.5,
@@ -272,8 +270,7 @@ def test_defaults_applied_when_keys_omitted(tmp_path):
     assert book.base_currency == "EUR"
     assert book.book_vol_target == 0.09
     assert book.sleeve_reversion_fraction == 1.0
-    assert book.max_book_gross == 1.0
-    assert book.gross_cap is None
+    assert book.gross_cap == 1.0
     assert book.sleeves[0].weight_band_down == 0.0
     assert book.sleeves[0].weight_band_up == 0.0
     assert book.tail_convexity_budget is None
@@ -291,6 +288,21 @@ def test_removed_live_drift_band_keys_fail_closed(tmp_path):
     """)
 
     with pytest.raises(BookConfigError, match="removed live drift-band keys"):
+        load_book_config(path)
+
+
+def test_removed_max_book_gross_fails_closed(tmp_path):
+    path = _write(tmp_path, """
+        max_book_gross = 1.0
+
+        [[sleeves]]
+        name = "trend"
+        wheel_filename = "trend.whl"
+        risk_share = 1.0
+        group = "Floor"
+    """)
+
+    with pytest.raises(BookConfigError, match="use 'gross_cap'"):
         load_book_config(path)
 
 

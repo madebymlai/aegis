@@ -10,7 +10,7 @@ Aegis Trader is a NautilusTrader overlay (ADR-0001). Nautilus already provides t
 |---|---|---|---|
 | Market data | `data/market_data.py` | `MarketDataPort` + `NautilusMarketData` in one module | Cache-backed native bar windows, per-period freshness, instrument sizing, native quantity construction, and FX marks. |
 | Book state | `portfolio/book_state.py` | `BookStatePort` + `NautilusBookState` in one module | NAV/cash aggregation, cache health, and base-currency realized weights from Nautilus portfolio/cache reads. |
-| Bundle loading | `bundles/` | `BundleRegistryPort` with stub and entry-point implementations | Installed Execution Bundle discovery, wheel-label lookup, and cap provenance against the bundle's locked plan. This is the only remaining justified port/adapter file split because it has multiple implementations. |
+| Bundle loading | `bundles/` | `BundleRegistryPort` with stub and entry-point implementations | Installed Execution Bundle discovery and wheel-label lookup. This is the only remaining justified port/adapter file split because it has multiple implementations. |
 | Rebalance orchestration | `trader/pipeline.py` | `RebalancePipeline` value-object API | Startup gates, Cache-backed market-data reads through ports, Execution Bundle calls, netting/gating, sizing, freshness filtering, and the `SleeveLedger`. Imports no Strategy or Nautilus event-loop types. |
 | Nautilus adapter | `trader/strategy.py`, `trader/node.py` | Native Nautilus `Strategy`; broker-neutral `TradingNode`/backtest config + the live run/stop lifecycle | Lifecycle, bar-driven period rollover, futures roll refresh, FX quote mirroring into Cache marks, translating `OrderIntent`s into Nautilus orders, RiskEngine config, the `trader start`/`stop` daemon, and structured `self.log` records. IBKR client/connection config is **not** here — it lives in the one IBKR adapter (`aegis-data/ibkr.py`); `node.py` carries no broker vocabulary. |
 
@@ -18,7 +18,7 @@ Aegis Trader is a NautilusTrader overlay (ADR-0001). Nautilus already provides t
 
 ```
 domain/*            -> pure value objects and algorithms, no Nautilus
-bundles/*           -> bundle registry/provenance, no Strategy lifecycle
+bundles/*           -> bundle registry and contract assembly, no Strategy lifecycle
 trader/pipeline.py  -> domain + bundle/data/portfolio ports, no Strategy effects
 trader/strategy.py  -> Nautilus lifecycle and I/O effects over the pipeline
 trader/node.py      -> broker-neutral Nautilus node + live run/stop lifecycle; no IBKR SDK

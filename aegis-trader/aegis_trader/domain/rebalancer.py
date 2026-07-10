@@ -13,9 +13,9 @@ Netting (Slice 2):
 Realized-book gate (Slice 4):
 - Asymmetric drift bands (band_up, band_down) per instrument suppress
   unnecessary trading when the realized position is still within tolerance.
-- The realized post-band book is gated against gross/net/per-name caps; the
-  gross/net gate is the kernel-owned Exposure Validation module
-  (``aegis_runtime.validate_exposure``, root ADR-0008).
+- The planned post-band book is clamped to the book gross ceiling, remediated
+  against per-name caps, and gated against an explicit net cap by the
+  kernel-owned Exposure Validation module (root ADR-0008).
 - A per-name cap breach triggers deterministic widen-to-compliance (ignore
   bands, trade back to the cap); an unfixable breach raises (fail closed).
 - An aggregate drift threshold trips when the book has drifted too far from
@@ -29,7 +29,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 import pandas as pd
-from aegis_runtime import DriftBand, validate_exposure
+from aegis_runtime import DriftBand
+from aegis_runtime.exposure_validation import validate_net_exposure
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import Allocation, SleeveWeightBand, allocate
@@ -156,7 +157,7 @@ def rebalance_plan(
                 net_target_by_instrument_id.get(instrument_id, 0.0) + scaled
             )
 
-    net_target_by_instrument_id = _clamp_to_max_gross(net_target_by_instrument_id, book)
+    net_target_by_instrument_id = _clamp_to_gross_cap(net_target_by_instrument_id, book)
 
     # -- Step 2: net -> band -> post-execution book projection --
     rw = realized_weights or {}
@@ -226,21 +227,21 @@ def rebalance_plan(
         book=book,
     )
 
-    # -- Step 3.5: down-only clamp on the PROJECTED book --
-    # Step 1 clamps the *target* to max_book_gross, but within-band, untraded
+    # -- Step 3.5: authoritative gross clamp on the PROJECTED book --
+    # Step 1 clamps the *target* to gross_cap, but within-band, untraded
     # names keep their drifted realised weight, so the projected post-execution
     # book can still exceed the ceiling.  Re-apply the same down-only clamp to
-    # the projection and re-derive the deltas (the bands yield to the clamp), so
-    # the hard gross gate below is not tripped by a vol-target / drift overshoot.
+    # the projection and re-derive the deltas (the bands yield to the clamp).
     # Net is intentionally NOT scaled here: a directional (net) breach is an
     # anomaly that must surface at the gate, not be silently shrunk.
-    clamped_post_book = _clamp_to_max_gross(post_book, book)
+    clamped_post_book = _clamp_to_gross_cap(post_book, book)
     if clamped_post_book is not post_book:
         post_book = clamped_post_book
         deltas = _deltas_from_realized(post_book, rw)
 
-    # -- Step 4: final planned-book caps --
-    _gate_book_caps(post_book, book)
+    # -- Step 4: explicit planned-book net cap --
+    if book.net_cap is not None:
+        validate_net_exposure(pd.DataFrame([post_book]), book.exposure_limits)
 
     return RebalancePlan(
         deltas=tuple(deltas),
@@ -384,21 +385,21 @@ def _gate_per_name_caps(
             )
 
 
-def _clamp_to_max_gross(
+def _clamp_to_gross_cap(
     net_target_by_instrument_id: dict[InstrumentId, float], book: BookConfig
 ) -> dict[InstrumentId, float]:
     """Down-only vol-target clamp (ADR-0004 amendment).
 
     Vol-targeting may over-lever an unlevered book when realized volatilities are
     low.  Scale the netted book down so its gross does not exceed
-    ``max_book_gross``; never scale it up — when the book is already within the
-    ceiling it is returned unchanged.  The gross/net cap gate downstream remains
-    the authoritative hard backstop.
+    ``gross_cap``; never scale it up — when the book is already within the
+    ceiling it is returned unchanged. The explicit net-cap gate downstream is
+    independent because a directional breach must surface rather than be scaled.
     """
     gross = sum(abs(w) for w in net_target_by_instrument_id.values())
-    if gross <= book.max_book_gross:
+    if gross <= book.gross_cap:
         return net_target_by_instrument_id
-    clamp = book.max_book_gross / gross
+    clamp = book.gross_cap / gross
     return {
         instrument_id: weight * clamp
         for instrument_id, weight in net_target_by_instrument_id.items()
@@ -420,18 +421,3 @@ def _deltas_from_realized(
         if abs(delta) >= _ZERO_GUARD:
             deltas.append(WeightDelta(instrument_id=instrument_id, delta=delta))
     return deltas
-
-
-def _gate_book_caps(
-    post_book: dict[InstrumentId, float],
-    book: BookConfig,
-) -> None:
-    """Gate the post-execution book through the kernel Exposure Validation module.
-
-    The Rebalancer owns projection and remediation (bands, clamps,
-    widen-to-compliance); the gross/net inequalities, tolerance, and error
-    vocabulary are the kernel gate's (root ADR-0008, Trader ADR-0002).  Always
-    checked, regardless of whether realised positions are supplied; breaches
-    raise ``GrossExposureBreach`` / ``NetExposureBreach``.
-    """
-    validate_exposure(pd.DataFrame([post_book]), book.exposure_limits)

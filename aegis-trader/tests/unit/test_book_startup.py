@@ -380,24 +380,6 @@ def test_bootstrap_halts_on_band_overlap_before_starting_roll_desk() -> None:
     assert roll_desk.calls == []
 
 
-def test_bootstrap_halts_on_cap_before_starting_roll_desk() -> None:
-    roll_desk = _RollDesk(
-        (Halt(StartupGate.CONTINUOUS_IDENTITY, "would materialize later"),)
-    )
-
-    result = _bootstrap(
-        book=_book(per_name_cap=1.5),
-        roll_desk=roll_desk,
-        fx_reference_pairs=(_FX_EURUSD,),
-    )
-
-    assert result == Halt(
-        StartupGate.CAP_PROVENANCE,
-        "book per_name_cap (1.5) exceeds sleeve 'trend' bundle gross_cap (1.0)",
-    )
-    assert roll_desk.calls == []
-
-
 def test_bootstrap_halts_on_account_integrity_before_starting_roll_desk() -> None:
     roll_desk = _RollDesk()
 

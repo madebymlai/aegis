@@ -169,8 +169,7 @@ A wheel therefore ships **only data plus a constant loader**: the copied compone
 one `bundle_manifest.json`, and a byte-identical `__init__.py` shim that calls
 `load_installed_bundle(__package__)`. No generated code. The wheel becomes fully
 inspectable, the json is the single serialization, and the future Trader overlay reads the
-same `bundle_loader` to recover a bundle's provenance (the caps it must check, ADR-0001
-amendment 2026-06-14).
+same `bundle_loader` to recover the standalone Sleeve limits the bundle itself enforces.
 
 Consequence for `aerd export`: with serialization owned upstream and names deterministic,
 the command splits cleanly into a pure `assemble_bundle(...) -> BundleArtifact` core (the
@@ -185,12 +184,19 @@ Root ADR-0008 supersedes the **no bundle-side gate** part of the 2026-06-14 amen
 `compute_weights` remains a pure `data -> signed weights` transform: it does not remediate,
 resize, or mutate an allocation. Before returning, however, it passes those weights and the
 limits in its `LockedExecutionPlan` to the one kernel-owned Exposure Validation module.
-Research uses that same module at Candidate scope, and Trader uses it again on the realized
-post-band plan. The three scopes therefore share one inequality, tolerance, Direction
-vocabulary, and typed error hierarchy rather than maintaining nominally identical
-policies.
+Research uses that same full gate at Candidate scope. Trader's authoritative gross
+operation is instead its proportional planned-book clamp; for an explicit net cap it calls
+the kernel's narrower net operation so the inequality, tolerance, and typed error remain
+shared rather than reimplemented.
 
-The ownership split remains intact. The locked plan carries the sleeve limits validated by
-research; Trader's Book Config carries operator-selected realized-book limits; the startup
-provenance check prevents those book limits from exceeding the bundle's research evidence.
-Only the claim that validation occurs exclusively in the overlay is withdrawn.
+The ownership split remains intact. The locked plan carries and enforces the standalone
+Sleeve limits validated by research. Trader's Book Config independently carries the
+post-allocation Commingled Book `gross_cap` and optional net/per-name policies. These scopes
+are not compared numerically: Trader may scale and net several valid Sleeves into a Book whose
+gross or net has no one-to-one relationship with any Sleeve limit. Only the claim that
+validation occurs exclusively in the overlay is withdrawn.
+
+This also withdraws the 2026-06-14 amendment's claim that Trader compares Book caps to
+Sleeve research evidence or prevents allocator scaling through such a comparison. The
+Execution Bundle enforces its locked limits before Trader allocation; the Book limits govern
+the independent post-allocation result.

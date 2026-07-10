@@ -11,7 +11,6 @@ class StartupGate(str, Enum):
 
     BAND_OWNERSHIP = "band_ownership"
     BOOK_TIMEFRAME = "book_timeframe"
-    CAP_PROVENANCE = "cap_provenance"
     ACCOUNT_INTEGRITY = "account_integrity"
     # Cross-Sleeve continuous-root declarations disagree (id or adjustment mode);
     # distinct from CONTINUOUS_IDENTITY, the post-materialisation id check.

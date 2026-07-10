@@ -9,10 +9,8 @@ test_sizing.py; the composition is exercised by ``TestRebalancePipeline`` below.
 import pandas as pd
 import pytest
 
-from aegis_runtime import (
-    DriftBand,
-    NetExposureBreach,
-)
+from aegis_runtime import DriftBand
+from aegis_runtime.exposure_validation import NetExposureBreach
 from aegis_trader.domain.book_config import BookConfig, DrawdownDeleverCurve, SleeveConfig
 from aegis_trader.domain.rebalancer import (
     PerNameExposureBreach,
@@ -280,7 +278,7 @@ class TestRebalanceMultiSleeve:
             ),
             book_vol_target=0.09,
             sleeve_reversion_fraction=0.5,
-            max_book_gross=2.0,  # headroom: isolate the band logic from the gross clamp
+            gross_cap=2.0,  # headroom: isolate the band logic from the gross clamp
         )
         previous = {book.sleeves[0].name: 0.6363961030678927, book.sleeves[1].name: 0.6363961030678927}
 
@@ -555,10 +553,9 @@ class TestRebalanceSlice4:
 
     def test_gross_within_ceiling_after_drawdown_delever(self):
         """The down-only clamp keeps gross within the ceiling through the
-        drawdown-delever path: the delevered target is still clamped to
-        max_book_gross (== gross_cap), so the post-book never breaches the cap."""
+        drawdown-delever path."""
         book = self._book(
-            max_book_gross=0.20, gross_cap=0.20,
+            gross_cap=0.20,
             drawdown_delever=DrawdownDeleverCurve(
                 start_drawdown=0.05,
                 end_drawdown=0.25,
@@ -571,35 +568,23 @@ class TestRebalanceSlice4:
             realized_drawdown=0.25,
         )
         gross = sum(abs(d.delta) for d in result)  # realized empty -> delta == post weight
-        assert gross <= book.max_book_gross + 1e-9
-
-    def test_max_book_gross_above_gross_cap_rejected(self):
-        """A soft clamp ceiling above the hard gross cap is incoherent — the
-        down-only clamp could never make such a book compliant — so it is
-        rejected at config construction, not 13 months into a backtest."""
-        with pytest.raises(ValueError, match="exceeds gross_cap"):
-            self._book(max_book_gross=1.0, gross_cap=0.8)
+        assert gross <= book.gross_cap + 1e-9
 
     def test_within_band_drift_over_ceiling_clamped_not_failed(self):
-        """Within-band drift can push the projected book over max_book_gross even
-        when the target is within it.  The down-only clamp scales the projection
-        back to the ceiling (bands yield) instead of tripping the hard gross gate."""
-        book = self._book(
-            max_book_gross=1.0, gross_cap=1.0,
-        )
+        """Within-band drift can push the projected book over gross_cap even
+        when the target is within it. The planned-book clamp remains authoritative."""
+        book = self._book(gross_cap=1.0)
         result = rebalance(
             {book.sleeves[0].name: _target({"AAA": 0.5, "BBB": 0.5})},
             book,
             instrument_bands=self._bands(0.05, "AAA", "BBB"),
             realized_weights={_iid("AAA"): 0.53, _iid("BBB"): 0.53},
         )
-        # Drift 0.03 <= band 0.05, so without the projected clamp the book sits at
-        # gross 1.06 and fails closed.  With it, both names get a corrective sell
-        # and the resulting book lands on the ceiling.
+        # Drift 0.03 <= band 0.05, so without the projected clamp the book would
+        # sit at gross 1.06. Both names instead get a corrective sell.
         after = {d.instrument_id.symbol.value: 0.53 + d.delta for d in result}
         gross_after = sum(abs(w) for w in after.values())
         assert gross_after == pytest.approx(1.0)
-        assert gross_after <= book.gross_cap + 1e-9
 
     def test_net_cap_breach_fails_closed(self):
         book = self._book(net_cap=0.10)
@@ -628,10 +613,8 @@ class TestRebalanceSlice4:
     def test_cleanup_gross_clamped_to_ceiling(self):
         """The force-cleanup path stays subordinate to the gross ceiling: cleanup
         trades every name back to target (gross 0.70), then the down-only clamp
-        pulls the projected book to max_book_gross (== gross_cap), so the cleanup
-        never breaches the cap."""
-        book = self._book(aggregate_drift_threshold=0.03, max_book_gross=0.50, gross_cap=0.50,
-                          )
+        pulls the projected book to gross_cap."""
+        book = self._book(aggregate_drift_threshold=0.03, gross_cap=0.50)
         # Drift trips; cleanup targets 0.40+0.30 (gross 0.70) > ceiling 0.50 -> clamped.
         result = rebalance({book.sleeves[0].name: _target({"AAA": 0.40, "BBB": 0.30})}, book,
                            instrument_bands=self._bands(0.10, "AAA", "BBB"),
@@ -641,7 +624,6 @@ class TestRebalanceSlice4:
             after[d.instrument_id] = after.get(d.instrument_id, 0.0) + d.delta
         gross = sum(abs(w) for w in after.values())
         assert gross == pytest.approx(0.50)
-        assert gross <= book.gross_cap + 1e-9
 
     def test_correlated_drift_triggers_cleanup(self):
         """N small within-band drifts trip the aggregate threshold → cleanup all."""
@@ -715,7 +697,7 @@ class TestRebalancePipeline:
 class TestDownOnlyGrossClamp:
     """ADR-0004 amendment: vol-targeting is down-only.  When the vol-target solve
     over-levers an unlevered book, the netted book is clamped down to
-    ``max_book_gross`` instead of failing closed at the gross cap.
+    ``gross_cap``.
     """
 
     @staticmethod
@@ -726,7 +708,6 @@ class TestDownOnlyGrossClamp:
                 SleeveConfig(name=SleeveName("high"), wheel_filename="high.whl", risk_share=0.5),
             ),
             book_vol_target=0.09,
-            max_book_gross=1.0,
             gross_cap=1.0,
             **kwargs,
         )
@@ -741,12 +722,12 @@ class TestDownOnlyGrossClamp:
             realized_vols={book.sleeves[0].name: 0.03, book.sleeves[1].name: 0.03},
         )
         gross = sum(abs(d.delta) for d in plan.deltas)
-        assert gross <= book.max_book_gross + 1e-9
+        assert gross <= book.gross_cap + 1e-9
 
     def test_underlevered_book_is_not_scaled_up_to_the_cap(self):
         book = self._book()
         # High realized vols -> vol-targeting de-levers below the cap; the clamp
-        # must leave it there (down-only), never peg it up to max_book_gross.
+        # must leave it there (down-only), never peg it up to gross_cap.
         plan = rebalance_plan(
             {book.sleeves[0].name: _target({"A": 1.0}),
              book.sleeves[1].name: _target({"B": 1.0})},
@@ -754,7 +735,7 @@ class TestDownOnlyGrossClamp:
             realized_vols={book.sleeves[0].name: 0.40, book.sleeves[1].name: 0.40},
         )
         gross = sum(abs(d.delta) for d in plan.deltas)
-        assert gross < book.max_book_gross
+        assert gross < book.gross_cap
 
     def test_clamp_lands_exactly_on_the_cap(self):
         book = self._book()
@@ -765,7 +746,7 @@ class TestDownOnlyGrossClamp:
             realized_vols={book.sleeves[0].name: 0.03, book.sleeves[1].name: 0.03},
         )
         gross = sum(abs(d.delta) for d in plan.deltas)
-        assert gross == pytest.approx(book.max_book_gross)
+        assert gross == pytest.approx(book.gross_cap)
 
     def test_clamp_preserves_relative_weights(self):
         book = self._book()
@@ -796,4 +777,4 @@ class TestDownOnlyGrossClamp:
             realized_drawdown=0.25,
         )
         gross = sum(abs(d.delta) for d in plan.deltas)
-        assert gross <= book.max_book_gross + 1e-9
+        assert gross <= book.gross_cap + 1e-9

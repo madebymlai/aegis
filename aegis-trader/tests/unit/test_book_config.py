@@ -1,10 +1,7 @@
 """Unit tests for BookConfig — zero Nautilus."""
 
-import math
-
 import pytest
 
-from aegis_runtime import ExposureLimits
 from aegis_trader.domain.book_config import (
     BookConfig,
     CostModelConfig,
@@ -256,17 +253,12 @@ class TestBookConfig:
 
 
 class TestBookConfigCaps:
-    """Caps declaration.
+    """Commingled Book cap declarations."""
 
-    Cap *provenance* (caps never exceeding the bundles' research-validated
-    ceilings) is bundle-grounded and lives in test_cap_provenance.py — it is no
-    longer a self-referential check on BookConfig.
-    """
-
-    def test_caps_default_none(self):
-        """Caps default to None (unlimited)."""
+    def test_optional_caps_default_none(self):
+        """Optional caps default to None; gross has a finite operating default."""
         book = BookConfig(sleeves=(make_sleeve("trend"),))
-        assert book.gross_cap is None
+        assert book.gross_cap == 1.0
         assert book.net_cap is None
         assert book.per_name_cap is None
         assert book.aggregate_drift_threshold is None
@@ -285,29 +277,17 @@ class TestBookConfigCaps:
         assert book.per_name_cap == 0.15
         assert book.aggregate_drift_threshold == 0.05
 
-    def test_exposure_limits_holds_declared_caps(self):
-        """BookConfig is an Exposure Limits holder (root ADR-0008): the declared
-        gross/net caps cross the kernel seam unchanged."""
-        book = BookConfig(
-            sleeves=(make_sleeve("trend"),),
-            max_book_gross=1.0,
-            gross_cap=1.5,
-            net_cap=0.8,
-        )
-        assert book.exposure_limits == ExposureLimits(gross_cap=1.5, net_cap=0.8)
-
-    def test_exposure_limits_omitted_caps_are_unbounded(self):
-        """A book with no declared caps still yields legal Exposure Limits that
-        gate as unbounded — no skip-the-gate branch at the call site."""
-        book = BookConfig(sleeves=(make_sleeve("trend"),))
-        assert book.exposure_limits.gross_cap == math.inf
-        assert book.exposure_limits.net_cap == math.inf
-
     @pytest.mark.parametrize(
         ("field", "value"),
-        (("gross_cap", float("nan")), ("net_cap", float("nan")), ("net_cap", -0.1)),
+        (
+            ("gross_cap", float("nan")),
+            ("gross_cap", float("inf")),
+            ("gross_cap", 0.0),
+            ("net_cap", float("nan")),
+            ("net_cap", -0.1),
+        ),
     )
-    def test_invalid_exposure_limits_fail_at_book_construction(self, field, value):
+    def test_invalid_book_caps_fail_at_construction(self, field, value):
         with pytest.raises(ValueError):
             BookConfig(sleeves=(make_sleeve("trend"),), **{field: value})
 

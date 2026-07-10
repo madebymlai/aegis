@@ -45,11 +45,8 @@ start_drawdown = 0.05
 end_drawdown = 0.25
 floor_multiplier = 0.50
 
-# Gross cap after risk-budget scaling; raise it to run levered across sleeves.
-max_book_gross = 1.0
-
-# Risk caps, all as fractions of NAV. Provenance (caps <= what research
-# validated) is checked at load against each sleeve's bundle, not declared here.
+# Commingled Book risk caps after Sleeve allocation and netting. Each Execution
+# Bundle separately enforces the standalone Sleeve limits locked by research.
 gross_cap = 1.0       # max sum |w_i|
 net_cap = 0.5         # max |sum w_i|
 per_name_cap = 0.1    # max |w_i| per instrument

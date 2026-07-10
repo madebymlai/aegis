@@ -6,26 +6,27 @@ Aegis Trader suppresses rebalance churn with a **drift band**: a leg trades only
 realized weight has drifted from target by more than the band. The band means under-band
 legs are *deliberately held* at their current weight `w_c`, so the book Trader actually
 requests after band resolution — `{traded legs → resolved target} ∪ {held legs → w_c}` —
-is **not** the all-at-target book. Therefore the **rebalancer** gates that **planned
-realized post-band book** against the book's gross/net/per-name caps, not the raw target
-book. The gate is **authoritative for the rebalance request**; the band is subordinate and
-may only suppress churn within the gate's compliance envelope.
+is **not** the all-at-target book. Therefore the **rebalancer** enforces the book's
+constraints on that **planned realized post-band book**, not the raw target book. It clamps
+gross to `gross_cap`, remediates per-name breaches, and gates an explicit net cap. The
+planned-book enforcement is **authoritative for the rebalance request**; the band is
+subordinate and may only suppress churn within its compliance envelope.
 
 This book gate is **not** a second wheel-local **Allocation Policy**. Root ADR-0008
 supersedes ADR-0001's 2026-06-14 removal of bundle-side validation: the Execution Bundle
 is still a pure transform, but it passes each **sleeve** allocation through the shared
 `aegis-runtime` validator using the limits locked with that bundle. The **Book Config**
-separately supplies the realized-book limits, and provenance prevents it from running a
-sleeve hotter than its locked research evidence. The Rebalancer gates that realized
-**book** through the same validator; it owns projection and remediation but no gross/net
-inequality, tolerance, or error vocabulary.
+independently supplies the post-allocation Commingled Book gross/net/per-name policies.
+Trader owns the gross clamp and per-name remediation. An explicit net cap is delegated to
+the kernel's net-only operation, so Trader does not duplicate its inequality, tolerance, or
+error. Book and Sleeve limits are different scopes and are not compared.
 
 Gating the target while emitting the band-filtered book is a tolerance gap of the same
 class as the NoCash tripwire (ADR-0011): each held leg is within band of target, but the
 drifts sum — `N` legs nudged the same way by a directional market move give up to
-`N·band` of un-gated gross/net drift through a `gross_cap` the gate never saw, and the
-breach correlates with crisis days, when caps matter most. By Aegis's own "no tolerance"
-stance this is a fail-closed correctness requirement, not an optimisation.
+`N·band` of gross or net drift that target-only enforcement never saw. The projected gross
+clamp and explicit net gate must therefore see the post-band request. The risk correlates
+with crisis days, when constraints matter most; this is correctness, not an optimisation.
 
 ## Considered options
 
@@ -58,6 +59,9 @@ stance this is a fail-closed correctness requirement, not an optimisation.
 - **A min-cost-set solver for the gate override**: rejected for v1. Trader applies a fixed
   sequence of deterministic remediations in weight space before sizing. Any residual
   planned-book breach halts with no orders; no optimizer is required.
+- **A second exposure gate after sizing and venue filtering**: rejected. The planned
+  post-band book is the single rebalance-policy scope. Rounding and venue availability are
+  execution outcomes; monitoring an already-held book is a separate concern.
 - **Trade-to-edge by default** (move a tripped leg only to the band rim): rejected as the
   default. Edge-parking leaves legs at the rim so they re-trip next cycle and raises
   tracking error; trade-to-target is the default, with partial movement carried only when
@@ -67,18 +71,17 @@ stance this is a fail-closed correctness requirement, not an optimisation.
 
 - **Rebalance pipeline:** `targets → allocate/net by InstrumentId → clamp target gross →
   resolve per-instrument bands → optional aggregate-L1 full cleanup → repair realized
-  per-name breaches → clamp projected gross → gate the planned book → size/round → filter
-  stale instruments → emit`. A planned-book breach returns no orders and halts the
-  strategy.
+  per-name breaches → clamp projected gross → gate explicit net → size/round → filter
+  stale instruments → emit`. An unfixable per-name or net breach returns no orders and
+  halts the strategy.
 - **Band lives in weight space**, per instrument, as a pair `(band_up, band_down)`
   defaulting symmetric to the book band; `w_c = position_notional_base / NAV_base`. Trip
   when `(w_c − w_t) > band_up` (trim) or `(w_t − w_c) > band_down` (add). Overrides are
   locked per instrument in the Execution Bundle and scaled by the owning sleeve's applied
   allocation. The tail sets `band_up` tight and `band_down` loose.
 - **Trade-to-target by default**; a locked band may select a partial destination.
-- **Between-rebalance drift is still accepted**, now consistently: ADR-0007 defines
-  `gross_cap` as a constraint on the *requested* rebalance, and the post-band book *is* the
-  request.
+- **Between-rebalance drift is still accepted**, now consistently: the post-band book is the
+  requested rebalance, so that projection is the object clamped and gated.
 - **Drift is evaluated every rebalance** (each sleeve-period bar-close), not only when the
   target changes — a frozen target still drifts as prices move, so a held book is re-checked
   each cycle (once/day for a daily book; negligible cost).
@@ -87,9 +90,9 @@ stance this is a fail-closed correctness requirement, not an optimisation.
   `w_c` is part of the planned post-band projection. Freshness filtering occurs after that
   request is validated and simply suppresses orders for unavailable venues; Trader does
   not run a second exposure policy over sizing or availability outcomes.
-- **Gate the realized book; trade only the targeted (one rule).** The realized book the gate
-  evaluates spans the Manifest-targeted instruments and their reconciled `Cache` positions, so
-  the gate always sees true exposure for the book Trader runs. The **trade set is the
+- **Enforce the planned book; trade only the targeted (one rule).** The projection spans the
+  Manifest-targeted instruments and their reconciled `Cache` positions, so constraint
+  enforcement sees the exposure Trader is requesting. The **trade set is the
   Manifest-targeted instruments only**.
   - **Amended 2026-06-15 (aegis-rd-bwb.1): quarantine removed.** The original rule also
     folded *held instruments with no Manifest entry* into the gate union — quarantined (never
@@ -108,20 +111,4 @@ stance this is a fail-closed correctness requirement, not an optimisation.
   layers. A fidelity diagnostic (realized tracking error vs the *unbuffered* target, plus
   turnover) is a test seam to confirm the floor does not go over-sticky.
 - **Determinism:** band resolution, full-cleanup selection, per-name repair, gross clamp,
-  and planned-book validation are deterministic. No minimal-trade-set claim is made.
-
-## Amendment (2026-07-10): remove the post-sizing defensive gate
-
-The 2026-07-09 implementation added a second exposure gate after sizing, rounding, and
-freshness filtering. It required `SizedOrder.projected_delta`, reconstructed a second book
-from provider-agnostic quantities, and revalidated a held book even when no sleeve made a
-rebalance decision. That layer is removed.
-
-The planned post-band book is the single Trader exposure scope. `size_deltas` again returns
-plain `OrderIntent` values, and a no-decision period performs no exposure validation.
-Rounding, missing sizing data, and venue availability are execution outcomes rather than a
-second book policy. Monitoring an already-held book is a separate risk-monitoring concern.
-
-Strategy still materializes every order before submitting any, so a missing instrument
-cannot cause partial submission. The venue-produced `Quantity` is accepted directly; it is
-not compared against a separately derived float projection.
+  and planned-book net validation are deterministic. No minimal-trade-set claim is made.

@@ -152,6 +152,26 @@ def validate_exposure(
     )
 
 
+def validate_net_exposure(allocations: pd.DataFrame, limits: ExposureLimits) -> None:
+    """Gate only net exposure for a signed target-weight frame.
+
+    Trader already enforces gross exposure by clamping its planned book. This
+    narrower operation keeps the remaining net inequality, tolerance, and error
+    vocabulary in the kernel without inventing an unbounded gross limit.
+    """
+    if allocations.empty or len(allocations.columns) == 0:
+        return
+    net_cap = cast(float, limits.net_cap)
+    _assert_within_cap(
+        allocations.sum(axis=1).abs(),
+        net_cap,
+        name="net",
+        expr="|Σwᵢ|",
+        breach=NetExposureBreach,
+        describe=None,
+    )
+
+
 def _describe_group(key: Hashable) -> str:
     return f"group {key!r}"
 

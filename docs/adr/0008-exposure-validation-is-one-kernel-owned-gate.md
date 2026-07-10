@@ -42,26 +42,24 @@ a gate research never validated. We collapse to one kernel module,
   research apparatus must not cross into execution (Context Map; same firewall ADR-0006
   respected).
 
-## Amendment (2026-07-09): Trader's realized book is the third validation scope
+## Amendment (2026-07-09): Trader reuses the kernel's net policy
 
-The same kernel interface now gates Trader's realized post-band book. `BookConfig`
-projects its optional book caps into one `ExposureLimits` value. The Rebalancer gates
-its planned post-band projection; it no longer owns a second gross/net comparison,
-tolerance, or error vocabulary. Trader still owns the distinct work that belongs to its
-actor: projection, the down-only `max_book_gross` clamp, per-name remediation, and the
-decision to halt when the planned book remains non-compliant.
+Research and an Execution Bundle remain the two full gross/net/Direction validation
+scopes. Trader has a different gross operation: it proportionally clamps both the netted
+target and the planned post-band book to its Commingled Book `gross_cap`. Because that clamp is
+authoritative, a second gross comparison would be unreachable defensive policy.
 
-Exposure Validation therefore serves three scopes with one policy:
+Trader delegates only its reachable explicit net cap to
+`validate_net_exposure(frame, net_cap)`. That operation lives beside the full gate and
+reuses its comparison, `1e-9` tolerance, and `NetExposureBreach`; Trader owns projection,
+gross clamping, and per-name remediation. `BookConfig` constructs one validated
+`ExposureLimits` value from its real gross cap and optional net cap; a book with no explicit
+net cap invokes no net operation.
 
-- research gates Candidate-expanded frames before simulation;
-- an Execution Bundle gates one Sleeve's signed allocation;
-- Trader gates the planned realized Commingled Book projection.
+The Trader limits govern the Commingled Book after allocation and netting. They are not
+provenance projections of the standalone Sleeve limits carried by Execution Bundles, so no
+Book-to-Sleeve cap comparison is made at startup.
 
-The kernel leaves allocation values unchanged and owns only the shared sign, gross,
-and net policy. In research, `NaN` remains the simulator's sparse "no new allocation"
-instruction; the gate uses the same Pandas reductions as before this amendment. The
-Execution Bundle retains its separate latest-row completeness check, while Trader
-supplies its realized one-row projection directly. Grouped reductions use
-`dropna=False`, so a missing label remains part of the gate instead of requiring a
-separate rejection path. Invalid cap values still fail at `ExposureLimits` construction
-because they make the shared inequalities meaningless.
+The kernel leaves allocation values unchanged. In research, `NaN` remains the simulator's
+sparse "no new allocation" instruction, and grouped reductions use `dropna=False` so every
+supplied group remains part of the gate.

@@ -29,13 +29,9 @@ sleeve_reversion_fraction = 0.5
 # CAGR, Sharpe 1.21 -> 0.92) for the same reason: USD 154,444.01 financing,
 # or ~USD 424.4k average debit.  Treat the old "+13% net" analytic overlay as
 # superseded by these measured per-currency engine numbers.
-max_book_gross = 1.75
-
-# Book caps as fractions of NAV.  Provenance is checked at load against each
-# sleeve's bundle (all three re-exported 2026-07-05 with gross_cap = net_cap = 2.0,
-# ceilings only - sleeve weights unchanged), so these must not exceed those ceilings.
-gross_cap = 2.0
-net_cap = 2.0
+# Commingled Book caps as fractions of NAV, applied after Sleeve allocation and
+# netting. Each Execution Bundle separately enforces its standalone Sleeve limits.
+gross_cap = 1.75
 
 # Backtest funding: 5,000 EUR only (foreign legs reached via per-currency margin loans).
 # RE-SCALED to the LIVE account size 2026-07-06 (was 1,000,000): per-order minimums and

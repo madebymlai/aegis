@@ -42,7 +42,6 @@ from aegis_trader.backtest import (
 )
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.domain.roll import RollEvent, SubscribeBars, UnsubscribeBars
-from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.portfolio import NautilusBookState
 from aegis_trader.trader.strategy import RebalanceStrategy
@@ -66,20 +65,8 @@ risk_share = 1.0
 group = "Floor"
 """
 
-_BAD_CAP_BOOK_TOML = f"""
-base_currency = "EUR"
-per_name_cap = 1.5
-
-[[sleeves]]
-name = "trend"
-wheel_filename = "{_WHEEL}"
-risk_share = 1.0
-group = "Floor"
-"""
-
 _FINANCING_BOOK_TOML = f"""
 base_currency = "EUR"
-max_book_gross = 2.0
 gross_cap = 2.0
 net_cap = 2.0
 
@@ -424,30 +411,6 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     fills = _closed_orders(engine)
     assert len(fills) == 1
     assert fills[0].instrument_id == _INSTRUMENT_ID
-    engine.dispose()
-
-
-def test_run_book_backtest_halts_bad_cap_book_and_idles(tmp_path) -> None:
-    book_path = tmp_path / "book.toml"
-    book_path.write_text(_BAD_CAP_BOOK_TOML)
-    catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
-
-    result = run_book_backtest(
-        book_path,
-        start="2020-01-01",
-        end="2020-01-05",
-        catalog_path=catalog_path,
-        registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
-    )
-    engine = result.engine
-    strategy = _strategy(engine)
-
-    assert _closed_orders(engine) == []
-    assert strategy.startup_result is not None
-    assert strategy.startup_result.halt_gate == StartupGate.CAP_PROVENANCE
     engine.dispose()
 
 

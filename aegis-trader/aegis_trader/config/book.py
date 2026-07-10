@@ -73,7 +73,7 @@ def load_book_config(path: str | Path) -> BookConfig:
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise BookConfigError(f"malformed book config {str(path)!r}: {exc}") from exc
 
-    _reject_removed_band_keys(data, path)
+    _reject_removed_book_keys(data, path)
 
     try:
         sleeves = tuple(
@@ -101,8 +101,7 @@ def load_book_config(path: str | Path) -> BookConfig:
         base_currency=data.get("base_currency", "EUR"),
         book_vol_target=float(data.get("book_vol_target", 0.09)),
         sleeve_reversion_fraction=float(data.get("sleeve_reversion_fraction", 1.0)),
-        max_book_gross=float(data.get("max_book_gross", 1.0)),
-        gross_cap=data.get("gross_cap"),
+        gross_cap=float(data.get("gross_cap", 1.0)),
         net_cap=data.get("net_cap"),
         per_name_cap=data.get("per_name_cap"),
         tail_convexity_budget=tail_convexity_budget,
@@ -113,7 +112,12 @@ def load_book_config(path: str | Path) -> BookConfig:
     )
 
 
-def _reject_removed_band_keys(data: Mapping[str, object], path: Path) -> None:
+def _reject_removed_book_keys(data: Mapping[str, object], path: Path) -> None:
+    if "max_book_gross" in data:
+        raise BookConfigError(
+            f"book config {str(path)!r} declares removed key 'max_book_gross'; "
+            "use 'gross_cap' as the single Commingled Book gross ceiling"
+        )
     removed = ("default_band_up", "default_band_down", "band_overrides")
     present = [key for key in removed if key in data]
     if present:

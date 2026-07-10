@@ -22,8 +22,6 @@ from aegis_runtime.drift_band import DriftBand, gate
 from aegis_runtime.exposure_validation import (
     ExposureLimits,
     ExposureValidationError,
-    GrossExposureBreach,
-    NetExposureBreach,
     validate_exposure,
 )
 from aegis_runtime.financing import debit_interest
@@ -45,7 +43,6 @@ __all__ = [
     "ExposureLimits",
     "ExposureValidationError",
     "gate",
-    "GrossExposureBreach",
     "InstrumentId",
     "InvalidMissingIndexPolicy",
     "LockedExecutionPlan",
@@ -54,7 +51,6 @@ __all__ = [
     "MarketDataMissingIndexError",
     "MarketDataBundle",
     "MissingIndexPolicy",
-    "NetExposureBreach",
     "validate_bare_root",
     "validate_exposure",
 ]

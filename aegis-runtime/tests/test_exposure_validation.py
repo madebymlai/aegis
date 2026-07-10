@@ -11,6 +11,7 @@ from aegis_runtime.exposure_validation import (
     InvalidExposureLimits,
     NetExposureBreach,
     validate_exposure,
+    validate_net_exposure,
 )
 
 
@@ -126,7 +127,7 @@ def test_net_exposure_above_net_cap_is_rejected_fail_closed() -> None:
 
 
 def test_net_exposure_within_tolerance_passes() -> None:
-    validate_exposure(
+    validate_net_exposure(
         _book({"A": [1.0 + 1e-9]}),
         ExposureLimits(gross_cap=2.0, net_cap=1.0),
     )
@@ -134,7 +135,7 @@ def test_net_exposure_within_tolerance_passes() -> None:
 
 def test_net_exposure_beyond_tolerance_fails() -> None:
     with pytest.raises(NetExposureBreach):
-        validate_exposure(
+        validate_net_exposure(
             _book({"A": [1.0 + 2e-9]}),
             ExposureLimits(gross_cap=2.0, net_cap=1.0),
         )

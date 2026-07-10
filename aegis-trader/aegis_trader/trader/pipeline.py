@@ -28,7 +28,6 @@ from aegis_runtime.currency import (
 )
 
 from aegis_trader.bundles.bands import BundleBands, InstrumentBandError, build_instrument_bands
-from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import check_account_integrity
@@ -161,9 +160,6 @@ class RebalancePipeline:
         band_result = self._band_ownership_startup_result()
         if band_result is not None:
             return band_result
-        cap_result = self._cap_provenance_startup_result()
-        if cap_result is not None:
-            return cap_result
         return self._account_integrity_startup_result()
 
     def _band_ownership_startup_result(self) -> _startup.StartupResult | None:
@@ -173,17 +169,6 @@ class RebalancePipeline:
             return _startup.StartupResult(
                 trading_enabled=False,
                 halt_gate=_startup.StartupGate.BAND_OWNERSHIP,
-                halt_reason=str(exc),
-            )
-        return None
-
-    def _cap_provenance_startup_result(self) -> _startup.StartupResult | None:
-        try:
-            check_cap_provenance(self._book, self._sleeve_to_bundle)
-        except CapProvenanceError as exc:
-            return _startup.StartupResult(
-                trading_enabled=False,
-                halt_gate=_startup.StartupGate.CAP_PROVENANCE,
                 halt_reason=str(exc),
             )
         return None

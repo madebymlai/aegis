@@ -222,29 +222,29 @@
               <p class="text-xs font-semibold uppercase text-emerald-700">After</p>
               <div class="deep-module mt-8 p-5">
                 <p class="text-xs font-semibold uppercase text-slate-500">Deep Exposure Validation module</p>
-                <p class="mt-2 text-sm font-semibold text-slate-950">One cap inequality, tolerance, and error vocabulary</p>
+                  <p class="mt-2 text-sm font-semibold text-slate-950">One reachable cap comparison, tolerance, and error vocabulary</p>
                 <div class="mt-5 grid gap-3 sm:grid-cols-3">
                   <div class="internal-module p-3 text-center text-xs">research<br/>Candidate scope</div>
                   <div class="internal-module p-3 text-center text-xs">Execution Bundle<br/>allocation scope</div>
-                  <div class="internal-module p-3 text-center text-xs">Trader<br/>realized book scope</div>
+                  <div class="internal-module p-3 text-center text-xs">Trader<br/>explicit net scope</div>
                 </div>
               </div>
             </section>
           </div>
 
           <dl class="mt-6 grid gap-4 md:grid-cols-2">
-            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">The Trader asks and recomputes gross/net exposure with different tolerance and errors instead of telling the kernel-owned module to validate the realized post-band book.</dd></div>
-            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Keep post-band projection and remediation in the Rebalancer, but return all gross/net policy to the one existing Exposure Validation interface.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">Trader recomputes the reachable net-cap comparison with different tolerance and errors. Its second gross comparison is unreachable because the planned Commingled Book is already clamped to the same <code>gross_cap</code>.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Keep projection, the authoritative Book gross clamp, and per-name remediation in Rebalancer. Delegate only the explicit net cap to the kernel-owned Exposure Validation module. Execution Bundle limits remain independent standalone Sleeve policy.</dd></div>
           </dl>
 
           <div class="mt-5 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <p class="border-l-2 border-emerald-500 pl-3">locality: cap math once</p>
-            <p class="border-l-2 border-emerald-500 pl-3">leverage: three validation scopes</p>
+            <p class="border-l-2 border-emerald-500 pl-3">leverage: two full scopes + Trader net</p>
             <p class="border-l-2 border-emerald-500 pl-3">kernel tests own semantics</p>
             <p class="border-l-2 border-emerald-500 pl-3">Trader tests prove wiring</p>
           </div>
 
-          <div class="mt-5 border-l-4 border-red-600 bg-red-50 px-4 py-3 text-sm text-red-900"><strong>Contradicts ADRs:</strong> root ADR-0008 and Trader ADR-0002 both assign these inequalities to the shared kernel module; the current Rebalancer bypasses that decision.</div>
+          <div class="mt-5 border-l-4 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-950"><strong>Corrected after implementation review:</strong> the original candidate incorrectly treated Trader as a third full gross/net gate. The projected gross clamp is authoritative, so retaining a second gross comparison would be defensive YAGNI. Root ADR-0008 and Trader ADR-0002 now record the narrower net-only reuse.</div>
         </article>
 
         <article id="component-wiring" class="rounded-lg border border-slate-300 bg-white p-5 shadow-sm sm:p-7">
@@ -330,7 +330,7 @@ flowchart TB
 
           <div class="mt-5">
             <p class="text-xs font-semibold uppercase text-slate-500">Files</p>
-            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-trader/aegis_trader/bundles/book_sleeves.py &middot; bundles/port.py &middot; bundles/registry.py &middot; bundles/stub.py &middot; bundles/bands.py &middot; bundles/provenance.py &middot; domain/book_timeframe.py &middot; trader/node.py &middot; backtest.py</p>
+            <p class="mt-2 break-words font-mono text-xs leading-6 text-slate-700">aegis-trader/aegis_trader/bundles/book_sleeves.py &middot; bundles/port.py &middot; bundles/registry.py &middot; bundles/stub.py &middot; bundles/bands.py &middot; domain/book_timeframe.py &middot; trader/node.py &middot; backtest.py</p>
           </div>
 
           <div class="mt-6 grid gap-6 md:grid-cols-2">
@@ -343,7 +343,7 @@ flowchart TB
                   <div class="border border-red-400 bg-white p-3">loadable ids</div>
                   <div class="border border-red-400 bg-white p-3">timeframe</div>
                   <div class="border border-red-400 bg-white p-3">band owners</div>
-                  <div class="border border-red-400 bg-white p-3">cap provenance</div>
+                  <div class="border border-red-400 bg-white p-3">continuous declarations</div>
                   <div class="border border-red-400 bg-white p-3">strategy registration</div>
                   <div class="border border-red-400 bg-white p-3">margin need</div>
                 </div>
@@ -371,7 +371,7 @@ flowchart TB
           </div>
 
           <dl class="mt-6 grid gap-4 md:grid-cols-2">
-            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">Bundle loading returns a raw tuple, so live and backtest callers must know how a valid Commingled Book derives identity, timeframe, band ownership, cap provenance, and registration.</dd></div>
+            <div><dt class="text-xs font-semibold uppercase text-slate-500">Problem</dt><dd class="mt-1 text-sm leading-6">Bundle loading returns a raw tuple, so live and backtest callers must know how a valid Commingled Book derives identity, timeframe, band ownership, continuous-root declarations, and registration.</dd></div>
             <div><dt class="text-xs font-semibold uppercase text-slate-500">Solution</dt><dd class="mt-1 text-sm leading-6">Deepen the existing bundle-loading module so assembly owns the loaded Sleeves and the book facts both callers need, retaining the two real registry adapters.</dd></div>
           </dl>
 
