@@ -312,18 +312,16 @@ def test_component_manifest_exposes_param_space_defaults_and_consumed_outputs(tm
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     indicator_def = registry.get(ComponentSelection("indicators", "demo.indicator"))
     strategy_def = registry.get(ComponentSelection("strategies", "demo.strategy"))
-    indicator = indicator_def.manifest
-    strategy = strategy_def.manifest
+    indicator = indicator_def._manifest
+    strategy = strategy_def._manifest
 
     assert indicator.defaults == {"window": 20}
-    assert indicator_def.has_param_space is True
-    assert indicator_def.param_space_entrypoint_name == "param_space"
+    assert indicator_def._has_param_space is True
     assert strategy.param_names == ("threshold",)
     assert strategy.output_name == "active"
     assert strategy.consumes_outputs == ("value",)
     assert strategy.defaults == {"threshold": 0.0}
-    assert strategy_def.has_param_space is True
-    assert strategy_def.param_space_entrypoint_name == "param_space"
+    assert strategy_def._has_param_space is True
 
 
 def test_component_manifest_rejects_defaults_outside_param_names(tmp_path) -> None:
@@ -403,7 +401,7 @@ def test_strategy_manifest_registers_all_allocation_native_shapes(tmp_path, outp
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     definition = registry.get(ComponentSelection("strategies", f"demo.{output_name}"))
 
-    assert definition.manifest.output_name == output_name
+    assert definition._manifest.output_name == output_name
     snapshot = registry.public_snapshot()
     strategy_snapshot = snapshot["families"]["strategies"][f"demo.{output_name}"]
     assert strategy_snapshot["output_name"] == output_name
@@ -670,9 +668,7 @@ def test_component_with_lookback_entrypoint_has_lookback_true(tmp_path) -> None:
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     definition = registry.get(ComponentSelection("indicators", "demo.with_lookback"))
     assert definition.has_lookback is True
-    assert definition.lookback_entrypoint_name == "lookback"
-    lookback_fn = definition.load_lookback()
-    assert lookback_fn(window=10) == 42
+    assert definition.warmup_bars({"window": 10}) == 42
 
 
 def test_component_without_lookback_entrypoint_has_lookback_false(tmp_path) -> None:
@@ -682,7 +678,6 @@ def test_component_without_lookback_entrypoint_has_lookback_false(tmp_path) -> N
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     definition = registry.get(ComponentSelection("indicators", "demo.no_lookback"))
     assert definition.has_lookback is False
-    assert definition.lookback_entrypoint_name is None
 
 
 def test_stray_module_level_callable_assignment_is_inert(tmp_path) -> None:

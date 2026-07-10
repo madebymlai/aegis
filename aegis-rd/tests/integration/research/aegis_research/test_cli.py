@@ -963,10 +963,7 @@ def test_show_indicator_schema_example_round_trips_through_registry(
     # Copy the example into a fake component root
     import shutil
 
-    from research.aegis_research.component_registry.contracts import (
-        ComponentSelection,
-        IndicatorManifest,
-    )
+    from research.aegis_research.component_registry.contracts import ComponentSelection
     from research.aegis_research.component_registry.registry import (
         discover_component_registry,
     )
@@ -985,15 +982,13 @@ def test_show_indicator_schema_example_round_trips_through_registry(
 
     assert registry.ids("indicators") == ("example.ma",)
     definition = registry.get(ComponentSelection("indicators", "example.ma"))
-    manifest = definition.manifest
-    assert isinstance(manifest, IndicatorManifest)
-    assert manifest.id == "example.ma"
-    assert manifest.version == "1.0.0"
-    assert manifest.input_names == ("Close",)
-    assert manifest.param_names == ("window", "wtype")
-    assert manifest.output_names == ("ma",)
-    assert manifest.defaults == {"window": 20, "wtype": "simple"}
-    assert definition.has_param_space is True
+    assert definition.id == "example.ma"
+    assert definition.version == "1.0.0"
+    assert definition.input_names == ("Close",)
+    assert definition.declared_param_names() == ("window", "wtype")
+    assert definition.produced_output_names() == ("ma",)
+    assert definition.default_params() == {"window": 20, "wtype": "simple"}
+    assert definition.load_param_space() is not None
 
 
 def test_show_indicator_schema_guide_embeds_example_source(
@@ -1171,10 +1166,7 @@ def test_show_strategy_schema_example_round_trips_through_registry(
     """The packaged strategy example round-trips through the real registry parser/discovery."""
     import shutil
 
-    from research.aegis_research.component_registry.contracts import (
-        ComponentSelection,
-        StrategyManifest,
-    )
+    from research.aegis_research.component_registry.contracts import ComponentSelection
     from research.aegis_research.component_registry.registry import (
         discover_component_registry,
     )
@@ -1194,17 +1186,15 @@ def test_show_strategy_schema_example_round_trips_through_registry(
 
     assert registry.ids("strategies") == ("example.ma_cross",)
     definition = registry.get(ComponentSelection("strategies", "example.ma_cross"))
-    manifest = definition.manifest
-    assert isinstance(manifest, StrategyManifest)
-    assert manifest.id == "example.ma_cross"
-    assert manifest.version == "1.0.0"
-    assert manifest.input_names == ("Close",)
-    assert manifest.param_names == ("fast_window", "slow_window")
-    assert manifest.output_name == "active"
-    assert manifest.consumes_outputs == ()
-    assert manifest.defaults == {"fast_window": 10, "slow_window": 20}
-    assert manifest.owns_portfolio is False
-    assert definition.has_param_space is True
+    assert definition.id == "example.ma_cross"
+    assert definition.version == "1.0.0"
+    assert definition.input_names == ("Close",)
+    assert definition.declared_param_names() == ("fast_window", "slow_window")
+    assert definition.allocation_output_name() == "active"
+    assert definition.consumed_output_names() == ()
+    assert definition.default_params() == {"fast_window": 10, "slow_window": 20}
+    assert definition.public_snapshot()["owns_portfolio"] is False
+    assert definition.load_param_space() is not None
 
 
 def test_show_strategy_schema_guide_embeds_example_source(

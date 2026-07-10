@@ -6,12 +6,14 @@ family-uniform empty results, and the factory's snapshot/fingerprint invariants.
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
 
 from research.aegis_research.component_registry.contracts import (
     ComponentDefinition,
+    ComponentRegistryError,
     ComponentSelection,
     ComponentSourceIdentity,
     IndicatorManifest,
@@ -22,10 +24,10 @@ from tests.support.research.aegis_research.factories import make_component_regis
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _identity() -> ComponentSourceIdentity:
+def _identity(source_hash: str = "abc123") -> ComponentSourceIdentity:
     return ComponentSourceIdentity(
         repo_relative_path="tests/fixtures/component.py",
-        source_hash="abc123",
+        source_hash=source_hash,
     )
 
 
@@ -37,6 +39,9 @@ def _indicator(
     output_names: tuple[str, ...] = ("value", "signal"),
     defaults: dict[str, object] | None = None,
     has_param_space: bool = False,
+    has_lookback: bool = False,
+    file_path: Path | None = None,
+    source_hash: str = "abc123",
 ) -> ComponentDefinition:
     manifest = IndicatorManifest(
         family="indicators",
@@ -48,10 +53,11 @@ def _indicator(
         defaults=defaults or {},
     )
     return ComponentDefinition(
-        manifest=manifest,
-        file_path=Path(f"/fixtures/{id}.py"),
-        identity=_identity(),
-        has_param_space=has_param_space,
+        _manifest=manifest,
+        _file_path=file_path or Path(f"/fixtures/{id}.py"),
+        identity=_identity(source_hash),
+        _has_param_space=has_param_space,
+        has_lookback=has_lookback,
     )
 
 
@@ -76,14 +82,221 @@ def _strategy(
         defaults=defaults or {},
     )
     return ComponentDefinition(
-        manifest=manifest,
-        file_path=Path(f"/fixtures/{id}.py"),
+        _manifest=manifest,
+        _file_path=Path(f"/fixtures/{id}.py"),
         identity=_identity(),
-        has_param_space=has_param_space,
+        _has_param_space=has_param_space,
     )
 
 
 # ── undeclared_params ────────────────────────────────────────────────────────
+
+
+def test_declared_param_names_preserves_manifest_order() -> None:
+    definition = _indicator(param_names=("smooth", "window"))
+
+    declared = definition.declared_param_names()
+
+    assert declared == ("smooth", "window")
+
+
+def test_default_params_returns_declared_defaults() -> None:
+    definition = _indicator(defaults={"window": 20, "smooth": 0.5})
+
+    defaults = definition.default_params()
+
+    assert defaults == {"window": 20, "smooth": 0.5}
+
+
+def test_version_returns_manifest_version() -> None:
+    definition = _indicator()
+
+    version = definition.version
+
+    assert version == "1.0.0"
+
+
+def test_allocation_output_name_returns_strategy_channel() -> None:
+    definition = _strategy(output_name="target_weights")
+
+    output_name = definition.allocation_output_name()
+
+    assert output_name == "target_weights"
+
+
+def test_allocation_output_name_rejects_indicator_with_component_name() -> None:
+    definition = _indicator(id="demo.signal")
+
+    with pytest.raises(
+        ComponentRegistryError,
+        match=r"component indicators/demo\.signal does not declare a strategy allocation output",
+    ):
+        definition.allocation_output_name()
+
+
+def test_load_param_space_returns_none_when_entrypoint_is_absent() -> None:
+    definition = _indicator(has_param_space=False)
+
+    param_space = definition.load_param_space()
+
+    assert param_space is None
+
+
+def test_load_param_space_returns_declared_entrypoint(tmp_path: Path) -> None:
+    component_path = tmp_path / "component.py"
+    component_path.write_text(
+        "def param_space():\n    return {'window': 20}\n",
+        encoding="utf-8",
+    )
+    definition = _indicator(has_param_space=True, file_path=component_path)
+
+    param_space = definition.load_param_space()
+
+    assert param_space is not None
+    assert param_space() == {"window": 20}
+
+
+def test_intent_loaders_distinguish_full_source_hashes_with_a_shared_prefix(
+    tmp_path: Path,
+) -> None:
+    first_path = tmp_path / "first.py"
+    first_path.write_text("def run():\n    return 'first'\n", encoding="utf-8")
+    second_path = tmp_path / "second.py"
+    second_path.write_text("def run():\n    return 'second'\n", encoding="utf-8")
+    first = _indicator(
+        id="demo.shared_prefix",
+        file_path=first_path,
+        source_hash="abcdef123456" + "1" * 52,
+    )
+    second = _indicator(
+        id="demo.shared_prefix",
+        file_path=second_path,
+        source_hash="abcdef123456" + "2" * 52,
+    )
+
+    first_result = first.load_callable()()
+    second_result = second.load_callable()()
+
+    assert first_result == "first"
+    assert second_result == "second"
+
+
+def test_source_text_returns_verbatim_component_source(tmp_path: Path) -> None:
+    component_path = tmp_path / "component.py"
+    source = "# component source\nVALUE = 'verbatim'\n"
+    component_path.write_text(source, encoding="utf-8")
+    definition = _indicator(file_path=component_path)
+
+    loaded_source = definition.source_text()
+
+    assert loaded_source == source
+
+
+def test_warmup_bars_calls_lookback_with_resolved_params(tmp_path: Path) -> None:
+    component_path = tmp_path / "component.py"
+    component_path.write_text(
+        "def lookback(window):\n    return window + 2\n",
+        encoding="utf-8",
+    )
+    definition = _indicator(
+        id="demo.lookback",
+        file_path=component_path,
+        has_lookback=True,
+    )
+
+    warmup_bars = definition.warmup_bars({"window": 5})
+
+    assert warmup_bars == 7
+
+
+def test_warmup_bars_rejects_non_integer_result_with_component_name(tmp_path: Path) -> None:
+    component_path = tmp_path / "component.py"
+    component_path.write_text(
+        "def lookback():\n    return '3'\n",
+        encoding="utf-8",
+    )
+    definition = _indicator(
+        id="demo.bad_type",
+        file_path=component_path,
+        has_lookback=True,
+    )
+
+    with pytest.raises(
+        ComponentRegistryError,
+        match=r"component indicators/demo\.bad_type lookback\(\) must return a non-negative int",
+    ):
+        definition.warmup_bars({})
+
+
+def test_warmup_bars_rejects_negative_result_with_component_name(tmp_path: Path) -> None:
+    component_path = tmp_path / "component.py"
+    component_path.write_text(
+        "def lookback():\n    return -1\n",
+        encoding="utf-8",
+    )
+    definition = _indicator(
+        id="demo.negative",
+        file_path=component_path,
+        has_lookback=True,
+    )
+
+    with pytest.raises(
+        ComponentRegistryError,
+        match=r"component indicators/demo\.negative lookback\(\) must return a non-negative int",
+    ):
+        definition.warmup_bars({})
+
+
+def test_warmup_bars_rejects_missing_entrypoint_with_component_name() -> None:
+    definition = _indicator(id="demo.missing_lookback", has_lookback=False)
+
+    with pytest.raises(
+        ComponentRegistryError,
+        match=r"component indicators/demo\.missing_lookback has no lookback entrypoint",
+    ):
+        definition.warmup_bars({})
+
+
+def test_component_definition_public_surface_is_queries_and_intent_loaders() -> None:
+    field_names = _component_definition_field_names()
+    public_members = _component_definition_public_members()
+
+    assert field_names == {
+        "_manifest",
+        "_file_path",
+        "identity",
+        "_has_param_space",
+        "has_lookback",
+    }
+    assert public_members == {
+        "allocation_output_name",
+        "consumed_output_names",
+        "declared_param_names",
+        "default_params",
+        "family",
+        "has_lookback",
+        "id",
+        "input_names",
+        "load_callable",
+        "load_param_space",
+        "produced_output_names",
+        "public_snapshot",
+        "source_text",
+        "undeclared_params",
+        "unsatisfied_params",
+        "version",
+        "warmup_bars",
+    }
+
+
+def _component_definition_field_names() -> set[str]:
+    return {field.name for field in fields(ComponentDefinition)}
+
+
+def _component_definition_public_members() -> set[str]:
+    return {
+        name for name in dir(ComponentDefinition) if not name.startswith("_")
+    }
 
 
 def test_undeclared_params_empty_when_all_provided_are_declared() -> None:
@@ -165,36 +378,42 @@ def test_unsatisfied_params_mixed_provided_defaulted_and_missing() -> None:
 
 
 def test_produced_output_names_indicator_returns_output_names() -> None:
-    definition = _indicator(output_names=("value", "signal"))
-    assert definition.produced_output_names() == frozenset({"value", "signal"})
+    definition = _indicator(output_names=("signal", "value"))
+
+    output_names = definition.produced_output_names()
+
+    assert output_names == ("signal", "value")
 
 
 def test_produced_output_names_strategy_returns_empty() -> None:
     definition = _strategy()
-    assert definition.produced_output_names() == frozenset()
+    assert definition.produced_output_names() == ()
 
 
 def test_produced_output_names_indicator_single_output() -> None:
     definition = _indicator(output_names=("returns",))
-    assert definition.produced_output_names() == frozenset({"returns"})
+    assert definition.produced_output_names() == ("returns",)
 
 
 # ── consumed_output_names ────────────────────────────────────────────────────
 
 
 def test_consumed_output_names_strategy_returns_consumes_outputs() -> None:
-    definition = _strategy(consumes_outputs=("value", "returns"))
-    assert definition.consumed_output_names() == frozenset({"value", "returns"})
+    definition = _strategy(consumes_outputs=("returns", "value"))
+
+    output_names = definition.consumed_output_names()
+
+    assert output_names == ("returns", "value")
 
 
 def test_consumed_output_names_indicator_returns_empty() -> None:
     definition = _indicator()
-    assert definition.consumed_output_names() == frozenset()
+    assert definition.consumed_output_names() == ()
 
 
 def test_consumed_output_names_strategy_empty_consumes() -> None:
     definition = _strategy(consumes_outputs=())
-    assert definition.consumed_output_names() == frozenset()
+    assert definition.consumed_output_names() == ()
 
 
 # ── uniform dispatch: both families answer all queries without error ──────────
@@ -209,8 +428,8 @@ def test_all_queries_work_on_indicator() -> None:
     # No error on any query.
     assert definition.undeclared_params(frozenset({"extra"})) == frozenset({"extra"})
     assert definition.unsatisfied_params(frozenset()) == frozenset()
-    assert definition.produced_output_names() == frozenset({"signal"})
-    assert definition.consumed_output_names() == frozenset()
+    assert definition.produced_output_names() == ("signal",)
+    assert definition.consumed_output_names() == ()
 
 
 def test_all_queries_work_on_strategy() -> None:
@@ -220,8 +439,8 @@ def test_all_queries_work_on_strategy() -> None:
     )
     assert definition.undeclared_params(frozenset({"extra"})) == frozenset({"extra"})
     assert definition.unsatisfied_params(frozenset()) == frozenset({"threshold"})
-    assert definition.produced_output_names() == frozenset()
-    assert definition.consumed_output_names() == frozenset({"signal"})
+    assert definition.produced_output_names() == ()
+    assert definition.consumed_output_names() == ("signal",)
 
 
 # ── in-memory component-registry factory ─────────────────────────────────────

@@ -20,6 +20,9 @@ import pandas as pd
 from research.aegis_research.component_registry.contracts import (
     ComponentDefinition,
     ComponentFamily,
+    ComponentSourceIdentity,
+    IndicatorManifest,
+    StrategyManifest,
 )
 from research.aegis_research.component_registry.registry import (
     FrozenComponentRegistry,
@@ -299,6 +302,71 @@ def make_component_registry(
     loop and fingerprint recipe.
     """
     return freeze_component_registry(definitions)
+
+
+def make_indicator_component_definition(
+    *,
+    id: str = "demo.indicator",
+    version: str = "1.0.0",
+    input_names: tuple[str, ...] = ("Close",),
+    param_names: tuple[str, ...] = (),
+    output_names: tuple[str, ...] = ("value",),
+    defaults: Mapping[str, Any] | None = None,
+    has_param_space: bool = False,
+    has_lookback: bool = False,
+) -> ComponentDefinition:
+    return ComponentDefinition(
+        _manifest=IndicatorManifest(
+            family="indicators",
+            id=id,
+            version=version,
+            input_names=input_names,
+            param_names=param_names,
+            output_names=output_names,
+            defaults=dict(defaults or {}),
+        ),
+        _file_path=Path(f"/fixtures/{id}.py"),
+        identity=_component_source_identity(id),
+        _has_param_space=has_param_space,
+        has_lookback=has_lookback,
+    )
+
+
+def make_strategy_component_definition(
+    *,
+    id: str = "demo.strategy",
+    version: str = "1.0.0",
+    input_names: tuple[str, ...] = ("Close",),
+    param_names: tuple[str, ...] = (),
+    output_name: str = "active",
+    consumes_outputs: tuple[str, ...] = (),
+    defaults: Mapping[str, Any] | None = None,
+    has_param_space: bool = False,
+    has_lookback: bool = False,
+) -> ComponentDefinition:
+    return ComponentDefinition(
+        _manifest=StrategyManifest(
+            family="strategies",
+            id=id,
+            version=version,
+            input_names=input_names,
+            param_names=param_names,
+            output_name=output_name,
+            consumes_outputs=consumes_outputs,
+            defaults=dict(defaults or {}),
+        ),
+        _file_path=Path(f"/fixtures/{id}.py"),
+        identity=_component_source_identity(id),
+        _has_param_space=has_param_space,
+        has_lookback=has_lookback,
+    )
+
+
+def _component_source_identity(component_id: str) -> ComponentSourceIdentity:
+    return ComponentSourceIdentity(
+        repo_relative_path=f"tests/fixtures/{component_id}.py",
+        source_hash="0" * 64,
+    )
 
 
 def make_setup_result(**overrides: Any) -> SetupResult:

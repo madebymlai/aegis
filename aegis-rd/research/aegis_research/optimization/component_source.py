@@ -13,8 +13,6 @@ from research.aegis_research.component_registry import (
     ComponentFamily,
     ComponentSelection,
     FrozenComponentRegistry,
-    IndicatorManifest,
-    StrategyManifest,
 )
 from research.aegis_research.configuration import (
     RunConfig,
@@ -191,13 +189,11 @@ class _ComposedSource:
         return _build_frame(alloc_arr, close_window, n_candidates, param_lists, self.params)
 
     def to_optimization_source(self) -> OptimizationSource:
-        strategy_manifest = self.strategy.definition.manifest
-        assert isinstance(strategy_manifest, StrategyManifest)
         return OptimizationSource(
             precompute=self.precompute,
             simulate=self.simulate,
             params=self.params,
-            output_name=strategy_manifest.output_name,
+            output_name=self.strategy.definition.allocation_output_name(),
             evidence=_source_evidence(self.strategy, self.indicators, self.params),
             diagnostics={
                 "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
@@ -253,15 +249,12 @@ def _build_runtime(
 ) -> _ComponentRuntime:
     definition = component_registry.get(ComponentSelection(family, ref.id))
     locked = force_locked
-    param_space_entrypoint_name = None if locked else definition.param_space_entrypoint_name
-    attribute_names = [definition.callable_name]
-    if param_space_entrypoint_name is not None:
-        attribute_names.append(param_space_entrypoint_name)
-    attributes = definition.load_attributes(attribute_names)
+    component_callable = definition.load_callable()
+    param_space_callable = None if locked else definition.load_param_space()
     param_space = (
         {}
-        if param_space_entrypoint_name is None
-        else _load_param_space(definition, attributes[param_space_entrypoint_name])
+        if param_space_callable is None
+        else _load_param_space(definition, param_space_callable)
     )
     fixed_params = _fixed_params_for_ref(
         family,
@@ -283,7 +276,7 @@ def _build_runtime(
         slot=slot,
         ref=ref,
         definition=definition,
-        callable=attributes[definition.callable_name],
+        callable=component_callable,
         fixed_params=fixed_params,
         param_space=dict(param_space),
         param_keys=param_keys,
@@ -313,11 +306,11 @@ def _fixed_params_for_ref(
     else:
         fixed = {
             name: value
-            for name, value in getattr(definition.manifest, "defaults", {}).items()
+            for name, value in definition.default_params().items()
             if name not in param_space
         }
         fixed.update(dict(ref.params))
-    unknown = sorted(set(fixed) - set(getattr(definition.manifest, "param_names", ())))
+    unknown = sorted(definition.undeclared_params(frozenset(fixed)))
     if unknown:
         raise ComponentSourceError(
             f"component {family}/{definition.id} fixed params are not declared: {unknown}"
@@ -353,7 +346,7 @@ def _load_param_space(
                 "hidden component params are represented in candidate identity."
             )
         params[param_name] = param
-    unknown = sorted(set(params) - set(getattr(definition.manifest, "param_names", ())))
+    unknown = sorted(definition.undeclared_params(frozenset(params)))
     if unknown:
         raise ComponentSourceError(
             f"component {definition.family}/{definition.id} param space returned undeclared "
@@ -368,7 +361,7 @@ def _validate_component_param_sources(
     param_space: Mapping[str, vbt.Param],
 ) -> None:
     missing = sorted(
-        set(getattr(definition.manifest, "param_names", ())) - set(fixed_params) - set(param_space)
+        set(definition.declared_param_names()) - set(fixed_params) - set(param_space)
     )
     if missing:
         raise ComponentSourceError(
@@ -431,9 +424,7 @@ def _validated_indicator_output_arrays(
     *,
     expected_shape: tuple[int, int],
 ) -> dict[str, np.ndarray]:
-    manifest = runtime.definition.manifest
-    assert isinstance(manifest, IndicatorManifest)
-    output_names = tuple(manifest.output_names)
+    output_names = runtime.definition.produced_output_names()
     if not isinstance(output, Mapping):
         raise ComponentSourceError(
             f"indicator {runtime.definition.id!r} must return a mapping for outputs "
@@ -530,7 +521,7 @@ def _assert_output_contract(
 ) -> None:
     produced: dict[str, str] = {}
     for runtime in indicators:
-        for output_name in getattr(runtime.definition.manifest, "output_names", ()):
+        for output_name in runtime.definition.produced_output_names():
             previous = produced.get(output_name)
             if previous is not None:
                 raise ComponentSourceError(
@@ -538,9 +529,7 @@ def _assert_output_contract(
                     f"and {runtime.definition.id!r}"
                 )
             produced[output_name] = runtime.definition.id
-    missing = sorted(
-        set(getattr(strategy.definition.manifest, "consumes_outputs", ())) - set(produced)
-    )
+    missing = sorted(set(strategy.definition.consumed_output_names()) - set(produced))
     if missing:
         raise ComponentSourceError(
             f"strategy {strategy.definition.id!r} consumes outputs not produced by indicators: {missing}"
@@ -565,9 +554,9 @@ def _source_evidence(
         "produced_outputs": [
             output_name
             for runtime in indicators
-            for output_name in getattr(runtime.definition.manifest, "output_names", ())
+            for output_name in runtime.definition.produced_output_names()
         ],
-        "consumed_outputs": list(getattr(strategy.definition.manifest, "consumes_outputs", ())),
+        "consumed_outputs": list(strategy.definition.consumed_output_names()),
     }
 
 
@@ -576,7 +565,7 @@ def _runtime_evidence(runtime: _ComponentRuntime) -> dict[str, Any]:
         "family": runtime.family,
         "slot": runtime.slot,
         "id": runtime.definition.id,
-        "version": runtime.definition.manifest.version,
+        "version": runtime.definition.version,
         **runtime.definition.identity.public(),
         "fixed_params": to_builtin(runtime.fixed_params),
         "param_keys": dict(runtime.param_keys),

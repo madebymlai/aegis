@@ -6,11 +6,12 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Any
 
 from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.component_registry.contracts import (
+    COMPONENT_ENTRYPOINT,
     COMPONENT_FAMILIES,
     ComponentDefinition,
     ComponentFamily,
@@ -85,32 +86,19 @@ def discover_component_registry(
     return freeze_component_registry(definitions)
 
 
-def load_component_callable(definition: ComponentDefinition) -> Any:
-    return load_component_attribute(definition, definition.callable_name)
+def _load_component_callable(definition: ComponentDefinition) -> Any:
+    return _load_component_attribute(definition, COMPONENT_ENTRYPOINT)
 
 
-def load_component_attribute(definition: ComponentDefinition, attribute_name: str) -> Any:
-    return load_component_attributes(definition, (attribute_name,))[attribute_name]
+def _load_component_attribute(definition: ComponentDefinition, attribute_name: str) -> Any:
+    return _load_component_attributes(definition, (attribute_name,))[attribute_name]
 
 
-def load_component_attributes(
+def _load_component_attributes(
     definition: ComponentDefinition,
     attribute_names: tuple[str, ...],
 ) -> dict[str, Any]:
-    module_name = (
-        "research.aegis_research.component_registry.loaded."
-        f"{definition.family}.{definition.id}.{definition.identity.source_hash[:12]}"
-    ).replace("-", "_")
-    spec = importlib.util.spec_from_file_location(module_name, definition.file_path)
-    if spec is None or spec.loader is None:
-        raise ComponentRegistryError(f"could not import component file: {definition.file_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception:
-        sys.modules.pop(module_name, None)
-        raise
+    module = _load_component_module(definition)
     attributes = {}
     for attribute_name in attribute_names:
         try:
@@ -125,6 +113,27 @@ def load_component_attributes(
             )
         attributes[attribute_name] = component_callable
     return attributes
+
+
+def _load_component_module(definition: ComponentDefinition) -> ModuleType:
+    module_name = (
+        "research.aegis_research.component_registry.loaded."
+        f"{definition.family}.{definition.id}.{definition.identity.source_hash}"
+    ).replace("-", "_")
+    loaded = sys.modules.get(module_name)
+    if loaded is not None:
+        return loaded
+    spec = importlib.util.spec_from_file_location(module_name, definition._file_path)
+    if spec is None or spec.loader is None:
+        raise ComponentRegistryError(f"could not import component file: {definition._file_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
 
 
 def freeze_component_registry(

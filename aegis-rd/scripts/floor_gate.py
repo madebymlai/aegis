@@ -84,7 +84,7 @@ def build_pole_returns(config_path: Path, *, strategy_param_overrides: dict | No
     for ind_cfg in config.indicators:
         definition = registry.get(ComponentSelection("indicators", ind_cfg.id))
         run_fn = definition.load_callable()
-        params = dict(definition.manifest.defaults)
+        params = definition.default_params()
         params.update(ind_cfg.params)
         out = run_fn(bundle, n_candidates=1, **{k: [v] for k, v in params.items()})
         for name, arr in out.items():
@@ -96,7 +96,7 @@ def build_pole_returns(config_path: Path, *, strategy_param_overrides: dict | No
             indicator_outputs[name] = arr
 
     strategy_def = registry.get(ComponentSelection("strategies", config.strategy.id))
-    strategy_params = dict(strategy_def.manifest.defaults)
+    strategy_params = strategy_def.default_params()
     strategy_params.update(config.strategy.params)
     if strategy_param_overrides:
         strategy_params.update(strategy_param_overrides)

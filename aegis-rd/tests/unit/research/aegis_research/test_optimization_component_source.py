@@ -20,7 +20,6 @@ from research.aegis_research.optimization.component_source import (
     _ComponentRuntime,
     _ComposedSource,
     _deduplicate_runtime_params,
-    _fixed_params_for_ref,
     build_component_optimization_source,
 )
 from research.aegis_research.optimization.param_namespace import (
@@ -30,11 +29,13 @@ from research.aegis_research.optimization.param_namespace import (
 )
 from research.aegis_research.optimization.precompute import candidate_keys
 from tests.support.research.aegis_research.factories import (
+    make_indicator_component_definition,
     make_portfolio_config,
     make_ranking_config,
     make_run_config,
     make_run_indicator_source_config,
     make_run_source_ref_config,
+    make_strategy_component_definition,
 )
 
 _INDICATOR_REF = ComponentRef("indicators", "demo.trend", "demo.trend")
@@ -240,6 +241,21 @@ def test_two_output_indicator_outputs_remain_distinct_for_strategy(tmp_path: Pat
     result = _run_pipeline(source, close, 1, **_single_candidate_params())
 
     np.testing.assert_array_equal(result.to_numpy(), np.ones_like(result.to_numpy()))
+
+
+def test_component_source_evidence_preserves_manifest_output_order(tmp_path: Path) -> None:
+    root = tmp_path / "research" / "components"
+    _write_two_output_indicator(root / "indicators" / "trend.py")
+    _write_two_output_strategy(root / "strategies" / "strategy.py")
+    registry = discover_component_registry(root=root, repo_root=tmp_path)
+
+    source = build_component_optimization_source(
+        _config(),
+        component_registry=registry,
+        data=_data_bundle(),
+    )
+
+    assert source.evidence["produced_outputs"] == ["trend", "inverse_trend"]
 
 
 @pytest.mark.parametrize(
@@ -719,12 +735,18 @@ def _stub_runtime(
     consumes_outputs: tuple[str, ...] = (),
     input_names: tuple[str, ...] = ("Close",),
 ) -> _ComponentRuntime:
-    manifest = SimpleNamespace(
-        output_names=output_names,
-        consumes_outputs=consumes_outputs,
-    )
-    definition = SimpleNamespace(
-        id=rid, family=family, manifest=manifest, input_names=list(input_names)
+    definition = (
+        make_indicator_component_definition(
+            id=rid,
+            input_names=input_names,
+            output_names=output_names,
+        )
+        if family == "indicators"
+        else make_strategy_component_definition(
+            id=rid,
+            input_names=input_names,
+            consumes_outputs=consumes_outputs,
+        )
     )
     return _ComponentRuntime(
         family=family,
@@ -780,64 +802,3 @@ def test_compose_uses_fixed_candidate_param_when_no_swept_params() -> None:
     composed = _ComposedSource.compose(_data_bundle(), strategy, (indicator,))
 
     assert list(composed.params) == [FIXED_CANDIDATE_PARAM]
-
-
-def test_fixed_params_for_ref_swept_takes_defaults_minus_space_plus_ref() -> None:
-    definition = SimpleNamespace(
-        id="demo",
-        family="indicators",
-        manifest=SimpleNamespace(defaults={"a": 1, "b": 2}, param_names=("a", "b", "c")),
-    )
-    ref = SimpleNamespace(params={"c": 3})
-
-    fixed = _fixed_params_for_ref(
-        "indicators",
-        "demo",
-        ref,
-        definition,
-        {},
-        param_space={"a": vbt.Param([1])},
-        force_locked=False,
-    )
-
-    assert fixed == {"b": 2, "c": 3}
-
-
-def test_fixed_params_for_ref_locked_uses_resolved_params() -> None:
-    definition = SimpleNamespace(
-        id="demo",
-        family="indicators",
-        manifest=SimpleNamespace(defaults={"a": 1}, param_names=("a", "b")),
-    )
-    key = ComponentRef("indicators", "demo", "demo")
-
-    fixed = _fixed_params_for_ref(
-        "indicators",
-        "demo",
-        SimpleNamespace(params={}),
-        definition,
-        {key: {"a": 9, "b": 8}},
-        param_space={},
-        force_locked=True,
-    )
-
-    assert fixed == {"a": 9, "b": 8}
-
-
-def test_fixed_params_for_ref_locked_without_resolved_raises() -> None:
-    definition = SimpleNamespace(
-        id="demo",
-        family="indicators",
-        manifest=SimpleNamespace(defaults={}, param_names=("a",)),
-    )
-
-    with pytest.raises(ComponentSourceError, match="requires resolved lock params"):
-        _fixed_params_for_ref(
-            "indicators",
-            "demo",
-            SimpleNamespace(params={}),
-            definition,
-            {},
-            param_space={},
-            force_locked=True,
-        )

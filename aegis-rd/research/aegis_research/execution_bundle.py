@@ -22,7 +22,6 @@ from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
     discover_component_registry,
 )
-from research.aegis_research.component_registry.contracts import IndicatorManifest, StrategyManifest
 from research.aegis_research.configuration import (
     LOCK_ROLES,
     RunConfig,
@@ -88,7 +87,6 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
     strategy_definition = component_registry.get(
         ComponentSelection("strategies", config.strategy.id)
     )
-    strategy_manifest = _strategy_manifest(strategy_definition)
     strategy_id = strategy_definition.id
     candidate_key = lock_run.candidate_key
     candidate_prefix = _candidate_prefix(candidate_key)
@@ -118,7 +116,7 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
         net_cap=config.portfolio.net_cap,
         direction=config.portfolio.direction,
     )
-    version = strategy_manifest.version
+    version = strategy_definition.version
     wheel_filename = f"{_wheel_safe(dist_name)}-{version}-py3-none-any.whl"
     return BundleArtifact(
         strategy_id=strategy_id,
@@ -180,19 +178,18 @@ def _assemble_components(
                 f"indicator {definition.id!r} lacks lookback() entrypoint; "
                 f"every bundled component must declare its warmup bars"
             )
-        indicator_manifest = _indicator_manifest(definition)
         component_ref = ComponentRef("indicators", definition.id, ref.id)
         params = dict(component_params[component_ref])
-        lookback_bars = max(lookback_bars, _call_lookback(definition, params))
+        lookback_bars = max(lookback_bars, definition.warmup_bars(params))
         indicator_specs.append(
             _component_spec(
-                manifest=indicator_manifest,
+                definition=definition,
                 module=f"{package_name}.{module_name}",
                 params=params,
             )
         )
         hashes[f"indicators/{definition.id}"] = definition.identity.source_hash
-        sources[filename] = _assert_payload_imports_clean(filename, definition.file_path.read_text(encoding="utf-8"))
+        sources[filename] = _assert_payload_imports_clean(filename, definition.source_text())
 
     definition = component_registry.get(ComponentSelection("strategies", config.strategy.id))
     if not definition.has_lookback:
@@ -200,17 +197,18 @@ def _assemble_components(
             f"strategy {definition.id!r} lacks lookback() entrypoint; "
             f"every bundled component must declare its warmup bars"
         )
-    strategy_manifest = _strategy_manifest(definition)
     component_ref = ComponentRef("strategies", definition.id, STRATEGY_SLOT)
     params = dict(component_params[component_ref])
-    lookback_bars = max(lookback_bars, _call_lookback(definition, params))
+    lookback_bars = max(lookback_bars, definition.warmup_bars(params))
     strategy_spec = _component_spec(
-        manifest=strategy_manifest,
+        definition=definition,
         module=f"{package_name}.strategy",
         params=params,
     )
     hashes[f"strategies/{definition.id}"] = definition.identity.source_hash
-    sources["strategy.py"] = _assert_payload_imports_clean("strategy.py", definition.file_path.read_text(encoding="utf-8"))
+    sources["strategy.py"] = _assert_payload_imports_clean(
+        "strategy.py", definition.source_text()
+    )
     return AssembledComponents(
         strategy=strategy_spec,
         indicators=tuple(indicator_specs),
@@ -220,32 +218,18 @@ def _assemble_components(
     )
 
 
-def _indicator_manifest(definition: ComponentDefinition) -> IndicatorManifest:
-    manifest = definition.manifest
-    if not isinstance(manifest, IndicatorManifest):
-        raise TypeError(f"component {definition.id!r} is not an indicator")
-    return manifest
-
-
-def _strategy_manifest(definition: ComponentDefinition) -> StrategyManifest:
-    manifest = definition.manifest
-    if not isinstance(manifest, StrategyManifest):
-        raise TypeError(f"component {definition.id!r} is not a strategy")
-    return manifest
-
-
 def _component_spec(
     *,
-    manifest: IndicatorManifest | StrategyManifest,
+    definition: ComponentDefinition,
     module: str,
     params: Mapping[str, Any],
 ) -> ComponentSpec:
     return ComponentSpec(
-        family=manifest.family,
-        component_id=manifest.id,
+        family=definition.family,
+        component_id=definition.id,
         module=module,
-        input_names=tuple(manifest.input_names),
-        output_names=tuple(manifest.output_names),
+        input_names=definition.input_names,
+        output_names=definition.produced_output_names(),
         params=dict(params),
     )
 
@@ -281,21 +265,6 @@ def _bundle_contract(
         ),
         adjustment_mode=adjustment_mode if futures else None,
     )
-
-
-
-
-def _call_lookback(definition: ComponentDefinition, params: Mapping[str, Any]) -> int:
-    lookback_fn = definition.load_lookback()
-    result = lookback_fn(**params)
-    if not isinstance(result, int) or result < 0:
-        raise ValueError(
-            f"component {definition.id!r} lookback() must return a non-negative int; "
-            f"got {result!r}"
-        )
-    return result
-
-
 def _required_arrays(components: AssembledComponents) -> tuple[str, ...]:
     names: list[str] = []
     for spec in (*components.indicators, components.strategy):

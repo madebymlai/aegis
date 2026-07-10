@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -110,41 +110,46 @@ class StrategyManifest(ComponentManifest):
 
 @dataclass(frozen=True)
 class ComponentDefinition:
-    manifest: IndicatorManifest | StrategyManifest
-    file_path: Path
+    _manifest: IndicatorManifest | StrategyManifest
+    _file_path: Path
     identity: ComponentSourceIdentity
-    has_param_space: bool = False
+    _has_param_space: bool = False
     has_lookback: bool = False
 
     @property
-    def callable_name(self) -> str:
-        return COMPONENT_ENTRYPOINT
-
-    @property
-    def param_space_entrypoint_name(self) -> str | None:
-        return COMPONENT_PARAM_SPACE_ENTRYPOINT if self.has_param_space else None
-
-    @property
-    def lookback_entrypoint_name(self) -> str | None:
-        return COMPONENT_LOOKBACK_ENTRYPOINT if self.has_lookback else None
-
-    @property
     def family(self) -> ComponentFamily:
-        return self.manifest.family
+        return self._manifest.family
 
     @property
     def id(self) -> str:
-        return self.manifest.id
+        return self._manifest.id
+
+    @property
+    def version(self) -> str:
+        return self._manifest.version
 
     @property
     def input_names(self) -> tuple[str, ...]:
-        return self.manifest.input_names
+        return self._manifest.input_names
 
     # ── Query surface ──────────────────────────────────────────────────────
 
+    def declared_param_names(self) -> tuple[str, ...]:
+        return self._manifest.param_names
+
+    def default_params(self) -> dict[str, Any]:
+        return dict(self._manifest.defaults)
+
+    def allocation_output_name(self) -> str:
+        if not isinstance(self._manifest, StrategyManifest):
+            raise ComponentRegistryError(
+                f"component {self.family}/{self.id} does not declare a strategy allocation output"
+            )
+        return self._manifest.output_name
+
     def undeclared_params(self, provided: frozenset[str]) -> frozenset[str]:
         """Return params in *provided* that are not declared in the manifest."""
-        return provided - frozenset(self.manifest.param_names)
+        return provided - frozenset(self._manifest.param_names)
 
     def unsatisfied_params(self, provided: frozenset[str]) -> frozenset[str]:
         """Return declared params neither provided, nor defaulted, nor waived.
@@ -152,55 +157,74 @@ class ComponentDefinition:
         A module-level ``param_space`` waives all declared params regardless of
         what is provided or defaulted.
         """
-        if self.has_param_space:
+        if self._has_param_space:
             return frozenset()
         return (
-            frozenset(self.manifest.param_names)
+            frozenset(self._manifest.param_names)
             - provided
-            - frozenset(self.manifest.defaults)
+            - frozenset(self._manifest.defaults)
         )
 
-    def produced_output_names(self) -> frozenset[str]:
+    def produced_output_names(self) -> tuple[str, ...]:
         """Output names this component produces (uniform across families).
 
         Indicator manifests return their ``output_names``; strategy manifests
         return empty — callers never type-dispatch.
         """
-        return frozenset(self.manifest.output_names)
+        return self._manifest.output_names
 
-    def consumed_output_names(self) -> frozenset[str]:
+    def consumed_output_names(self) -> tuple[str, ...]:
         """Output names this component consumes (uniform across families).
 
         Strategy manifests return their ``consumes_outputs``; indicator
         manifests return empty — callers never type-dispatch.
         """
-        return frozenset(self.manifest.consumes_outputs)
+        return self._manifest.consumes_outputs
 
     # ── Callable loading ───────────────────────────────────────────────────
 
     def load_callable(self) -> Any:
-        from research.aegis_research.component_registry.registry import load_component_callable
+        from research.aegis_research.component_registry.registry import _load_component_callable
 
-        return load_component_callable(self)
+        return _load_component_callable(self)
 
-    def load_lookback(self) -> Any:
+    def source_text(self) -> str:
+        return self._file_path.read_text(encoding="utf-8")
+
+    def load_param_space(self) -> Any | None:
+        if not self._has_param_space:
+            return None
+        from research.aegis_research.component_registry.registry import _load_component_attribute
+
+        return _load_component_attribute(self, COMPONENT_PARAM_SPACE_ENTRYPOINT)
+
+    def warmup_bars(self, params: Mapping[str, Any]) -> int:
         if not self.has_lookback:
             raise ComponentRegistryError(
                 f"component {self.family}/{self.id} has no lookback entrypoint"
             )
-        return self.load_attribute(COMPONENT_LOOKBACK_ENTRYPOINT)
+        from research.aegis_research.component_registry.registry import _load_component_attribute
+
+        lookback = _load_component_attribute(self, COMPONENT_LOOKBACK_ENTRYPOINT)
+        result = lookback(**params)
+        if not isinstance(result, int) or result < 0:
+            raise ComponentRegistryError(
+                f"component {self.family}/{self.id} lookback() must return a non-negative int, "
+                f"got {result!r}"
+            )
+        return result
 
     def public_snapshot(self) -> dict[str, Any]:
         """The one projection of a component's public facts.
 
         Emitted into the registry snapshot and hashed for the registry fingerprint.
         """
-        manifest = self.manifest
+        manifest = self._manifest
         payload: dict[str, Any] = {
             "family": self.family,
             "id": self.id,
             "version": manifest.version,
-            "callable": self.callable_name,
+            "callable": COMPONENT_ENTRYPOINT,
             "source_hash": self.identity.source_hash,
             "source": self.identity.public(),
             "inputs": list(manifest.input_names),
@@ -208,24 +232,16 @@ class ComponentDefinition:
                 "names": list(manifest.param_names),
                 "defaults": dict(manifest.defaults),
                 "param_space": {
-                    "available": self.has_param_space,
-                    "entrypoint": self.param_space_entrypoint_name,
+                    "available": self._has_param_space,
+                    "entrypoint": COMPONENT_PARAM_SPACE_ENTRYPOINT
+                    if self._has_param_space
+                    else None,
                 },
             },
             "lookback": {
                 "available": self.has_lookback,
-                "entrypoint": self.lookback_entrypoint_name,
+                "entrypoint": COMPONENT_LOOKBACK_ENTRYPOINT if self.has_lookback else None,
             },
         }
         payload.update(manifest.public_fields())
         return to_builtin(payload)
-
-    def load_attribute(self, attribute_name: str) -> Any:
-        from research.aegis_research.component_registry.registry import load_component_attribute
-
-        return load_component_attribute(self, attribute_name)
-
-    def load_attributes(self, attribute_names: Sequence[str]) -> dict[str, Any]:
-        from research.aegis_research.component_registry.registry import load_component_attributes
-
-        return load_component_attributes(self, tuple(attribute_names))
