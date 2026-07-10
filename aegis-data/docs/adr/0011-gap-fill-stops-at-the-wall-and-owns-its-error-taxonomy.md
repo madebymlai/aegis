@@ -29,10 +29,10 @@ failure without importing the IBKR adapter — against the port's DIP promise.
   Historical Store warmer (the pre-seeding workaround, institutionalised).
 
 - **The provider's answer is `ServedBars` (bars + `served_from`).** `served_from`
-  is the requested start when the whole window was walked, or the oldest
-  data-bearing chunk's start when the wall stopped the walk. The port claims
-  catalog coverage only from `served_from`: an empty head inside a walked
-  window (weekend, holiday) stays covered, a pre-wall head stays missing.
+  is the requested start when the whole window was walked, or — at the wall —
+  the first pulled bar's instant. The port claims catalog coverage only from
+  `served_from`: an empty head inside a fully walked window (weekend, holiday)
+  stays covered, while everything before the wall's first bar stays missing.
   This is the one bit that distinguishes "no bars because nothing traded"
   from "no bars because history ends" — and only the provider has it.
 
@@ -65,15 +65,16 @@ failure without importing the IBKR adapter — against the port's DIP promise.
   requesting a too-wide window re-checks that head once per fill attempt —
   one bounded empty request each time. Unavailability stays a judged verdict,
   not a cached fact.
-- **The wall's precision is one chunk (≤365 days).** ``served_from`` is the
-  oldest *data-bearing chunk's* start, not the first bar: that whole span was
-  queried and the source answered with everything it has, so the claim is
-  honest in the verified-against-source sense — the same semantics that keep
-  holiday/weekend heads covered. The cost: a window starting inside the wall
-  chunk but before the first bar is served short without a gap verdict (the
-  Run's coverage facet still records the actual span). Claiming from the
-  first bar instead would raise false gap verdicts for non-trading-day heads
-  at the wall chunk — rejected.
+- **The wall's precision is one day, for free.** The oldest data-bearing
+  chunk was queried in full, so its first returned bar is exactly where the
+  source's history begins; `served_from` reports that instant. An empty head
+  adjacent to the wall is pre-history, not a holiday — a verdict "cannot
+  serve [Sat, Mon)" when history starts Monday is true — so day-precise
+  claims produce no false gap verdicts. (Holiday/weekend heads only need
+  covering inside *fully walked* windows, where `served_from` is the
+  requested start and nothing changed.) A run whose window starts just
+  before the first bar re-asks that small head once per fill attempt and
+  gets the exact-interval verdict.
 - Consumers (aegis-rd's market-data loader) can wrap exactly two port errors
   to build their failure contract (aegis-rd-1gef.3) without importing any
   vendor module.
