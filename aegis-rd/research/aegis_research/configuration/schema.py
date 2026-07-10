@@ -122,11 +122,6 @@ class DataConfig:
     timeframe: str = "1D"
     path: str | None = None
     missing_index: MissingPolicy = "raise"
-    missing_columns: MissingPolicy = "raise"
-    tz_localize: str | bool | None = None
-    tz_convert: str | bool | None = None
-    skip_on_error: bool = False
-    silence_warnings: bool = False
     quality: DataQualityConfig = field(default_factory=DataQualityConfig)
 
     @property
@@ -142,11 +137,6 @@ class DataConfig:
     def _validate_conditional_requireds(self) -> DataConfig:
         """Cross-field requiredness for the native Nautilus catalog contract."""
         _require_catalog_ids(self)
-        if self.skip_on_error and "skipped_instrument_ids" not in self.quality.allowed_degradations:
-            raise ValueError(
-                "skip_on_error requires data.quality.allowed_degradations "
-                "to include 'skipped_instrument_ids'"
-            )
         return self
 
 

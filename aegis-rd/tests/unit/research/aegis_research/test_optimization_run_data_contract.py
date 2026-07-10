@@ -159,7 +159,7 @@ def test_metadata_artifact_payload_merges_metadata_and_contract(
 
     payload = make_run_data_facts(array_contract=contract).metadata_artifact_payload()
 
-    assert payload["schema_version"] == "market_data.v3"
+    assert payload["schema_version"] == "market_data.v4"
     assert payload["request"]["timeframe"] == "1D"
     assert payload["configured_arrays"] == ["Open", "High", "Low", "Close", "Volume"]
     assert payload["contract_required_arrays"] == ["Close", "Open"]

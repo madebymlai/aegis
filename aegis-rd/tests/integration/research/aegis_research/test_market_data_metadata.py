@@ -52,7 +52,7 @@ class _FrozenData:
         return frame.xs(feature, axis=1, level="feature")
 
 
-def test_describe_builds_the_market_data_v3_facet_model() -> None:
+def test_describe_builds_the_market_data_v4_facet_model() -> None:
     config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
     observation = _frozen_observation()
     diagnostics = (
@@ -70,7 +70,7 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
                     last_timestamp="2020-01-03 00:00:00+00:00",
                 )
             },
-            provider_status="loaded",
+            load_status="loaded",
         ),
     )
     quality = MarketDataQuality(state="healthy")
@@ -81,7 +81,7 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
             native_data=_FrozenData(),
             source_metadata={"frozen": True},
             evidence={"source": "test_evidence", "raw_rows": 3},
-            provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
+            port_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
         ),
         observation=observation,
         diagnostics=diagnostics,
@@ -89,8 +89,8 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
         required_arrays=("Close",),
     )
 
-    # v3 facet-shaped model (ADR-0020): assert facets, not a flat dict
-    assert metadata.schema_version == "market_data.v3"
+    # v4 facet-shaped model (ADR-0020): assert facets, not a flat dict
+    assert metadata.schema_version == "market_data.v4"
     assert metadata.request.requested_instrument_ids == [_id("SYN.XNAS")]
     assert metadata.request.timeframe == "1D"
     assert metadata.request.authored_arrays == ["Close"]
@@ -132,25 +132,19 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
                     "last_timestamp": "2020-01-03 00:00:00+00:00",
                 }
             },
-            "provider_status": "loaded",
+            "load_status": "loaded",
         }
     ]
     # provenance facet: deduplicated provider/source blobs
-    assert metadata.provenance.provider_class == "_FrozenData"
+    assert metadata.provenance.source_class == "_FrozenData"
     assert metadata.provenance.source_metadata == {"frozen": True}
     assert metadata.provenance.index_evidence == {"source": "test_evidence", "raw_rows": 3}
-    assert metadata.provenance.provider_metadata == {
+    assert metadata.provenance.port_metadata == {
         "source": "frozen",
         "class": f"{__name__}._FrozenData",
     }
-    assert metadata.provenance.omitted_metadata_fields == []
     assert metadata.provenance.update_supported is False
     assert metadata.provenance.missing_index == "raise"
-    assert metadata.provenance.missing_columns == "raise"
-    assert metadata.provenance.tz_localize is None
-    assert metadata.provenance.tz_convert is None
-    assert metadata.provenance.skip_on_error is False
-    assert metadata.provenance.silence_warnings is False
 
 
 def test_unavailable_failure_wire_shape_is_pinned() -> None:
@@ -162,19 +156,18 @@ def test_unavailable_failure_wire_shape_is_pinned() -> None:
 
     result = load_market_data_result(config, port=unservable_port())
 
-    assert result.metadata.provenance.source_metadata["provider_error_type"] == (
+    assert result.metadata.provenance.source_metadata["error_type"] == (
         "MarketDataUnavailableError"
     )
     assert "missing=" in result.metadata.provenance.source_metadata[
-        "provider_error_summary"
+        "error_summary"
     ]
     assert result.metadata.provenance.index_evidence["source"] == (
         QUALITY_DATA_UNAVAILABLE
     )
-    assert result.metadata.provenance.provider_metadata == {}
-    assert result.metadata.provenance.omitted_metadata_fields == []
+    assert result.metadata.provenance.port_metadata == {}
     assert result.metadata.provenance.update_supported is False
-    assert result.metadata.provenance.provider_class is None
+    assert result.metadata.provenance.source_class is None
 
 
 def test_failed_shape_equals_success_shape_minus_data() -> None:
@@ -197,7 +190,7 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
     assert failure.metadata.coverage.rows == 0
     assert failure.metadata.coverage.start is None
     assert failure.metadata.coverage.end is None
-    assert failure.metadata.provenance.provider_class is None
+    assert failure.metadata.provenance.source_class is None
     assert failure.metadata.quality.state == QUALITY_DATA_UNAVAILABLE
     assert failure.native_data is None
 
@@ -217,9 +210,8 @@ def test_describe_tolerates_empty_provider_internals() -> None:
         required_arrays=("Close",),
     )
 
-    assert metadata.provenance.provider_class is None
-    assert metadata.provenance.provider_metadata == {}
-    assert metadata.provenance.omitted_metadata_fields == []
+    assert metadata.provenance.source_class is None
+    assert metadata.provenance.port_metadata == {}
     assert metadata.provenance.update_supported is False
     assert metadata.coverage.rows == 0
     assert metadata.coverage.instrument_ids == []
@@ -245,14 +237,14 @@ def test_loaded_metadata_round_trips_through_the_leaf_sequence() -> None:
             native_data=native_data,
             source_metadata={"frozen": True},
             evidence={"source": "test_evidence", "raw_rows": 3},
-            provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
+            port_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
         ),
     )
 
     loaded = [d.name for d in result.metadata.arrays if d.loaded]
     assert loaded == ["Close"]
     assert result.metadata.provenance.source_metadata == {"frozen": True}
-    assert result.metadata.provenance.provider_metadata["class"] == f"{__name__}._FrozenData"
+    assert result.metadata.provenance.port_metadata["class"] == f"{__name__}._FrozenData"
 
 
 def _id(value: str) -> InstrumentId:

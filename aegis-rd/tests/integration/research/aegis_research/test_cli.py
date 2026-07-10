@@ -1382,9 +1382,9 @@ def test_config_schema_guide_states_allowed_degradations() -> None:
 
 
 def test_config_schema_guide_states_missing_policies() -> None:
-    """Drift: missing-index/missing-columns policies catalog is interpolated from code."""
+    """Drift: the missing-index policy catalog is interpolated from code."""
     guide = _render_guide("config-schema")
-    assert "Missing-Index / Missing-Columns Policies" in guide
+    assert "Missing-Index Policy" in guide
 
 
 def test_config_schema_guide_states_reserved_execute_keys() -> None:

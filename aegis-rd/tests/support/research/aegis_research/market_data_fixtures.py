@@ -162,7 +162,7 @@ def loaded_market_data_result(
         MarketDataLoad(
             native_data=native_data,
             evidence=index_evidence(panels["Close"].index, source="test_fixture"),
-            provider_metadata={"class": "tests.market_data_fixture"},
+            port_metadata={"class": "tests.market_data_fixture"},
         ),
     )
 

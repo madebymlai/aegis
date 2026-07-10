@@ -268,7 +268,6 @@ def test_skipped_symbol_with_explicit_policy_is_degraded_allowed() -> None:
         make_data_config(
             instruments=["AAA.XNAS", "BBB.XNAS"],
             arrays=["Close"],
-            skip_on_error=True,
             quality=make_data_quality_config(allowed_degradations=["skipped_instrument_ids"]),
         ),
         MarketDataLoad(native_data=native_data),

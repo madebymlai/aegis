@@ -52,9 +52,13 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 # ranking dropped ``min_weight`` for empirical-Bayes shrinkage (parameter-free):
 # the resolved document no longer carries the retired knob. Both fields ride
 # resolved_config.v1 deliberately, so schema_version stays put while hashes move.
+# Re-pinned 2026-07-10 for the market_data.v4 reshape (aegis-rd-1gef.6): the five
+# retired VBT-loader knobs (missing_columns, tz_localize, tz_convert,
+# skip_on_error, silence_warnings) left DataConfig, so the resolved document
+# shrank — a recorded reset, one bump.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "3c9e5d68cb728a20e99702a70aaf151c597434f1930ac7ad14cad1bd1799212e",
-    "int_valued_caps": "023f0697e0b7bd47ee0dfb86ea86b299bb90b9ac510cca890c7c5478d4f508ea",
+    "canonical_grid": "1f182e724b978bc9d88671a0b4bcb54da7d6c1d0a54c3339f4e11549e1c142e6",
+    "int_valued_caps": "0ce2826cd6ad1dfc82fb544d1ccb63aa36b11f2ee5f3391a2f2bd6c7c7ac5c38",
 }
 
 

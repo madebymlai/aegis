@@ -141,7 +141,7 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
         "ESZ6.XCME",
     ]
     assert result.metadata.provenance.index_evidence["source"] == "nautilus_catalog"
-    assert result.metadata.provenance.provider_metadata == {"source": "nautilus_data_provider_port"}
+    assert result.metadata.provenance.port_metadata == {"source": "nautilus_data_provider_port"}
     assert result.distributions == ()
 
 
@@ -447,7 +447,7 @@ def test_catalog_adapter_records_distribution_coverage_in_quality_metadata(
         port=port,
     )
 
-    coverage = result.metadata.provenance.provider_metadata["distribution_coverage"]
+    coverage = result.metadata.provenance.port_metadata["distribution_coverage"]
     assert coverage[0]["instrument_id"] == "SPY.ARCA"
     assert coverage[0]["applicable"] is True
     assert coverage[0]["verified_start"] == "2024-01-01T00:00:00+00:00"

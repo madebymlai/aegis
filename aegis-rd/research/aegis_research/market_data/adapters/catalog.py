@@ -115,7 +115,7 @@ def _load_from_port(
         start=start,
         end=end,
     )
-    provider_metadata: dict[str, object] = {"source": "nautilus_data_provider_port"}
+    port_metadata: dict[str, object] = {"source": "nautilus_data_provider_port"}
     distribution_coverage = _distribution_coverage_report(
         data_port,
         tradeable_instrument_ids,
@@ -123,7 +123,7 @@ def _load_from_port(
         end=end,
     )
     if distribution_coverage:
-        provider_metadata["distribution_coverage"] = distribution_coverage
+        port_metadata["distribution_coverage"] = distribution_coverage
     return MarketDataLoad(
         native_data=native_data,
         source_metadata={
@@ -140,7 +140,7 @@ def _load_from_port(
             },
         },
         evidence=index_evidence(native_index(native_data), source="nautilus_catalog"),
-        provider_metadata=provider_metadata,
+        port_metadata=port_metadata,
         currency_conversion=currency_conversion,
         adjustment_mode=adjustment_mode,
         distributions=distributions,

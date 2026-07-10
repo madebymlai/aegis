@@ -92,11 +92,6 @@ def make_data_config(**overrides: Any) -> DataConfig:
         "timeframe": "1D",
         "path": None,
         "missing_index": "raise",
-        "missing_columns": "raise",
-        "tz_localize": None,
-        "tz_convert": None,
-        "skip_on_error": False,
-        "silence_warnings": False,
         "quality": make_data_quality_config(),
     }
     defaults.update(overrides)

@@ -33,13 +33,17 @@ def index_evidence(index: pd.Index, *, source: str) -> dict[str, Any]:
 
 
 def native_from_array_dict(arrays: dict[str, pd.DataFrame], config: DataConfig) -> Any:
+    # Fixed pull policy: the catalog serves clean UTC frames, so only the
+    # calendar policy (``missing_index``) is authored; the remaining VBT pull
+    # options are pinned to their strict values (v4 reshape — the config knobs
+    # for them are retired).
     return vbt.Data.from_data(
         vbt.feature_dict(arrays),
         columns_are_symbols=True,
         missing_index=config.missing_index,
-        missing_columns=config.missing_columns,
-        tz_localize=config.tz_localize,
-        tz_convert=config.tz_convert,
+        missing_columns="raise",
+        tz_localize=None,
+        tz_convert=None,
     )
 
 

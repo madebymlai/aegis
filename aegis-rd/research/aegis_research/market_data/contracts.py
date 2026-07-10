@@ -75,8 +75,7 @@ class MarketDataLoad:
     native_data: Any
     source_metadata: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
-    provider_metadata: dict[str, Any] = field(default_factory=dict)
-    omitted_metadata_fields: list[dict[str, str]] = field(default_factory=list)
+    port_metadata: dict[str, Any] = field(default_factory=dict)
     # Optional second continuous series (the ``pnl_adjustment`` mode) the portfolio
     # simulates P&L on; ``None`` when no instrument declares a P&L series.
     pnl_native_data: Any = None
@@ -95,7 +94,7 @@ class MarketDataLoad:
     failure: MarketDataUnavailableError | None = None
 
     @property
-    def provider_class(self) -> str | None:
+    def source_class(self) -> str | None:
         return None if self.native_data is None else type(self.native_data).__name__
 
     @property
@@ -148,7 +147,7 @@ class DataDiagnostics:
     instrument_id: InstrumentId
     configured: bool
     arrays: dict[str, DataArrayDiagnostics] = field(default_factory=dict)
-    provider_status: str = "loaded"
+    load_status: str = "loaded"
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -190,32 +189,32 @@ class CoverageFacet:
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class ProvenanceFacet:
-    """Provider/source blobs and loader configuration carried forward."""
+    """Source/port blobs and the one loader policy carried forward.
 
-    provider_class: str | None
+    Reshaped for ``market_data.v4``: catalog-era vocabulary only — the retired
+    remote/VBT-loader knobs are gone and the ``provider_*`` names became
+    ``source_class`` / ``port_metadata``.
+    """
+
+    source_class: str | None
     source_metadata: dict[str, Any]
     index_evidence: dict[str, Any]
-    provider_metadata: dict[str, Any]
-    omitted_metadata_fields: list[dict[str, str]]
+    port_metadata: dict[str, Any]
     update_supported: bool
     missing_index: str
-    missing_columns: str
-    tz_localize: str | bool | None
-    tz_convert: str | bool | None
-    skip_on_error: bool
-    silence_warnings: bool
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class MarketDataMetadataV3:
-    """Typed ``market_data.v3`` metadata Evidence artifact.
+class MarketDataMetadataV4:
+    """Typed ``market_data.v4`` metadata Evidence artifact.
 
-    Facet-shaped model (ADR-0020) replacing the hand-built ``market_data.v2``
-    dict.  One ``arrays`` descriptor list replaces eight parallel Array-name
-    lists; duplicate, derivable, and vestigial keys are dropped.
+    Facet-shaped model (ADR-0020); the v4 reshape retires the remote/VBT-era
+    vocabulary alongside the adapter seam: provenance speaks catalog
+    (``source_class`` / ``port_metadata``), per-instrument records carry a
+    ``load_status``, and failure values say ``data_unavailable``.
     """
 
-    schema_version: Literal["market_data.v3"]
+    schema_version: Literal["market_data.v4"]
     request: RequestFacet
     arrays: list[ArrayDescriptor]
     coverage: CoverageFacet
@@ -227,7 +226,7 @@ class MarketDataMetadataV3:
 @dataclass(frozen=True)
 class MarketDataResult:
     native_data: Any
-    metadata: MarketDataMetadataV3
+    metadata: MarketDataMetadataV4
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
     pnl_native_data: Any = None

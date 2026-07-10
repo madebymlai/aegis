@@ -9,7 +9,7 @@ from research.aegis_research.market_data.contracts import (
     CoverageFacet,
     DataDiagnostics,
     MarketDataLoad,
-    MarketDataMetadataV3,
+    MarketDataMetadataV4,
     MarketDataQuality,
     ProvenanceFacet,
     RequestFacet,
@@ -28,8 +28,8 @@ def describe(
     diagnostics: tuple[DataDiagnostics, ...],
     quality: MarketDataQuality,
     required_arrays: tuple[str, ...],
-) -> MarketDataMetadataV3:
-    """Assemble the schema-versioned ``market_data.v3`` typed metadata model.
+) -> MarketDataMetadataV4:
+    """Assemble the schema-versioned ``market_data.v4`` typed metadata model.
 
     The single authority for the metadata wire contract.  Facet-shaped
     (ADR-0020): one ``arrays`` descriptor list replaces eight parallel
@@ -58,8 +58,8 @@ def describe(
         )
         for name in sorted(all_requested_names)
     ]
-    return MarketDataMetadataV3(
-        schema_version="market_data.v3",
+    return MarketDataMetadataV4(
+        schema_version="market_data.v4",
         request=RequestFacet(
             requested_instrument_ids=list(instrument_ids(config.instruments)),
             timeframe=config.timeframe,
@@ -76,18 +76,12 @@ def describe(
         quality=quality,
         diagnostics=list(diagnostics),
         provenance=ProvenanceFacet(
-            provider_class=source.provider_class,
+            source_class=source.source_class,
             source_metadata=_source_metadata(source, quality),
             index_evidence=source.evidence,
-            provider_metadata=source.provider_metadata,
-            omitted_metadata_fields=source.omitted_metadata_fields,
+            port_metadata=source.port_metadata,
             update_supported=source.update_supported,
             missing_index=config.missing_index,
-            missing_columns=config.missing_columns,
-            tz_localize=config.tz_localize,
-            tz_convert=config.tz_convert,
-            skip_on_error=config.skip_on_error,
-            silence_warnings=config.silence_warnings,
         ),
     )
 
@@ -98,6 +92,6 @@ def _source_metadata(
     if source.failure is None:
         return source.source_metadata
     return {
-        "provider_error_type": type(source.failure).__name__,
-        "provider_error_summary": quality.reasons[0] if quality.reasons else quality.state,
+        "error_type": type(source.failure).__name__,
+        "error_summary": quality.reasons[0] if quality.reasons else quality.state,
     }

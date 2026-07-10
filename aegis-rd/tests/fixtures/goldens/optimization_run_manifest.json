@@ -1,7 +1,7 @@
 {
   "artifacts": [
     {
-      "hash": "ca41b4180b1ee5da1e705c618d3cb1ef176704261158300a0354cc1ac6e42c5b",
+      "hash": "6ac1b71ada159e7c27b6441b48c592f96ff1aee08d858716d8915d5a699c9769",
       "hash_algorithm": "sha256",
       "id": "data.metadata",
       "metadata": {},
@@ -10,7 +10,7 @@
       "role": "data_metadata",
       "schema_version": "data_metadata.v3",
       "shape": {},
-      "size": 21124,
+      "size": 20903,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -57,18 +57,13 @@
         "XLE.XNAS",
         "XLU.XNAS"
       ],
-      "missing_columns": "raise",
       "missing_index": "raise",
       "path": "catalog",
       "quality": {
         "allowed_degradations": []
       },
-      "silence_warnings": false,
-      "skip_on_error": false,
       "start": "2024-01-01",
-      "timeframe": "1D",
-      "tz_convert": null,
-      "tz_localize": null
+      "timeframe": "1D"
     },
     "indicators": [
       {
@@ -155,7 +150,7 @@
       "raw_config_identity": {
         "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
       },
-      "resolved_config_hash": "dbd34df702cfa263528e8d8c6db3851079d1f00ba00918ccee6e15cc7e4cf878",
+      "resolved_config_hash": "5f867f897bf67ba4d2d16c6c8cfa5fd6457a0fd339d3cb9dca77ff5e39f8fa34",
       "schema_version": 10,
       "selection": {
         "config_path": "<masked>",

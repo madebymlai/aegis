@@ -95,10 +95,10 @@ def test_coverage_gap_collapses_to_a_data_unavailable_verdict() -> None:
     # The verdict carries the gate's exact judgement, not a generic phrase.
     assert "missing=" in result.quality.reasons[0]
     provenance = result.metadata.provenance
-    assert provenance.source_metadata["provider_error_type"] == "MarketDataUnavailableError"
-    assert "missing=" in provenance.source_metadata["provider_error_summary"]
+    assert provenance.source_metadata["error_type"] == "MarketDataUnavailableError"
+    assert "missing=" in provenance.source_metadata["error_summary"]
     assert provenance.index_evidence["source"] == QUALITY_DATA_UNAVAILABLE
-    assert [d.provider_status for d in result.metadata.diagnostics] == [
+    assert [d.load_status for d in result.metadata.diagnostics] == [
         QUALITY_DATA_UNAVAILABLE
     ]
 

@@ -386,9 +386,9 @@ def _render_literal_catalogs() -> str:
             "Valid values for `signal.execution_timing`.",
         ),
         (
-            "Missing-Index / Missing-Columns Policies",
+            "Missing-Index Policy",
             MISSING_POLICIES,
-            "Valid values for `data.missing_index` and `data.missing_columns`.",
+            "Valid values for `data.missing_index`.",
         ),
         (
             "Reserved `optimization.execute` Keys",

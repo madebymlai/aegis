@@ -121,12 +121,11 @@ A declarative YAML specification that fully defines a **Run**: **Data Source Mod
 _Avoid_: spec, recipe, template
 
 **Data Source Mode**:
-The **Run Config** choice for how market data enters a **Run**. `store` selects
-the shared **Historical Store** path that may **Ensure Coverage** by filling
-gaps through a configured **Gap-Fill Provider** and requires each symbol to
-declare its canonical **InstrumentId**. Other source values select RD-owned
-sourcing. It is not the identity under which historical data is stored or
-traded.
+How market data enters a **Run**: the shared **Historical Store** path, which
+may **Ensure Coverage** by filling gaps through a configured **Gap-Fill
+Provider** and requires each symbol to declare its canonical **InstrumentId**.
+It is the only sourcing — there is no source selection in a **Run Config** —
+and it is not the identity under which historical data is stored or traded.
 _Avoid_: InstrumentId, store key, execution source, Trader source mode
 
 **RD Symbol Name**:

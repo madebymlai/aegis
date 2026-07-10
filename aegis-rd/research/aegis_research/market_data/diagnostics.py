@@ -49,7 +49,7 @@ def unavailable_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ...]:
             instrument_id=instrument_id,
             configured=True,
             arrays={},
-            provider_status=QUALITY_DATA_UNAVAILABLE,
+            load_status=QUALITY_DATA_UNAVAILABLE,
         )
         for instrument_id in _config_instrument_ids(config)
     )
@@ -116,7 +116,7 @@ def diagnose(
                     instrument_id=instrument_id,
                     arrays=config.effective_arrays,
                 ),
-                provider_status="loaded",
+                load_status="loaded",
             )
         )
     for instrument_id in _config_instrument_ids(config):
@@ -126,7 +126,7 @@ def diagnose(
                     instrument_id=instrument_id,
                     configured=True,
                     arrays={},
-                    provider_status="skipped",
+                    load_status="skipped",
                 )
             )
     return tuple(diagnostics)

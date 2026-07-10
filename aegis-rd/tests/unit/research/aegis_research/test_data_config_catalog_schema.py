@@ -32,7 +32,21 @@ def test_data_config_accepts_native_instrument_id_shape() -> None:
     )
 
 
-@pytest.mark.parametrize("field_name", ["source", "symbols", "provider"])
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "source",
+        "symbols",
+        "provider",
+        # The VBT-loader-era knobs retired with the market_data.v4 reshape: a
+        # config still setting one fails loudly, naming the offending field.
+        "missing_columns",
+        "tz_localize",
+        "tz_convert",
+        "skip_on_error",
+        "silence_warnings",
+    ],
+)
 def test_data_config_rejects_removed_legacy_fields(field_name: str) -> None:
     raw = {
         "arrays": ["Close"],

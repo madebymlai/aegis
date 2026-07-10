@@ -40,7 +40,7 @@ def evaluate(
         diagnostic
         for diagnostic in diagnostics
         if diagnostic.configured
-        and diagnostic.provider_status == QUALITY_DATA_UNAVAILABLE
+        and diagnostic.load_status == QUALITY_DATA_UNAVAILABLE
     ]
     if unavailable:
         return MarketDataQuality(
@@ -55,12 +55,10 @@ def evaluate(
     skipped_instrument_ids = [
         diagnostic.instrument_id
         for diagnostic in diagnostics
-        if diagnostic.configured and diagnostic.provider_status == "skipped"
+        if diagnostic.configured and diagnostic.load_status == "skipped"
     ]
     allowed_skipped_instrument_ids = (
-        set(skipped_instrument_ids)
-        if (config.skip_on_error and "skipped_instrument_ids" in allowed)
-        else set()
+        set(skipped_instrument_ids) if "skipped_instrument_ids" in allowed else set()
     )
     if skipped_instrument_ids:
         skipped_values = _instrument_id_values(skipped_instrument_ids)
