@@ -230,11 +230,13 @@ def test_quote_marking_reference_price_is_the_bid_ask_mid():
 
 
 def test_reference_price_rejects_bars_misaligned_with_the_mark_bars():
+    from aegis_data.marking import MarkBarMisalignmentError
+
     marking = DeclaredMarkingResolver().resolve(
         InstrumentId.from_str("VWRD.LSEETF"), "1D"
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(MarkBarMisalignmentError):
         marking.reference_price([])
 
 

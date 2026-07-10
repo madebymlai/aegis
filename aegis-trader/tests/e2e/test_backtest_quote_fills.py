@@ -2,15 +2,18 @@
 
 A quote-marked leg's BID + ASK bars are the single source: the simulated venue
 pairs them into L1 quotes and fills market orders at the real touch, the
-Portfolio marks the position at the fed quote mid, and no fill-cost parameter
-exists — the crossing cost falls out of the observed spread.  The book-global
-``slippage_probability`` is deliberately set to 1.0 to prove it no longer
-drives a quote-marked leg's fill.
+Portfolio marks the position at the strategy-published quote mid, and no
+fill-cost parameter exists — the crossing cost falls out of the observed
+spread.  The book-global ``slippage_probability`` is deliberately set to 1.0
+to prove it no longer drives a quote-marked leg's fill.
+
+One deterministic backtest (fixed weights over constant quotes) is run once;
+each test asserts a single literal outcome of it.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
 
 import pandas as pd
 import pytest
@@ -38,10 +41,9 @@ from aegis_trader.portfolio.performance import BookEquityRecorder
 _TIGHT = InstrumentId.from_str("TIGHT.XETR")
 _WIDE = InstrumentId.from_str("WIDE.XETR")
 _WHEEL = "quote-fills.whl"
-_STARTING_CASH = 1_000_000.0
 
 # Constant quotes so the touch is unambiguous on every day: the tight leg
-# crosses a 0.10 spread, the wide leg a 1.00 spread, around the same mid shape.
+# crosses a 0.10 spread, the wide leg a 1.00 spread.
 _TIGHT_BID, _TIGHT_ASK = 100.00, 100.10
 _WIDE_BID, _WIDE_ASK = 100.00, 101.00
 
@@ -57,6 +59,79 @@ wheel_filename = "{_WHEEL}"
 risk_share = 1.0
 group = "Floor"
 """
+
+
+@dataclass(frozen=True)
+class _QuoteFillOutcome:
+    """The finished run's observable facts, one field per test."""
+
+    filled_instrument_ids: frozenset[InstrumentId]
+    tight_fill_price: float
+    wide_fill_price: float
+    final_equity: float
+
+
+@pytest.fixture(scope="module")
+def outcome(tmp_path_factory: pytest.TempPathFactory) -> _QuoteFillOutcome:
+    book_path = tmp_path_factory.mktemp("quote-fills") / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    registry = StubBundleRegistry({_WHEEL: _TwoLegFixedWeightBundle()})
+    resolver = DeclaredMarkingResolver(
+        declared={_TIGHT: MarkMode.QUOTE, _WIDE: MarkMode.QUOTE}
+    )
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        registry=registry,
+        data_source=_QuoteMarkedDataSource(),
+        bar_type_resolver=resolver,
+    )
+    engine = result.engine
+
+    try:
+        fills = {
+            order.instrument_id: order
+            for order in engine.cache.orders()
+            if order.is_closed
+        }
+        return _QuoteFillOutcome(
+            filled_instrument_ids=frozenset(fills),
+            tight_fill_price=fills[_TIGHT].avg_px,
+            wide_fill_price=fills[_WIDE].avg_px,
+            final_equity=_final_equity(engine),
+        )
+    finally:
+        engine.dispose()
+
+
+def test_quote_marked_legs_fill_from_dense_quotes_with_no_trade_series(
+    outcome: _QuoteFillOutcome,
+) -> None:
+    assert outcome.filled_instrument_ids == {_TIGHT, _WIDE}
+
+
+def test_a_buy_fills_exactly_at_the_ask_despite_certain_global_slippage(
+    outcome: _QuoteFillOutcome,
+) -> None:
+    # slippage_probability is 1.0 in the book config; the quote venue retires it.
+    assert outcome.tight_fill_price == pytest.approx(100.10)
+
+
+def test_a_wide_leg_pays_its_own_observed_spread_not_a_shared_knob(
+    outcome: _QuoteFillOutcome,
+) -> None:
+    assert outcome.wide_fill_price == pytest.approx(101.00)
+
+
+def test_open_positions_mark_at_the_quote_mid_not_the_touch(
+    outcome: _QuoteFillOutcome,
+) -> None:
+    # 1_000_000 - 2499 shares x 0.05 tight half-spread - 2488 shares x 0.50
+    # wide half-spread: equity at mid to the cent.  Marked at the bid instead,
+    # equity would read 997_262.05 (a further half-spread per share lower).
+    assert outcome.final_equity == pytest.approx(998_631.05, abs=0.01)
 
 
 class _TwoLegFixedWeightBundle(ExecutionBundle):
@@ -143,61 +218,8 @@ class _QuoteMarkedDataSource:
         )
 
 
-def test_quote_marked_legs_fill_at_the_touch_and_mark_at_the_mid(tmp_path) -> None:
-    book_path = tmp_path / "book.toml"
-    book_path.write_text(_BOOK_TOML)
-    registry = StubBundleRegistry({_WHEEL: _TwoLegFixedWeightBundle()})
-    resolver = DeclaredMarkingResolver(
-        declared={_TIGHT: MarkMode.QUOTE, _WIDE: MarkMode.QUOTE}
-    )
-
-    result = run_book_backtest(
-        book_path,
-        start="2020-01-01",
-        end="2020-01-05",
-        registry=registry,
-        data_source=_QuoteMarkedDataSource(),
-        bar_type_resolver=resolver,
-    )
-    engine = result.engine
-
-    try:
-        fills = {
-            order.instrument_id: order
-            for order in engine.cache.orders()
-            if order.is_closed
-        }
-        # Dense quotes with NO trade series: both legs fill.
-        assert set(fills) == {_TIGHT, _WIDE}
-        # The fill IS the real touch — buy at the ask, exactly, even though the
-        # book-global slippage_probability is 1.0 (retired for quote venues).
-        assert fills[_TIGHT].avg_px == pytest.approx(_TIGHT_ASK)
-        assert fills[_WIDE].avg_px == pytest.approx(_WIDE_ASK)
-        # Each leg pays its own observed spread: wide costs 10x tight per share.
-        tight_cost = fills[_TIGHT].avg_px - _mid(_TIGHT_BID, _TIGHT_ASK)
-        wide_cost = fills[_WIDE].avg_px - _mid(_WIDE_BID, _WIDE_ASK)
-        assert wide_cost == pytest.approx(10.0 * tight_cost)
-        # The book marks open positions at the quote mid (the single
-        # reference_price formula), not at the bid/touch: final equity equals
-        # cash after the ask fills plus the positions valued at mid.
-        tight_qty = fills[_TIGHT].quantity.as_double()
-        wide_qty = fills[_WIDE].quantity.as_double()
-        expected_equity = (
-            _STARTING_CASH
-            - tight_qty * (_TIGHT_ASK - _mid(_TIGHT_BID, _TIGHT_ASK))
-            - wide_qty * (_WIDE_ASK - _mid(_WIDE_BID, _WIDE_ASK))
-        )
-        assert _final_equity(engine) == pytest.approx(expected_equity, abs=1.0)
-    finally:
-        engine.dispose()
-
-
-def _mid(bid: float, ask: float) -> float:
-    return (bid + ask) / 2.0
-
-
-def _final_equity(engine: Any) -> float:
-    for actor in engine.trader.actors():
+def _final_equity(engine: object) -> float:
+    for actor in engine.trader.actors():  # type: ignore[attr-defined]
         if isinstance(actor, BookEquityRecorder):
             return float(actor.equity_curve.iloc[-1])
     raise AssertionError("no BookEquityRecorder on the engine")

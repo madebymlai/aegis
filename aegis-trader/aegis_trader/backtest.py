@@ -423,7 +423,9 @@ def _add_venues(
     financing_module = build_financing_module(config.costs)
     # A venue hosting a quote-marked leg fills from the real bid/ask book; its
     # crossing cost IS the observed spread, so the book-global one-tick
-    # prob_slippage retires there (aegis-rd-tggo.5).
+    # prob_slippage retires there (aegis-rd-tggo.5).  Nautilus fill models are
+    # per-venue, so a bar-marked leg co-hosted on such a venue loses the knob
+    # too — its fills stay at the bar close, unslipped.
     quote_marked_venues = {
         instrument.id.venue
         for instrument in instruments
@@ -452,6 +454,10 @@ def _add_venues(
             fill_model=fill_model,
             fee_model=cost_models.fee_model,
             book_type=BookType.L1_MBP,
+            # Fills rely on bars/quotes only, never trade ticks (aegis-rd-tggo.5):
+            # Nautilus defaults this True, so the guard must be explicit — a
+            # quote-marked leg's sparse trade prints must never drive a fill.
+            trade_execution=False,
             allow_cash_borrowing=account_type == AccountType.MARGIN
             or len(balance_currencies) > 1,
         )

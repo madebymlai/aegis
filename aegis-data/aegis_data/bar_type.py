@@ -117,16 +117,24 @@ def _mic_venue(venue: str) -> str | None:
     return exchange_to_mic_venue(venue)
 
 
+def is_cash_fx_shaped(instrument_id: InstrumentId) -> bool:
+    """Whether the id carries the cash-FX tell in its symbol shape (``BASE/QUOTE``).
+
+    The single home of the tell: it is known from the id alone, before the
+    instrument definition is resolved (on a cold fill the definition is seeded
+    only *after* the bars are fetched, so the asset class is not yet available
+    at request time).
+    """
+    return "/" in instrument_id.symbol.value
+
+
 def _price_type(instrument_id: InstrumentId) -> str:
     """``MID`` for cash FX, ``LAST`` for everything else.
 
-    A cash-FX pair carries the FX tell in its symbol shape — ``BASE/QUOTE`` — which
-    is known from the id alone, before the instrument definition is resolved (on a
-    cold fill the definition is seeded only *after* the bars are fetched, so the
-    asset class is not yet available at request time).  IBKR has no TRADES print for
-    cash FX, so its raw bars are ``MID``; everything else is ``LAST``.
+    IBKR has no TRADES print for cash FX, so its raw bars are ``MID``;
+    everything else is ``LAST``.
     """
-    return "MID" if "/" in instrument_id.symbol.value else "LAST"
+    return "MID" if is_cash_fx_shaped(instrument_id) else "LAST"
 
 
 def continuous_bar_type(root_id: InstrumentId, timeframe: str) -> BarType:
@@ -155,6 +163,7 @@ __all__ = [
     "UnsupportedTimeframeError",
     "continuous_bar_type",
     "external_bar_type",
+    "is_cash_fx_shaped",
     "mic_canonical_instrument_id",
     "raw_bar_type",
     "timeframe_to_ns",

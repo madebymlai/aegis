@@ -13,6 +13,7 @@ from typing import Any, cast
 import pandas as pd
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
+from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import CurrencyPair, FuturesContract
 
@@ -354,7 +355,7 @@ class DistributionCoverageService:
             for bar in self._bars_for(bar_type, start_ns, end_ns)
         ]
 
-    def _bars_for(self, bar_type: Any, start_ns: int, end_ns: int) -> list[Any]:
+    def _bars_for(self, bar_type: BarType, start_ns: int, end_ns: int) -> list[Any]:
         from nautilus_trader.model.data import Bar
 
         return list(

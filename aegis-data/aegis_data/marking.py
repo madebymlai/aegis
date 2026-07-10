@@ -35,7 +35,11 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import pandas as pd
 
-from aegis_data.bar_type import external_bar_type, mic_canonical_instrument_id
+from aegis_data.bar_type import (
+    external_bar_type,
+    is_cash_fx_shaped,
+    mic_canonical_instrument_id,
+)
 from aegis_data.ohlcv import bars_to_ohlcv
 
 if TYPE_CHECKING:
@@ -225,12 +229,12 @@ class InstrumentFacts(Protocol):
 class SymbolShapeFacts:
     """Cash FX recognised by its ``BASE/QUOTE`` symbol shape (ADR-0007).
 
-    The one signal available before the instrument definition is resolved: on a
-    cold fill the definition is seeded only *after* the bars are fetched.
+    The one signal available before the instrument definition is resolved;
+    the tell itself has one home, ``bar_type.is_cash_fx_shaped``.
     """
 
     def is_cash_fx(self, instrument_id: InstrumentId) -> bool:
-        return "/" in instrument_id.symbol.value
+        return is_cash_fx_shaped(instrument_id)
 
 
 def marking_for_mode(
