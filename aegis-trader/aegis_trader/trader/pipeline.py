@@ -30,7 +30,7 @@ from aegis_runtime.currency import (
 from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.integrity import check_account_integrity
-from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
+from aegis_trader.trader._rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import SleeveLedger

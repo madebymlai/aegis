@@ -1,8 +1,11 @@
-"""Pure-domain rebalancer: per-sleeve target weights -> WeightDelta[].
+"""The rebalancer: RebalancePipeline's planning implementation.
 
-Zero Nautilus, zero sizing.  The rebalancer works entirely in dimensionless
-weight space (fractions of NAV); turning a weight delta into a native share
-count is a separate concern (``sizing.size_deltas``).
+Private to the pipeline — ``trader/pipeline.py`` is its only importer, and
+``RebalancePipeline.rebalance_period`` is the test surface for every behavior
+in here (ADR-0003 amendment 2026-07-10).  Zero Nautilus lifecycle, zero
+sizing: the rebalancer works entirely in dimensionless weight space (fractions
+of NAV); turning a weight delta into a native share count is a separate
+concern (``sizing.size_deltas``).
 
 Netting (Slice 2):
 - Each sleeve's latest target weights are scaled by the risk-budget allocator.
@@ -52,32 +55,6 @@ class PerNameExposureBreach(ValueError):
     """A final or unfixable position exceeds Trader's per-name cap."""
 
 
-def rebalance(
-    sleeve_targets: dict[SleeveName, pd.DataFrame],
-    book: BookConfig,
-    *,
-    instrument_bands: Mapping[InstrumentId, DriftBand],
-    band_owners: Mapping[InstrumentId, SleeveName] | None = None,
-    realized_weights: dict[InstrumentId, float] | None = None,
-    realized_vols: dict[SleeveName, float] | None = None,
-    realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
-    previous_sleeve_weights: dict[SleeveName, float] | None = None,
-    realized_drawdown: float | None = None,
-) -> tuple[WeightDelta, ...]:
-    """Net per-sleeve target weights into signed weight deltas to trade."""
-    return rebalance_plan(
-        sleeve_targets,
-        book,
-        instrument_bands=instrument_bands,
-        band_owners=band_owners,
-        realized_weights=realized_weights,
-        realized_vols=realized_vols,
-        realized_covariance=realized_covariance,
-        previous_sleeve_weights=previous_sleeve_weights,
-        realized_drawdown=realized_drawdown,
-    ).deltas
-
-
 def rebalance_plan(
     sleeve_targets: dict[SleeveName, pd.DataFrame],
     book: BookConfig,
@@ -85,7 +62,6 @@ def rebalance_plan(
     instrument_bands: Mapping[InstrumentId, DriftBand],
     band_owners: Mapping[InstrumentId, SleeveName] | None = None,
     realized_weights: dict[InstrumentId, float] | None = None,
-    realized_vols: dict[SleeveName, float] | None = None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None = None,
     previous_sleeve_weights: dict[SleeveName, float] | None = None,
     realized_drawdown: float | None = None,
@@ -115,10 +91,9 @@ def rebalance_plan(
     weight (signed fraction of NAV).  When supplied, the realised book is gated against
     caps and drift bands before any delta is emitted.
 
-    *realized_covariance* and *realized_vols* are handed to the allocator as-is;
-    which estimate refines the configured risk shares (covariance-aware ERC/HRP,
-    the diagonal limit, or a cold book on the raw shares) is the allocator's own
-    routing (``allocator.allocate``).
+    *realized_covariance* is handed to the allocator as-is; which estimate
+    refines the configured risk shares (covariance-aware ERC/HRP or a cold book
+    on the raw shares) is the allocator's own routing (``allocator.allocate``).
     ``realized_drawdown`` is the current
     book drawdown fraction; when the book declares a drawdown-de-lever curve it
     scales the whole allocation down after risk budgeting.
@@ -142,7 +117,6 @@ def rebalance_plan(
     allocation = _allocate_sleeves(
         latest_targets,
         book,
-        realized_vols=realized_vols,
         realized_covariance=realized_covariance,
         previous_sleeve_weights=previous_sleeve_weights,
         realized_drawdown=realized_drawdown,
@@ -281,7 +255,6 @@ def _allocate_sleeves(
     latest_targets: dict[SleeveName, dict[InstrumentId, float]],
     book: BookConfig,
     *,
-    realized_vols: dict[SleeveName, float] | None,
     realized_covariance: dict[SleeveName, dict[SleeveName, float]] | None,
     previous_sleeve_weights: dict[SleeveName, float] | None,
     realized_drawdown: float | None = None,
@@ -291,7 +264,6 @@ def _allocate_sleeves(
         sleeve_targets=latest_targets,
         risk_shares=book.allocator_risk_shares(),
         book_vol_target=book.book_vol_target,
-        realized_vols=realized_vols,
         realized_covariance=realized_covariance,
         groups={sleeve.name: sleeve.group for sleeve in book.sleeves},
         previous_multipliers=previous_sleeve_weights,

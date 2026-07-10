@@ -1,6 +1,6 @@
 # Aegis Trader package architecture: deep modules over the Nautilus kernel
 
-Status: accepted, amended 2026-06-20 (aegis-rd-8pt), 2026-06-23 (aegis-rd-r8b.8 — modes.py dissolves; IBKR config leaves the Trader; see amendment below), 2026-07-10 (aegis-rd-57aa — deep Book assembly)
+Status: accepted, amended 2026-06-20 (aegis-rd-8pt), 2026-06-23 (aegis-rd-r8b.8 — modes.py dissolves; IBKR config leaves the Trader; see amendment below), 2026-07-10 (aegis-rd-57aa — deep Book assembly), 2026-07-10 (aegis-rd-qllq — rebalance planning is internal to RebalancePipeline; see amendment below)
 
 Aegis Trader is a NautilusTrader overlay (ADR-0001). Nautilus already provides the live/backtest kernel: `MessageBus`, `Cache`, `DataEngine`, `ExecutionEngine`, `RiskEngine`, `Portfolio`, and one `Strategy` event loop that runs across backtest, paper, and live. The Trader architecture therefore wraps Nautilus only where the wrapper hides Trader-specific depth. It does **not** create parallel execution or observability ports.
 
@@ -12,7 +12,7 @@ Aegis Trader is a NautilusTrader overlay (ADR-0001). Nautilus already provides t
 | Book state | `portfolio/book_state.py` | `BookStatePort` + `NautilusBookState` in one module | NAV/cash aggregation, cache health, and base-currency realized weights from Nautilus portfolio/cache reads. |
 | Book assembly | `bundles/book.py` | `assemble_book(BookConfig, BundleRegistryPort) -> AssembledBook` | Sleeve resolution, deterministic loadable IDs, timeframe, warmup window, margin need, band ownership, and coherent continuous-root declarations. Structurally invalid Books fail before broker attachment. |
 | Bundle registry | `bundles/port.py`, `bundles/registry.py`, `bundles/stub.py` | `BundleRegistryPort` with stub and entry-point implementations | Installed Execution Bundle discovery and wheel-label lookup. This is the only remaining justified port/adapter file split because it has multiple implementations. |
-| Rebalance orchestration | `trader/pipeline.py` | `RebalancePipeline` value-object API | Account-integrity startup gate, Cache-backed market-data reads through ports, Execution Bundle calls, netting/gating, sizing, freshness filtering, and the `SleeveLedger`. Imports no Strategy or Nautilus event-loop types. |
+| Rebalance orchestration | `trader/pipeline.py` (+ private `trader/_rebalancer.py`) | `RebalancePipeline` value-object API | Account-integrity startup gate, Cache-backed market-data reads through ports, Execution Bundle calls, the whole ADR-0002 rebalance plan (allocate, net, clamp, band, remediate, cap-gate — implemented by the pipeline-private `_rebalancer` module), sizing, freshness filtering, and the `SleeveLedger`. Imports no Strategy or Nautilus event-loop types. |
 | Nautilus adapter | `trader/strategy.py`, `trader/node.py` | Native Nautilus `Strategy`; broker-neutral `TradingNode`/backtest config + the live run/stop lifecycle | Lifecycle, bar-driven period rollover, futures roll refresh, FX quote mirroring into Cache marks, translating `OrderIntent`s into Nautilus orders, RiskEngine config, the `trader start`/`stop` daemon, and structured `self.log` records. IBKR client/connection config is **not** here — it lives in the one IBKR adapter (`aegis-data/ibkr.py`); `node.py` carries no broker vocabulary. |
 
 ## Dependency rule
@@ -21,6 +21,9 @@ Aegis Trader is a NautilusTrader overlay (ADR-0001). Nautilus already provides t
 domain/*            -> pure value objects and algorithms, no Nautilus
 bundles/*           -> bundle registry and contract assembly, no Strategy lifecycle
 trader/pipeline.py  -> domain + bundle/data/portfolio ports, no Strategy effects
+trader/_rebalancer.py -> pure planning implementation of the pipeline (imports domain/*
+                       only; no ports, no Nautilus lifecycle); imported by trader/pipeline.py
+                       and nothing else
 trader/strategy.py  -> Nautilus lifecycle and I/O effects over the pipeline
 trader/node.py      -> broker-neutral Nautilus node + live run/stop lifecycle; no IBKR SDK
                        import and no ibg_*/IDEALPRO vocabulary — reaches IBKR only through the
@@ -36,7 +39,7 @@ backtest.py         -> backtest engine + non-live RiskEngine config (was trader/
 
 - `startup_check() -> StartupResult` runs the environment-dependent account-integrity gate. Structural Book invariants are already proven by `assemble_book`; a failed runtime gate returns a typed halt gate plus human reason, which the Strategy logs before idling.
 - Identity needs no pipeline resolver: `AssembledBook.loadable_instrument_ids` is the proven, sorted union from every Execution Bundle, and IBKR's `InstrumentProvider.load_ids` resolves it at boot (root ADR-0007). The futures roll is driven by the Roll Desk over `aegis-data`'s `ContinuousContractModel` — live, keyed by `InstrumentId` — not by a pipeline resolution step.
-- `rebalance_period(CompletedRebalancePeriod) -> RebalanceResult` reads completed-period windows and freshness through `MarketDataPort`, computes sleeve targets from Execution Bundles, builds the rebalance plan, sizes deltas, filters stale instruments, records the `SleeveLedger`, and returns `OrderIntent`s plus a `RebalanceSummary` carrying the real gate outcome.
+- `rebalance_period(CompletedRebalancePeriod) -> RebalanceResult` reads completed-period windows and freshness through `MarketDataPort`, computes sleeve targets from Execution Bundles, builds the rebalance plan, sizes deltas, filters stale instruments, records the `SleeveLedger`, and returns `OrderIntent`s plus a `RebalanceSummary` carrying the real gate outcome. It is also the **test surface for all rebalance-planning behavior** (`tests/unit/test_rebalance_behavior.py` over the pipeline-seam harness): the plan builder, its value object, and the per-name breach error are private vocabulary of `trader/_rebalancer.py`, not a contract.
 - The owned `SleeveLedger` supplies realized covariance for the next rebalance and end-of-run evidence (realized book skew and per-sleeve P&L attribution).
 
 `RebalanceStrategy` is the thin Nautilus adapter around that shape. It wires cache-backed ports and the resolver at `on_start`, logs `StartupResult` / `RebalanceSummary` / end-of-run evidence through native `self.log`, subscribes bars and FX reference quotes, keeps the bar-driven period rollover trigger, refreshes futures rolls, and submits returned orders through Nautilus's own order factory and `ExecutionEngine`.
@@ -58,6 +61,7 @@ aegis_trader/
   portfolio/book_state.py      # BookStatePort + NautilusBookState
   trader/
     pipeline.py                # StartupResult/RebalanceResult orchestration
+    _rebalancer.py             # pipeline-private rebalance planning (ADR-0002 gates)
     strategy.py                # Nautilus Strategy adapter
     node.py                    # broker-neutral live TradingNode + run/stop lifecycle (trader start/stop)
 ```
@@ -121,3 +125,50 @@ node.stop(); node.dispose()`); `trader stop` sends `SIGTERM` to a pidfile.
 platform.) `IBConnectionSettings.from_env` drops the `mode` parameter and
 **requires `IB_PORT`** (fail-closed — Nautilus defaults `ibg_port=None`, and the
 port is the live/paper switch).
+
+## Amendment — 2026-07-10 (aegis-rd-qllq): rebalance planning is internal to `RebalancePipeline`
+
+`domain/rebalancer.py` moved to **`trader/_rebalancer.py`** — a private module
+of the pipeline, its only importer. The module keeps its file decomposition,
+its name (ADR-0002's "the rebalancer"), and its purity (imports `domain/*`
+only; no ports, no Nautilus lifecycle); ADR-0002's gate behavior and ordering
+moved verbatim. What changed is ownership: the nine-parameter
+`rebalance_plan` seam had exactly one production caller — the pipeline, which
+gathers every argument from state it already owns (bundle bands and owners,
+ledger covariance and drawdown, its own applied sleeve weights) — so it failed
+the deletion test as a public interface. `RebalancePlan` and
+`PerNameExposureBreach` are now the private module's vocabulary; the pipeline's
+own interface is unchanged.
+
+Deleted with the seam, no shims (Forward-First):
+
+- `rebalance()` — a deltas-only wrapper with zero production callers.
+- the `realized_vols` parameter of `rebalance_plan` — production only ever
+  feeds the allocator through the ledger's realized covariance; the
+  allocator's own `realized_vols` routing (ADR-0004) is untouched.
+
+**Test surface.** All rebalance-planning behavior is asserted through
+`rebalance_period` in production observables — orders, `halt_reason`,
+`GateOutcome`, summary counts, `last_sleeve_weights` — via the pipeline-seam
+harness (`tests/support/rebalance_harness.py`, identity sizing: unit bars,
+NAV 1e6). The migration was parity-protected: the new suite landed green
+against the old public seam before the move, so the move commit is
+behavior-neutral with the new suite as its oracle.
+
+Considered and rejected:
+
+- **Inline into `pipeline.py`** — a ~1,000-line module; the repo splits files
+  well before that (cf. the validation split), and the planning/orchestration
+  file decomposition is worth keeping. Privacy, not co-location, was the goal.
+- **Underscore it in place (`domain/_rebalancer.py`)** — an ownership
+  contradiction: a module private to the pipeline does not live in the shared
+  domain layer its neighbors may import.
+- **Keep the internal-seam tests** — rejected on the observability argument:
+  assertions the production interface cannot express are pinning
+  non-production observables, i.e. dead behavior. The migration proved this
+  concretely: cross-sleeve overlap netting is unreachable (book assembly
+  admits one band owner per instrument and bundle bands must equal the
+  contract), a realized position outside every bundle contract can never
+  become an order (no sizing metadata; filtered as stale), and the "empty
+  target frame is silently skipped" behavior was never production-true — at
+  the interface it crashes the period (latent bug aegis-rd-m4fv).
