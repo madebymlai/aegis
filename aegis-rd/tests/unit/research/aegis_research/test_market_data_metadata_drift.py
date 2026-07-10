@@ -39,12 +39,12 @@ def test_constructing_with_extra_field_is_rejected() -> None:
                 )
             ],
             coverage=CoverageFacet(instrument_ids=[], rows=0, start=None, end=None),
-            quality=MarketDataQuality(state="provider_failed"),
+            quality=MarketDataQuality(state="data_unavailable"),
             diagnostics=[],
             provenance=ProvenanceFacet(
                 provider_class=None,
                 source_metadata={},
-                index_evidence={"source": "provider_failed"},
+                index_evidence={"source": "data_unavailable"},
                 provider_metadata={},
                 omitted_metadata_fields=[],
                 update_supported=False,

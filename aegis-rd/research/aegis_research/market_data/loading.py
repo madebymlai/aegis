@@ -1,8 +1,9 @@
-"""Orchestrator: wire observe -> judge -> describe behind the adapter seam.
+"""Orchestrator: wire observe -> judge -> describe over the catalog loader.
 
-`loading` owns no concern logic. It dispatches to a source adapter — a failed
-pull collapses to the degenerate adapter result, so failure rides the same
-sequence as success — then threads the outcome through the leaf modules:
+`loading` owns no concern logic. It loads through the catalog loader — the
+one implementation, behind the ``CatalogBackedDataPort`` seam — and an
+unavailable window collapses to the degenerate load, so failure rides the
+same sequence as success. The outcome threads through the leaf modules:
 observe (:mod:`diagnostics`), judge (:mod:`quality`), describe
 (:mod:`metadata`). Public feature accessors are re-exported from
 :mod:`features` so the facade surface stays stable.
@@ -19,12 +20,9 @@ from research.aegis_research.market_data import metadata as _metadata
 from research.aegis_research.market_data import quality as _judge
 from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.contracts import (
-    MarketDataAdapter,
     MarketDataResult,
     MarketDataUnavailableError,
-    RemoteDataPullError,
     failed_market_data_load,
-    provider_failed_adapter_result,
 )
 
 if TYPE_CHECKING:
@@ -63,7 +61,6 @@ def load_market_data_result(
     config: DataConfig,
     *,
     required_arrays: tuple[str, ...] | None = None,
-    adapter: MarketDataAdapter | None = None,
     port: CatalogBackedDataPort | None = None,
 ) -> MarketDataResult:
     """Load catalog data, then apply Aegis evidence/quality contracts.
@@ -76,11 +73,7 @@ def load_market_data_result(
     required = merge_data_arrays(requested, required_arrays or ())
 
     try:
-        source = (
-            load_catalog_source(config, port=port) if adapter is None else adapter(config)
-        )
-    except RemoteDataPullError as error:
-        source = provider_failed_adapter_result(error)
+        source = load_catalog_source(config, port=port)
     except MarketDataUnavailableError as error:
         # The failure rides the same observe -> judge -> describe sequence as
         # success, so an unavailable window becomes judged Run Evidence.

@@ -17,7 +17,6 @@ from research.aegis_research.market_data.contracts import (
     QUALITY_DATA_UNAVAILABLE,
     QUALITY_DEGRADED_ALLOWED,
     QUALITY_HEALTHY,
-    QUALITY_PROVIDER_FAILED,
     QUALITY_REJECTED,
     UNAVAILABLE_REASON_KEY,
     DataDiagnostics,
@@ -50,18 +49,6 @@ def evaluate(
                 index_evidence.get(UNAVAILABLE_REASON_KEY)
                 or "market data is unavailable for the requested window",
             ),
-            allowed_degradations=tuple(config.quality.allowed_degradations),
-        )
-
-    provider_failed = [
-        diagnostic
-        for diagnostic in diagnostics
-        if diagnostic.configured and diagnostic.provider_status == QUALITY_PROVIDER_FAILED
-    ]
-    if provider_failed:
-        return MarketDataQuality(
-            state=QUALITY_PROVIDER_FAILED,
-            reasons=("provider failed before usable native data was available",),
             allowed_degradations=tuple(config.quality.allowed_degradations),
         )
 

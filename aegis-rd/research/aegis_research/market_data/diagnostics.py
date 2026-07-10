@@ -1,8 +1,8 @@
 """Observe: a single pass over loaded data producing typed diagnostics.
 
-The one place market data is observed. ``observe_source`` is the pull-outcome
-entry: a failed pull observes nothing and diagnoses every configured
-instrument as provider-failed. ``observe`` shapes the native source
+The one place market data is observed. ``observe_source`` is the load-outcome
+entry: a failed load observes nothing and diagnoses every configured
+instrument as data-unavailable. ``observe`` shapes the native source
 object into a :class:`MarketDataObservation` (index, arrays, instrument IDs, panels);
 ``diagnose`` turns that observation into the typed per-instrument, per-Array
 :class:`DataDiagnostics` records the judge reads. The adapter's index
@@ -22,11 +22,9 @@ from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data import panels as _panels
 from research.aegis_research.market_data.contracts import (
     QUALITY_DATA_UNAVAILABLE,
-    QUALITY_PROVIDER_FAILED,
     DataArrayDiagnostics,
     DataDiagnostics,
     MarketDataLoad,
-    MarketDataUnavailableError,
 )
 from research.aegis_research.market_data.identity import as_instrument_id, instrument_ids
 
@@ -45,19 +43,13 @@ def empty_observation() -> MarketDataObservation:
     return MarketDataObservation(index=pd.Index([]), arrays=(), instrument_ids=(), panels={})
 
 
-def provider_failed_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ...]:
-    return _failed_load_diagnostics(config, status=QUALITY_PROVIDER_FAILED)
-
-
-def _failed_load_diagnostics(
-    config: DataConfig, *, status: str
-) -> tuple[DataDiagnostics, ...]:
+def unavailable_diagnostics(config: DataConfig) -> tuple[DataDiagnostics, ...]:
     return tuple(
         DataDiagnostics(
             instrument_id=instrument_id,
             configured=True,
             arrays={},
-            provider_status=status,
+            provider_status=QUALITY_DATA_UNAVAILABLE,
         )
         for instrument_id in _config_instrument_ids(config)
     )
@@ -70,15 +62,10 @@ def observe_source(
     requested_arrays: tuple[str, ...],
 ) -> tuple[MarketDataObservation, tuple[DataDiagnostics, ...]]:
     """Observe one load outcome: a failed load observes nothing and diagnoses
-    every configured instrument with the failure's status; a loaded pull is
-    observed and diagnosed."""
+    every configured instrument as data-unavailable; a loaded pull is observed
+    and diagnosed."""
     if source.failure is not None:
-        status = (
-            QUALITY_DATA_UNAVAILABLE
-            if isinstance(source.failure, MarketDataUnavailableError)
-            else QUALITY_PROVIDER_FAILED
-        )
-        return empty_observation(), _failed_load_diagnostics(config, status=status)
+        return empty_observation(), unavailable_diagnostics(config)
     observation = observe(
         config, native_data=source.native_data, requested_arrays=requested_arrays
     )

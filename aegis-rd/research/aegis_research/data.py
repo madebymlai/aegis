@@ -5,21 +5,18 @@ from aegis_runtime import MarketDataBundle
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OHLCV_ARRAYS
-from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.contracts import (
     LOGICAL_ARRAYS,
+    QUALITY_DATA_UNAVAILABLE,
     QUALITY_DEGRADED_ALLOWED,
     QUALITY_HEALTHY,
-    QUALITY_PROVIDER_FAILED,
     QUALITY_REJECTED,
     DataArrayDiagnostics,
     DataDiagnostics,
-    MarketDataAdapter,
-    MarketDataAdapterResult,
     MarketDataQuality,
     MarketDataQualityError,
     MarketDataResult,
-    RemoteDataPullError,
+    MarketDataUnavailableError,
 )
 from research.aegis_research.market_data.features import (
     array_from_ohlcv,
@@ -43,25 +40,22 @@ from research.aegis_research.market_data.run_arrays import (
 __all__ = [
     "LOGICAL_ARRAYS",
     "OHLCV_ARRAYS",
+    "QUALITY_DATA_UNAVAILABLE",
     "QUALITY_DEGRADED_ALLOWED",
     "QUALITY_HEALTHY",
-    "QUALITY_PROVIDER_FAILED",
     "QUALITY_REJECTED",
     "DataArrayDiagnostics",
     "DataDiagnostics",
-    "MarketDataAdapter",
-    "MarketDataAdapterResult",
     "MarketDataBundle",
     "MarketDataQuality",
     "MarketDataQualityError",
     "MarketDataResult",
-    "RemoteDataPullError",
+    "MarketDataUnavailableError",
     "RunArrayAlignmentError",
     "RunArrays",
     "array_from_ohlcv",
     "close_from_ohlcv",
     "high_from_ohlcv",
-    "load_catalog_source",
     "load_market_data",
     "load_market_data_result",
     "low_from_ohlcv",

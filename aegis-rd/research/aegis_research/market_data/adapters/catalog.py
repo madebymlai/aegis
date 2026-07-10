@@ -32,7 +32,7 @@ from research.aegis_research.market_data.adapters._support import (
 )
 from research.aegis_research.market_data.contracts import (
     CONTINUOUS_ROOT_IDS_KEY,
-    MarketDataAdapterResult,
+    MarketDataLoad,
     MarketDataUnavailableError,
 )
 from research.aegis_research.market_data.identity import instrument_ids
@@ -46,7 +46,7 @@ def load_catalog_source(
     config: DataConfig,
     *,
     port: CatalogBackedDataPort | None = None,
-) -> MarketDataAdapterResult:
+) -> MarketDataLoad:
     # ADR-0006: research fills like live — a catalog miss backfills through the
     # port (unconditional, ungated); a warm read never connects. The concrete
     # provider is wired inside aegis-data's factory, so this module depends only on
@@ -66,7 +66,7 @@ def load_catalog_source(
 
 def _load_from_port(
     data_port: CatalogBackedDataPort, config: DataConfig
-) -> MarketDataAdapterResult:
+) -> MarketDataLoad:
     start = _required_window_edge(config.start, "start")
     end = _required_window_edge(config.end, "end")
     raw_frames = data_port.load_raw_bars(
@@ -124,7 +124,7 @@ def _load_from_port(
     )
     if distribution_coverage:
         provider_metadata["distribution_coverage"] = distribution_coverage
-    return MarketDataAdapterResult(
+    return MarketDataLoad(
         native_data=native_data,
         source_metadata={
             "catalog_path": config.path,

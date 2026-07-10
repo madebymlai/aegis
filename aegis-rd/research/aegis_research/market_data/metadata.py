@@ -8,7 +8,7 @@ from research.aegis_research.market_data.contracts import (
     ArrayDescriptor,
     CoverageFacet,
     DataDiagnostics,
-    MarketDataAdapterResult,
+    MarketDataLoad,
     MarketDataMetadataV3,
     MarketDataQuality,
     ProvenanceFacet,
@@ -23,7 +23,7 @@ __all__ = ["MarketDataObservation", "describe"]
 def describe(
     config: DataConfig,
     *,
-    source: MarketDataAdapterResult,
+    source: MarketDataLoad,
     observation: MarketDataObservation,
     diagnostics: tuple[DataDiagnostics, ...],
     quality: MarketDataQuality,
@@ -93,7 +93,7 @@ def describe(
 
 
 def _source_metadata(
-    source: MarketDataAdapterResult, quality: MarketDataQuality
+    source: MarketDataLoad, quality: MarketDataQuality
 ) -> dict[str, Any]:
     if source.failure is None:
         return source.source_metadata

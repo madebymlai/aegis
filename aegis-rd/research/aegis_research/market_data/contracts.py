@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 from aegis_data.distributions import Distribution
 from aegis_runtime.currency import CurrencyConversion
@@ -10,7 +10,6 @@ from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from research.aegis_research.configuration import DataConfig
 from research.aegis_research.market_data.native_metadata import supports_update
 
 LOGICAL_ARRAYS = {
@@ -26,18 +25,11 @@ CONTINUOUS_ROOT_IDS_KEY = "continuous_root_ids"
 QUALITY_HEALTHY = "healthy"
 QUALITY_DEGRADED_ALLOWED = "degraded_allowed"
 QUALITY_REJECTED = "rejected"
-QUALITY_PROVIDER_FAILED = "provider_failed"
 QUALITY_DATA_UNAVAILABLE = "data_unavailable"
 # Carried in the failed load's index evidence so the judge — which reads only
 # diagnostics and evidence, never the load itself — can put the gate's exact
 # judgement (which intervals cannot be served) into the verdict's reasons.
 UNAVAILABLE_REASON_KEY = "unavailable_reason"
-
-
-class RemoteDataPullError(ValueError):
-    def __init__(self, source: str, message: str) -> None:
-        self.source = source
-        super().__init__(f"Failed to pull {source} data: {message}")
 
 
 class MarketDataUnavailableError(RuntimeError):
@@ -60,10 +52,6 @@ class MarketDataQualityError(ValueError):
 
 class AdjustmentModeEvidenceError(ValueError):
     """A market-data result pairs futures evidence and adjustment mode incoherently."""
-
-
-class MarketDataAdapter(Protocol):
-    def __call__(self, config: DataConfig) -> MarketDataAdapterResult: ...
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -101,10 +89,10 @@ class MarketDataLoad:
     adjustment_mode: ContinuousFutureAdjustmentType | None = None
     # Listed-ETF cash events read from the same Nautilus catalog as bars.
     distributions: tuple[Distribution, ...] = ()
-    # Set only by the failed-load constructors: loaders raise, they never
-    # return a failed load. Carrying the failure as data lets the one
+    # Set only by ``failed_market_data_load``: the loader raises, it never
+    # returns a failed load. Carrying the failure as data lets the one
     # observe → judge → describe sequence handle both outcomes.
-    failure: Exception | None = None
+    failure: MarketDataUnavailableError | None = None
 
     @property
     def provider_class(self) -> str | None:
@@ -117,11 +105,6 @@ class MarketDataLoad:
         return supports_update(self.native_data)
 
 
-# Transitional alias: the retired adapter seam's name for the handoff, kept
-# importable until the seam's deletion (aegis-rd-1gef.5).
-MarketDataAdapterResult = MarketDataLoad
-
-
 def failed_market_data_load(error: MarketDataUnavailableError) -> MarketDataLoad:
     """The degenerate load an unavailable window collapses to: no native data,
     data-unavailable index evidence carrying the gate's judgement, the error as
@@ -132,16 +115,6 @@ def failed_market_data_load(error: MarketDataUnavailableError) -> MarketDataLoad
             "source": QUALITY_DATA_UNAVAILABLE,
             UNAVAILABLE_REASON_KEY: str(error),
         },
-        failure=error,
-    )
-
-
-def provider_failed_adapter_result(error: RemoteDataPullError) -> MarketDataAdapterResult:
-    """The degenerate result a failed pull collapses to: no native data,
-    provider-failed index evidence, the error carried as data."""
-    return MarketDataAdapterResult(
-        native_data=None,
-        evidence={"source": "provider_failed"},
         failure=error,
     )
 

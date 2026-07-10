@@ -4,32 +4,30 @@ import importlib
 
 from research.aegis_research import data as facade
 
-# The frozen public surface of research.aegis_research.data. The market-data
-# decomposition moves concerns between leaf modules but must keep this facade
-# byte-for-byte stable: every name below stays importable, with the same object,
-# so nothing outside market_data/ has to change.
+# The frozen public surface of research.aegis_research.data — the deep
+# interface after the adapter-seam retirement (aegis-rd-1gef.5): the load
+# entry points, the result and its typed parts, the quality-state vocabulary,
+# and the one environmental error. The catalog loader and the internal load
+# handoff are implementation, not interface.
 EXPECTED_PUBLIC_NAMES = (
     "LOGICAL_ARRAYS",
     "OHLCV_ARRAYS",
+    "QUALITY_DATA_UNAVAILABLE",
     "QUALITY_DEGRADED_ALLOWED",
     "QUALITY_HEALTHY",
-    "QUALITY_PROVIDER_FAILED",
     "QUALITY_REJECTED",
     "DataDiagnostics",
     "DataArrayDiagnostics",
-    "MarketDataAdapter",
-    "MarketDataAdapterResult",
     "MarketDataBundle",
     "MarketDataQuality",
     "MarketDataQualityError",
     "MarketDataResult",
-    "RemoteDataPullError",
+    "MarketDataUnavailableError",
     "RunArrayAlignmentError",
     "RunArrays",
     "close_from_ohlcv",
     "array_from_ohlcv",
     "high_from_ohlcv",
-    "load_catalog_source",
     "load_market_data",
     "load_market_data_result",
     "low_from_ohlcv",
