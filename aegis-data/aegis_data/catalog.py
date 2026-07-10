@@ -109,7 +109,9 @@ class DistributionDataProviderPort(Protocol):
 
 
 @dataclass(frozen=True)
-class RawBarRequest:
+class CatalogWindowRequest:
+    """One requested catalog window: which ids, over which edges (ADR-0012)."""
+
     instrument_ids: tuple[InstrumentId, ...]
     start: str
     end: str
@@ -199,7 +201,7 @@ class CatalogBackedDataPort:
     # in without reshaping the port.
     resolver: RawBarTypeResolver = DeclaredMarkingResolver()
 
-    def load_window(self, request: RawBarRequest) -> CatalogWindow:
+    def load_window(self, request: CatalogWindowRequest) -> CatalogWindow:
         """One coherent read of the requested window (ADR-0012).
 
         The internal ordering is contract, not style: the bar coverage-gate /
@@ -210,7 +212,7 @@ class CatalogBackedDataPort:
         and ONE verification pass serves both the returned distributions and
         the coverage report.
         """
-        ohlcv = self.load_raw_bars(request)
+        ohlcv = self._load_raw_bars(request)
         instruments = self._complete_definitions(request.instrument_ids)
         distribution_coverage = self._coverage_service().verify_window(
             request.instrument_ids, start=request.start, end=request.end
@@ -243,7 +245,11 @@ class CatalogBackedDataPort:
             )
         return definitions
 
-    def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
+    def _load_raw_bars(
+        self, request: CatalogWindowRequest
+    ) -> dict[InstrumentId, pd.DataFrame]:
+        # Internal since ADR-0012's contraction: the window read and the
+        # contract-leg OHLCV fetch are the only callers.
         frames: dict[InstrumentId, pd.DataFrame] = {}
         for instrument_id in request.instrument_ids:
             marking = self.resolver.resolve(instrument_id, request.timeframe)
@@ -260,12 +266,12 @@ class CatalogBackedDataPort:
         return frames
 
     def load_quote_frames(
-        self, request: RawBarRequest
+        self, request: CatalogWindowRequest
     ) -> dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]]:
         """The ``(bid, ask)`` OHLCV frames for the quote-marked legs in *request*.
 
         The research fill projection's feed: a quote-marked instrument's two
-        sided series, coverage-gated like ``load_raw_bars``; bar-marked legs
+        sided series, coverage-gated like the window read's bar pass; bar-marked legs
         are simply absent.  Live never reads this — the fill projection is
         derived research-side and never serialized (aegis-rd-tggo.5).
         """
@@ -284,11 +290,11 @@ class CatalogBackedDataPort:
                 frames[instrument_id] = sided
         return frames
 
-    def read_native_bars(self, request: RawBarRequest) -> dict[InstrumentId, list[Bar]]:
+    def read_native_bars(self, request: CatalogWindowRequest) -> dict[InstrumentId, list[Bar]]:
         """The window's stored native ``Bar``\\ s per instrument — a pure warm read.
 
-        The single owner of the catalog ``Bar`` query (``load_raw_bars`` layers the
-        coverage gate + OHLCV projection on top).  Unlike ``load_raw_bars`` it never
+        The single owner of the catalog ``Bar`` query (the window read's bar pass
+        layers the coverage gate + OHLCV projection on top).  Unlike that pass it never
         fills: callers that already warmed the catalog (e.g. the continuous-future leg
         read after the chain fetch) get the fixed-point ``Bar``\\ s back, and a window
         past an instrument's life yields only the bars that exist, not a coverage error.
@@ -302,7 +308,7 @@ class CatalogBackedDataPort:
             for instrument_id in request.instrument_ids
         }
 
-    def _query_bars(self, bar_type: BarType, request: RawBarRequest) -> list[Bar]:
+    def _query_bars(self, bar_type: BarType, request: CatalogWindowRequest) -> list[Bar]:
         return list(
             self.catalog.query(
                 _bar_cls(),
@@ -327,25 +333,6 @@ class CatalogBackedDataPort:
         """
         return catalog_definitions(self.catalog, instrument_ids)
 
-    def distributions(
-        self,
-        instrument_ids: Sequence[InstrumentId],
-        *,
-        start: str | int | pd.Timestamp | None = None,
-        end: str | int | pd.Timestamp | None = None,
-    ) -> tuple[Distribution, ...]:
-        """Read stored cash distributions for instruments through the catalog port.
-
-        The port owns the raw catalog query so consumers and fakes declare distribution
-        behavior on the same interface they use for bars and definitions.
-        """
-        # ADR-0008: distributions cross the verified catalog port; direct catalog
-        # reads are storage primitives, not research/trader data paths.
-        self._coverage_service().ensure_covered(
-            tuple(instrument_ids), start=start, end=end
-        )
-        return query_distribution_data(self.catalog, instrument_ids, start=start, end=end)
-
     def distribution_coverage_report(
         self,
         instrument_ids: Sequence[InstrumentId],
@@ -353,6 +340,13 @@ class CatalogBackedDataPort:
         start: str | int | pd.Timestamp | None = None,
         end: str | int | pd.Timestamp | None = None,
     ) -> tuple[dict[str, Any], ...]:
+        """The coverage diagnostic for ids OUTSIDE a window read (ADR-0012).
+
+        The window read already carries its own report; this pure query serves
+        ids that can never enter a window request — a continuous root has no
+        raw bars, yet its not-applicable rows are real Run evidence.  An
+        unresolvable id still fails loud.
+        """
         return self._coverage_service().coverage_report(
             tuple(instrument_ids), start=start, end=end
         )
@@ -378,10 +372,10 @@ class CatalogBackedDataPort:
     ) -> pd.DataFrame:
         """Fetch one dated contract leg's OHLCV frame through the catalog port."""
         instrument_id = InstrumentId.from_str(symbol)
-        request = RawBarRequest(
+        request = CatalogWindowRequest(
             (instrument_id,), start.isoformat(), end.isoformat(), timeframe
         )
-        return self.load_raw_bars(request)[instrument_id]
+        return self._load_raw_bars(request)[instrument_id]
 
     def probe_contract_volume(
         self,
@@ -421,7 +415,7 @@ class CatalogBackedDataPort:
             resolver=self.resolver,
         )
 
-    def _ensure_covered(self, bar_type: BarType, request: RawBarRequest) -> None:
+    def _ensure_covered(self, bar_type: BarType, request: CatalogWindowRequest) -> None:
         missing = self._missing_intervals(bar_type, request)
         if not missing:
             return
@@ -457,7 +451,7 @@ class CatalogBackedDataPort:
                 self.definition_seeder(bar_type.instrument_id)
 
     def _missing_intervals(
-        self, bar_type: BarType, request: RawBarRequest
+        self, bar_type: BarType, request: CatalogWindowRequest
     ) -> list[tuple[int, int]]:
         return self.catalog.get_missing_intervals_for_request(
             _timestamp_ns(request.start),
@@ -581,7 +575,7 @@ __all__ = [
     "GapFillProviderError",
     "MissingCatalogDefinitionsError",
     "NautilusDataProviderPort",
-    "RawBarRequest",
+    "CatalogWindowRequest",
     "ResolvedContinuousRoot",
     "ServedBars",
     "bars_to_ohlcv",

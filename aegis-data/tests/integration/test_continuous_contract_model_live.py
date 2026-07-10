@@ -13,7 +13,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    RawBarRequest,
+    CatalogWindowRequest,
     parquet_data_catalog,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
@@ -61,8 +61,8 @@ def _warm_catalog(
             catalog, provider, (instrument_id,)
         ),
     )
-    fill_port.load_raw_bars(
-        RawBarRequest(instrument_ids=tuple(legs), start=start, end=end)
+    fill_port.load_window(
+        CatalogWindowRequest(instrument_ids=tuple(legs), start=start, end=end)
     )
     return CatalogBackedDataPort(parquet_data_catalog(path))
 
@@ -71,7 +71,7 @@ def _front_leg_bars(
     warm: CatalogBackedDataPort, leg: InstrumentId, start: str, end: str
 ) -> list[Bar]:
     return warm.read_native_bars(
-        RawBarRequest(instrument_ids=(leg,), start=start, end=end, timeframe="1D")
+        CatalogWindowRequest(instrument_ids=(leg,), start=start, end=end, timeframe="1D")
     )[leg]
 
 

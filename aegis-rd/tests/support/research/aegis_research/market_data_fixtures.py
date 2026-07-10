@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from aegis_data.catalog import CatalogBackedDataPort, raw_bar_type
+from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, raw_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode, RawBarTypeResolver
 from aegis_data.testing import FakeCatalog
 from nautilus_trader.model.data import Bar, BarType
@@ -295,13 +295,21 @@ def _verify_zero_distribution_coverage(
     # too, so RD integration tests stay warm and never query IBKR for fake symbols.
     # The verified read is the ensure (ADR-0010); the clock is pinned to the window
     # start so seeded corpora stay byte-deterministic.
-    events = CatalogBackedDataPort(
+    window = CatalogBackedDataPort(
         catalog,
         distribution_provider=_ZeroDistributionProvider(panels),
         clock_ns=lambda: start.value,
         resolver=resolver if resolver is not None else DeclaredMarkingResolver(),
-    ).distributions((instrument_id,), start=start, end=end)
-    assert not events, f"synthetic corpus grew distributions for {instrument_id.value}"
+    ).load_window(
+        CatalogWindowRequest(
+            (instrument_id,),
+            start=start.isoformat(),
+            end=end.isoformat(),
+        )
+    )
+    assert not window.distributions, (
+        f"synthetic corpus grew distributions for {instrument_id.value}"
+    )
 
 
 class _ZeroDistributionProvider:

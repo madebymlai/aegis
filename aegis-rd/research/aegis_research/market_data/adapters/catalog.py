@@ -9,7 +9,7 @@ from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
     GapFillProviderError,
-    RawBarRequest,
+    CatalogWindowRequest,
     catalog_data_port,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
@@ -90,7 +90,7 @@ def _load_from_port(
     # Data ADR-0012: the whole native window — bars, complete definitions,
     # verified distributions, coverage report — is ONE coherent port read.
     window = data_port.load_window(
-        RawBarRequest(
+        CatalogWindowRequest(
             instrument_ids=instrument_ids(config.native_instrument_ids),
             start=start,
             end=end,

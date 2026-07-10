@@ -31,7 +31,7 @@ from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     NautilusDataProviderPort,
-    RawBarRequest,
+    CatalogWindowRequest,
     parquet_data_catalog,
 )
 
@@ -137,7 +137,7 @@ class CatalogBacktestDataSource:
         end: str,
     ) -> BacktestMarketData:
         data_port = self._data_port()
-        request = RawBarRequest(
+        request = CatalogWindowRequest(
             instrument_ids=instrument_ids,
             start=start,
             end=end,

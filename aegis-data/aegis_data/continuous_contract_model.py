@@ -11,7 +11,7 @@ from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import timeframe_to_ns
-from aegis_data.catalog import CatalogBackedDataPort, RawBarRequest, bars_to_ohlcv
+from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, bars_to_ohlcv
 from aegis_data.chain import fetch_contract_chain
 from aegis_data.continuous_future import ContinuousFuture, continuous_future
 from aegis_data.continuous_materialize import materialize_continuous_bars
@@ -193,7 +193,7 @@ class ContinuousContractModel:
         )
         leg_ids = tuple(InstrumentId.from_str(symbol) for symbol in chain.symbols)
         leg_bars = self._port.read_native_bars(
-            RawBarRequest(leg_ids, self._start, end, self._timeframe)
+            CatalogWindowRequest(leg_ids, self._start, end, self._timeframe)
         )
         leg_instruments = tuple(self._port.instruments(leg_ids).values())
         quote_currency = self._leg_quote_currency(leg_instruments)

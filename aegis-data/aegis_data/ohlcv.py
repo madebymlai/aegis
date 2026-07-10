@@ -1,6 +1,6 @@
 """The Bar→OHLCV frame projection — the single home for the corpus column shape.
 
-Shared by the catalog port's ``load_raw_bars``, the continuous-future composer,
+Shared by the catalog port's window read, the continuous-future composer,
 and the marking value object's frame projection; it sits below all of them so
 none re-derives the column shape.
 """

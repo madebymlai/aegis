@@ -22,7 +22,7 @@ from nautilus_trader.model.instruments import FuturesContract
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    RawBarRequest,
+    CatalogWindowRequest,
     bars_to_ohlcv,
     parquet_data_catalog,
 )
@@ -133,18 +133,21 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     port = CatalogBackedDataPort(
         catalog,
         provider=provider,
+        # The window read verifies distribution coverage too (ADR-0012), so the
+        # fill port carries both provider roles — the production composition.
+        distribution_provider=provider,
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
     )
-    request = RawBarRequest(instrument_ids=(_AAPL,), start="2024-01-02", end="2024-02-01")
+    request = CatalogWindowRequest(instrument_ids=(_AAPL,), start="2024-01-02", end="2024-02-01")
 
-    filled = port.load_raw_bars(request)
+    filled = port.load_window(request).ohlcv
     assert not filled[_AAPL].empty
     assert (filled[_AAPL]["Close"] > 0).all()
 
     # Provider-less read: must serve entirely from the catalog (no IBKR contact).
-    warm = CatalogBackedDataPort(parquet_data_catalog(catalog_path)).load_raw_bars(request)
+    warm = CatalogBackedDataPort(parquet_data_catalog(catalog_path)).load_window(request).ohlcv
     assert warm[_AAPL]["Close"].tolist() == filled[_AAPL]["Close"].tolist()
 
     # AC6: the served instrument's definition was persisted as a Step-1 write.
