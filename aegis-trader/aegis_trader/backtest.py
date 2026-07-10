@@ -26,7 +26,7 @@ from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.risk.config import RiskEngineConfig
 
-from aegis_data.bar_type import raw_bar_type
+from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     NautilusDataProviderPort,
@@ -213,10 +213,14 @@ def run_book_backtest(
         distributions=market_data.distributions,
         starting_cash=starting_cash,
     )
+    # The one raw bar-type resolution seam (aegis-rd-tggo.1), shared by the
+    # wrangler, the equity recorder, and the strategy so they name identical bars.
+    resolver = PreferLastResolver()
     _add_instruments_and_bars(
         engine,
         market_data=market_data,
         timeframe=assembled_book.timeframe,
+        resolver=resolver,
     )
     engine.sort_data()
     _add_equity_recorder(
@@ -224,8 +228,9 @@ def run_book_backtest(
         book=book,
         instrument_ids=assembled_book.loadable_instrument_ids,
         timeframe=assembled_book.timeframe,
+        resolver=resolver,
     )
-    _add_strategy(engine, book=assembled_book)
+    _add_strategy(engine, book=assembled_book, resolver=resolver)
 
     engine.run()
     financing_totals = (
@@ -429,11 +434,12 @@ def _add_instruments_and_bars(
     *,
     market_data: BacktestMarketData,
     timeframe: str,
+    resolver: RawBarTypeResolver,
 ) -> None:
     for instrument_id, instrument in market_data.instruments.items():
         engine.add_instrument(instrument)
         frame = market_data.ohlcv[instrument_id]
-        bars = _wrangle_external_bars(instrument, frame, timeframe)
+        bars = _wrangle_external_bars(instrument, frame, timeframe, resolver)
         engine.add_data(bars, sort=False)
         if isinstance(instrument, CurrencyPair):
             # An FX conversion leg feeds the cache mark xrate the same way live
@@ -472,9 +478,10 @@ def _wrangle_external_bars(
     instrument: Instrument,
     ohlcv: pd.DataFrame,
     timeframe: str,
+    resolver: RawBarTypeResolver,
 ) -> list[Bar]:
     frame = _normalize_ohlcv(ohlcv)
-    return wrangle_bars(instrument, frame, timeframe)
+    return wrangle_bars(instrument, frame, timeframe, resolver=resolver)
 
 
 def _normalize_ohlcv(ohlcv: pd.DataFrame) -> pd.DataFrame:
@@ -494,14 +501,16 @@ def _add_equity_recorder(
     book: BookConfig,
     instrument_ids: tuple[InstrumentId, ...],
     timeframe: str,
+    resolver: RawBarTypeResolver,
 ) -> None:
     engine.add_actor(
         BookEquityRecorder(
             BookEquityRecorderConfig(
                 base_currency=book.base_currency,
                 bar_types=tuple(
-                    str(raw_bar_type(instrument_id, timeframe))
+                    str(bar_type)
                     for instrument_id in instrument_ids
+                    for bar_type in resolver.resolve(instrument_id, timeframe).mark_bars
                 ),
             )
         )
@@ -512,13 +521,15 @@ def _add_strategy(
     engine: BacktestEngine,
     *,
     book: AssembledBook,
+    resolver: RawBarTypeResolver,
 ) -> None:
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
             book=book.config,
             fill_time_in_force=None,
             warmup_cache_on_start=False,
-        )
+        ),
+        bar_type_resolver=resolver,
     )
     strategy.register_book(book)
     engine.add_strategy(strategy)

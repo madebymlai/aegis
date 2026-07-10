@@ -33,7 +33,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, assert_never
 
-from nautilus_trader.model.data import Bar, QuoteTick
+from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.events import OrderDenied
@@ -43,8 +43,9 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
-from aegis_data.bar_type import raw_bar_type, timeframe_to_ns
+from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, catalog_root, parquet_data_catalog
+from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
 
 from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data import (
@@ -121,8 +122,16 @@ class RebalanceStrategy(Strategy):
       whose venue was open (had a Cache bar) during the completed period.
     """
 
-    def __init__(self, config: RebalanceStrategyConfig) -> None:
+    def __init__(
+        self,
+        config: RebalanceStrategyConfig,
+        *,
+        bar_type_resolver: RawBarTypeResolver = PreferLastResolver(),
+    ) -> None:
         super().__init__(config)
+        # The one raw bar-type resolution seam (aegis-rd-tggo.1): every
+        # subscribe/unsubscribe/request and cache read resolves through it.
+        self._bar_type_resolver = bar_type_resolver
         self._assembled_book: AssembledBook | None = None
         # ── bar-driven cadence state ─────────────────────────────────────
         self._current_period: int | None = None
@@ -239,7 +248,11 @@ class RebalanceStrategy(Strategy):
         )
         roll_desk = self._build_roll_desk()
         self._roll_desk = roll_desk
-        self._market_data = NautilusMarketData(cache=self.cache, continuous=roll_desk)
+        self._market_data = NautilusMarketData(
+            cache=self.cache,
+            continuous=roll_desk,
+            resolver=self._bar_type_resolver,
+        )
 
         boot = bootstrap(
             now=self.clock.utc_now(),
@@ -338,21 +351,24 @@ class RebalanceStrategy(Strategy):
 
     def _apply_roll_intent(self, intent: RollIntent) -> bool:
         if isinstance(intent, SubscribeBars):
-            self.subscribe_bars(raw_bar_type(intent.instrument_id, intent.timeframe))
+            for bar_type in self._mark_bars(intent.instrument_id, intent.timeframe):
+                self.subscribe_bars(bar_type)
             return False
         if isinstance(intent, UnsubscribeBars):
-            self.unsubscribe_bars(raw_bar_type(intent.instrument_id, intent.timeframe))
+            for bar_type in self._mark_bars(intent.instrument_id, intent.timeframe):
+                self.unsubscribe_bars(bar_type)
             return False
         if isinstance(intent, RequestInstrument):
             self.request_instrument(intent.instrument_id)
             return False
         if isinstance(intent, RequestBars):
-            self.request_bars(
-                raw_bar_type(intent.instrument_id, intent.timeframe),
-                start=intent.start,
-                end=intent.end,
-                update_catalog=intent.update_catalog,
-            )
+            for bar_type in self._mark_bars(intent.instrument_id, intent.timeframe):
+                self.request_bars(
+                    bar_type,
+                    start=intent.start,
+                    end=intent.end,
+                    update_catalog=intent.update_catalog,
+                )
             return False
         if isinstance(intent, RollEvent):
             self._require_pipeline().apply_roll(intent)
@@ -361,6 +377,9 @@ class RebalanceStrategy(Strategy):
             self._halt_from_roll_intent(intent)
             return True
         assert_never(intent)
+
+    def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
+        return self._bar_type_resolver.resolve(instrument_id, timeframe).mark_bars
 
     def _halt_from_roll_intent(self, intent: Halt) -> None:
         startup_result = StartupResult(

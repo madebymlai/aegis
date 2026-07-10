@@ -21,7 +21,7 @@ from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Currency, Quantity
-from aegis_data.bar_type import raw_bar_type
+from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
 from aegis_trader.domain.sizing import InstrumentSizing
 
 
@@ -119,10 +119,15 @@ class NautilusMarketData:
     """
 
     def __init__(
-        self, *, cache: CacheFacade, continuous: ContinuousReadPort | None = None
+        self,
+        *,
+        cache: CacheFacade,
+        continuous: ContinuousReadPort | None = None,
+        resolver: RawBarTypeResolver = PreferLastResolver(),
     ) -> None:
         self._cache = cache
         self._continuous = continuous
+        self._resolver = resolver
 
     def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing | None:
         instrument = self._cache.instrument(self.execution_instrument_id(instrument_id))
@@ -200,7 +205,8 @@ class NautilusMarketData:
         if series is not None:
             return _frame_to_market_bars(series)
         # Cache.bars returns newest-first; bundles need chronological arrays.
-        cache_bars = self._cache.bars(raw_bar_type(instrument_id, timeframe))
+        marking = self._resolver.resolve(instrument_id, timeframe)
+        cache_bars = self._cache.bars(marking.mark_bars[0])
         return [_to_market_bar(bar) for bar in reversed(cache_bars)]
 
     def _continuous_series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:

@@ -14,6 +14,7 @@ from platformdirs import user_data_dir
 
 from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
 from aegis_data.distributions import Distribution, query_distribution_data
+from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
 from aegis_data.roll import DatedContract
 
 if TYPE_CHECKING:
@@ -165,10 +166,15 @@ class CatalogBackedDataPort:
     # dependency, so deterministic callers cross this seam instead of building
     # the coverage service themselves.
     clock_ns: Callable[[], int] = _now_ns
+    # The one raw bar-type resolution seam (aegis-rd-tggo.1): every mark/fill
+    # read resolves its bar identity here, so a different marking policy plugs
+    # in without reshaping the port.
+    resolver: RawBarTypeResolver = PreferLastResolver()
 
     def load_raw_bars(self, request: RawBarRequest) -> dict[InstrumentId, pd.DataFrame]:
         for instrument_id in request.instrument_ids:
-            self._ensure_covered(raw_bar_type(instrument_id, request.timeframe), request)
+            for bar_type in self._mark_bars(instrument_id, request.timeframe):
+                self._ensure_covered(bar_type, request)
         return {
             instrument_id: bars_to_ohlcv(bars)
             for instrument_id, bars in self.read_native_bars(request).items()
@@ -187,13 +193,19 @@ class CatalogBackedDataPort:
             instrument_id: list(
                 self.catalog.query(
                     _bar_cls(),
-                    identifiers=[str(raw_bar_type(instrument_id, request.timeframe))],
+                    identifiers=[
+                        str(bar_type)
+                        for bar_type in self._mark_bars(instrument_id, request.timeframe)
+                    ],
                     start=request.start,
                     end=request.end,
                 )
             )
             for instrument_id in request.instrument_ids
         }
+
+    def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
+        return self.resolver.resolve(instrument_id, timeframe).mark_bars
 
     def instruments(
         self, instrument_ids: Sequence[InstrumentId]
@@ -295,7 +307,10 @@ class CatalogBackedDataPort:
         from aegis_data._distribution_coverage import DistributionCoverageService
 
         return DistributionCoverageService(
-            self.catalog, self.distribution_provider, clock_ns=self.clock_ns
+            self.catalog,
+            self.distribution_provider,
+            clock_ns=self.clock_ns,
+            resolver=self.resolver,
         )
 
     def _ensure_covered(self, bar_type: BarType, request: RawBarRequest) -> None:

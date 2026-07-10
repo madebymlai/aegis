@@ -15,17 +15,26 @@ from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.wranglers import BarDataWrangler
 
-from aegis_data.bar_type import raw_bar_type
+from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
 
 _FX_PRICE_PRECISION = 5
 _FX_SIZE = 1_000_000
 
 
-def wrangle_bars(instrument: Instrument, ohlcv: pd.DataFrame, timeframe: str) -> list[Bar]:
-    """Wrangle an OHLCV frame into the instrument's ``Bar`` list at *timeframe*
-    (the contract timeframe; the EXTERNAL bar type — LAST, or MID for cash FX — is
-    derived from it)."""
-    wrangler = BarDataWrangler(raw_bar_type(instrument.id, timeframe), instrument)
+def wrangle_bars(
+    instrument: Instrument,
+    ohlcv: pd.DataFrame,
+    timeframe: str,
+    *,
+    resolver: RawBarTypeResolver = PreferLastResolver(),
+) -> list[Bar]:
+    """Wrangle an OHLCV frame into the instrument's ``Bar`` list at *timeframe*.
+
+    The bar identity comes from the injected marking *resolver* (the one raw
+    bar-type resolution seam) — a bar-marked instrument wrangles onto its single
+    mark bar (LAST, or MID for cash FX)."""
+    marking = resolver.resolve(instrument.id, timeframe)
+    wrangler = BarDataWrangler(marking.mark_bars[0], instrument)
     return wrangler.process(ohlcv)
 
 

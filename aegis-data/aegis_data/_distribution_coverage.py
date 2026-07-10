@@ -16,7 +16,7 @@ from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import FuturesContract
 
-from aegis_data.bar_type import raw_bar_type
+from aegis_data.marking import PreferLastResolver, RawBarTypeResolver
 from aegis_data.catalog import (
     CatalogCoverageGapError,
     DistributionDataProviderPort,
@@ -53,6 +53,7 @@ class DistributionCoverageService:
     catalog: Any
     provider: DistributionDataProviderPort | None = None
     clock_ns: Callable[[], int] = field(kw_only=True)
+    resolver: RawBarTypeResolver = field(kw_only=True, default=PreferLastResolver())
 
     def ensure_covered(
         self,
@@ -316,7 +317,10 @@ class DistributionCoverageService:
         return list(
             self.catalog.query(
                 Bar,
-                identifiers=[str(raw_bar_type(instrument_id, "1D"))],
+                identifiers=[
+                    str(bar_type)
+                    for bar_type in self.resolver.resolve(instrument_id, "1D").mark_bars
+                ],
                 start=start_ns,
                 end=end_ns,
             )
