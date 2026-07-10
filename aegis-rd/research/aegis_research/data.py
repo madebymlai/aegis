@@ -34,6 +34,11 @@ from research.aegis_research.market_data.loading import (
     load_market_data_result,
 )
 from research.aegis_research.market_data.panels import market_data_bundle
+from research.aegis_research.market_data.run_arrays import (
+    RunArrayAlignmentError,
+    RunArrays,
+    prepare_run_arrays,
+)
 
 __all__ = [
     "LOGICAL_ARRAYS",
@@ -51,6 +56,8 @@ __all__ = [
     "MarketDataQualityError",
     "MarketDataResult",
     "RemoteDataPullError",
+    "RunArrayAlignmentError",
+    "RunArrays",
     "array_from_ohlcv",
     "close_from_ohlcv",
     "high_from_ohlcv",
@@ -60,6 +67,7 @@ __all__ = [
     "low_from_ohlcv",
     "market_data_bundle",
     "pd",
+    "prepare_run_arrays",
     "required_experiment_ohlcv_arrays",
     "required_ohlcv_arrays",
     "vbt",

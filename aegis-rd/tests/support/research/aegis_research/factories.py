@@ -16,6 +16,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_runtime import MarketDataBundle
 
 from research.aegis_research.component_registry.contracts import (
     ComponentDefinition,
@@ -43,6 +44,7 @@ from research.aegis_research.configuration import (
     RunSplitConfig,
     SignalConfig,
 )
+from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.optimization.candidate_grid import (
     SPLIT_LEVEL,
     CandidateGrid,
@@ -367,6 +369,26 @@ def _component_source_identity(component_id: str) -> ComponentSourceIdentity:
         repo_relative_path=f"tests/fixtures/{component_id}.py",
         source_hash="0" * 64,
     )
+
+
+def make_run_arrays(**overrides: Any) -> RunArrays:
+    """Return a RunArrays with valid defaults, overridden by any kwargs.
+
+    Defaults are a coherent single-series shape: the P&L frames are the signal
+    Close/Open objects themselves, mirroring what ``prepare_run_arrays``
+    produces when no P&L series is declared.
+    """
+    close = overrides.pop("close", pd.DataFrame({0: [1.0, 2.0]}))
+    open_ = overrides.pop("open_", pd.DataFrame({0: [1.0, 2.0]}))
+    defaults: dict[str, Any] = {
+        "signal": MarketDataBundle({"Close": close, "Open": open_}),
+        "pnl_close": close,
+        "pnl_open": open_,
+        "currency_conversion": None,
+        "distributions": (),
+    }
+    defaults.update(overrides)
+    return RunArrays(**defaults)
 
 
 def make_setup_result(**overrides: Any) -> SetupResult:
