@@ -22,6 +22,7 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
+    MissingCatalogDefinitionsError,
     ServedBars,
     raw_bar_type,
 )
@@ -717,19 +718,56 @@ def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
 
 
 def test_run_book_backtest_fails_on_missing_catalog_instrument(tmp_path) -> None:
+    # Bars are covered but the definition is not stored: the window read's
+    # completeness guarantee fails with the port's authoring error (Data
+    # ADR-0012) — never the environmental coverage-gap error.
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
-    catalog_path.mkdir()
+    _seed_catalog_bars_only(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
-    with pytest.raises(CatalogInstrumentError, match="VUSA.XLON"):
+    with pytest.raises(MissingCatalogDefinitionsError, match="VUSA.XLON"):
         run_book_backtest(
             book_path,
             start="2020-01-01",
             end="2020-01-05",
             catalog_path=catalog_path,
             registry=registry,
+        )
+
+
+class _EmptyDataSource:
+    def load(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> BacktestMarketData:
+        return BacktestMarketData(instruments={}, ohlcv={})
+
+
+def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
+    tmp_path,
+) -> None:
+    # Sleeve-contract validation is Trader's own book-assembly concern, distinct
+    # from catalog completeness: a declared id the loaded market data does not
+    # carry still fails with Trader's own error before the engine starts.
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+
+    with pytest.raises(
+        CatalogInstrumentError, match="did not return instrument definition"
+    ):
+        run_book_backtest(
+            book_path,
+            start="2020-01-01",
+            end="2020-01-05",
+            registry=registry,
+            data_source=_EmptyDataSource(),
         )
 
 
@@ -755,9 +793,16 @@ def _seed_catalog(
     instrument_id: InstrumentId,
     closes: list[float],
 ) -> None:
+    ParquetDataCatalog(catalog_path).write_data([_equity(instrument_id)])
+    _seed_catalog_bars_only(catalog_path, instrument_id, closes)
+
+
+def _seed_catalog_bars_only(
+    catalog_path,
+    instrument_id: InstrumentId,
+    closes: list[float],
+) -> None:
     catalog = ParquetDataCatalog(catalog_path)
-    instrument = _equity(instrument_id)
-    catalog.write_data([instrument])
     bars = [
         _bar(raw_bar_type(instrument_id, "1D"), day, close)
         for day, close in zip(pd.date_range("2020-01-01", periods=len(closes), freq="D"), closes, strict=True)

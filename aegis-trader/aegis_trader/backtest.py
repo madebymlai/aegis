@@ -62,7 +62,11 @@ DEFAULT_BACKTEST_BAR_CAPACITY = 10_000
 
 
 class CatalogInstrumentError(ValueError):
-    """Raised when the catalog does not hold a requested instrument definition."""
+    """A sleeve's contract declared an id the loaded market data does not carry.
+
+    Trader's own book-assembly concern, distinct from catalog completeness —
+    a definition the catalog does not hold fails inside the port's window read
+    with its authoring error (Data ADR-0012)."""
 
 
 class ContractDataError(ValueError):
@@ -133,34 +137,22 @@ class CatalogBacktestDataSource:
         end: str,
     ) -> BacktestMarketData:
         data_port = self._data_port()
-        instruments = _catalog_instruments(data_port, instrument_ids)
         request = RawBarRequest(
             instrument_ids=instrument_ids,
             start=start,
             end=end,
             timeframe=timeframe,
         )
-        frames = data_port.load_raw_bars(request)
-        quote_frames = data_port.load_quote_frames(request)
-        # ADR-0008: Trader backtests consume distributions through the same verified
-        # catalog-port seam as RD, never by querying distribution storage directly.
-        # A cash FX pair pays no distributions — the verified store carries no
-        # coverage record for conversion legs, so they are excluded from the request.
-        distribution_ids = tuple(
-            instrument_id
-            for instrument_id in instrument_ids
-            if not isinstance(instruments[instrument_id], CurrencyPair)
-        )
-        distributions = data_port.distributions(
-            distribution_ids,
-            start=start,
-            end=end,
-        )
+        # Data ADR-0012: the whole window — bars, complete definitions, verified
+        # distributions — is ONE coherent port read.  Definition completeness and
+        # distribution applicability (a cash FX pair pays no distributions) are
+        # the port's guarantees now, not caller-side triage or filtering.
+        window = data_port.load_window(request)
         return BacktestMarketData(
-            instruments=instruments,
-            ohlcv=frames,
-            distributions=distributions,
-            quote_frames=quote_frames,
+            instruments=window.instruments,
+            ohlcv=window.ohlcv,
+            distributions=window.distributions,
+            quote_frames=data_port.load_quote_frames(request),
         )
 
     def _data_port(self) -> CatalogBackedDataPort:
@@ -321,25 +313,6 @@ def build_backtest_engine_config(
     )
 
 
-def _catalog_instruments(
-    data_port: CatalogBackedDataPort,
-    instrument_ids: tuple[InstrumentId, ...],
-) -> dict[InstrumentId, Instrument]:
-    # The port keys definitions back to the caller's authored ids.
-    loaded = data_port.instruments(instrument_ids)
-    missing = [
-        instrument_id.value
-        for instrument_id in instrument_ids
-        if instrument_id not in loaded
-    ]
-    if missing:
-        raise CatalogInstrumentError(
-            "catalog is missing instrument definitions for native "
-            f"InstrumentIds: {missing}"
-        )
-    return {instrument_id: loaded[instrument_id] for instrument_id in instrument_ids}
-
-
 def _validate_market_data(book: AssembledBook, market_data: BacktestMarketData) -> None:
     for sleeve_name, bundle in book.sleeves.items():
         contract = bundle.contract
@@ -482,8 +455,9 @@ def _add_instruments_and_bars(
         if sided is not None:
             # Quote-marked (aegis-rd-tggo.5): BID + ASK EXTERNAL bars are the
             # single source — the venue pairs them into L1 quotes (fills at the
-            # real touch), the strategy derives its mid from the same bars, and
-            # the Portfolio marks at the fed mid.  No LAST/MID bar exists.
+            # real touch), and the strategy both signals on and publishes the
+            # derived mid mark from the same bars (the one publisher, research
+            # and live alike — aegis-rd-tggo.3).  No LAST/MID bar exists.
             bid_frame, ask_frame = sided
             engine.add_data(
                 _wrangle_quote_external_bars(
@@ -491,7 +465,6 @@ def _add_instruments_and_bars(
                 ),
                 sort=False,
             )
-            engine.add_data(_mark_price_updates(instrument, frame), sort=False)
             continue
         bars = _wrangle_external_bars(instrument, frame, timeframe, resolver)
         engine.add_data(bars, sort=False)
