@@ -1,0 +1,306 @@
+"""Pipeline-seam harness for rebalance behavior tests.
+
+Stages weight-space scenarios through ``RebalancePipeline.rebalance_period``
+and reads them back in production observables (orders, halt reason, gate
+outcome, summary, applied sleeve weights).
+
+Identity-sizing convention: every bar closes at 1.0 and NAV is 1,000,000, so a
+weight delta ``w`` sizes to a quantity of ``round(w * 1_000_000)`` — weights
+read back exactly as micro-NAV order quantities.
+
+Band ownership note: book assembly requires each instrument's drift band to be
+declared by exactly one sleeve, and a bundle's plan must band exactly its
+contract's instruments — sleeves therefore never share an instrument.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+
+import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
+
+from aegis_runtime import (
+    BundleManifest,
+    ComponentSpec,
+    DataContract,
+    DriftBand,
+    ExecutionBundle,
+    LockedExecutionPlan,
+    MarketDataBundle,
+    MissingIndexPolicy,
+)
+from aegis_runtime.currency import CurrencyConversion
+
+from aegis_trader.data.market_data import MarketBar
+from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.sizing import InstrumentSizing
+from aegis_trader.domain.sleeve_ledger import (
+    MIN_SLEEVE_VOL_RETURNS,
+    SleeveLedger,
+)
+from aegis_trader.domain.types import OrderSide, SleeveName
+from aegis_trader.trader.pipeline import (
+    CompletedRebalancePeriod,
+    RebalancePipeline,
+    RebalanceResult,
+)
+from tests.support.factories import assemble_test_book
+
+NAV = 1_000_000.0
+_DAY_NS = 86_400_000_000_000
+
+
+def iid(symbol: str) -> InstrumentId:
+    return InstrumentId.from_str(f"{symbol}.TEST")
+
+
+@dataclass(frozen=True)
+class SleeveSpec:
+    """One sleeve of a staged book: its targets and the bands it owns.
+
+    ``targets`` maps symbol -> latest target weight; ``rows`` optionally stages
+    earlier target rows before it.  ``bands`` defaults to a zero-width band per
+    owned symbol (trade straight to target).
+    """
+
+    name: str
+    risk_share: float
+    targets: Mapping[str, float]
+    rows: Sequence[Mapping[str, float]] = ()
+    bands: Mapping[str, DriftBand] | None = None
+    weight_band: float = 0.0
+
+    @property
+    def sleeve_name(self) -> SleeveName:
+        return SleeveName(self.name)
+
+    @property
+    def wheel_filename(self) -> str:
+        return f"{self.name}.whl"
+
+
+class WeightSleeveBundle(ExecutionBundle):
+    """A sleeve bundle that emits the spec's target weights verbatim."""
+
+    def __init__(self, spec: SleeveSpec) -> None:
+        symbols = tuple(spec.targets)
+        instrument_ids = tuple(iid(symbol) for symbol in symbols)
+        bands = {
+            iid(symbol): (
+                spec.bands[symbol]
+                if spec.bands is not None and symbol in spec.bands
+                else DriftBand.symmetric(0.0)
+            )
+            for symbol in symbols
+        }
+        self._rows = (*spec.rows, spec.targets)
+        contract = DataContract(
+            instrument_ids=instrument_ids,
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+        )
+        manifest = BundleManifest(
+            run_id="rebalance-harness",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=instrument_ids,
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="staged-weights",
+                module="tests.staged_weights",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands=bands,
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
+        rows = self._rows[-len(close.index):]
+        padded = (*(rows[0],) * (len(close.index) - len(rows)), *rows)
+        target = pd.DataFrame(
+            [
+                {iid(symbol): weight for symbol, weight in row.items()}
+                for row in padded
+            ],
+            index=close.index,
+        )
+        target.columns.name = "instrument_id"
+        return target
+
+
+class _BookState:
+    def __init__(self, realized_weights: dict[InstrumentId, float]) -> None:
+        self._realized_weights = realized_weights
+
+    def nav(self) -> float:
+        return NAV
+
+    def cash(self) -> float:
+        return NAV
+
+    def is_cache_healthy(self) -> bool:
+        return True
+
+    def realized_weights(self) -> dict[InstrumentId, float]:
+        return dict(self._realized_weights)
+
+
+class _UnitPriceMarketData:
+    """Every staged instrument: two fresh daily bars closing at 1.0, EUR-quoted."""
+
+    def __init__(self, instrument_ids: frozenset[InstrumentId]) -> None:
+        self._instrument_ids = instrument_ids
+        self._bars = (
+            MarketBar(0, 1.0, 1.0, 1.0, 1.0, 1_000.0),
+            MarketBar(_DAY_NS, 1.0, 1.0, 1.0, 1.0, 1_000.0),
+        )
+
+    def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing:
+        return InstrumentSizing(currency="EUR", size_increment=1.0)
+
+    def make_quantity(self, _instrument_id: InstrumentId, raw_shares: float) -> float:
+        return raw_shares
+
+    def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
+        return instrument_id
+
+    def currency_pair(self, instrument_id: InstrumentId) -> tuple[str, str] | None:
+        return None
+
+    def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
+        return 1.0
+
+    def lookback_window(
+        self,
+        instrument_id: InstrumentId,
+        _timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+        limit: int,
+    ) -> tuple[MarketBar, ...]:
+        _ = (period, period_ns)
+        if instrument_id not in self._instrument_ids:
+            return ()
+        return self._bars[-limit:]
+
+    def has_bar_in_period(
+        self,
+        instrument_id: InstrumentId,
+        _timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+    ) -> bool:
+        _ = (period, period_ns)
+        return instrument_id in self._instrument_ids
+
+
+class SequencedCovarianceLedger(SleeveLedger):
+    """A ledger whose covariance answer is staged per rebalance period."""
+
+    def __init__(
+        self,
+        covariances: Sequence[dict[SleeveName, dict[SleeveName, float]] | None],
+    ) -> None:
+        super().__init__()
+        self._covariances = list(covariances)
+
+    def realized_covariance(
+        self,
+        names: Sequence[SleeveName],
+        *,
+        min_returns: int = MIN_SLEEVE_VOL_RETURNS,
+    ) -> dict[SleeveName, dict[SleeveName, float]] | None:
+        return self._covariances.pop(0)
+
+
+class DrawdownLedger(SleeveLedger):
+    """A ledger reporting a staged current drawdown."""
+
+    def __init__(self, drawdown: float) -> None:
+        super().__init__()
+        self._drawdown = drawdown
+
+    def current_drawdown(self, current_nav: float) -> float:
+        return self._drawdown
+
+
+@dataclass
+class RebalanceHarness:
+    """One staged book behind its pipeline; each ``run`` is one completed period."""
+
+    pipeline: RebalancePipeline
+    _period: int = field(default=0, init=False)
+
+    def run(self) -> RebalanceResult:
+        self._period += 1
+        return self.pipeline.rebalance_period(
+            CompletedRebalancePeriod(period=self._period, period_ns=self._period * _DAY_NS)
+        )
+
+
+def build_harness(
+    sleeves: Sequence[SleeveSpec],
+    *,
+    realized: Mapping[str, float] | None = None,
+    ledger: SleeveLedger | None = None,
+    **book_kwargs: object,
+) -> RebalanceHarness:
+    """Assemble a staged book through its real assembly path."""
+    book = BookConfig(
+        sleeves=tuple(
+            SleeveConfig(
+                name=spec.sleeve_name,
+                wheel_filename=spec.wheel_filename,
+                risk_share=spec.risk_share,
+                weight_band_down=spec.weight_band,
+                weight_band_up=spec.weight_band,
+            )
+            for spec in sleeves
+        ),
+        base_currency="EUR",
+        **book_kwargs,  # type: ignore[arg-type]
+    )
+    bundles = {spec.wheel_filename: WeightSleeveBundle(spec) for spec in sleeves}
+    staged_ids = frozenset(
+        iid(symbol) for spec in sleeves for symbol in spec.targets
+    ) | frozenset(iid(symbol) for symbol in (realized or {}))
+    pipeline = RebalancePipeline(
+        book_state=_BookState({iid(symbol): weight for symbol, weight in (realized or {}).items()}),
+        market_data=_UnitPriceMarketData(staged_ids),
+        book=assemble_test_book(book, bundles),
+        ledger=ledger if ledger is not None else SleeveLedger(),
+    )
+    return RebalanceHarness(pipeline)
+
+
+def signed_order_weights(result: RebalanceResult) -> dict[str, float]:
+    """Each order read back as a signed weight of NAV, keyed by symbol."""
+    return {
+        order.instrument_id.symbol.value: (
+            order.quantity if order.side is OrderSide.BUY else -order.quantity
+        )
+        / NAV
+        for order in result.orders
+    }
