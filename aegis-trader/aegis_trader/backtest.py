@@ -10,7 +10,7 @@ Nautilus ``InstrumentId`` values, raw bars come from the Nautilus
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -23,7 +23,8 @@ from nautilus_trader.model.data import Bar, CustomData, DataType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.instruments import CurrencyPair, Instrument
-from nautilus_trader.model.objects import Currency, Money
+from nautilus_trader.model.objects import Currency, Money, Price
+from nautilus_trader.portfolio.config import PortfolioConfig
 from nautilus_trader.risk.config import RiskEngineConfig
 
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
@@ -38,7 +39,7 @@ from aegis_trader.bundles.book import AssembledBook, assemble_book
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
-from aegis_trader.data import wrangle_bars, wrangle_fx_quotes
+from aegis_trader.data import wrangle_bars, wrangle_fx_quotes, wrangle_quote_bars
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.portfolio.performance import (
@@ -75,11 +76,20 @@ class ContractDataError(ValueError):
 
 @dataclass(frozen=True)
 class BacktestMarketData:
-    """Catalog material the runner feeds into Nautilus' ``BacktestEngine``."""
+    """Catalog material the runner feeds into Nautilus' ``BacktestEngine``.
+
+    ``ohlcv`` is each instrument's mark series (a quote-marked leg's derived
+    mid).  ``quote_frames`` carries the ``(bid, ask)`` sided frames for
+    quote-marked legs only — the research fill projection's feed, derived here
+    and never serialized (aegis-rd-tggo.5).
+    """
 
     instruments: Mapping[InstrumentId, Instrument]
     ohlcv: Mapping[InstrumentId, pd.DataFrame]
     distributions: tuple[Distribution, ...] = ()
+    quote_frames: Mapping[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True)
@@ -112,6 +122,7 @@ class CatalogBacktestDataSource:
     catalog_path: Path | None = None
     provider: NautilusDataProviderPort | None = None
     port: CatalogBackedDataPort | None = None
+    resolver: RawBarTypeResolver = DeclaredMarkingResolver()
 
     def load(
         self,
@@ -123,14 +134,14 @@ class CatalogBacktestDataSource:
     ) -> BacktestMarketData:
         data_port = self._data_port()
         instruments = _catalog_instruments(data_port, instrument_ids)
-        frames = data_port.load_raw_bars(
-            RawBarRequest(
-                instrument_ids=instrument_ids,
-                start=start,
-                end=end,
-                timeframe=timeframe,
-            )
+        request = RawBarRequest(
+            instrument_ids=instrument_ids,
+            start=start,
+            end=end,
+            timeframe=timeframe,
         )
+        frames = data_port.load_raw_bars(request)
+        quote_frames = data_port.load_quote_frames(request)
         # ADR-0008: Trader backtests consume distributions through the same verified
         # catalog-port seam as RD, never by querying distribution storage directly.
         # A cash FX pair pays no distributions — the verified store carries no
@@ -149,6 +160,7 @@ class CatalogBacktestDataSource:
             instruments=instruments,
             ohlcv=frames,
             distributions=distributions,
+            quote_frames=quote_frames,
         )
 
     def _data_port(self) -> CatalogBackedDataPort:
@@ -159,6 +171,7 @@ class CatalogBacktestDataSource:
             catalog,
             provider=self.provider,
             distribution_provider=_distribution_provider(self.provider),
+            resolver=self.resolver,
         )
 
 
@@ -173,6 +186,7 @@ def run_book_backtest(
     provider: NautilusDataProviderPort | None = None,
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
+    bar_type_resolver: RawBarTypeResolver | None = None,
 ) -> BookBacktestResult:
     """Build and run a commingled-book backtest from the Nautilus catalog.
 
@@ -185,9 +199,15 @@ def run_book_backtest(
     book = load_book_config(book_path)
     registry = registry if registry is not None else EntryPointBundleRegistry()
     assembled_book = assemble_book(book, registry)
+    # The one raw bar-type resolution seam (aegis-rd-tggo.1), shared by the data
+    # source, the wrangler, the equity recorder, and the strategy so they name
+    # identical bars.  The sim/fill projection below is DERIVED from the resolved
+    # markings, research-side only, and never serialized (aegis-rd-tggo.5).
+    resolver = bar_type_resolver if bar_type_resolver is not None else DeclaredMarkingResolver()
     source = data_source or CatalogBacktestDataSource(
         catalog_path=catalog_path,
         provider=provider,
+        resolver=resolver,
     )
     market_data = source.load(
         assembled_book.loadable_instrument_ids,
@@ -204,6 +224,9 @@ def run_book_backtest(
                 DEFAULT_BACKTEST_BAR_CAPACITY,
                 assembled_book.required_bar_window,
             ),
+            # Quote-marked legs mark P&L at the quote mid via MarkPriceUpdate;
+            # bar-marked legs fall back to their bar close.
+            use_mark_prices=bool(market_data.quote_frames),
         )
     )
     financing_module = _add_venues(
@@ -212,10 +235,8 @@ def run_book_backtest(
         instruments=tuple(market_data.instruments.values()),
         distributions=market_data.distributions,
         starting_cash=starting_cash,
+        quote_marked_ids=frozenset(market_data.quote_frames),
     )
-    # The one raw bar-type resolution seam (aegis-rd-tggo.1), shared by the
-    # wrangler, the equity recorder, and the strategy so they name identical bars.
-    resolver = DeclaredMarkingResolver()
     _add_instruments_and_bars(
         engine,
         market_data=market_data,
@@ -277,6 +298,7 @@ def build_backtest_engine_config(
     trader_id: str = "BACKTEST-001",
     risk_guard_config: RiskGuardConfig | None = None,
     bar_capacity: int = DEFAULT_BACKTEST_BAR_CAPACITY,
+    use_mark_prices: bool = False,
 ) -> BacktestEngineConfig:
     """Build the backtest engine config.
 
@@ -285,11 +307,16 @@ def build_backtest_engine_config(
     The runner adds venues, instruments, data, and the strategy to the resulting
     ``BacktestEngine`` and pairs it with a plain ``MARKET`` (``fill_time_in_force``
     ``None``), which fills at the execution bar's close.
+
+    ``use_mark_prices`` is set when the book carries quote-marked legs: the
+    Portfolio then values positions at the fed ``MarkPriceUpdate`` (the quote
+    mid) while fills stay at the venue book's touch (aegis-rd-tggo.5).
     """
     return BacktestEngineConfig(
         trader_id=trader_id,
         cache=CacheConfig(bar_capacity=bar_capacity),
         risk_engine=build_risk_engine_config(risk_guard_config),
+        portfolio=PortfolioConfig(use_mark_prices=use_mark_prices),
         logging=LoggingConfig(),
     )
 
@@ -384,6 +411,7 @@ def _add_venues(
     instruments: Sequence[Instrument],
     distributions: Sequence[Distribution],
     starting_cash: float,
+    quote_marked_ids: frozenset[InstrumentId] = frozenset(),
 ) -> FinancingModule | None:
     config = book.config
     account_currencies = _account_currencies(config, instruments)
@@ -403,8 +431,19 @@ def _add_venues(
         starting_cash,
     )
     financing_module = build_financing_module(config.costs)
+    # A venue hosting a quote-marked leg fills from the real bid/ask book; its
+    # crossing cost IS the observed spread, so the book-global one-tick
+    # prob_slippage retires there (aegis-rd-tggo.5).
+    quote_marked_venues = {
+        instrument.id.venue
+        for instrument in instruments
+        if instrument.id in quote_marked_ids
+    }
     for index, native_venue in enumerate(native_venues):
         cost_models = build_simulated_cost_models(config)
+        fill_model = (
+            None if native_venue in quote_marked_venues else cost_models.fill_model
+        )
         modules = [
             *([financing_module] if index == 0 and financing_module is not None else []),
             *build_dividend_modules(distributions),
@@ -420,7 +459,7 @@ def _add_venues(
             if index == 0
             else _zero_balances(balance_currencies),
             modules=modules,
-            fill_model=cost_models.fill_model,
+            fill_model=fill_model,
             fee_model=cost_models.fee_model,
             book_type=BookType.L1_MBP,
             allow_cash_borrowing=account_type == AccountType.MARGIN
@@ -439,6 +478,21 @@ def _add_instruments_and_bars(
     for instrument_id, instrument in market_data.instruments.items():
         engine.add_instrument(instrument)
         frame = market_data.ohlcv[instrument_id]
+        sided = market_data.quote_frames.get(instrument_id)
+        if sided is not None:
+            # Quote-marked (aegis-rd-tggo.5): BID + ASK EXTERNAL bars are the
+            # single source — the venue pairs them into L1 quotes (fills at the
+            # real touch), the strategy derives its mid from the same bars, and
+            # the Portfolio marks at the fed mid.  No LAST/MID bar exists.
+            bid_frame, ask_frame = sided
+            engine.add_data(
+                _wrangle_quote_external_bars(
+                    instrument, bid_frame, ask_frame, timeframe, resolver
+                ),
+                sort=False,
+            )
+            engine.add_data(_mark_price_updates(instrument, frame), sort=False)
+            continue
         bars = _wrangle_external_bars(instrument, frame, timeframe, resolver)
         engine.add_data(bars, sort=False)
         if isinstance(instrument, CurrencyPair):
@@ -447,6 +501,48 @@ def _add_instruments_and_bars(
             # fx_rate read works from the same series the panel conversion uses.
             engine.add_data(_fx_quotes(instrument, frame), sort=False)
     _add_distribution_data(engine, market_data.distributions)
+
+
+def _wrangle_quote_external_bars(
+    instrument: Instrument,
+    bid_ohlcv: pd.DataFrame,
+    ask_ohlcv: pd.DataFrame,
+    timeframe: str,
+    resolver: RawBarTypeResolver,
+) -> list[Bar]:
+    return wrangle_quote_bars(
+        instrument,
+        _normalize_ohlcv(bid_ohlcv),
+        _normalize_ohlcv(ask_ohlcv),
+        timeframe,
+        resolver=resolver,
+    )
+
+
+def _mark_price_updates(instrument: Instrument, mid_ohlcv: pd.DataFrame) -> list[Any]:
+    """One ``MarkPriceUpdate`` per bar close at the quote mid.
+
+    *mid_ohlcv* is the marking's derived mid frame, so the value fed here is
+    ``reference_price = (bid + ask) / 2`` — the single mid formula — consumed
+    natively by the Portfolio (``use_mark_prices``) while fills stay at the
+    touch.
+    """
+    from nautilus_trader.model.data import MarkPriceUpdate
+
+    closes = _normalize_ohlcv(mid_ohlcv)["close"]
+    if closes.index.tz is None:
+        closes = closes.tz_localize("UTC")
+    # One extra decimal so the exact half-tick mid stays representable.
+    precision = instrument.price_precision + 1
+    return [
+        MarkPriceUpdate(
+            instrument_id=instrument.id,
+            value=Price(float(value), precision),
+            ts_event=timestamp.value,
+            ts_init=timestamp.value,
+        )
+        for timestamp, value in closes.items()
+    ]
 
 
 def _add_distribution_data(

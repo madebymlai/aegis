@@ -288,6 +288,33 @@ def test_quote_marked_ohlcv_frame_keeps_only_days_quoted_on_both_sides():
     assert frame.index.tolist() == [pd.Timestamp("2024-01-02")]
 
 
+def test_quote_marking_exposes_its_sided_bid_and_ask_frames():
+    resolver = DeclaredMarkingResolver(
+        declared={InstrumentId.from_str("UEQC.IBIS"): MarkMode.QUOTE}
+    )
+    marking = resolver.resolve(InstrumentId.from_str("UEQC.IBIS"), "1D")
+    bid_bars = [_bar(marking.mark_bars[0], "100.00")]
+    ask_bars = [_bar(marking.mark_bars[1], "100.50")]
+
+    sided = marking.quote_ohlcv_frames(
+        {marking.mark_bars[0]: bid_bars, marking.mark_bars[1]: ask_bars}
+    )
+
+    assert sided is not None
+    bid_frame, ask_frame = sided
+    assert bid_frame["Close"].tolist() == [100.0]
+    assert ask_frame["Close"].tolist() == [100.5]
+
+
+def test_bar_marked_instrument_has_no_sided_quote_frames():
+    marking = DeclaredMarkingResolver().resolve(
+        InstrumentId.from_str("VWRD.LSEETF"), "1D"
+    )
+    bars = [_bar(marking.mark_bars[0], "104.25")]
+
+    assert marking.quote_ohlcv_frames({marking.mark_bars[0]: bars}) is None
+
+
 def test_marking_is_an_immutable_value_object():
     marking = DeclaredMarkingResolver().resolve(
         InstrumentId.from_str("VWRD.LSEETF"), "1D"

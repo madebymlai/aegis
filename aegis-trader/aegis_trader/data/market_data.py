@@ -204,10 +204,16 @@ class NautilusMarketData:
         series = self._continuous_series(instrument_id)
         if series is not None:
             return _frame_to_market_bars(series)
-        # Cache.bars returns newest-first; bundles need chronological arrays.
+        # The marking owns the projection: a bar-marked instrument's own bars, a
+        # quote-marked instrument's derived bid/ask mid — the same series
+        # research signals on.  Cache.bars returns newest-first; the projection
+        # needs chronological arrays.
         marking = self._resolver.resolve(instrument_id, timeframe)
-        cache_bars = self._cache.bars(marking.mark_bars[0])
-        return [_to_market_bar(bar) for bar in reversed(cache_bars)]
+        bars_by_type = {
+            bar_type: list(reversed(self._cache.bars(bar_type)))
+            for bar_type in marking.mark_bars
+        }
+        return _frame_to_market_bars(marking.ohlcv_frame(bars_by_type))
 
     def _continuous_series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:
         if self._continuous is None:

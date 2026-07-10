@@ -38,6 +38,27 @@ def wrangle_bars(
     return wrangler.process(ohlcv)
 
 
+def wrangle_quote_bars(
+    instrument: Instrument,
+    bid_ohlcv: pd.DataFrame,
+    ask_ohlcv: pd.DataFrame,
+    timeframe: str,
+    *,
+    resolver: RawBarTypeResolver,
+) -> list[Bar]:
+    """Wrangle a quote-marked instrument's sided frames into BID + ASK ``Bar``\\ s.
+
+    The simulated venue pairs same-timestamp BID/ASK EXTERNAL bars into L1
+    quote updates, so these two series alone drive the book: fills execute at
+    the real touch and no MID bar ever reaches the venue (aegis-rd-tggo.5).
+    """
+    bid_type, ask_type = resolver.resolve(instrument.id, timeframe).mark_bars
+    return [
+        *BarDataWrangler(bid_type, instrument).process(bid_ohlcv),
+        *BarDataWrangler(ask_type, instrument).process(ask_ohlcv),
+    ]
+
+
 def build_currency_pair(base_currency: str, quote_currency: str, venue: str) -> CurrencyPair:
     """A spot FX ``CurrencyPair`` (``base/quote``) on *venue*.
 

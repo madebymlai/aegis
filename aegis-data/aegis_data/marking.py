@@ -154,6 +154,23 @@ class InstrumentMarking:
             return (bid.loc[index] + ask.loc[index]) / 2.0
         return bars_to_ohlcv(bars_by_type[self.mark_bars[0]])
 
+    def quote_ohlcv_frames(
+        self, bars_by_type: Mapping[BarType, Sequence[Bar]]
+    ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+        """The ``(bid, ask)`` OHLCV frames when quote-marked, ``None`` otherwise.
+
+        The feed for the research-side fill projection (quote-driven fills):
+        a bar-marked instrument simply has no sided quote, so callers need no
+        mode branch.  Live never calls this — the fill projection is derived,
+        research-only, and never serialized.
+        """
+        if self.mode is not MarkMode.QUOTE:
+            return None
+        return (
+            bars_to_ohlcv(bars_by_type[self.mark_bars[0]]),
+            bars_to_ohlcv(bars_by_type[self.mark_bars[1]]),
+        )
+
 
 def _mid_price(bid: Bar, ask: Bar) -> Price:
     from nautilus_trader.model.objects import Price
