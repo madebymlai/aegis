@@ -309,14 +309,20 @@ class CatalogBackedDataPort:
         }
 
     def _query_bars(self, bar_type: BarType, request: CatalogWindowRequest) -> list[Bar]:
-        return list(
-            self.catalog.query(
-                _bar_cls(),
-                identifiers=[str(bar_type)],
-                start=request.start,
-                end=request.end,
-            )
+        bars = self.catalog.query(
+            _bar_cls(),
+            identifiers=[str(bar_type)],
+            start=request.start,
+            end=request.end,
         )
+        # Gap-fill serves overlapping yearly batches, so a dense series (BID/ASK) can
+        # persist two bars for one ts_event at a batch boundary - the same trading day
+        # fetched twice. Nautilus' identity dedupe keeps both when their values/ts_init
+        # differ, so collapse to one bar per ts_event here (last wins): a sparse LAST
+        # series has no boundary bar and is untouched, but a quote-derived frame must
+        # have a unique index or its mid/reindex breaks downstream.
+        by_ts_event: dict[int, Bar] = {bar.ts_event: bar for bar in bars}
+        return [by_ts_event[ts_event] for ts_event in sorted(by_ts_event)]
 
     def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
         return self.resolver.resolve(instrument_id, timeframe).mark_bars

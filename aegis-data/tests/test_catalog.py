@@ -320,6 +320,51 @@ def test_catalog_port_serves_a_quote_marked_instrument_as_the_derived_mid(
     assert provider.requests == []
 
 
+def test_catalog_port_collapses_duplicate_ts_event_from_overlapping_batches(
+    tmp_path: Path,
+) -> None:
+    """A stored series with two bars for one ts_event (see `_query_bars` for how a
+    dense gap-filled series acquires them) reads back with a unique index: the read
+    seam collapses per ts_event, or the quote-mid frame's index breaks downstream
+    (the UEQC.IBIS:QUOTE regression, aegis-rd-bkom)."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("UEQC.XETR")
+    resolver = DeclaredMarkingResolver(declared={instrument_id: MarkMode.QUOTE})
+    bid_type, ask_type = resolver.resolve(instrument_id, "1D").mark_bars
+    # The gap-fill's overlapping yearly batches consolidate into one file that carries TWO
+    # bars for the boundary day 01-02 (the same day served twice with a slightly different
+    # value; Nautilus' identity dedupe keeps both). Reproduce that persisted state directly:
+    # one written series with a duplicated ts_event on each side.
+    _write_span(
+        catalog,
+        [_bar(bid_type, "2024-01-01", 100.0), _bar(ask_type, "2024-01-01", 101.0),
+         _bar(bid_type, "2024-01-02", 100.4), _bar(ask_type, "2024-01-02", 101.4),
+         _bar(bid_type, "2024-01-02", 102.0), _bar(ask_type, "2024-01-02", 103.0),
+         _bar(bid_type, "2024-01-03", 104.0), _bar(ask_type, "2024-01-03", 105.0)],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    port = CatalogBackedDataPort(catalog, provider=_ProviderPort([]), resolver=resolver)
+
+    frame = port._load_raw_bars(
+        CatalogWindowRequest(
+            instrument_ids=(instrument_id,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+    )[instrument_id]
+
+    # One row per ts_event: the boundary duplicate (01-02) is collapsed and the index stays
+    # unique (before the fix the duplicate made a two-row index that broke downstream).
+    assert frame.index.is_unique
+    assert len(frame) == 3
+    # The undisputed days mark at their mids; the boundary day is a single mid, not two.
+    assert frame["Close"].iloc[0] == 100.5
+    assert frame["Close"].iloc[-1] == 104.5
+
+
 def test_catalog_port_cold_fills_a_quote_marked_instrument_from_bid_and_ask(
     tmp_path: Path,
 ) -> None:
