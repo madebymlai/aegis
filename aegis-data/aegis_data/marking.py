@@ -10,9 +10,12 @@ derived mid; a single-``BarType`` return cannot express that.
 
 The mark mode is **declared** where the instrument is named — one optional
 token on the tradeable id (``UEQC.IBIS:QUOTE``, ``:MID``; absent = LAST),
-parsed once at config load — plus static instrument facts for the defaults
-(cash FX is bar-marked MID; IBKR serves no TRADES print for it).  A closed set
-of three modes, not an open policy registry.
+parsed once at config load.  A closed set of three modes, not an open policy
+registry, and no heuristics: a cash-FX *conversion* leg is declared by the
+config section that names it (``exchange:`` membership -> bar-marked MID;
+IBKR serves no TRADES print for FX), and a *tradeable* FX pair carries an
+explicit ``:MID`` like any other declared mode — forgetting it fails loud at
+the gateway (IB error 162), never silently.
 
 Architectural rule (ADR-0007 amendment, verified against the Nautilus docs):
 ``EXTERNAL`` L1 bars feed the simulated venue's order book, INTERNAL values
@@ -35,11 +38,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import pandas as pd
 
-from aegis_data.bar_type import (
-    external_bar_type,
-    is_cash_fx_shaped,
-    mic_canonical_instrument_id,
-)
+from aegis_data.bar_type import external_bar_type, mic_canonical_instrument_id
 from aegis_data.ohlcv import bars_to_ohlcv
 
 if TYPE_CHECKING:
@@ -214,29 +213,6 @@ class RawBarTypeResolver(Protocol):
         ...
 
 
-@runtime_checkable
-class InstrumentFacts(Protocol):
-    """Static instrument facts the mark-mode defaults read — never live market
-    state, never a probe.  The highest test seam: fake facts resolve the whole
-    marking with no broker and no catalog."""
-
-    def is_cash_fx(self, instrument_id: InstrumentId) -> bool:
-        """Whether the id names a cash FX pair (IBKR serves it MIDPOINT-only)."""
-        ...
-
-
-@dataclass(frozen=True)
-class SymbolShapeFacts:
-    """Cash FX recognised by its ``BASE/QUOTE`` symbol shape (ADR-0007).
-
-    The one signal available before the instrument definition is resolved;
-    the tell itself has one home, ``bar_type.is_cash_fx_shaped``.
-    """
-
-    def is_cash_fx(self, instrument_id: InstrumentId) -> bool:
-        return is_cash_fx_shaped(instrument_id)
-
-
 def marking_for_mode(
     instrument_id: InstrumentId, timeframe: str, mode: MarkMode
 ) -> InstrumentMarking:
@@ -253,17 +229,17 @@ def marking_for_mode(
 
 @dataclass(frozen=True)
 class DeclaredMarkingResolver:
-    """Declaration + static facts -> :class:`InstrumentMarking` (aegis-rd-tggo.2).
+    """Declarations -> :class:`InstrumentMarking` (aegis-rd-tggo.2).
 
-    An explicitly declared mode wins; absent, a cash-FX id defaults to
-    bar-marked MID (the IDEALPRO venue rule) and everything else to LAST.
-    Stateless and query-only; with no declarations it reproduces the corpus
-    rule byte-identically.  Declarations are keyed by the canonical corpus id,
-    so the raw-IB-exchange and MIC spellings name one instrument.
+    One rule: an explicitly declared mode wins, everything undeclared is LAST.
+    There is no heuristic — the config layer supplies every non-LAST mode as a
+    declaration (the id token; ``exchange:`` conversion legs as MID by section
+    membership).  Stateless and query-only.  Declarations are keyed by the
+    canonical corpus id, so the raw-IB-exchange and MIC spellings name one
+    instrument.
     """
 
     declared: Mapping[InstrumentId, MarkMode] = field(default_factory=dict)
-    facts: InstrumentFacts = SymbolShapeFacts()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -277,15 +253,9 @@ class DeclaredMarkingResolver:
 
     def resolve(self, instrument_id: InstrumentId, timeframe: str) -> InstrumentMarking:
         corpus_id = mic_canonical_instrument_id(instrument_id)
-        return marking_for_mode(corpus_id, timeframe, self._mode(corpus_id))
-
-    def _mode(self, corpus_id: InstrumentId) -> MarkMode:
-        declared = self.declared.get(corpus_id)
-        if declared is not None:
-            return declared
-        if self.facts.is_cash_fx(corpus_id):
-            return MarkMode.MID
-        return MarkMode.LAST
+        return marking_for_mode(
+            corpus_id, timeframe, self.declared.get(corpus_id, MarkMode.LAST)
+        )
 
 
 def _mark_bars(
@@ -303,13 +273,11 @@ def _mark_bars(
 
 __all__ = [
     "DeclaredMarkingResolver",
-    "InstrumentFacts",
     "InstrumentMarking",
     "MarkBarMisalignmentError",
     "MarkDeclaration",
     "MarkMode",
     "RawBarTypeResolver",
-    "SymbolShapeFacts",
     "UnknownMarkTokenError",
     "marking_for_mode",
     "parse_mark_declaration",

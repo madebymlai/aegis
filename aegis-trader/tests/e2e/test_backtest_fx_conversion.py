@@ -30,6 +30,7 @@ from aegis_runtime import (
 
 from aegis_runtime.currency import CurrencyConversion
 
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_trader.backtest import CatalogBacktestDataSource, run_book_backtest
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.data import build_currency_pair
@@ -63,6 +64,9 @@ class _UsdFixedWeightBundle(ExecutionBundle):
             missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
             exchange=(_EURUSD_ID,),
+            # As a real export records it: the tradeable explicit, the
+            # exchange conversion leg bar-marked MID by its section.
+            mark_modes={_USD_INSTRUMENT_ID: "LAST", _EURUSD_ID: "MID"},
         )
         manifest = BundleManifest(
             run_id="fx-conversion-synth",
@@ -206,5 +210,8 @@ def _zero_distribution_source(catalog_path) -> CatalogBacktestDataSource:
         port=CatalogBackedDataPort(
             ParquetDataCatalog(catalog_path),
             distribution_provider=_AdjustedLastProvider(adjusted_last),
+            # The port reads what the bundle records: the FX conversion leg is
+            # bar-marked MID by declaration, never by symbol shape.
+            resolver=DeclaredMarkingResolver(declared={_EURUSD_ID: MarkMode.MID}),
         )
     )

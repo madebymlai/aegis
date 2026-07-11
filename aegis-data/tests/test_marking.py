@@ -41,16 +41,6 @@ def _bar(bar_type: BarType, close: str, *, day: str = "2024-01-02") -> Bar:
     )
 
 
-class _FakeFacts:
-    """Static instrument facts steered per test — no broker, no catalog."""
-
-    def __init__(self, cash_fx: set[str] | None = None) -> None:
-        self._cash_fx = cash_fx or set()
-
-    def is_cash_fx(self, instrument_id: InstrumentId) -> bool:
-        return instrument_id.value in self._cash_fx
-
-
 # ── the declaration token (parsed once at config load) ─────────────────────
 
 
@@ -96,8 +86,12 @@ def test_undeclared_tradeable_resolves_to_its_last_bar():
     assert marking.mark_bars == (BarType.from_str("VWRD.LSEETF-1-DAY-LAST-EXTERNAL"),)
 
 
-def test_cash_fx_resolves_to_its_mid_bar_via_the_facts_port():
-    resolver = DeclaredMarkingResolver(facts=_FakeFacts({"EUR/USD.IDEALPRO"}))
+def test_a_declared_cash_fx_conversion_leg_resolves_to_its_mid_bar():
+    # The config layer supplies this declaration structurally: an ``exchange:``
+    # conversion leg is MID because the section that names it says what it is.
+    resolver = DeclaredMarkingResolver(
+        declared={InstrumentId.from_str("EUR/USD.IDEALPRO"): MarkMode.MID}
+    )
 
     marking = resolver.resolve(InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D")
 
@@ -107,12 +101,15 @@ def test_cash_fx_resolves_to_its_mid_bar_via_the_facts_port():
     )
 
 
-def test_default_facts_recognize_cash_fx_by_symbol_shape():
+def test_an_undeclared_cash_fx_id_resolves_last_like_anything_else():
+    # No shape heuristic: undeclared means LAST, FX included. A tradeable FX
+    # pair therefore needs an explicit :MID, and a forgotten one fails loud at
+    # the gateway (IB error 162) instead of silently guessing.
     marking = DeclaredMarkingResolver().resolve(
         InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D"
     )
 
-    assert marking.mode is MarkMode.MID
+    assert marking.mode is MarkMode.LAST
 
 
 def test_declared_quote_resolves_to_bid_and_ask_external_bars():
@@ -150,17 +147,6 @@ def test_declared_mid_resolves_to_the_single_mid_bar():
     assert marking.mark_bars == (BarType.from_str("XEON.XETR-1-DAY-MID-EXTERNAL"),)
 
 
-def test_a_declared_token_wins_over_the_facts_default():
-    resolver = DeclaredMarkingResolver(
-        declared={InstrumentId.from_str("EUR/USD.IDEALPRO"): MarkMode.QUOTE},
-        facts=_FakeFacts({"EUR/USD.IDEALPRO"}),
-    )
-
-    marking = resolver.resolve(InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D")
-
-    assert marking.mode is MarkMode.QUOTE
-
-
 def test_a_declaration_resolves_under_the_canonical_venue_spelling():
     # Declared under the raw IB exchange, resolved by the MIC id (or vice versa):
     # both spellings are one instrument in the corpus.
@@ -176,9 +162,10 @@ def test_a_declaration_resolves_under_the_canonical_venue_spelling():
 @pytest.mark.parametrize(
     ("instrument_id", "timeframe"),
     [
+        # Non-FX only: raw_bar_type keeps the corpus-key FX carve-out for
+        # fixtures, while resolution is declaration-only (undeclared FX = LAST).
         ("AAPL.NASDAQ", "1D"),
         ("VWRD.LSEETF", "1W"),
-        ("EUR/USD.IDEALPRO", "1D"),
         ("ES.XCME", "15min"),
     ],
 )

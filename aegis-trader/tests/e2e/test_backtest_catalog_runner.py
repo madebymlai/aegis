@@ -112,6 +112,7 @@ class _FixedWeightBundle(ExecutionBundle):
             timeframe="1D",
             missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
+            mark_modes={instrument_id: "LAST"},
         )
         manifest = BundleManifest(
             run_id="catalog-runner-synth",
@@ -183,6 +184,9 @@ class _TwoVenueBundle(ExecutionBundle):
             timeframe="1D",
             missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
+            mark_modes={
+                instrument_id: "LAST" for instrument_id in self._instrument_ids
+            },
         )
         manifest = BundleManifest(
             run_id="catalog-runner-two-venue",

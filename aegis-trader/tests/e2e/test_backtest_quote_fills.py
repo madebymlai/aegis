@@ -21,7 +21,6 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
 
-from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -76,9 +75,6 @@ def outcome(tmp_path_factory: pytest.TempPathFactory) -> _QuoteFillOutcome:
     book_path = tmp_path_factory.mktemp("quote-fills") / "book.toml"
     book_path.write_text(_BOOK_TOML)
     registry = StubBundleRegistry({_WHEEL: _TwoLegFixedWeightBundle()})
-    resolver = DeclaredMarkingResolver(
-        declared={_TIGHT: MarkMode.QUOTE, _WIDE: MarkMode.QUOTE}
-    )
 
     result = run_book_backtest(
         book_path,
@@ -86,7 +82,6 @@ def outcome(tmp_path_factory: pytest.TempPathFactory) -> _QuoteFillOutcome:
         end="2020-01-05",
         registry=registry,
         data_source=_QuoteMarkedDataSource(),
-        bar_type_resolver=resolver,
     )
     engine = result.engine
 
@@ -146,6 +141,9 @@ class _TwoLegFixedWeightBundle(ExecutionBundle):
             timeframe="1D",
             missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
+            # As a real export records it: both legs quote-marked, so the
+            # runner resolves the same recorded view live would consume.
+            mark_modes={_TIGHT: "QUOTE", _WIDE: "QUOTE"},
         )
         manifest = BundleManifest(
             run_id="quote-fills-synth",

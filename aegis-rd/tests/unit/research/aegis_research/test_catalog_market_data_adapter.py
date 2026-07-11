@@ -8,6 +8,7 @@ import pytest
 from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
 from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.testing import FakeCatalog, bars, future
 from aegis_runtime.currency import MissingFxPairError
 from nautilus_trader.model.data import Bar
@@ -88,11 +89,14 @@ def _fake_port(
     frames: dict[InstrumentId, pd.DataFrame],
     *,
     legs: list[FuturesContract] | None = None,
+    exchange: tuple[InstrumentId, ...] = (),
 ) -> tuple[CatalogBackedDataPort, _RecordingFakeCatalog]:
     """A real port over a fake catalog seeded with *frames* and their definitions.
 
     ``legs`` seeds dated futures-contract definitions so a continuous root's
-    coverage-report diagnostic can resolve its legs.
+    coverage-report diagnostic can resolve its legs.  ``exchange`` carries the
+    same structural declaration production supplies: a conversion leg is
+    bar-marked MID by the config section that names it, never by symbol shape.
     """
     catalog = _RecordingFakeCatalog(
         instruments=[
@@ -104,7 +108,10 @@ def _fake_port(
             for iid, frame in frames.items()
         },
     )
-    return CatalogBackedDataPort(catalog), catalog
+    resolver = DeclaredMarkingResolver(
+        declared=dict.fromkeys(exchange, MarkMode.MID)
+    )
+    return CatalogBackedDataPort(catalog, resolver=resolver), catalog
 
 
 def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_columns() -> None:
@@ -117,7 +124,8 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
             aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0]),
             esz6: _frame(index, close=[20.0, 21.0], volume=[200.0, 210.0]),
             eurusd: _frame(index, close=[1.1, 1.2], volume=[0.0, 0.0]),
-        }
+        },
+        exchange=(eurusd,),
     )
     config = make_data_config(
         arrays=["Close", "Volume"],
@@ -237,6 +245,7 @@ def test_catalog_adapter_converts_a_non_base_continuous_root_through_exchange_fx
     port, _catalog = _fake_port(
         {eurusd: _frame(index, close=[1.25, 1.20], volume=[0.0, 0.0])},
         legs=[future("ESH4.XCME", "2024-03-15")],
+        exchange=(eurusd,),
     )
 
     class FakeContinuousModel:

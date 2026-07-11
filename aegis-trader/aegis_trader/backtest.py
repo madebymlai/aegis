@@ -256,17 +256,14 @@ def run_book_backtest(
 
 
 def _book_resolver(book: AssembledBook) -> RawBarTypeResolver:
-    """The runner's marking resolver for *book*.
+    """The runner's marking resolver for *book*: the recorded markings, always.
 
-    A bundle that records mark modes is backtested on exactly those recorded
-    markings — the same read-only view live consumes — so research validation
-    and deployment resolve one truth.  A bundle recording nothing (pre-recording
-    exports, synthetic test stubs) keeps the corpus-default declared resolver.
+    The backtest resolves exactly the read-only view live consumes, so research
+    validation and deployment share one truth — including the failure: a bundle
+    that records no marking for a leg fails here with the same re-export error
+    live gives, never a silent default (forward-first; no pre-recording path).
     """
-    recorded = recorded_marking_resolver(book)
-    if recorded.recorded:
-        return recorded
-    return DeclaredMarkingResolver()
+    return recorded_marking_resolver(book)
 
 
 def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | None:

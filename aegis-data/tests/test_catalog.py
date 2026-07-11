@@ -120,6 +120,12 @@ def _seed_fx_pair(catalog: ParquetDataCatalog, fx_pair: InstrumentId) -> None:
     )
 
 
+def _fx_mid_resolver(fx_pair: InstrumentId) -> DeclaredMarkingResolver:
+    """The declaration production supplies for a conversion leg: MID by the
+    config section that names it, never by symbol shape."""
+    return DeclaredMarkingResolver(declared={fx_pair: MarkMode.MID})
+
+
 def _currency_pair(instrument_id: InstrumentId) -> CurrencyPair:
     base, quote = instrument_id.symbol.value.split("/")
     return CurrencyPair(
@@ -961,7 +967,9 @@ def test_catalog_port_skips_distribution_verification_for_cash_fx(
     fx_pair = _id("EUR/USD.IDEALPRO")
     _seed_fx_pair(catalog, fx_pair)
 
-    events = CatalogBackedDataPort(catalog).load_window(CatalogWindowRequest(
+    events = CatalogBackedDataPort(
+        catalog, resolver=_fx_mid_resolver(fx_pair)
+    ).load_window(CatalogWindowRequest(
         (fx_pair,),
         start="2024-01-01",
         end="2024-01-04",
@@ -978,7 +986,7 @@ def test_catalog_port_reports_cash_fx_distribution_coverage_not_applicable(
     catalog = ParquetDataCatalog(catalog_path)
     fx_pair = _id("EUR/USD.IDEALPRO")
     _seed_fx_pair(catalog, fx_pair)
-    port = CatalogBackedDataPort(catalog)
+    port = CatalogBackedDataPort(catalog, resolver=_fx_mid_resolver(fx_pair))
     port.load_window(CatalogWindowRequest(
         (fx_pair,),
         start="2024-01-01",
@@ -1012,11 +1020,13 @@ def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
     CatalogBackedDataPort(
         catalog,
         clock_ns=lambda: pd.Timestamp("2026-01-02", tz="UTC").value,
+        resolver=_fx_mid_resolver(fx_pair),
     ).load_window(CatalogWindowRequest((fx_pair,), **window)).distributions
 
     CatalogBackedDataPort(
         catalog,
         clock_ns=lambda: pd.Timestamp("2026-01-01", tz="UTC").value,
+        resolver=_fx_mid_resolver(fx_pair),
     ).load_window(CatalogWindowRequest((fx_pair,), **window)).distributions
 
     report = CatalogBackedDataPort(catalog).distribution_coverage_report(
@@ -1393,7 +1403,11 @@ def test_catalog_port_load_window_returns_one_coherent_value(
             )
         }
     )
-    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port = CatalogBackedDataPort(
+        catalog,
+        distribution_provider=provider,
+        resolver=_fx_mid_resolver(fx_pair),
+    )
 
     window = port.load_window(
         CatalogWindowRequest(

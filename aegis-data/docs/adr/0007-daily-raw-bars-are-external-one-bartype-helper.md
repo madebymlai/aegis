@@ -70,32 +70,36 @@ and split across two on-disk folders.
   `INTERNAL` for *intraday* on some venues). This ADR records why *daily* is
   `EXTERNAL`: there is no tick feed, and live must subscribe `EXTERNAL`.
 
-## Amendment (aegis-rd-tggo.2): the price type is a declared mark mode, not a symbol heuristic
+## Amendment (aegis-rd-tggo.2, sharpened by aegis-rd-t2kc): the price type is a declared mark mode, not a symbol heuristic
 
-The symbol heuristic ("`LAST`, except cash FX is `MID`") is superseded as the
-*decision rule*; it survives only as the **default**. Each tradeable now has a
-declared **mark mode** — a closed three-value set, resolved per instrument by
+The symbol heuristic ("`LAST`, except cash FX is `MID`") is superseded
+entirely as a resolution rule. Each leg now has a declared **mark mode** — a
+closed three-value set, resolved per instrument by
 `aegis_data.marking.DeclaredMarkingResolver` into an `InstrumentMarking` value
 object (the one seam every raw bar-type consumer crosses):
 
-- **`LAST`** (default, no declaration) — one `LAST-EXTERNAL` bar, marked at its
-  close. Continuous-future legs are `LAST` by construction (this carve-out is
-  unchanged; the continuous target `BarType` is not a marking decision).
-- **`MID`** (bar-marked) — one `MID-EXTERNAL` bar, marked at its close. Cash FX
-  reaches this via the venue default: a cash-FX-shaped id (`BASE/QUOTE`, the
-  IDEALPRO shape — still the one signal available before the definition is
-  seeded) defaults to `MID` exactly as before, so undeclared corpora resolve
-  byte-identically to the old heuristic.
+- **`LAST`** (the only default: no declaration means LAST) — one
+  `LAST-EXTERNAL` bar, marked at its close. Continuous-future legs are `LAST`
+  by construction (this carve-out is unchanged; the continuous target
+  `BarType` is not a marking decision).
+- **`MID`** (bar-marked) — one `MID-EXTERNAL` bar, marked at its close. Cash
+  FX reaches this **structurally**: an `exchange:` conversion leg is MID
+  *because the config section that names it says what it is* (IBKR serves no
+  TRADES print for cash FX); a *tradeable* FX pair declares `:MID` explicitly
+  like any other mode, and a forgotten declaration fails loud at the gateway
+  (IB error 162), never silently.
 - **`QUOTE`** (quote-marked) — the instrument carries **`BID-EXTERNAL` +
   `ASK-EXTERNAL`** bars; its mark is the **derived** mid `(bid + ask) / 2`
   (`InstrumentMarking.reference_price`, the single home of the mid formula).
   This is the thin-ETF mode: trades are sparse but the vendor quote is dense.
 
 The declaration is **one token where the instrument is named**
-(`UEQC.IBIS:QUOTE`, `:MID`) — per-instrument scope, parsed once at config
-load, never a maintained side table and never a runtime probe. Defaults are
-read from static instrument facts (`InstrumentFacts`), never live market
-state.
+(`UEQC.IBIS:QUOTE`, `:MID`) or, for conversion legs, the `exchange:` section
+membership itself — per-instrument scope, parsed once at config load, never a
+maintained side table, never a runtime probe, and never a symbol-shape guess.
+(`raw_bar_type` keeps the `BASE/QUOTE` → `MID` corpus-key rule purely as a
+fixture/storage-key convenience; production mark resolution never consults
+it.)
 
 **Architectural constraint (verified against the Nautilus backtesting docs),
 the reason QUOTE derives its mid:** `EXTERNAL` L1 bars feed the simulated

@@ -197,11 +197,14 @@ def _render_data_section() -> str:
             "column order. These are parsed to `InstrumentId` at the catalog adapter edge and "
             "remain typed through the runtime bundle. An entry may carry an optional declared "
             "mark-mode token — `UEQC.IBIS:QUOTE` (quote-marked: BID/ASK bars, derived mid) or "
-            "`:MID` (bar-marked midpoint). Absent, the corpus defaults apply: LAST, with cash "
-            "FX bar-marked MID. Parsed once at config load into `mark_modes`.",
+            "`:MID` (bar-marked midpoint). Absent means LAST — no heuristic, so a *tradeable* "
+            "cash FX pair must declare `:MID` explicitly. Parsed once at config load into "
+            "`mark_modes`.",
             "",
             "**`exchange`** — optional data-only native `InstrumentId` values requested from "
-            "the same catalog/port but never exposed as tradeable bundle columns.",
+            "the same catalog/port but never exposed as tradeable bundle columns. Section "
+            "membership is itself a mark declaration: a conversion leg is bar-marked MID "
+            "(IBKR serves no TRADES print for cash FX), so it takes no token.",
             "",
             "**`futures`** — optional bare continuous-future root symbols (e.g. `[ES, KC]`), "
             "not native ids. Each is materialised on demand as a back-adjusted continuous "

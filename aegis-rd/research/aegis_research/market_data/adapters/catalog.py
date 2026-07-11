@@ -8,13 +8,12 @@ import pandas as pd
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
-    GapFillProviderError,
     CatalogWindowRequest,
+    GapFillProviderError,
     catalog_data_port,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
-from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_runtime.currency import (
     CurrencyConversion,
     build_currency_conversion_from_codes,
@@ -34,7 +33,10 @@ from research.aegis_research.market_data.contracts import (
     MarketDataLoad,
     MarketDataUnavailableError,
 )
-from research.aegis_research.market_data.identity import instrument_ids
+from research.aegis_research.market_data.identity import (
+    declared_marking_resolver,
+    instrument_ids,
+)
 
 
 class ContinuousRootCollisionError(Exception):
@@ -59,27 +61,12 @@ def load_catalog_source(
     data_port = (
         port
         if port is not None
-        else catalog_data_port(config.path, resolver=_declared_resolver(config))
+        else catalog_data_port(config.path, resolver=declared_marking_resolver(config))
     )
     try:
         return _load_from_port(data_port, config)
     except (CatalogCoverageGapError, GapFillProviderError) as error:
         raise MarketDataUnavailableError(str(error)) from error
-
-
-def _declared_resolver(config: DataConfig) -> DeclaredMarkingResolver:
-    """The config's parsed mark declarations as the port's marking resolver.
-
-    One resolution per run: the declared token (parsed at config load) decides
-    each tradeable's mark bars; undeclared legs keep the corpus defaults (LAST;
-    cash FX bar-marked MID).
-    """
-    return DeclaredMarkingResolver(
-        declared={
-            InstrumentId.from_str(instrument_id): MarkMode(mode)
-            for instrument_id, mode in config.mark_modes.items()
-        }
-    )
 
 
 def _load_from_port(

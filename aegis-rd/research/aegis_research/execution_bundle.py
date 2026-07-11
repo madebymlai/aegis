@@ -14,7 +14,6 @@ from aegis_runtime import (
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
-from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 
 from research.aegis_research.component_registry import (
@@ -29,7 +28,10 @@ from research.aegis_research.configuration import (
     load_run_config,
 )
 from research.aegis_research.drift_bands import instrument_bands_from
-from research.aegis_research.market_data.identity import resolved_instruments
+from research.aegis_research.market_data.identity import (
+    declared_marking_resolver,
+    resolved_instruments,
+)
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
 from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
@@ -276,17 +278,13 @@ def _recorded_mark_modes(
 ) -> dict[InstrumentId, str]:
     """The resolved mark mode per loadable leg, pinned into the export.
 
-    The same resolution research loaded under (the declared token + the corpus
-    defaults), recorded explicitly for every static leg — LAST included — so
-    live consumes the mark and never re-derives it (aegis-rd-tggo.3).
-    Continuous roots are LAST by construction and are not recorded.
+    The same resolution research loaded under (the declared tokens plus
+    ``exchange:`` membership as the MID declaration), recorded explicitly for
+    every static leg — LAST included — so live consumes the mark and never
+    re-derives it (aegis-rd-tggo.3).  Continuous roots are LAST by
+    construction and are not recorded.
     """
-    resolver = DeclaredMarkingResolver(
-        declared={
-            InstrumentId.from_str(value): MarkMode(mode)
-            for value, mode in config.data.mark_modes.items()
-        }
-    )
+    resolver = declared_marking_resolver(config.data)
     continuous_symbols = set(futures)
     loadable = (
         *(
