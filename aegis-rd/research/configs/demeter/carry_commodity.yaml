@@ -1,0 +1,91 @@
+name: demeter_eu_credit_carry_commodity
+schema_version: 10
+output_dir: runs/demeter_eu/credit_carry_commodity
+
+# THE COMMODITY-BREADTH LEG keep/kill (aegis-rd-bkom, GH #80 carry Q1): does adding a
+# market-neutral commodity-carry breadth leg (UBS CMCI Commodity Carry SF UCITS ETF, UEQC)
+# lift the concave income pole's Sharpe while its robust downside L-skew stays < 0 (the leg
+# mutes but must not breach the concave gate)?
+#
+# Base = the live champion floor-partner cell (defensive 1.0 / fx 0 / carry_gain 0 / at1 0)
+# PINNED, under the same live band/fee mechanics as the lock. Single swept axis:
+# commodity_weight {0, 0.15, 0.25} via param_space, with the 0-cell as the nested in-grid
+# control (= demeter.carry_mix champion book, SDHY + LQDH). IHYU and IEML are absent because
+# defensive=1.0 / fx=0 zero-weight them.
+#
+# WINDOW: UEQC's IB history starts 2020-01-23 (headTimestamp probe, BID/ASK/TRADES), so the
+# window starts there (pre-inception NaNs fail the quality gate). Judge cells against the
+# IN-GRID control (commodity_weight=0), NOT the carry_floor lock (different window). The
+# window spans the two crises a concave pole must be gated on: the Mar-2020 COVID crash and
+# the 2022 commodity spike. NOTE: the underpowered first run (3 folds, Friedman p~=0.44)
+# wanted a +1.5yr extension to end 2026-07-01, but extending the window trips a data-layer
+# bug in the catalog coverage/consolidation path (distribution coverage seeds UEQC to the
+# last complete year 2025-01-01, which TOUCHES the extended window's 2025-01-01 boundary and
+# Nautilus' consolidate rejects touching intervals as non-disjoint). Tracked separately;
+# the window stays at 2025-01-01 until that extension bug is fixed. See 2026-07-11 diary.
+#
+# MARK/FILL: UEQC is thin in TRADES but dense in quotes, so it is QUOTE-marked
+# (UEQC.IBIS:QUOTE, aegis-rd-tggo): BID/ASK is the single source for the derived mid mark
+# AND the touch fill (the real spread is the crossing cost - median 25.5 bps, p90 109). SDHY
+# and LQDH are LAST-marked USD UCITS (EUR/USD conversion leg for the EUR book). UEQC is
+# EUR-native, so it needs no FX leg.
+#
+# Pre-registered keep/kill criteria: research/vault/runs/demeter/2026-07-11.md.
+data:
+  base_currency: EUR
+  instruments: [SDHY.LSEETF, LQDH.LSEETF, UEQC.IBIS:QUOTE]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2020-01-23'   # UEQC inception (IB headTimestamp) — the binding leg
+  end: '2025-01-01'     # extension to 2026-07-01 blocked by a catalog coverage bug (see header)
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: demeter_eu.credit_carry_commodity
+  params:
+    carry_window: 252
+- id: demeter.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: demeter.carry_mix_commodity
+  params:
+    vol_target: 0.10
+    defensive: 1.0        # short-duration HY bucket (SDHY); IHYU zero-weighted
+    fx_weight: 0.0        # EM local-currency leg dropped (net-negative for the pairing, P2)
+    carry_gain: 0.0       # spread-richness lean dropped (P2 2026-07-04)
+    at1_weight: 0.0       # AT1 leg off
+    # commodity_weight swept via param_space {0, 0.15, 0.25}; 0 = nested control (champion book)
+
+portfolio:
+  gross_cap: 1.0  # champion clamp (the unclip experiment was killed 2026-07-06)
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003  # 0.03% IBKR auto-conversion, charged per trade on the USD legs
+  fixed_fee: 1.25             # IBKR per-order minimum
+  band_up: 0.10               # asymmetric drift band (live rebalance mechanics)
+  band_down: 0.20
+
+ranking:
+  metric: carry_income_utility   # income ranker
+
+report:
+  # Concave family-membership (robust L-skew) + survivability (tail budget) gates reported
+  # next to the income ranker. Distributions seeded (GH #76) so the coupons compound; UEQC
+  # is accumulating so its mid is already total return.
+  metrics: [carry_tail_budget, carry_downside_lskew]
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
