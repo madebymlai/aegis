@@ -61,8 +61,8 @@ class _FakeHistoricClient:
 
 
 def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
-    sentinel_bars = [object(), object()]
-    fake = _FakeHistoricClient(bars=sentinel_bars, instruments=[])
+    served = [_StampedBar("2024-01-02"), _StampedBar("2024-02-01")]
+    fake = _FakeHistoricClient(bars=served, instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
@@ -72,32 +72,29 @@ def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
         end=pd.Timestamp("2024-03-01", tz="UTC"),
     )
 
-    assert list(out.bars) == sentinel_bars
-    # The whole window was walked: coverage is served from the requested start.
+    assert list(out.bars) == served
+    # The oldest bar is one closure past the requested start, so history covers it:
+    # coverage is served from the requested start (contiguous with any prior file).
     assert out.served_from == pd.Timestamp("2024-01-01", tz="UTC")
+    assert len(fake.bar_calls) == 1
     call = fake.bar_calls[0]
     assert call["bar_specifications"] == ["1-DAY-LAST"]
     assert call["instrument_ids"] == ["AAPL.XNAS"]
     assert call["tz_name"] == "UTC"
-    # The historic client applies tz_name itself, so it must get NAIVE datetimes.
-    assert call["start_date_time"] == datetime(2024, 1, 1)
-    assert call["start_date_time"].tzinfo is None
+    # One native request: a whole-window `duration` ending at the NAIVE end (the
+    # historic client applies tz_name itself); no start_date_time backward walk.
+    assert call["duration"] == "60 D"
     assert call["end_date_time"] == datetime(2024, 3, 1)
+    assert call["end_date_time"].tzinfo is None
+    assert "start_date_time" not in call
 
 
-def test_request_bars_walks_a_wide_window_backward_in_yearly_chunks() -> None:
-    """A window wider than one IB request allows is fetched newest-first in ≤365-day
-    chunks through the same session, and the chunks reassemble in chronological
-    order.  The provider owns this walk (not the vendor client's internal
-    segmentation) so it can stop at the no-data wall (#75)."""
-    newest_chunk_bar, oldest_chunk_bar = object(), object()
-
-    class _Chunked(_FakeHistoricClient):
-        async def request_bars(self, **kwargs: Any) -> list[Any]:
-            self.bar_calls.append(kwargs)
-            return [newest_chunk_bar] if len(self.bar_calls) == 1 else [oldest_chunk_bar]
-
-    fake = _Chunked(bars=[], instruments=[])
+def test_request_bars_asks_one_native_duration_for_a_wide_window() -> None:
+    """A window wider than a single IB request's limit is served by ONE native
+    request whose `duration` spans the whole window; Nautilus segments it by
+    duration internally, so the provider does not re-walk it in yearly chunks."""
+    served = [_StampedBar("2016-06-02"), _StampedBar("2017-06-01")]
+    fake = _FakeHistoricClient(bars=served, instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
@@ -107,14 +104,13 @@ def test_request_bars_walks_a_wide_window_backward_in_yearly_chunks() -> None:
         end=pd.Timestamp("2018-01-01", tz="UTC"),
     )
 
-    assert len(fake.bar_calls) == 2
-    assert fake.bar_calls[0]["start_date_time"] == datetime(2017, 1, 1)
+    assert len(fake.bar_calls) == 1
+    assert fake.bar_calls[0]["duration"] == "2 Y"
     assert fake.bar_calls[0]["end_date_time"] == datetime(2018, 1, 1)
-    assert fake.bar_calls[1]["start_date_time"] == datetime(2016, 6, 1)
-    assert fake.bar_calls[1]["end_date_time"] == datetime(2016, 12, 31, 23, 59, 59)
-    assert list(out.bars) == [oldest_chunk_bar, newest_chunk_bar]
+    assert "start_date_time" not in fake.bar_calls[0]
+    assert list(out.bars) == served
     assert out.served_from == pd.Timestamp("2016-06-01", tz="UTC")
-    # One session serves the whole walk — connect/close wrap the walk, not each chunk.
+    # One session serves the request — connect/close wrap it once.
     assert fake.events == ["connect", "aclose"]
 
 
@@ -123,24 +119,32 @@ class _StampedBar:
         self.ts_event = pd.Timestamp(day, tz="UTC").value
 
 
-def test_request_bars_stops_cleanly_at_the_no_data_wall() -> None:
-    """GH #75: a chunk with no bars is the no-data wall — history simply does not
-    reach back that far (TLT pre-2016, SPTL pre-2017).  The walk stops there instead
-    of stepping further into pre-listing history chunk by timed-out chunk, and the
-    bars already pulled are still returned."""
+def test_request_bars_claims_nothing_when_no_bars_are_returned() -> None:
+    """An empty answer claims no coverage: ``served_from`` falls back to the window
+    end, so the coverage gate sees the whole window as unserved (nothing to write)."""
+    fake = _FakeHistoricClient(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    out = provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2024-01-01", tz="UTC"),
+        end=pd.Timestamp("2024-03-01", tz="UTC"),
+    )
+
+    assert list(out.bars) == []
+    assert out.served_from == pd.Timestamp("2024-03-01", tz="UTC")
+
+
+def test_request_bars_serves_from_the_listing_when_history_clamps_short() -> None:
+    """GH #75: IB clamps its answer at the instrument's earliest available data, so a
+    single request reaching before the listing simply returns fewer bars — the
+    provider never steps into empty pre-listing history.  The oldest returned bar IS
+    where history begins: coverage is served from there (far past the requested
+    start), and the pre-listing head stays unclaimed for the coverage gate."""
     listing_date = pd.Timestamp("2016-06-15", tz="UTC")
-    first_bar = _StampedBar("2016-06-15")
-    newer_bar = _StampedBar("2017-03-01")
-
-    class _Walled(_FakeHistoricClient):
-        async def request_bars(self, **kwargs: Any) -> list[Any]:
-            self.bar_calls.append(kwargs)
-            chunk_end = pd.Timestamp(kwargs["end_date_time"], tz="UTC")
-            if chunk_end < listing_date:
-                return []
-            return [newer_bar] if len(self.bar_calls) == 1 else [first_bar]
-
-    fake = _Walled(bars=[], instruments=[])
+    served = [_StampedBar("2016-06-15"), _StampedBar("2017-03-01")]
+    fake = _FakeHistoricClient(bars=served, instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("TLT.XNAS"), "1D")
 
@@ -150,20 +154,18 @@ def test_request_bars_stops_cleanly_at_the_no_data_wall() -> None:
         end=pd.Timestamp("2018-01-01", tz="UTC"),
     )
 
-    # Two chunks with data, then the first empty chunk ends the walk — the two
-    # remaining pre-wall years are never requested.
-    assert len(fake.bar_calls) == 3
-    assert list(out.bars) == [first_bar, newer_bar]
-    # At the wall the truth boundary is day-precise for free: the oldest
-    # data-bearing chunk was queried in full, so its first bar IS where the
-    # source's history begins.  Coverage is served from that instant; the
-    # pre-history head stays unclaimed and the coverage gate judges it exactly.
-    assert out.served_from == pd.Timestamp("2016-06-15", tz="UTC")
+    # One request; IB returned only from the listing.
+    assert len(fake.bar_calls) == 1
+    assert list(out.bars) == served
+    # The gap from 2013 to the first bar is far wider than a market closure, so it
+    # reads as IB clamping at the listing: coverage begins at that first bar, not the
+    # requested 2013 start, leaving the pre-listing head for the coverage gate.
+    assert out.served_from == listing_date
 
 
 def test_request_bars_can_pass_expired_future_contracts() -> None:
-    sentinel_bars = [object()]
-    fake = _FakeHistoricClient(bars=sentinel_bars, instruments=[])
+    served = [_StampedBar("2026-03-02")]
+    fake = _FakeHistoricClient(bars=served, instruments=[])
     provider = IbkrHistoricalProvider(
         include_expired_futures=True,
         client_factory=lambda: fake,
@@ -176,7 +178,7 @@ def test_request_bars_can_pass_expired_future_contracts() -> None:
         end=pd.Timestamp("2026-06-23", tz="UTC"),
     )
 
-    assert list(out.bars) == sentinel_bars
+    assert list(out.bars) == served
     call = fake.bar_calls[0]
     assert "instrument_ids" not in call
     contract = call["contracts"][0]

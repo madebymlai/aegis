@@ -116,16 +116,19 @@ class IbkrHistoricalProvider:
         start: pd.Timestamp,
         end: pd.Timestamp,
     ) -> ServedBars:
-        """The vendor-aggregated bars for *bar_type* over ``[start, end]``.
+        """The vendor bars for *bar_type* over ``[start, end]`` in one native request.
 
-        The window is walked newest-first in ≤365-day chunks (one IB historic
-        request each) and the walk **stops at the no-data wall**: the first chunk
-        that comes back empty means the window has stepped past the instrument's
-        available history, so earlier chunks are never requested (#75) — each one
-        would only burn a full request timeout to learn the same thing.  The
-        answer carries the bars *and* ``served_from`` (how far back the walk got)
-        so the port claims coverage honestly; judging whether the shortfall is
-        acceptable stays with the catalog's coverage gate.
+        The whole window is asked for as a single IB ``duration`` ending at *end*.
+        Nautilus segments an IB request by its duration internally, so the provider
+        does not re-implement that walk; and IB clamps the answer at the instrument's
+        earliest available data, so no request ever steps past the listing into empty
+        pre-history — the job the old backward walk did with a no-data wall (#75),
+        now done by IB itself in one request.  ``served_from`` reports how far back
+        the answer reached: the requested *start* when history covers it (so a
+        follow-on write abuts the prior file), or the oldest bar returned when IB
+        clamped at a later listing (so the pre-history head stays unclaimed for the
+        coverage gate).  A whole-unit duration overshoots below *start*; those extra
+        bars are trimmed back to the requested window.
         """
         contract = self._expired_future_contract(bar_type.instrument_id)
         instrument_kwargs = (
@@ -135,7 +138,7 @@ class IbkrHistoricalProvider:
         )
         return self._request(
             f"historical bars {bar_type}",
-            lambda session: self._walk_bars_to_the_wall(
+            lambda session: self._request_bars_once(
                 session,
                 bar_type=bar_type,
                 start=start,
@@ -144,7 +147,7 @@ class IbkrHistoricalProvider:
             ),
         )
 
-    async def _walk_bars_to_the_wall(
+    async def _request_bars_once(
         self,
         session: Any,
         *,
@@ -153,28 +156,24 @@ class IbkrHistoricalProvider:
         end: pd.Timestamp,
         instrument_kwargs: Mapping[str, Any],
     ) -> ServedBars:
-        bars: list[Bar] = []
-        for chunk_start, chunk_end in _backward_windows(start, end):
-            pulled = await asyncio.wait_for(
-                session.request_bars(
-                    bar_specifications=[str(bar_type.spec)],
-                    start_date_time=_naive_utc(chunk_start),
-                    end_date_time=_naive_utc(chunk_end),
-                    tz_name="UTC",
-                    use_rth=self.use_rth,
-                    timeout=self.timeout,
-                    **instrument_kwargs,
-                ),
-                timeout=self.call_deadline,
-            )
-            if not pulled:
-                # The wall.  Its truth boundary is day-precise for free: the
-                # oldest data-bearing chunk was queried in full, so its first
-                # bar IS where the source's history begins — everything from
-                # that instant on was served, nothing before it exists.
-                return ServedBars(tuple(bars), _first_bar_instant(bars, end))
-            bars = list(pulled) + bars
-        return ServedBars(tuple(bars), start)
+        pulled = await asyncio.wait_for(
+            session.request_bars(
+                bar_specifications=[str(bar_type.spec)],
+                end_date_time=_naive_utc(end),
+                duration=_ib_duration(start, end),
+                tz_name="UTC",
+                use_rth=self.use_rth,
+                timeout=self.timeout,
+                **instrument_kwargs,
+            ),
+            timeout=self.call_deadline,
+        )
+        # The whole-unit duration can reach before `start`; keep only the window.
+        bars = [bar for bar in (pulled or []) if bar.ts_event >= start.value]
+        # Coverage is served from `start` when history reaches it (contiguous with any
+        # prior file), else from the oldest bar IB clamped at (#75, the unclaimed head).
+        served_from = start if _history_reached(bars, start) else _first_bar_instant(bars, end)
+        return ServedBars(tuple(bars), served_from)
 
     def request_instruments(
         self, instrument_ids: Sequence[InstrumentId]
@@ -319,12 +318,21 @@ class IbkrHistoricalProvider:
         return _expired_future_contract(instrument_id)
 
 
-# One IB historic request serves at most this much history for daily bars; the
-# backward walk steps in windows of this span.
-_FETCH_CHUNK_SPAN = pd.Timedelta(days=365)
-# Adjacent chunks abut one second apart — IB requests are second-granular, and no
-# bar the corpus serves (daily) can fall inside the crack.
-_CHUNK_GAP = pd.Timedelta(seconds=1)
+# The oldest returned bar within this of the requested start reads as history
+# reaching the start across a market closure; a wider gap reads as IB clamping at a
+# later listing date (#75).  Wider than any weekend/holiday and far narrower than a
+# real listing gap — the only blur is a start authored within this margin of an
+# unknown listing, a bounded (<= margin) over-claim the coverage gate tolerates.
+_WALL_PROBE_MARGIN = pd.Timedelta(days=14)
+
+
+def _history_reached(bars: Sequence[Bar], start: pd.Timestamp) -> bool:
+    """Whether the answer's oldest bar is close enough to *start* that history covers
+    it — only a market closure lies between.  A wider gap is IB clamping at a later
+    listing date (#75): the oldest bar is where history begins, not *start*."""
+    if not bars:
+        return False
+    return bars[0].ts_event - start.value <= _WALL_PROBE_MARGIN.value
 
 
 def _first_bar_instant(bars: Sequence[Bar], fallback: pd.Timestamp) -> pd.Timestamp:
@@ -333,19 +341,6 @@ def _first_bar_instant(bars: Sequence[Bar], fallback: pd.Timestamp) -> pd.Timest
     if not bars:
         return fallback
     return pd.Timestamp(bars[0].ts_event, tz="UTC")
-
-
-def _backward_windows(
-    start: pd.Timestamp, end: pd.Timestamp
-) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
-    """``[start, end]`` as newest-first chunk windows for the wall-stopping walk."""
-    windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
-    chunk_end = end
-    while chunk_end > start:
-        chunk_start = max(start, chunk_end - _FETCH_CHUNK_SPAN)
-        windows.append((chunk_start, chunk_end))
-        chunk_end = chunk_start - _CHUNK_GAP
-    return windows
 
 
 async def _request_instrument_parts(
