@@ -1,0 +1,74 @@
+name: demeter_eu_credit_carry_putwrite
+schema_version: 10
+output_dir: runs/demeter_eu/credit_carry_putwrite
+
+# THE COLLATERALIZED PUT-WRITE CHALLENGER from
+# [[the-ucits-constrained-carry-sleeve]]. UBS E50PW packages a fully funded cash-plus-short-
+# put index: four-week 97%-strike Euro Stoxx 50 puts plus German Bubill cash return. It is a
+# fixed-share satellite, not a credit instrument, so the indicator emits NaN for its
+# carry_score and the strategy excludes it from the Baa-Treasury richness mean.
+#
+# Base = the pinned floor-partner cell: defensive 1.0 / fx 0 / carry_gain 0 / at1 0.
+# Only putwrite_weight is swept by param_space {0, 0.10, 0.20, 0.30}; zero is the nested
+# in-grid incumbent SDHY + LQDH control. Judge the challenger at equal live mechanics and
+# tail budget, never from distribution yield or standalone volatility alone.
+#
+# IBKR identity verified 2026-07-11: conId 437843482, symbol E50PW, primary exchange EBS,
+# ISIN IE00BLDGHT92. Paper-account What-If returned PreSubmitted without warning. IB head
+# timestamps: TRADES 2020-08-04, BID_ASK 2020-08-10. The config uses QUOTE marks from the
+# later common frontier. Live-account PRIIPs permission remains a deployment precondition.
+data:
+  base_currency: EUR
+  instruments: [SDHY.LSEETF, LQDH.LSEETF, E50PW.EBS:QUOTE]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2020-08-10'
+  end: '2025-01-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: demeter_eu.credit_carry_putwrite
+  params:
+    carry_window: 252
+- id: demeter.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  id: demeter.carry_mix_putwrite
+  params:
+    vol_target: 0.10
+    defensive: 1.0
+    fx_weight: 0.0
+    carry_gain: 0.0
+    at1_weight: 0.0
+    # putwrite_weight swept via param_space; 0 is the nested incumbent control.
+
+portfolio:
+  gross_cap: 1.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: carry_income_utility
+
+report:
+  metrics: [carry_tail_budget, carry_downside_lskew]
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
