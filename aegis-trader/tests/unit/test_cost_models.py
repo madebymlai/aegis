@@ -98,14 +98,13 @@ def test_zero_cost_config_yields_zero_commission():
     assert _commission_amount(model, quantity=200, price="50.00", currency="GBP") == 0.0
 
 
-def test_fill_model_carries_configured_probability_and_seed():
+def test_fill_model_carries_configured_probability():
     fill_model = build_simulated_fill_model(
         CostModelConfig(slippage_probability=0.25, slippage_seed=42)
     )
 
     assert fill_model.prob_slippage == pytest.approx(0.25)
     assert fill_model.prob_fill_on_limit == pytest.approx(1.0)
-    assert fill_model.random_seed == 42
 
 
 def test_cost_models_do_not_import_ibapi():

@@ -16,21 +16,18 @@ from nautilus_trader.model.objects import Money
 from aegis_trader.domain.book_config import BookConfig, CostModelConfig
 
 
-class SimulatedFillModel(FillModel):
-    """FillModel retaining the configured seed for deterministic-run evidence."""
+def build_simulated_fill_model(costs: CostModelConfig) -> FillModel:
+    """Return the Nautilus fill model for simulated venues.
 
-    def __init__(self, costs: CostModelConfig) -> None:
-        super().__init__(
-            prob_fill_on_limit=1.0,
-            prob_slippage=costs.slippage_probability,
-            random_seed=costs.slippage_seed,
-        )
-        self.random_seed = costs.slippage_seed
-
-
-def build_simulated_fill_model(costs: CostModelConfig) -> SimulatedFillModel:
-    """Return the Nautilus fill model for simulated venues."""
-    return SimulatedFillModel(costs)
+    Limit fills stay deterministic (``prob_fill_on_limit=1.0``); the only
+    stochastic knob is the configured one-tick slippage, seeded for
+    reproducible runs.
+    """
+    return FillModel(
+        prob_fill_on_limit=1.0,
+        prob_slippage=costs.slippage_probability,
+        random_seed=costs.slippage_seed,
+    )
 
 
 @dataclass(frozen=True)
