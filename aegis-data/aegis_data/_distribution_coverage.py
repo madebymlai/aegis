@@ -139,13 +139,19 @@ class DistributionCoverageService:
         if not missing:
             return None
         if not coverage.applicability.applicable:
-            self._write_marker(
-                coverage.instrument_id,
-                start_ns=coverage.request_start,
-                end_ns=coverage.coverage_end,
-                applicable=False,
-                event_count=0,
-            )
+            # Mark only the missing sub-intervals, never the whole window: a leg shared
+            # by two configs (a cash FX conversion pair) is re-verified over a different,
+            # overlapping window, and a whole-window marker would overlap the prior one -
+            # which the catalog rejects as non-disjoint.  The applicable branch below is
+            # already per-interval for the same reason.
+            for start_ns, end_ns in missing:
+                self._write_marker(
+                    coverage.instrument_id,
+                    start_ns=start_ns,
+                    end_ns=end_ns,
+                    applicable=False,
+                    event_count=0,
+                )
             return None
         if provider is None:
             return _gap_message(coverage.instrument_id, missing)

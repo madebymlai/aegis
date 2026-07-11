@@ -1084,6 +1084,44 @@ def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
     assert report[0]["checked_at"] == "2026-01-02T00:00:00+00:00"
 
 
+def test_not_applicable_coverage_marks_disjointly_across_overlapping_windows(
+    tmp_path: Path,
+) -> None:
+    """A not-applicable leg shared by two configs (a cash FX conversion pair) verified
+    over OVERLAPPING windows must write DISJOINT coverage markers.  The second window
+    marks only its missing tail, not the whole window over the first marker - which
+    Nautilus rejects as a non-disjoint interval (the EUR/USD.IDEALPRO regression: the
+    commodity book marked 2020-01-23..2025-01-01, the put-write book 2020-08-10..2026-07-01)."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    fx_pair = _id("EUR/USD.IDEALPRO")
+    catalog.write_data([_currency_pair(fx_pair)])
+    mid = external_bar_type(fx_pair, "1D", "MID")
+    _write_span(
+        catalog,
+        [_bar(mid, "2020-02-03", 1.10), _bar(mid, "2026-06-01", 1.11)],
+        start="2020-01-01",
+        end="2027-01-01",
+    )
+    resolver = _fx_mid_resolver(fx_pair)
+
+    # First config's window verifies + marks the shared leg over 2020-01-23..2025-01-01.
+    CatalogBackedDataPort(catalog, resolver=resolver).load_window(
+        CatalogWindowRequest((fx_pair,), start="2020-01-23", end="2025-01-01")
+    )
+    # Second config's OVERLAPPING window must not collide on the shared leg's marker.
+    CatalogBackedDataPort(catalog, resolver=resolver).load_window(
+        CatalogWindowRequest((fx_pair,), start="2020-08-10", end="2026-07-01")
+    )
+
+    # The union is fully marked: a read across both windows finds no coverage gap.
+    report = CatalogBackedDataPort(catalog).distribution_coverage_report(
+        (fx_pair,), start="2020-01-23", end="2026-07-01"
+    )
+    assert report[0]["applicable"] is False
+
+
 def test_catalog_port_rejects_distribution_read_for_unresolved_instrument(
     tmp_path: Path,
 ) -> None:
