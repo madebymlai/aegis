@@ -97,9 +97,9 @@ The declaration is **one token where the instrument is named**
 (`UEQC.IBIS:QUOTE`, `:MID`) or, for conversion legs, the `exchange:` section
 membership itself — per-instrument scope, parsed once at config load, never a
 maintained side table, never a runtime probe, and never a symbol-shape guess.
-(`raw_bar_type` keeps the `BASE/QUOTE` → `MID` corpus-key rule purely as a
-fixture/storage-key convenience; production mark resolution never consults
-it.)
+(`raw_bar_type` is LAST-only — the undeclared default; every other price type
+keys through `external_bar_type` from a declaration, fixtures included, so
+the `BASE/QUOTE` shape is consulted nowhere.)
 
 **Architectural constraint (verified against the Nautilus backtesting docs),
 the reason QUOTE derives its mid:** `EXTERNAL` L1 bars feed the simulated

@@ -14,7 +14,7 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-from aegis_data.bar_type import mic_canonical_instrument_id
+from aegis_data.bar_type import external_bar_type, mic_canonical_instrument_id
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
@@ -105,9 +105,12 @@ class _AdjustedLastProvider:
 
 
 def _seed_fx_pair(catalog: ParquetDataCatalog, fx_pair: InstrumentId) -> None:
-    """Definition plus covered MID bars: a cash FX leg ready for a window read."""
+    """Definition plus covered MID bars: a cash FX leg ready for a window read.
+
+    The MID key is stated where the leg is seeded — exactly as production
+    declares it — matching the resolver the reading port carries."""
     catalog.write_data([_currency_pair(fx_pair)])
-    bar_type = raw_bar_type(fx_pair, "1D")
+    bar_type = external_bar_type(fx_pair, "1D", "MID")
     _write_span(
         catalog,
         [
@@ -1372,7 +1375,7 @@ def test_catalog_port_load_window_returns_one_coherent_value(
     equity_id = _id("SPY.ARCA")
     fx_pair = _id("EUR/USD.IDEALPRO")
     equity_bar_type = raw_bar_type(equity_id, "1D")
-    fx_bar_type = raw_bar_type(fx_pair, "1D")
+    fx_bar_type = external_bar_type(fx_pair, "1D", "MID")
     _write_span(
         catalog,
         [

@@ -5,9 +5,10 @@ Daily Raw Bars are ``EXTERNAL`` (ADR-0007): the corpus is vendor-aggregated
 OHLCV (IBKR historical) — finished bars with
 no tick feed to build a multi-year daily series from — and live can only receive
 IBKR's completed daily bar via an ``EXTERNAL`` subscription.  The price type is
-``LAST`` for tradeables but ``MID`` for cash FX, which has no trades print: IBKR
-serves MIDPOINT/BID/ASK for IDEALPRO, not TRADES, so a ``LAST`` request fails (IB
-error 162).
+a *declared* fact carried by the marking seam (``aegis_data.marking``), never
+derived here: :func:`external_bar_type` builds the key for whatever price type
+the resolved marking states (LAST / MID / BID / ASK), and :func:`raw_bar_type`
+is the LAST-only shorthand for the undeclared default.
 
 This is the lower, shared context both Aegis RD and Aegis Trader depend on, so
 the helper lives here and neither side re-derives the bar identity (the r8b
@@ -69,14 +70,15 @@ def _parse(timeframe: str) -> tuple[int, str]:
 
 
 def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
-    """The ``EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*.
+    """The ``LAST-EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*.
 
     Known IBKR exchange venues are canonicalized to their MIC venue before the
     corpus key is built, matching the IBKR provider's MIC-pinned definitions and
-    fetched bars. ``LAST`` is used for tradeables, ``MID`` for cash FX (ADR-0007).
+    fetched bars.  LAST only — the undeclared default (ADR-0007 amendment); any
+    other price type is a declared marking and keys via
+    :func:`external_bar_type` (e.g. a cash-FX conversion leg's ``MID``).
     """
-    corpus_id = mic_canonical_instrument_id(instrument_id)
-    return external_bar_type(corpus_id, timeframe, _price_type(corpus_id))
+    return external_bar_type(instrument_id, timeframe, "LAST")
 
 
 def external_bar_type(
@@ -115,19 +117,6 @@ def _mic_venue(venue: str) -> str | None:
     )
 
     return exchange_to_mic_venue(venue)
-
-
-def _price_type(instrument_id: InstrumentId) -> str:
-    """``MID`` for cash FX (the ``BASE/QUOTE`` symbol shape), ``LAST`` otherwise.
-
-    IBKR has no TRADES print for cash FX, so its stored corpus bars are keyed
-    ``MID-EXTERNAL`` — this keeps :func:`raw_bar_type` (the fixture/corpus-key
-    convenience) aligned with those keys.  Production mark resolution never
-    consults this shape tell: the marking seam resolves modes from
-    *declarations* only (an ``exchange:`` conversion leg is MID by its config
-    section; a tradeable FX pair declares ``:MID`` explicitly).
-    """
-    return "MID" if "/" in instrument_id.symbol.value else "LAST"
 
 
 def continuous_bar_type(root_id: InstrumentId, timeframe: str) -> BarType:

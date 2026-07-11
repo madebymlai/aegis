@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_data.bar_type import external_bar_type
 from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, raw_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode, RawBarTypeResolver
 from aegis_data.testing import FakeCatalog
@@ -343,7 +344,9 @@ def seed_catalog_fx(
     catalog.write_data([currency_pair_definition(pair_id)])
     index = pd.date_range(start, periods=periods, freq="D")
     rates = base_rate * np.exp(np.arange(periods) * drift)
-    bar_type = raw_bar_type(pair_id, "1D")
+    # MID stated where the leg is seeded — the same declaration production
+    # supplies for an exchange: conversion leg.
+    bar_type = external_bar_type(pair_id, "1D", "MID")
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = start_ts + pd.Timedelta(days=periods)
     catalog.write_data(

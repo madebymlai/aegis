@@ -30,6 +30,7 @@ from aegis_runtime import (
 
 from aegis_runtime.currency import CurrencyConversion
 
+from aegis_data.bar_type import external_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_trader.backtest import CatalogBacktestDataSource, run_book_backtest
 from aegis_trader.bundles.stub import StubBundleRegistry
@@ -163,7 +164,7 @@ def _seed_fx_catalog(catalog_path, rates: list[float]) -> None:
     catalog.write_data([pair])
     catalog.write_data(
         [
-            _bar(raw_bar_type(_EURUSD_ID, "1D"), day, rate, precision=5)
+            _bar(external_bar_type(_EURUSD_ID, "1D", "MID"), day, rate, precision=5)
             for day, rate in zip(
                 pd.date_range("2020-01-01", periods=len(rates), freq="D"),
                 rates,

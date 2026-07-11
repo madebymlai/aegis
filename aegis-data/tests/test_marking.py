@@ -18,7 +18,6 @@ from nautilus_trader.model.objects import Price, Quantity
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.marking import (
     DeclaredMarkingResolver,
-    InstrumentMarking,
     MarkDeclaration,
     MarkMode,
     RawBarTypeResolver,
@@ -162,10 +161,11 @@ def test_a_declaration_resolves_under_the_canonical_venue_spelling():
 @pytest.mark.parametrize(
     ("instrument_id", "timeframe"),
     [
-        # Non-FX only: raw_bar_type keeps the corpus-key FX carve-out for
-        # fixtures, while resolution is declaration-only (undeclared FX = LAST).
+        # FX included: raw_bar_type and the resolver share one undeclared
+        # default (LAST) — nothing anywhere derives a price type from the id.
         ("AAPL.NASDAQ", "1D"),
         ("VWRD.LSEETF", "1W"),
+        ("EUR/USD.IDEALPRO", "1D"),
         ("ES.XCME", "15min"),
     ],
 )

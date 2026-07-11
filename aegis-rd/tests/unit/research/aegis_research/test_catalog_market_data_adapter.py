@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
+from aegis_data.bar_type import mic_canonical_instrument_id
 from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
@@ -98,18 +98,18 @@ def _fake_port(
     same structural declaration production supplies: a conversion leg is
     bar-marked MID by the config section that names it, never by symbol shape.
     """
+    resolver = DeclaredMarkingResolver(declared=dict.fromkeys(exchange, MarkMode.MID))
     catalog = _RecordingFakeCatalog(
         instruments=[
             *(_definition(mic_canonical_instrument_id(iid)) for iid in frames),
             *(legs or []),
         ],
+        # Keyed by the same resolver the port reads with, so seeded keys can
+        # never drift from resolved keys.
         bars={
-            str(raw_bar_type(iid, "1D")): bars(iid, frame)
+            str(resolver.resolve(iid, "1D").mark_bars[0]): bars(iid, frame)
             for iid, frame in frames.items()
         },
-    )
-    resolver = DeclaredMarkingResolver(
-        declared=dict.fromkeys(exchange, MarkMode.MID)
     )
     return CatalogBackedDataPort(catalog, resolver=resolver), catalog
 

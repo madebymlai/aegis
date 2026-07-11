@@ -11,6 +11,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import (
     UnsupportedTimeframeError,
+    external_bar_type,
     raw_bar_type,
     timeframe_to_ns,
 )
@@ -29,25 +30,43 @@ def test_raw_bar_type_is_last_external_for_the_timeframe(timeframe, step):
 
 
 @pytest.mark.parametrize(
-    ("instrument_id", "price_type", "what_to_show_value"),
+    "instrument_id",
     [
-        # Cash FX serves MIDPOINT, never TRADES, on IDEALPRO (IB error 162 on a
-        # TRADES request) — the FX raw daily bar is MID-EXTERNAL (ADR-0007).
-        ("EUR/USD.IDEALPRO", "MID", "MIDPOINT"),
-        # Everything non-FX keeps the canonical LAST-EXTERNAL identity.
-        ("VWRD.LSEETF", "LAST", "TRADES"),
-        ("ES.XCME", "LAST", "TRADES"),
+        # LAST-only, cash FX included: the price type is a declared marking
+        # fact, never derived from the id (ADR-0007 amendment / aegis-rd-t2kc).
+        "EUR/USD.IDEALPRO",
+        "VWRD.LSEETF",
+        "ES.XCME",
     ],
 )
-def test_raw_bar_type_price_type_is_mid_for_fx_last_otherwise(
-    instrument_id, price_type, what_to_show_value
+def test_raw_bar_type_is_last_only_the_undeclared_default(instrument_id):
+    bar_type = raw_bar_type(InstrumentId.from_str(instrument_id), "1D")
+
+    assert bar_type == BarType.from_str(f"{instrument_id}-1-DAY-LAST-EXTERNAL")
+    assert what_to_show(bar_type) == "TRADES"
+
+
+@pytest.mark.parametrize(
+    ("price_type", "what_to_show_value"),
+    [
+        # The declared price type carries straight through to IB'''''s request:
+        # a conversion leg'''''s MID keys MIDPOINT (IB error 162 on TRADES for
+        # cash FX), a quote-marked leg'''''s sides key BID / ASK.
+        ("MID", "MIDPOINT"),
+        ("BID", "BID"),
+        ("ASK", "ASK"),
+    ],
+)
+def test_external_bar_type_carries_the_declared_price_type(
+    price_type, what_to_show_value
 ):
-    instrument = InstrumentId.from_str(instrument_id)
-    bar_type = raw_bar_type(instrument, "1D")
-    assert bar_type == BarType.from_str(
-        f"{instrument_id}-1-DAY-{price_type}-EXTERNAL"
+    bar_type = external_bar_type(
+        InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D", price_type
     )
-    # The exact symptom: the IB ``whatToShow`` the bar type translates to.
+
+    assert bar_type == BarType.from_str(
+        f"EUR/USD.IDEALPRO-1-DAY-{price_type}-EXTERNAL"
+    )
     assert what_to_show(bar_type) == what_to_show_value
 
 
