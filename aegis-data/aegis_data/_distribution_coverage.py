@@ -139,19 +139,13 @@ class DistributionCoverageService:
         if not missing:
             return None
         if not coverage.applicability.applicable:
-            # Mark only the missing sub-intervals, never the whole window: a leg shared
-            # by two configs (a cash FX conversion pair) is re-verified over a different,
-            # overlapping window, and a whole-window marker would overlap the prior one -
-            # which the catalog rejects as non-disjoint.  The applicable branch below is
-            # already per-interval for the same reason.
-            for start_ns, end_ns in missing:
-                self._write_marker(
-                    coverage.instrument_id,
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                    applicable=False,
-                    event_count=0,
-                )
+            self._write_marker(
+                coverage.instrument_id,
+                start_ns=coverage.request_start,
+                end_ns=coverage.coverage_end,
+                applicable=False,
+                event_count=0,
+            )
             return None
         if provider is None:
             return _gap_message(coverage.instrument_id, missing)
@@ -383,7 +377,33 @@ class DistributionCoverageService:
         event_count: int,
         checked_at_ns: int | None = None,
     ) -> None:
+        # Own disjointness: mark only the sub-intervals not already covered, so a caller
+        # can pass any window without knowing the catalog's partition layout.  A leg
+        # shared by two configs (a cash FX conversion pair) is re-verified over each
+        # config's window; a whole-window marker over a prior overlapping one is what the
+        # catalog rejects as non-disjoint.  Callers that already pass a bare gap (a
+        # verified interval, a force-reverified range cleared first) clip to themselves.
         checked_at_ns = self.clock_ns() if checked_at_ns is None else checked_at_ns
+        for gap_start, gap_end in self._missing(instrument_id, start_ns, end_ns):
+            self._write_marker_span(
+                instrument_id,
+                start_ns=gap_start,
+                end_ns=gap_end,
+                applicable=applicable,
+                event_count=event_count,
+                checked_at_ns=checked_at_ns,
+            )
+
+    def _write_marker_span(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start_ns: int,
+        end_ns: int,
+        applicable: bool,
+        event_count: int,
+        checked_at_ns: int,
+    ) -> None:
         marker_points = (start_ns,) if start_ns == end_ns else (start_ns, end_ns)
         markers = [
             DistributionCoverageMarker(

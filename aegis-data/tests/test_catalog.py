@@ -1114,6 +1114,11 @@ def test_not_applicable_coverage_marks_disjointly_across_overlapping_windows(
     CatalogBackedDataPort(catalog, resolver=resolver).load_window(
         CatalogWindowRequest((fx_pair,), start="2020-08-10", end="2026-07-01")
     )
+    # A third window fully inside the marked union is a no-op: the marker write clips
+    # to the empty set rather than rewriting (and colliding) an already-covered span.
+    CatalogBackedDataPort(catalog, resolver=resolver).load_window(
+        CatalogWindowRequest((fx_pair,), start="2021-01-01", end="2024-01-01")
+    )
 
     # The union is fully marked: a read across both windows finds no coverage gap.
     report = CatalogBackedDataPort(catalog).distribution_coverage_report(
