@@ -1,104 +1,32 @@
-import hashlib
-import json
 import zipfile
 from io import BytesIO
-from pathlib import Path
 
 import pytest
 
-from research.aegis_research.external_data.catb_portfolio import (
-    CatbPortfolioWeightError,
-    load_portfolio_metrics,
-    parse_hanetf_workbook,
-)
+from research.aegis_research.external_data.catb_manager_report import parse_manager_report
+from research.aegis_research.external_data.catb_portfolio import parse_hanetf_workbook
 
 
-def _cache(tmp_path: Path, *, total_cash_weight: float = 60.0) -> tuple[Path, Path]:
-    holdings = [
-        {
-            "isin": None,
-            "weight": total_cash_weight,
-            "market_value": 60.0,
-            "insurance_spread": None,
-        },
-        {
-            "isin": "A",
-            "weight": 20.0,
-            "market_value": 20.0,
-            "insurance_spread": 10.0,
-        },
-        {
-            "isin": "B",
-            "weight": 20.0,
-            "market_value": 20.0,
-            "insurance_spread": 6.0,
-        },
-    ]
-    payload = {
-        "schema_version": 2,
-        "retrieved_at": "2026-07-12T00:00:00+00:00",
-        "fund_isin": "IE000UWJUW87",
-        "holdings_sha256": hashlib.sha256(
-            json.dumps(holdings, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest(),
-        "holdings": holdings,
-    }
-    path = tmp_path / "catb.json"
-    path.write_text(json.dumps(payload))
-    enrichment = tmp_path / "matches.json"
-    enrichment.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "matches": {
-                    "A": {
-                        "expected_loss": 2.0,
-                        "artemis_source": "https://www.artemis.bm/a",
-                        "available_at": "2025-12-31T00:00:00+00:00",
-                        "verified_at": "2026-07-12T00:00:00+00:00",
-                    },
-                    "B": {
-                        "expected_loss": 2.0,
-                        "artemis_source": "https://www.artemis.bm/b",
-                        "available_at": "2025-12-31T00:00:00+00:00",
-                        "verified_at": "2026-07-12T00:00:00+00:00",
-                    },
-                },
-            }
-        )
-    )
-    return path, enrichment
+def test_parses_whole_portfolio_manager_statistics_from_publication_date() -> None:
+    content = """
+    <p><strong>Published Date:</strong> May 1, 2026</p>
+    <p>The weighted average maturity was 1.74 years.</p>
+    <p><strong>Cat Bond ETF Portfolio Statistics</strong><br><strong>As of 31/03/2026</strong></p>
+    <table>
+      <tr><td>Average Coupon</td><td>13.0%</td></tr>
+      <tr><td>Average Yield</td><td>9.3%</td></tr>
+      <tr><td>Spread</td><td>6.0%</td></tr>
+      <tr><td>Expected Loss (EL) %</td><td>2.8%</td></tr>
+    </table>
+    """
 
+    metrics = parse_manager_report(content)
 
-@pytest.mark.parametrize(
-    ("field", "expected"),
-    [
-        ("insurance_spread", 8.0),
-        ("expected_loss", 2.0),
-        ("net_carry", 9.0),
-        ("risk_multiple", 4.0),
-        ("coverage", 1.0),
-    ],
-)
-def test_aggregates_matched_catb_positions(
-    tmp_path: Path, field: str, expected: float
-) -> None:
-    path, enrichment = _cache(tmp_path)
-
-    metrics = load_portfolio_metrics(
-        path, enrichment, collateral_yield=4.0, fund_fee=1.0
-    )
-
-    assert getattr(metrics, field) == expected
-
-
-def test_rejects_weights_that_do_not_reconcile(tmp_path: Path) -> None:
-    path, enrichment = _cache(tmp_path, total_cash_weight=30.0)
-
-    with pytest.raises(CatbPortfolioWeightError, match="reconcile"):
-        load_portfolio_metrics(
-            path, enrichment, collateral_yield=4.0, fund_fee=1.0
-        )
+    assert metrics.available_at.isoformat() == "2026-05-01T00:00:00+00:00"
+    assert metrics.as_of == "2026-03-31"
+    assert metrics.loss_adjusted_yield == pytest.approx(6.5)
+    assert metrics.risk_multiple == pytest.approx(2.142857142857143)
+    assert metrics.weighted_maturity_years == 1.74
 
 
 def test_parses_hanetf_workbook_without_excel_dependency() -> None:

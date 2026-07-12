@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
-import warnings
 import zipfile
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -17,8 +14,7 @@ from xml.etree import ElementTree
 import requests
 
 HANETF_HOLDINGS_URL = (
-    "https://hanetf.com/wp-content/assets/upload/"
-    "Holdings-CATB-IE000UWJUW87-all-all.xlsx"
+    "https://hanetf.com/wp-content/assets/upload/Holdings-CATB-IE000UWJUW87-all-all.xlsx"
 )
 _XML_NAMESPACE = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
@@ -33,20 +29,6 @@ class CatbPortfolioSchemaError(CatbPortfolioError):
 
 class CatbPortfolioPositionError(CatbPortfolioError):
     """A holding contains an invalid or incomplete value."""
-
-
-class CatbPortfolioWeightError(CatbPortfolioError):
-    """Portfolio weights do not reconcile."""
-
-
-@dataclass(frozen=True)
-class CatbPortfolioMetrics:
-    available_at: datetime
-    insurance_spread: float
-    expected_loss: float
-    net_carry: float
-    risk_multiple: float
-    coverage: float
 
 
 def _cell_value(cell: ElementTree.Element) -> str | None:
@@ -108,30 +90,6 @@ def parse_hanetf_workbook(content: bytes) -> tuple[str, list[dict]]:
     return as_of, holdings
 
 
-def _enrich(holdings: list[dict], enrichment_path: Path) -> list[dict]:
-    matches = json.loads(enrichment_path.read_text())
-    if matches.get("schema_version") != 1:
-        raise CatbPortfolioSchemaError("unsupported CATB enrichment schema")
-    by_isin = matches["matches"]
-    allowed = {
-        "expected_loss",
-        "artemis_source",
-        "match_basis",
-        "available_at",
-        "verified_at",
-    }
-    enriched = []
-    for holding in holdings:
-        match = by_isin.get(holding["isin"], {})
-        unexpected = set(match) - allowed
-        if unexpected:
-            raise CatbPortfolioSchemaError(
-                f"CATB enrichment contains forbidden fields: {sorted(unexpected)}"
-            )
-        enriched.append(holding | match)
-    return enriched
-
-
 def refresh_holdings_cache(
     cache_dir: Path,
     *,
@@ -142,8 +100,7 @@ def refresh_holdings_cache(
         HANETF_HOLDINGS_URL,
         headers={
             "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "Chrome/138.0.0.0 Safari/537.36"
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36"
             ),
             "Referer": "https://hanetf.com/fund/catb-krc-cat-bond-ucits-etf/",
             "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*",
@@ -176,113 +133,3 @@ def refresh_holdings_cache(
     }
     path.write_text(json.dumps(payload, indent=2) + "\n")
     return path
-
-
-def load_portfolio_metrics(
-    path: Path,
-    enrichment_path: Path,
-    *,
-    collateral_yield: float,
-    fund_fee: float,
-) -> CatbPortfolioMetrics:
-    """Aggregate only explicitly matched CATB tranches; never impute unmatched risk."""
-    payload = json.loads(path.read_text())
-    if payload.get("schema_version") != 2 or payload.get("fund_isin") != "IE000UWJUW87":
-        raise CatbPortfolioSchemaError("unsupported CATB holdings cache")
-    try:
-        available_at = datetime.fromisoformat(payload["retrieved_at"])
-    except (KeyError, TypeError, ValueError) as error:
-        raise CatbPortfolioSchemaError("invalid CATB retrieval timestamp") from error
-
-    holdings = payload.get("holdings")
-    if not isinstance(holdings, list) or not holdings:
-        raise CatbPortfolioSchemaError("CATB cache has no holdings")
-    holdings_hash = hashlib.sha256(
-        json.dumps(holdings, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    if holdings_hash != payload.get("holdings_sha256"):
-        raise CatbPortfolioSchemaError("CATB cached holdings failed integrity verification")
-    holdings = _enrich(holdings, enrichment_path)
-    enrichment_times = [
-        datetime.fromisoformat(holding["available_at"])
-        for holding in holdings
-        if holding.get("expected_loss") is not None
-    ]
-    if enrichment_times:
-        available_at = max(available_at, max(enrichment_times))
-    identifiers = [holding["isin"] for holding in holdings if holding["isin"] is not None]
-    if len(identifiers) != len(set(identifiers)):
-        raise CatbPortfolioPositionError("CATB cache contains duplicate ISINs")
-    for holding in holdings:
-        values = [holding["weight"], holding["market_value"]]
-        values.extend(
-            value
-            for value in (holding["insurance_spread"], holding.get("expected_loss"))
-            if value is not None
-        )
-        if any(not math.isfinite(float(value)) or float(value) < 0.0 for value in values):
-            raise CatbPortfolioPositionError("CATB holding values must be finite and non-negative")
-        if holding.get("expected_loss") is not None and holding.get("artemis_source") is None:
-            raise CatbPortfolioPositionError("matched CATB holding has no Artemis source")
-
-    total_weight = sum(float(holding["weight"]) for holding in holdings)
-    if not math.isclose(total_weight, 100.0, abs_tol=0.1):
-        raise CatbPortfolioWeightError("CATB holding weights do not reconcile to 100%")
-    positions = [holding for holding in holdings if holding.get("expected_loss") is not None]
-    eligible_weight = sum(
-        float(holding["weight"])
-        for holding in holdings
-        if holding.get("eligible_cat_bond", holding["insurance_spread"] is not None)
-    )
-    matched_weight = sum(float(position["weight"]) for position in positions)
-    if eligible_weight <= 0.0 or matched_weight <= 0.0:
-        raise CatbPortfolioWeightError("CATB matched weights must be positive")
-
-    insurance_spread = sum(
-        float(position["weight"]) * float(position["insurance_spread"])
-        for position in positions
-    ) / matched_weight
-    expected_loss = sum(
-        float(position["weight"]) * float(position["expected_loss"])
-        for position in positions
-    ) / matched_weight
-    if expected_loss <= 0.0:
-        raise CatbPortfolioPositionError("CATB matched expected loss must be positive")
-    return CatbPortfolioMetrics(
-        available_at=available_at,
-        insurance_spread=insurance_spread,
-        expected_loss=expected_loss,
-        net_carry=collateral_yield + insurance_spread - expected_loss - fund_fee,
-        risk_multiple=insurance_spread / expected_loss,
-        coverage=matched_weight / eligible_weight,
-    )
-
-
-def current_and_cached_metrics(
-    cache_dir: Path,
-    enrichment_path: Path,
-    *,
-    history_dir: Path | None = None,
-    collateral_yield: float,
-    fund_fee: float,
-) -> list[CatbPortfolioMetrics]:
-    """Refresh when online, then return the full causal cache history."""
-    try:
-        refresh_holdings_cache(cache_dir)
-    except requests.RequestException as error:
-        warnings.warn(f"CATB holdings refresh failed; using cache: {error}", stacklevel=2)
-    paths = sorted(cache_dir.glob("catb-holdings-*.json"))
-    if history_dir is not None:
-        paths.extend(sorted(history_dir.glob("catb-holdings-*.json")))
-    if not paths:
-        raise CatbPortfolioSchemaError("CATB holdings cache is empty")
-    metrics = [
-        load_portfolio_metrics(
-            path,
-            enrichment_path,
-            collateral_yield=collateral_yield,
-            fund_fee=fund_fee,
-        )
-        for path in paths
-    ]
-    return sorted(metrics, key=lambda observation: observation.available_at)
