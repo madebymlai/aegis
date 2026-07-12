@@ -31,16 +31,23 @@ indicators:
 - id: demeter.cat_bond_calendar
   params:
     rebalance_interval_months: 1
-- id: demeter.cat_bond_market_carry
+- id: demeter.cat_bond_portfolio_carry
   params:
-    snapshot: research/data/artemis/cat_bond_market_yield-2efb9be47e7c6775.json
-    publication_lag_days: 7
-    max_age_days: 21
-    richness_window: 104
+    cache_dir: research/data/cache/hanetf/catb
+    history_dir: research/data/hanetf/catb
+    enrichment: research/data/artemis/catb-expected-loss-matches.json
+    max_age_days: 45
+    collateral_yield: 3.75
     fund_fee: 1.28
 
 strategy:
   id: demeter.cat_bond_income
+  params:
+    min_weight: 0.05
+    max_weight: 0.25
+    low_multiple: 2.0
+    high_multiple: 4.0
+    min_coverage: 0.8
 
 portfolio:
   gross_cap: 1.0

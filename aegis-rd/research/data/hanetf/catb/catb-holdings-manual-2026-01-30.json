@@ -1,0 +1,102 @@
+{
+  "schema_version": 2,
+  "as_of": "2026-01-30",
+  "retrieved_at": "2026-01-30T23:59:59+00:00",
+  "fund_isin": "IE000UWJUW87",
+  "source_url": "https://www.etfdoc.it/d/Port/ETCATB/IE000UWJUW87_hanetf-krc-cat-bond-ucits-etf-acc",
+  "corroborating_source": "https://hanetf.com/wp-content/assets/upload/01-26-Factsheet-CATB-IE000UWJUW87-en.pdf",
+  "source_note": "ETFDoc top ten as of 2026-01-30; HANetf factsheet reports 19 holdings as of 2026-01-31. Residual is deliberately unmatched and coverage-eligible.",
+  "source_sha256": "manual-public-reconstruction",
+  "holdings_sha256": "10cc912659da3a3494a4a26c0846022d2744f54a8ae4b7686d0ae73048c57f0f",
+  "holdings": [
+    {
+      "description": "HEXAGON IV RE LTD FLT 01/07/31 SR:A 10.53% 01/07/2031",
+      "isin": "XS2710192464",
+      "weight": 6.14,
+      "market_value": 6.14,
+      "insurance_spread": 10.53,
+      "maturity": "01/07/2031"
+    },
+    {
+      "description": "LION RE DAC FLT 06/15/29 SR:B 8.03% 06/15/2029",
+      "isin": "XS3075450471",
+      "weight": 5.91,
+      "market_value": 5.91,
+      "insurance_spread": 8.03,
+      "maturity": "06/15/2029"
+    },
+    {
+      "description": "HERBIE RE LTD FLT 06/07/27 SR:A 31% 06/07/2027",
+      "isin": "US42703VAM54",
+      "weight": 5.67,
+      "market_value": 5.67,
+      "insurance_spread": 31.0,
+      "maturity": "06/07/2027"
+    },
+    {
+      "description": "INTEGRITY RE III FLT 06/06/27 SR:D 29.05% 06/06/2027",
+      "isin": "US45870GAF37",
+      "weight": 5.62,
+      "market_value": 5.62,
+      "insurance_spread": 29.05,
+      "maturity": "06/06/2027"
+    },
+    {
+      "description": "INTL BK RECON & DEVELOP FLT 04/24/28 SR:D 12.22% 04/24/2028",
+      "isin": "XS2809694198",
+      "weight": 5.26,
+      "market_value": 5.26,
+      "insurance_spread": 12.22,
+      "maturity": "04/24/2028"
+    },
+    {
+      "description": "ARMOR RE II LTD FLT 01/07/28 SR:A 12.06% 01/07/2028",
+      "isin": "US04227FAF27",
+      "weight": 5.25,
+      "market_value": 5.25,
+      "insurance_spread": 12.06,
+      "maturity": "01/07/2028"
+    },
+    {
+      "description": "MARLON LTD FLT 06/07/27 SR:A 7% 06/07/2027",
+      "isin": "US571253AA10",
+      "weight": 5.23,
+      "market_value": 5.23,
+      "insurance_spread": 7.0,
+      "maturity": "06/07/2027"
+    },
+    {
+      "description": "SANDERS RE II LTD FLT 04/08/30 SR:B-2 4.75% 04/08/2030",
+      "isin": "US80001TAD90",
+      "weight": 5.23,
+      "market_value": 5.23,
+      "insurance_spread": 4.75,
+      "maturity": "04/08/2030"
+    },
+    {
+      "description": "WINSTON RE LTD FLT 02/26/27 SR:A 10.21% 02/26/2027",
+      "isin": "US975660AA93",
+      "weight": 5.22,
+      "market_value": 5.22,
+      "insurance_spread": 10.21,
+      "maturity": "02/26/2027"
+    },
+    {
+      "description": "2001 CAT RE LTD FLT 01/08/27 SR:A 12.5% 01/08/2027",
+      "isin": "US90215BAB36",
+      "weight": 5.17,
+      "market_value": 5.17,
+      "insurance_spread": 12.5,
+      "maturity": "01/08/2027"
+    },
+    {
+      "description": "UNDISCLOSED RESIDUAL (9 holdings and cash/collateral)",
+      "isin": null,
+      "weight": 45.3,
+      "market_value": 45.3,
+      "insurance_spread": null,
+      "maturity": null,
+      "eligible_cat_bond": true
+    }
+  ]
+}
