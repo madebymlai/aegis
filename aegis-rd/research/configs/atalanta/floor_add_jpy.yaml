@@ -1,0 +1,74 @@
+name: atalanta_floor_add_jpy
+schema_version: 10
+output_dir: runs/atalanta/floor-add-jpy
+
+# DROP-ONE-IN +JPY funding haven (GH #80, [[the-orthogonal-non-equity-trend-universe]]): the
+# champion 3-name floor plus a long-JPY leg - the one [convex] axis the 07-07 drop-one-in left
+# BLOCKED, not measured. Byte-identical to floor_dropin_base except the universe adds LJPY.
+#
+# WHY IT IS TESTABLE NOW: the clean UCITS long-JPY line, LJPY (WisdomTree Long JPY/Short USD,
+# LSE, USD, conId 79000381, listed 2009), is MIDPOINT/quote-only - no TRADES prints - so the
+# 07-07 LAST-path fetch 366'd (recorded as "blocked on the tradeable-UCITS data path"). The
+# tggo :QUOTE mark now fetches BID+ASK and marks at the derived mid (ADR-0007), exactly the
+# E50PW.EBS:QUOTE mechanism. Gateway-verified 2026-07-11 through the real IbkrHistoricalProvider
+# path: BID+ASK served back to 2014-07-14 (served_from=2018-01-01), covering the full window.
+#
+# JPY over the other havens (Greenwood/HBS 2025, "Flight to Safety or Flight from Carry?"): the
+# yen carries the strongest systematic risk-off loading (return-on-VIX-innovation t=12.82 vs CHF
+# 7.66) and OWNS the carry-unwind quadrant orthogonal to the book's USD-quoted trio (2024 unwind:
+# JPY +1.44 sigma while the dollar FELL). CHF was blocked structurally too - EUCH shares LJPY's
+# funding-haven shape but the SNB caps franc strength (the convexity you'd buy), and the EUR-listed
+# WisdomTree FX ETPs (EUJP/EUCH, Borsa Italiana) only carry IB history from 2022-08, missing the
+# 2020/2022 crises. LJPY is JPY/USD, so its short-USD leg has mild overlap with the trio's USD
+# conversion - the read reports the leg's |corr| to the champion stream alongside the convexity lift.
+data:
+  base_currency: EUR
+  instruments: [IDTL.LSEETF, IGLN.LSEETF, WCOA.LSEETF, LJPY.LSE:QUOTE]  # drop-one-in: +JPY funding haven (quote-marked)
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2026-07-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+  - id: atalanta.trend_score_regress
+    params:
+      lookback: 189
+  - id: atalanta.realized_vol
+    params:
+      vol_window: 126
+
+strategy:
+  id: atalanta.keystone_shortmute
+  params:
+    enter_band: 0.10
+    exit_band: 0.05
+    short_cap: 0.10
+
+portfolio:
+  base_currency: EUR
+  gross_cap: 2.0
+  net_cap: 2.0
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.10
+  band_down: 0.20
+
+ranking:
+  metric: trend_convexity_payoff
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_rolling
+    params:
+      length: 504
+      offset: 0
+      split: 0.5
+    max_splits: 10
