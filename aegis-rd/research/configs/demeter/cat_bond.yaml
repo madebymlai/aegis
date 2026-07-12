@@ -38,11 +38,6 @@ indicators:
 
 strategy:
   id: demeter.cat_bond_income
-  params:
-    min_weight: 0.05
-    max_weight: 0.25
-    low_multiple: 2.0
-    high_multiple: 4.0
 
 portfolio:
   gross_cap: 1.0
