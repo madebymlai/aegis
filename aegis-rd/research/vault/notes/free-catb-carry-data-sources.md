@@ -152,7 +152,8 @@ must not be spliced into CATB's live signal or presented as CATB backtest histor
    CATB's fund fee.
 4. Compute catastrophe-risk compensation as insurance spread divided by expected loss.
 5. Apply a conservative publication lag and reject stale observations.
-6. Emit a fully invested one-name CATB sleeve only when market carry qualifies.
+6. When market carry qualifies, use the trailing 104-week premium-richness percentile as
+   continuous utilization of the one-name CATB sleeve.
 7. Leave all commingled-book sizing to Aegis Trader's Allocator.
 
 ## Consequence for the current implementation
