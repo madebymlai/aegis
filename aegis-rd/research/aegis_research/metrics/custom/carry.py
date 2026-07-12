@@ -25,16 +25,16 @@ smooth low-variance point estimate, gate on the tail:
    Rho-stability of a ranking is a trust check, not a second knob —
    ``carry_utility_rho_sensitivity_from_curve`` reports it post hoc.
 
-2. **Carry tail budget** — the budgeted-bleed gate: the annualized left-decile
+2. **Carry tail budget** — the budgeted-bleed report: the actual left-decile
    mean of overlapping multi-month compounded own returns, band-averaged over
    the same 2-6 month horizons as the convexity metrics (a short-gamma blowup
    plays out over weeks, and a daily tail badly understates it; ranking directly
    on tail quantiles is estimator-unstable on short samples, per
-   Varga-Haszonits-Kondor, which is why this is a reported gate, not the
+   Varga-Haszonits-Kondor, which is why this is reported, not used as the
    ranker). A concave pole must show a left tail — it is paid for one — but the
    number must clear the floor the book can survive.
 
-3. **Carry downside L-skew** — the *family-membership* gate, robust edition. The
+3. **Carry downside L-skew** — the realized-sample shape report, robust edition. The
    concave pole must carry materially negative skew or it is not short-gamma at
    all; but the third-moment (Pearson) skew we used before is the worst possible
    estimator of that, because it is an average of *cubed* deviations and a single
@@ -121,13 +121,13 @@ def _carry_income_utility(daily: np.ndarray, rho: float = DEFAULT_RISK_AVERSION)
 
 
 def _left_tail_budget(stream: np.ndarray, horizon: int) -> float:
-    """Annualized left-decile mean of overlapping ``horizon``-day own returns.
+    """Actual left-decile mean of overlapping ``horizon``-day own returns.
 
     The loss side of convexity's net tail payoff, alone: how much the sleeve
     gives back when its multi-month windows go badly, on the horizon a
     short-gamma unwind actually develops over. A window floor keeps the decile
-    mean stable on a held-out split; a mean at or beyond -100% cannot be
-    annualized and reports as -1.0 (the budget is gone).
+    mean stable on a held-out split. The result stays in capital-budget units:
+    -0.08 means an 8% loss over the stated horizon, not an annualized projection.
     """
     windows = _rolling_compound(stream, horizon)
     if windows.size < _MIN_TAIL_WINDOWS:
@@ -137,9 +137,7 @@ def _left_tail_budget(stream: np.ndarray, horizon: int) -> float:
     if left.size == 0:
         return np.nan
     payoff = float(left.mean())
-    if 1.0 + payoff <= 0.0:
-        return -1.0
-    return (1.0 + payoff) ** (_ANNUALIZATION_DAYS / horizon) - 1.0
+    return max(payoff, -1.0)
 
 
 def _carry_tail_budget(stream: np.ndarray) -> float:
@@ -176,9 +174,9 @@ def _l_skewness(values: np.ndarray) -> float:
 def _carry_downside_lskew(stream: np.ndarray) -> float:
     """Horizon-band-averaged robust (L-moment) skew of overlapping multi-month returns.
 
-    The family-membership number: a concave income pole must read clearly negative
-    (short-gamma), measured where the concave signature lives - the multi-month
-    horizon - with an estimator a lone crash cannot dominate.
+    A realized-shape description measured at the multi-month horizon, with an
+    estimator a lone bad print cannot dominate. Contractual payoff identity and
+    realized sample shape remain separate claims.
     """
     vals = []
     for horizon in _HORIZON_BAND:
@@ -361,11 +359,11 @@ CARRY_INCOME_UTILITY_EXTRACTOR = ExtractorSpec(_make_stream_read(_carry_income_u
 
 CARRY_TAIL_BUDGET_DEFINITION = MetricDefinition(
     id=CARRY_TAIL_BUDGET_ID,
-    title="Carry Tail Budget (left-decile multi-month return, 2-6mo band)",
+    title="Carry Tail Budget (actual left-decile loss, 2-6mo band)",
     source_type=SOURCE_TYPE_CUSTOM,
     unit="return",
     value_semantics=(
-        "annualized mean of the worst decile of overlapping 2-6 month own returns; "
+        "actual mean loss in the worst decile of overlapping 2-6 month own returns; "
         "the sleeve's budgeted bleed (closer to zero = shallower tail)"
     ),
     provider="aegis",
@@ -384,7 +382,7 @@ CARRY_DOWNSIDE_LSKEW_DEFINITION = MetricDefinition(
     unit="ratio",
     value_semantics=(
         "robust L-moment skewness (tau_3) of overlapping 2-6 month own returns; "
-        "the concave family-membership gate (clearly negative = short-gamma)"
+        "the realized sample shape report (negative = observed left asymmetry)"
     ),
     provider="aegis",
     target="portfolio",

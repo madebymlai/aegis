@@ -79,11 +79,10 @@ ranking:
   metric: carry_income_utility   # income ranker; the allocator delta-theta ranks the shortlist in the floor harness
 
 report:
-  # Report the concave family-membership + survivability gates next to the ranker
-  # (what-makes-a-carry-sleeve-an-income-engine, "The metric to rank on"): the robust
-  # L-moment skew replaces the outlier-dominated quarterly moment skew. Two-sided gate -
-  # deep enough to be short-gamma (carry_downside_lskew clearly < 0) AND survivable
-  # (carry_tail_budget above the book's loss floor). NOTE the book now runs on
+  # Report realized sample shape + actual 2-6mo tail loss next to the ranker
+  # (what-makes-a-carry-sleeve-an-income-engine, "The metric to rank on"). L-moment
+  # skew replaces the outlier-dominated quarterly moment skew; tail budget stays in
+  # capital-loss units for comparison with the incumbent and book loss budget. NOTE the book now runs on
   # TOTAL-RETURN streams: the catalog distribution store is seeded (GH #76), so these
   # coupon-bearing ETFs finally compound their income in the sim.
   metrics: [carry_tail_budget, carry_downside_lskew]

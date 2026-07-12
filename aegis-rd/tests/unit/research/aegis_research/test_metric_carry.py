@@ -101,6 +101,36 @@ def test_tail_budget_exposes_the_hidden_left_tail() -> None:
     assert budget["smooth_crash"] < 0.0
 
 
+def test_tail_budget_reports_the_actual_multimonth_loss_not_an_annualized_loss() -> None:
+    """A capital budget is the loss suffered over its stated horizon, not a yearly projection."""
+    index = pd.date_range("2020-01-01", periods=640, freq="D")
+    groups = pd.Index(["steady_loss"], name="candidate_id")
+    value = pd.DataFrame(
+        {"steady_loss": 10_000.0 * np.cumprod(np.full(640, 0.999))},
+        index=index,
+    )
+    value.columns = groups
+    close_columns = pd.MultiIndex.from_product(
+        [groups, ["TLT"]], names=["candidate_id", SYMBOL_LEVEL]
+    )
+    close = pd.DataFrame(50.0, index=index, columns=close_columns)
+
+    budget = CARRY_TAIL_BUDGET_EXTRACTOR.read(_StubPortfolio(value, close), ReportConfig())
+
+    # Worked value: mean actual loss across 42/63/84/126-day windows at -10bp/day.
+    assert budget["steady_loss"] == pytest.approx(-0.0753211516091514)
+
+
+def test_carry_metric_metadata_names_tail_loss_and_realized_sample_shape() -> None:
+    from research.aegis_research.metrics.custom.carry import (
+        CARRY_DOWNSIDE_LSKEW_DEFINITION,
+        CARRY_TAIL_BUDGET_DEFINITION,
+    )
+
+    assert "actual" in CARRY_TAIL_BUDGET_DEFINITION.value_semantics
+    assert "realized sample shape" in CARRY_DOWNSIDE_LSKEW_DEFINITION.value_semantics
+
+
 def test_total_loss_scores_negative_infinity() -> None:
     from research.aegis_research.metrics.custom.carry import _carry_income_utility
 
