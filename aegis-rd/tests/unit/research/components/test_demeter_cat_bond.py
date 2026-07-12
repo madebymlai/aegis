@@ -100,17 +100,14 @@ def test_cat_bond_strategy_emits_targets_only_on_rebalance_rows() -> None:
     result = component.run(
         inputs,
         n_candidates=1,
-        min_weight=[0.05],
-        max_weight=[0.30],
-        low_multiple=[2.0],
-        high_multiple=[4.0],
+        min_multiple=[2.0],
     )
 
-    np.testing.assert_allclose(result[[0, 3], 0], [0.30, 0.30])
+    np.testing.assert_allclose(result[[0, 3], 0], [1.0, 1.0])
     assert np.isnan(result[[1, 2], 0]).all()
 
 
-def test_cat_bond_strategy_scales_between_floor_and_cap_with_risk_multiple() -> None:
+def test_cat_bond_strategy_is_off_when_compensation_is_inadequate() -> None:
     component = _load(
         "research/components/strategies/demeter/cat_bond_income.py",
         "demeter_cat_bond_income_risk_budget_test",
@@ -122,7 +119,7 @@ def test_cat_bond_strategy_scales_between_floor_and_cap_with_risk_multiple() -> 
         indicators={
             "rebalance_due": np.array([[1.0], [0.0]]),
             "cat_bond_loss_adjusted_yield": np.full((2, 1), 5.0),
-            "cat_bond_risk_multiple": np.full((2, 1), 3.0),
+            "cat_bond_risk_multiple": np.full((2, 1), 1.9),
             "cat_bond_data_fresh": np.ones((2, 1)),
         },
         n_candidates=1,
@@ -133,16 +130,13 @@ def test_cat_bond_strategy_scales_between_floor_and_cap_with_risk_multiple() -> 
     result = component.run(
         inputs,
         n_candidates=1,
-        min_weight=[0.10],
-        max_weight=[0.30],
-        low_multiple=[2.0],
-        high_multiple=[4.0],
+        min_multiple=[2.0],
     )
 
-    assert result[0, 0] == 0.20
+    assert result[0, 0] == 0.0
 
 
-def test_cat_bond_strategy_uses_floor_before_any_manager_report() -> None:
+def test_cat_bond_strategy_is_off_before_any_manager_report() -> None:
     component = _load(
         "research/components/strategies/demeter/cat_bond_income.py",
         "demeter_cat_bond_income_low_coverage_test",
@@ -165,10 +159,7 @@ def test_cat_bond_strategy_uses_floor_before_any_manager_report() -> None:
     result = component.run(
         inputs,
         n_candidates=1,
-        min_weight=[0.05],
-        max_weight=[0.25],
-        low_multiple=[2.0],
-        high_multiple=[4.0],
+        min_multiple=[2.0],
     )
 
-    assert result[0, 0] == 0.05
+    assert result[0, 0] == 0.0
