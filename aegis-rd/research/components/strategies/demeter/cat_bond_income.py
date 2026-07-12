@@ -16,7 +16,7 @@ COMPONENT_MANIFEST = {
     "output_name": "target_weights",
     "consumes_outputs": [
         "rebalance_due",
-        "cat_bond_loss_adjusted_yield",
+        "cat_bond_net_carry",
         "cat_bond_risk_multiple",
         "cat_bond_data_fresh",
     ],
@@ -72,9 +72,7 @@ def run(inputs, *, n_candidates, **param_lists):
     periods = len(inputs.data.array("Close"))
     n_symbols = inputs.n_symbols
     due = inputs.indicators["rebalance_due"].reshape(periods, n_candidates, n_symbols)
-    net = inputs.indicators["cat_bond_loss_adjusted_yield"].reshape(
-        periods, n_candidates, n_symbols
-    )
+    net = inputs.indicators["cat_bond_net_carry"].reshape(periods, n_candidates, n_symbols)
     multiple = inputs.indicators["cat_bond_risk_multiple"].reshape(periods, n_candidates, n_symbols)
     fresh = inputs.indicators["cat_bond_data_fresh"].reshape(periods, n_candidates, n_symbols)
     result = np.full((periods, n_candidates, n_symbols), np.nan)

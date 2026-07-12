@@ -5,7 +5,11 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
+import tempfile
+import warnings
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +35,43 @@ class ArtemisSnapshot:
     source_url: str
     source_sha256: str
     retrieved_at: str
+
+
+@dataclass(frozen=True)
+class ArtemisMarketYieldSource:
+    """Own the complete live-to-cache lifecycle for Artemis market-yield data."""
+
+    cache_dir: Path
+
+    def refresh(self) -> None:
+        """Fetch, validate, and atomically cache the current public observation set."""
+        response = requests.get(SOURCE_URL, timeout=30)
+        response.raise_for_status()
+        payload = snapshot_payload(response.text)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        destination = self.cache_dir / _snapshot_filename(payload["snapshot_sha256"])
+        _write_once(destination, json.dumps(payload, indent=2) + "\n")
+
+    def latest(self) -> ArtemisSnapshot:
+        """Return the cache entry with the newest market observation."""
+        paths = list(self.cache_dir.glob("cat_bond_market_yield-*.json"))
+        if not paths:
+            raise ArtemisIntegrityError(
+                "Artemis cache is empty; an online refresh is required before first use"
+            )
+        snapshots = [load_snapshot(path) for path in paths]
+        return max(
+            snapshots,
+            key=lambda snapshot: (snapshot.frame.index[-1], snapshot.retrieved_at),
+        )
+
+    def refresh_and_load(self) -> ArtemisSnapshot:
+        """Prefer live Artemis data and degrade to the newest validated cache entry."""
+        try:
+            self.refresh()
+        except (requests.RequestException, ArtemisParseError) as error:
+            warnings.warn(f"Artemis refresh failed; using cache: {error}", stacklevel=2)
+        return self.latest()
 
 
 def parse_market_yield_page(html: str) -> pd.DataFrame:
@@ -77,16 +118,30 @@ def snapshot_payload(html: str, *, retrieved_at: datetime | None = None) -> dict
     }
 
 
-def refresh_snapshot(destination: Path) -> Path:
-    """Fetch once and write an immutable content-addressed snapshot."""
-    response = requests.get(SOURCE_URL, timeout=30)
-    response.raise_for_status()
-    payload = snapshot_payload(response.text)
-    destination.mkdir(parents=True, exist_ok=True)
-    path = destination / f"cat_bond_market_yield-{payload['snapshot_sha256'][:16]}.json"
-    if not path.exists():
-        path.write_text(json.dumps(payload, indent=2) + "\n")
-    return path
+def _snapshot_filename(snapshot_sha256: str) -> str:
+    return f"cat_bond_market_yield-{snapshot_sha256[:16]}.json"
+
+
+def _write_once(destination: Path, contents: str) -> None:
+    """Atomically create an immutable cache entry without replacing an existing one."""
+    if destination.exists():
+        return
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(contents)
+            handle.flush()
+            os.fsync(handle.fileno())
+        with suppress(FileExistsError):
+            os.link(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def load_snapshot(path: Path) -> ArtemisSnapshot:

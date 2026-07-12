@@ -3,13 +3,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import requests
 
 from research.aegis_research.external_data.artemis import (
     ArtemisIntegrityError,
+    ArtemisMarketYieldSource,
     load_snapshot,
     parse_market_yield_page,
     snapshot_payload,
 )
+
+
+class _Response:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def raise_for_status(self) -> None:
+        return None
 
 
 def _page(*, expected_loss="1.0, 1.5") -> str:
@@ -50,3 +60,46 @@ def test_snapshot_rejects_observations_changed_after_pinning(tmp_path: Path) -> 
 
     with pytest.raises(ArtemisIntegrityError, match="does not match"):
         load_snapshot(path)
+
+
+def test_source_refresh_is_content_idempotent(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: _Response(_page()))
+    source = ArtemisMarketYieldSource(tmp_path)
+
+    source.refresh()
+    first_path = next(tmp_path.glob("*.json"))
+    first_contents = first_path.read_text()
+    source.refresh()
+
+    assert list(tmp_path.glob("*.json")) == [first_path]
+    assert first_path.read_text() == first_contents
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_source_uses_validated_cache_when_refresh_is_offline(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: _Response(_page()))
+    source = ArtemisMarketYieldSource(tmp_path)
+    source.refresh()
+
+    def offline(*args, **kwargs):
+        raise requests.ConnectionError("offline")
+
+    monkeypatch.setattr(requests, "get", offline)
+    with pytest.warns(UserWarning, match="using cache"):
+        snapshot = source.refresh_and_load()
+
+    assert snapshot.frame.index[-1] == datetime(2026, 1, 8)
+
+
+def test_source_cold_start_fails_clearly_when_offline(tmp_path: Path, monkeypatch) -> None:
+    def offline(*args, **kwargs):
+        raise requests.ConnectionError("offline")
+
+    monkeypatch.setattr(requests, "get", offline)
+    with (
+        pytest.warns(UserWarning, match="using cache"),
+        pytest.raises(ArtemisIntegrityError, match="online refresh is required"),
+    ):
+        ArtemisMarketYieldSource(tmp_path).refresh_and_load()

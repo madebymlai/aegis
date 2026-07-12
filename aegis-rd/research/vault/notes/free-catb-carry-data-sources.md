@@ -9,14 +9,10 @@ tags: [cat-bonds, carry, demeter, data]
 
 ## Decision
 
-Use **HANetf/King Ridge's CATB manager reports as the authoritative portfolio-level
-carry source**. Use HANetf's daily holdings for concentration and implementation
-monitoring. Keep Artemis market data as market context and the Artemis Deal Directory as
-an audit/enrichment source, not as the primary estimator of CATB expected loss.
-
-This removes the need to reach 80% bond-by-bond expected-loss coverage before CATB carry
-can be measured. A manager-published portfolio statistic covers the managed portfolio as
-a whole.
+Use the **Artemis/Plenum outstanding-market yield series as Demeter's sole external carry
+source**. CATB is the executable UCITS vehicle for the broad catastrophe-insurance premium;
+the strategy does not claim to estimate King Ridge's exact portfolio carry. HANetf data has
+no production dependency.
 
 ## The source we missed
 
@@ -53,11 +49,11 @@ before assuming whether the 1.28% TER is already reflected.
 
 ## Source hierarchy
 
-### 1. CATB manager reports — primary signal
+### 1. CATB manager reports — rejected production dependency
 
 The quarterly report is the only free source found that directly publishes CATB's
-portfolio expected loss and current spread/yield. Cache each report by publication time
-and use the statistics only from the following decision date.
+portfolio expected loss and current spread/yield. Its sparse cadence and lack of historical
+observations make it unsuitable as Demeter's production signal.
 
 Limitation: only one CATB quarterly report was discoverable so far. This provides a real
 31 March observation, not a continuous history or a time-series timing model.
@@ -90,12 +86,13 @@ Use it to explain CATB risk and cross-check manager statistics. No documented of
 bulk API or complete CSV export was found, so it should not be the load-bearing live feed.
 Expected loss is also usually the issuance estimate rather than a current manager model.
 
-### 4. Artemis market yield — regime context only
+### 4. Artemis market yield — production asset-class signal
 
 The free [cat-bond market-yield
-series](https://www.artemis.bm/catastrophe-bond-market-yield/) decomposes market yield
-into collateral yield, insurance spread and expected loss. It is useful for whether the
-overall market is rich or cheap, but it is not CATB-specific.
+series](https://www.artemis.bm/catastrophe-bond-market-yield/) decomposes outstanding-market
+yield into collateral yield, insurance spread and expected loss. Demeter deliberately uses
+this as an asset-class signal and implements the resulting exposure through CATB; it does
+not label the observation CATB-specific.
 
 ### 5. Free research and comparator data — validation only
 
@@ -122,22 +119,44 @@ OpenFIGI can freely map CATB ISINs to FIGIs, and FINRA TRACE may provide some re
 transactions, but identifiers and trades do not supply modelled expected loss. Cat bonds
 are also OTC and TRACE coverage is not a complete portfolio valuation source.
 
+## Historical observations found
+
+CATB itself has no earlier full-quarter history to recover: HANetf gives an inception date
+of 2 December 2025, and its report as of 31 March 2026 is therefore the fund's first full
+calendar quarter. HANetf retains monthly CATB factsheets from November/December 2025 onward,
+but those PDFs publish holdings, NAV and descriptive fund data rather than portfolio spread
+and modelled expected loss. They cannot extend the CATB-specific richness signal.
+
+The clean free historical calibration source is the **Twelve Cat Bond Fund monthly report
+archive** on Swiss Fund Data. Its reports expose discount margin or spread, modelled
+expected loss, excess spread, average coupon, maturity, loss bands, peril contributions and
+stress tests. Examples found include:
+
+- 30 June 2022: spread at issuance 5.69%, expected loss 2.16%, excess spread 3.53%,
+  implying a 2.63x spread/EL multiple.
+- 28 February 2025: discount margin 4.51%, expected loss 1.72%, excess spread 2.79%,
+  implying a 2.62x multiple.
+- 31 May 2025: discount margin 5.50%, expected loss 1.67%, excess spread 3.83%,
+  implying a 3.29x multiple.
+
+This archive is suitable for setting defensible prior ranges and testing whether a
+spread/EL sizing curve is sensible across market regimes. It is not CATB's portfolio and
+must not be spliced into CATB's live signal or presented as CATB backtest history.
+
 ## Recommended Demeter data contract
 
-1. Dynamically cache HANetf daily holdings.
-2. Dynamically discover and cache each CATB manager report.
-3. Treat manager-report `yield`, `spread`, `expected_loss`, `maturity`, and EL-band weights
-   as authoritative report observations with 100% portfolio coverage.
-4. Compute `spread / expected_loss` and `spread - expected_loss` without reconstructing
-   bond-level EL.
-5. Use Artemis aggregate richness only as a separate market-regime observation.
-6. Between manager reports, carry forward the latest report with explicit age; do not
-   pretend the portfolio EL updates daily.
-7. Ask HANetf whether future quarterly reports will retain the same fields and whether TER
-   is already embedded in the reported 9.3% yield before defining net expected carry.
+1. Refresh the public Artemis outstanding-market series on each Run.
+2. Store validated observations as immutable content-addressed runtime-cache entries; reuse
+   the newest valid entry during a temporary outage and fail a cacheless offline cold start.
+3. Compute total net carry as collateral yield plus insurance spread minus expected loss and
+   CATB's fund fee.
+4. Compute catastrophe-risk compensation as insurance spread divided by expected loss.
+5. Apply a conservative publication lag and reject stale observations.
+6. Emit a fully invested one-name CATB sleeve only when market carry qualifies.
+7. Leave all commingled-book sizing to Aegis Trader's Allocator.
 
 ## Consequence for the current implementation
 
-The 80% tranche-match gate and its bond-match report solve the wrong problem and are
-removed. The primary portfolio signal begins from the report published 1 May 2026, using
-its 31 March data without look-ahead.
+The HANetf holdings fetch, manager-report parser, tranche matching and coverage reporting are
+removed. Demeter now claims broad cat-bond market carry implemented through CATB, not exact
+CATB portfolio richness.
