@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.data import MarketDataBundle
@@ -130,3 +131,36 @@ def test_cat_bond_strategy_is_off_without_fresh_market_data() -> None:
     )
 
     assert result[0, 0] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("net_carry", "risk_multiple", "fresh", "expected"),
+    [
+        (5.74, 2.34, 1.0, 1.0),
+        (5.74, 2.00, 1.0, 1.0),
+        (5.74, 1.99, 1.0, 0.0),
+        (0.00, 3.00, 1.0, 0.0),
+        (-0.01, 3.00, 1.0, 0.0),
+        (5.74, 3.00, 0.0, 0.0),
+    ],
+)
+def test_cat_bond_sizing_is_binary_within_its_sleeve(
+    net_carry: float,
+    risk_multiple: float,
+    fresh: float,
+    expected: float,
+) -> None:
+    component = _load(
+        "research/components/strategies/demeter/cat_bond_income.py",
+        f"demeter_cat_bond_sizing_{net_carry}_{risk_multiple}_{fresh}",
+    )
+
+    result = component._monthly_exposure(
+        rebalance_due=np.array([1.0]),
+        loss_adjusted_yield=np.array([net_carry]),
+        multiple=np.array([risk_multiple]),
+        fresh=np.array([fresh]),
+        min_multiple=2.0,
+    )
+
+    assert result[0] == expected
