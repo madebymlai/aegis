@@ -16,7 +16,6 @@ COMPONENT_MANIFEST = {
     "input_names": ["Close"],
     "param_names": [
         "cache_dir",
-        "history_dir",
         "max_age_days",
     ],
     "output_names": [
@@ -29,7 +28,6 @@ COMPONENT_MANIFEST = {
     ],
     "defaults": {
         "cache_dir": "research/data/cache/hanetf/catb-reports",
-        "history_dir": "research/data/hanetf/catb-reports",
         "max_age_days": 120,
     },
 }
@@ -85,14 +83,9 @@ def run(data, *, n_candidates, **param_lists):
     }
     observations_by_params = {}
     for candidate in range(n_candidates):
-        key = (
-            str(_project_path(param_lists["cache_dir"][candidate])),
-            str(_project_path(param_lists["history_dir"][candidate])),
-        )
+        key = (str(_project_path(param_lists["cache_dir"][candidate])),)
         if key not in observations_by_params:
-            observations_by_params[key] = current_and_cached_reports(
-                Path(key[0]), history_dir=Path(key[1])
-            )
+            observations_by_params[key] = current_and_cached_reports(Path(key[0]))
         aligned = _aligned_metrics(
             close.index,
             observations_by_params[key],

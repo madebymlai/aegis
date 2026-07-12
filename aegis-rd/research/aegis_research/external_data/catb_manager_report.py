@@ -149,17 +149,13 @@ def load_cached_report(path: Path) -> CatbManagerMetrics:
         raise CatbManagerReportError("invalid CATB manager-report cache") from error
 
 
-def current_and_cached_reports(
-    cache_dir: Path, *, history_dir: Path | None = None
-) -> list[CatbManagerMetrics]:
+def current_and_cached_reports(cache_dir: Path) -> list[CatbManagerMetrics]:
     """Refresh when online, then return all observations in publication order."""
     try:
         refresh_report_cache(cache_dir)
     except requests.RequestException as error:
         warnings.warn(f"CATB manager-report refresh failed; using cache: {error}", stacklevel=2)
     paths = sorted(cache_dir.glob("catb-manager-report-*.json"))
-    if history_dir is not None:
-        paths.extend(sorted(history_dir.glob("catb-manager-report-*.json")))
     if not paths:
         raise CatbManagerReportError("CATB manager-report cache is empty")
     reports = [load_cached_report(path) for path in paths]

@@ -69,7 +69,6 @@ def test_catb_manager_report_is_unavailable_before_publication() -> None:
         MarketDataBundle(arrays={"Close": _close(index)}),
         n_candidates=1,
         cache_dir=["unused"],
-        history_dir=["unused"],
         max_age_days=[120],
     )
 

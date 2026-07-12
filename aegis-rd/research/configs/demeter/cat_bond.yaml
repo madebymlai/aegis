@@ -34,7 +34,6 @@ indicators:
 - id: demeter.cat_bond_portfolio_carry
   params:
     cache_dir: research/data/cache/hanetf/catb-reports
-    history_dir: research/data/hanetf/catb-reports
     max_age_days: 120
 
 strategy:
