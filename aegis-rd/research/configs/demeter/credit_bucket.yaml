@@ -1,0 +1,58 @@
+name: demeter_eu_credit_bucket_yield
+schema_version: 10
+output_dir: runs/demeter_eu/credit_bucket_yield
+lock: 20260713T200047206608Z_demeter_eu_credit_bucket_yield
+
+# Static broad-credit control and active maturity-within-quality challenger.
+# The active cells select exactly one IG and one HY fund while preserving a fixed 50/50
+# quality split. Point-in-time YTW and modified duration use the investable UCITS funds'
+# own historical weights, joined by ISIN to iShares security analytics. selection_strength=0
+# is the static LQDE+IHYU control; selection_strength=1 activates the maturity selector.
+data:
+  base_currency: EUR
+  instruments: [SDIG.LSEETF, LQDE.LSEETF, SDHY.LSEETF, IHYU.LSEETF]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2020-08-10'
+  end: '2026-07-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: demeter.credit_bucket_yield
+  params:
+    cache_dir: research/data/cache/ishares/credit-buckets
+    min_coverage: 0.90
+    max_age_days: 45
+
+strategy:
+  id: demeter.credit_yield_proxy_selector
+
+portfolio:
+  gross_cap: 1.0
+  net_cap: 1.0
+  direction: longonly
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  fixed_fee: 1.25
+  band_up: 0.02
+  band_down: 0.04
+
+ranking:
+  metric: carry_income_utility
+
+report:
+  metrics: [carry_tail_budget, carry_downside_lskew]
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_n_expanding
+    params:
+      n: 4
+      min_length: 756
+      split: -252
+    max_splits: 10

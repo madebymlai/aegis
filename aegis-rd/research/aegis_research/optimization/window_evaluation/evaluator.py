@@ -95,6 +95,38 @@ class WindowEvaluator:
             param_names,
         )
 
+    def portfolio_returns(self, range_: slice, **params: Any) -> pd.DataFrame:
+        """Return net portfolio returns for a pre-resolved Candidate window.
+
+        This is the return-stream counterpart to :meth:`evaluate`. It uses the
+        same signal slicing, precomputed indicator store, execution timing,
+        distributions, currency conversion, drift bands, and costs as the
+        optimization path. Callers therefore do not need to reconstruct the
+        portfolio simulation to compare a locked Candidate with another book.
+        """
+        _, combo_lists, n_combos, _ = _extract_combos(params)
+        keys = candidate_keys(combo_lists)
+        if any(key in self.store.invalid_keys for key in keys):
+            raise ValueError("cannot produce returns for an invalid Candidate")
+
+        signal_close_window = self.arrays.signal.array("Close").iloc[range_]
+        allocations = self.source.simulate(
+            signal_close_window,
+            self.store.window(range_, keys),
+            n_combos,
+            **combo_lists,
+        )
+        if allocations is vbt.NoResult:
+            raise ValueError("Candidate produced no portfolio allocations")
+        portfolio = self._portfolio_from_allocations(
+            self.arrays.pnl_close.iloc[range_],
+            self.arrays.pnl_open.iloc[range_],
+            allocations,
+        )
+        value = portfolio.get_value()
+        value_frame = value.to_frame() if isinstance(value, pd.Series) else value
+        return value_frame.pct_change(fill_method=None).iloc[1:]
+
     def non_executable_rows(self, window_index: pd.Index) -> int:
         """The seam cost of one window: rows held (non-executable) under next-open rules.
 
@@ -121,7 +153,18 @@ class WindowEvaluator:
         n_symbols = len(close_window.columns)
         if n_symbols == 0 or len(allocations.columns) // n_symbols < 1:
             return vbt.NoResult
-        pf = simulate_portfolio_batch(
+        pf = self._portfolio_from_allocations(close_window, open_window, allocations)
+        return central_metrics_from_grouped_accessors(
+            pf, self.report, metric_keys, param_names, self.extractors
+        )
+
+    def _portfolio_from_allocations(
+        self,
+        close_window: pd.DataFrame,
+        open_window: pd.DataFrame,
+        allocations: Any,
+    ) -> Any:
+        return simulate_portfolio_batch(
             close_window,
             allocations,
             self.book,
@@ -130,9 +173,6 @@ class WindowEvaluator:
             periods_per_year=self.report.periods_per_year,
             distributions=self.arrays.distributions,
             currency_conversion=self.arrays.currency_conversion,
-        )
-        return central_metrics_from_grouped_accessors(
-            pf, self.report, metric_keys, param_names, self.extractors
         )
 
 
