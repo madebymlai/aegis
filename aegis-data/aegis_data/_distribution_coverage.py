@@ -17,7 +17,9 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import CurrencyPair, FuturesContract
 
+from aegis_data.bar_type import raw_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
+from aegis_data.ohlcv import bars_to_ohlcv
 from aegis_data.catalog import (
     CatalogCoverageGapError,
     DistributionDataProviderPort,
@@ -54,6 +56,7 @@ class DistributionCoverageService:
     provider: DistributionDataProviderPort | None = None
     clock_ns: Callable[[], int] = field(kw_only=True)
     resolver: RawBarTypeResolver = field(kw_only=True, default=DeclaredMarkingResolver())
+    ensure_bar_coverage: Callable[[BarType, int, int], None] = field(kw_only=True)
 
     def coverage_report(
         self,
@@ -319,16 +322,12 @@ class DistributionCoverageService:
         start_ns: int,
         end_ns: int,
     ) -> pd.Series:
-        # The marking owns the close projection: a bar-marked instrument's own
-        # closes, a quote-marked instrument's derived bid/ask mid — the same
-        # series the corpus serves, so decode compares like with like.
-        marking = self.resolver.resolve(instrument_id, "1D")
-        return marking.ohlcv_frame(
-            {
-                bar_type: self._bars_for(bar_type, start_ns, end_ns)
-                for bar_type in marking.mark_bars
-            }
-        )["Close"]
+        # ADJUSTED_LAST adjusts the exchange's last-trade history, irrespective of
+        # how the strategy marks the position.  Comparing it with a BID/ASK mid
+        # would turn ordinary quote changes into synthetic cash distributions.
+        trade_type = raw_bar_type(instrument_id, "1D")
+        self.ensure_bar_coverage(trade_type, start_ns, end_ns)
+        return bars_to_ohlcv(self._bars_for(trade_type, start_ns, end_ns))["Close"]
 
     def _clamped_to_bar_frontier(
         self,
@@ -550,5 +549,3 @@ def _range_text(start_ns: int, end_ns: int) -> str:
         f"{pd.Timestamp(start_ns, tz='UTC').isoformat()}.."
         f"{pd.Timestamp(end_ns, tz='UTC').isoformat()}"
     )
-
-

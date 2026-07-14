@@ -11,7 +11,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import ComponentStrategyInputs
 
-_ROOT = Path(__file__).resolve().parents[4]
+_ROOT = Path(__file__).resolve().parents[3]
 _INSTRUMENTS = (
     "SDIG.LSEETF",
     "LQDE.LSEETF",

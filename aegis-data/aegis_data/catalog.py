@@ -419,6 +419,22 @@ class CatalogBackedDataPort:
             self.distribution_provider,
             clock_ns=self.clock_ns,
             resolver=self.resolver,
+            ensure_bar_coverage=self._ensure_bar_interval,
+        )
+
+    def _ensure_bar_interval(
+        self,
+        bar_type: BarType,
+        start_ns: int,
+        end_ns: int,
+    ) -> None:
+        self._ensure_covered(
+            bar_type,
+            CatalogWindowRequest(
+                instrument_ids=(bar_type.instrument_id,),
+                start=pd.Timestamp(start_ns, tz="UTC").isoformat(),
+                end=pd.Timestamp(end_ns, tz="UTC").isoformat(),
+            ),
         )
 
     def _ensure_covered(self, bar_type: BarType, request: CatalogWindowRequest) -> None:

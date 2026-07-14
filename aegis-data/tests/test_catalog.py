@@ -929,6 +929,75 @@ def test_catalog_port_verifies_accumulating_distribution_window_as_empty(
     assert len(provider.requests) == 1
 
 
+def test_quote_marking_does_not_turn_bid_ask_moves_into_distributions(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("UEQC.XETR")
+    resolver = DeclaredMarkingResolver(declared={instrument_id: MarkMode.QUOTE})
+    bid_type, ask_type = resolver.resolve(instrument_id, "1D").mark_bars
+    trade_type = raw_bar_type(instrument_id, "1D")
+    _write_span(
+        catalog,
+        [
+            _bar(bid_type, "2024-01-01", 100.0),
+            _bar(ask_type, "2024-01-01", 101.0),
+            _bar(bid_type, "2024-01-02", 90.0),
+            _bar(ask_type, "2024-01-02", 91.0),
+            _bar(bid_type, "2024-01-03", 100.0),
+            _bar(ask_type, "2024-01-03", 101.0),
+        ],
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    _write_definition(catalog, instrument_id)
+    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+
+    class _QuoteDistributionProvider(_AdjustedLastProvider):
+        def __init__(self) -> None:
+            super().__init__(
+                {instrument_id: pd.Series([100.0, 100.0, 100.0], index=dates)}
+            )
+            self.bar_requests: list[BarType] = []
+
+        def request_bars(
+            self,
+            bar_type: BarType,
+            *,
+            start: pd.Timestamp,
+            end: pd.Timestamp,
+        ) -> ServedBars:
+            self.bar_requests.append(bar_type)
+            return ServedBars(
+                (
+                    _bar(trade_type, "2024-01-01", 100.0),
+                    _bar(trade_type, "2024-01-02", 100.0),
+                    _bar(trade_type, "2024-01-03", 100.0),
+                ),
+                start,
+            )
+
+    provider = _QuoteDistributionProvider()
+    port = CatalogBackedDataPort(
+        catalog,
+        provider=provider,
+        distribution_provider=provider,
+        resolver=resolver,
+    )
+
+    window = port.load_window(
+        CatalogWindowRequest(
+            (instrument_id,), start="2024-01-01", end="2024-01-04"
+        )
+    )
+
+    assert window.ohlcv[instrument_id]["Close"].tolist() == [100.5, 90.5, 100.5]
+    assert window.distributions == ()
+    assert provider.bar_requests == [trade_type]
+
+
 def test_catalog_port_skips_distribution_verification_for_futures_and_roots(
     tmp_path: Path,
 ) -> None:

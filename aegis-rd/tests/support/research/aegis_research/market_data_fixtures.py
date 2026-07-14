@@ -242,20 +242,27 @@ def seed_catalog_quote(
     end: str,
     currency: str = "EUR",
 ) -> None:
-    """Seed a quote-marked instrument: definition + BID and ASK daily bars.
+    """Seed a quote-marked instrument: definition, BID/ASK marks and LAST reference.
 
-    The thin-ETF corpus shape (aegis-rd-tggo.2): dense quotes, NO LAST series
-    and NO stored MID bar — the mid is derived at read time by the marking.
+    The thin-ETF corpus shape (aegis-rd-tggo.2): dense quotes and no stored MID
+    bar — the mid is derived at read time. LAST is retained only as the reference
+    series needed to verify distributions against ADJUSTED_LAST.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(catalog_path)
     current_id = instrument_id(value)
     resolver = DeclaredMarkingResolver(declared={current_id: MarkMode.QUOTE})
     bid_type, ask_type = resolver.resolve(current_id, "1D").mark_bars
+    trade_type = raw_bar_type(current_id, "1D")
+    trade_frame = (bid_frame + ask_frame) / 2.0
     catalog.write_data([equity_definition(current_id, currency)])
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = pd.Timestamp(end, tz="UTC")
-    for bar_type, frame in ((bid_type, bid_frame), (ask_type, ask_frame)):
+    for bar_type, frame in (
+        (bid_type, bid_frame),
+        (ask_type, ask_frame),
+        (trade_type, trade_frame),
+    ):
         catalog.write_data(
             [
                 _bar(
@@ -272,11 +279,10 @@ def seed_catalog_quote(
             start=start_ts.value,
             end=end_ts.value,
         )
-    mid_close = (bid_frame["Close"] + ask_frame["Close"]) / 2.0
     _verify_zero_distribution_coverage(
         catalog,
         current_id,
-        panels={"Close": pd.DataFrame({current_id: mid_close})},
+        panels={"Close": pd.DataFrame({current_id: trade_frame["Close"]})},
         start=start_ts,
         end=end_ts,
         resolver=resolver,
