@@ -171,12 +171,12 @@ def test_requested_metric_ids_unions_ranking_and_report_metrics() -> None:
     from research.aegis_research.configuration.resolution import _requested_metric_ids
 
     raw = {
-        "ranking": {"metric": "carry_income_utility"},
-        "report": {"metrics": ["carry_tail_budget", "carry_downside_lskew", "carry_income_utility"]},
+        "ranking": {"metric": "convergent_income_utility"},
+        "report": {"metrics": ["convergent_tail_budget", "convergent_downside_lskew", "convergent_income_utility"]},
     }
     ids = _requested_metric_ids(raw)
     # Ranker first, then report extras, de-duplicated (income appears once).
-    assert ids == ("carry_income_utility", "carry_tail_budget", "carry_downside_lskew")
+    assert ids == ("convergent_income_utility", "convergent_tail_budget", "convergent_downside_lskew")
 
 
 def _resolve_with_report(ranking: dict[str, Any], report: dict[str, Any], *, tmp_path: Path):
@@ -199,19 +199,19 @@ def _resolve_with_report(ranking: dict[str, Any], report: dict[str, Any], *, tmp
 
 def test_report_metrics_pull_custom_metrics_into_the_effective_registry(tmp_path: Path) -> None:
     resolved = _resolve_with_report(
-        {"metric": "carry_income_utility"},
-        {"metrics": ["carry_tail_budget", "carry_downside_lskew"]},
+        {"metric": "convergent_income_utility"},
+        {"metrics": ["convergent_tail_budget", "convergent_downside_lskew"]},
         tmp_path=tmp_path,
     )
     ids = set(resolved.metric_registry.ids())
-    assert {"carry_income_utility", "carry_tail_budget", "carry_downside_lskew"} <= ids
-    assert list(resolved.config.report.metrics) == ["carry_tail_budget", "carry_downside_lskew"]
+    assert {"convergent_income_utility", "convergent_tail_budget", "convergent_downside_lskew"} <= ids
+    assert list(resolved.config.report.metrics) == ["convergent_tail_budget", "convergent_downside_lskew"]
 
 
 def test_unknown_report_metric_fails_closed_at_its_path(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve_with_report(
-            {"metric": "carry_income_utility"},
+            {"metric": "convergent_income_utility"},
             {"metrics": ["not_a_metric"]},
             tmp_path=tmp_path,
         )

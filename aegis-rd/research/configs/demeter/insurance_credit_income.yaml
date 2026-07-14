@@ -37,10 +37,10 @@ portfolio:
   band_down: 0.04
 
 ranking:
-  metric: carry_income_utility
+  metric: convergent_income_utility
 
 report:
-  metrics: [carry_tail_budget, carry_downside_lskew]
+  metrics: [convergent_tail_budget, convergent_downside_lskew]
 
 optimization:
   search: grid

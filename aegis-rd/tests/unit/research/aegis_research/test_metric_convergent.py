@@ -1,4 +1,4 @@
-"""Anti-gaming tests for the carry-pole ranking metrics.
+"""Anti-gaming tests for the convergent-pole ranking metrics.
 
 The property under test is the one the metric is hired for: a *smooth-crash*
 stream (steady daily premium punctuated by rare large losses - the payoff shape
@@ -16,13 +16,13 @@ import pytest
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import ReportConfig
 from research.aegis_research.metrics.custom import optional_custom_metrics
-from research.aegis_research.metrics.custom.carry import (
-    CARRY_INCOME_UTILITY_DEFINITION,
-    CARRY_INCOME_UTILITY_EXTRACTOR,
-    CARRY_INCOME_UTILITY_ID,
-    CARRY_TAIL_BUDGET_EXTRACTOR,
-    CARRY_TAIL_BUDGET_ID,
-    carry_utility_rho_sensitivity_from_curve,
+from research.aegis_research.metrics.custom.convergent import (
+    CONVERGENT_INCOME_UTILITY_DEFINITION,
+    CONVERGENT_INCOME_UTILITY_EXTRACTOR,
+    CONVERGENT_INCOME_UTILITY_ID,
+    CONVERGENT_TAIL_BUDGET_EXTRACTOR,
+    CONVERGENT_TAIL_BUDGET_ID,
+    convergent_utility_rho_sensitivity_from_curve,
 )
 from research.aegis_research.metrics.custom.support import EquityCurve
 
@@ -83,7 +83,7 @@ def test_income_utility_is_not_gamed_by_the_smooth_crash_stream() -> None:
     """The crossed ordering: higher Sharpe, lower utility - the metric's whole point."""
     pf = _stub_portfolio()
     config = ReportConfig()
-    utility = CARRY_INCOME_UTILITY_EXTRACTOR.read(pf, config)
+    utility = CONVERGENT_INCOME_UTILITY_EXTRACTOR.read(pf, config)
 
     assert _sharpe(_smooth_crash_returns()) > _sharpe(_honest_vol_returns())
     assert utility["smooth_crash"] < utility["honest_vol"]
@@ -94,7 +94,7 @@ def test_income_utility_is_not_gamed_by_the_smooth_crash_stream() -> None:
 def test_tail_budget_exposes_the_hidden_left_tail() -> None:
     pf = _stub_portfolio()
     config = ReportConfig()
-    budget = CARRY_TAIL_BUDGET_EXTRACTOR.read(pf, config)
+    budget = CONVERGENT_TAIL_BUDGET_EXTRACTOR.read(pf, config)
 
     # The crash stream's multi-month left decile is deep; the honest stream's is shallow.
     assert budget["smooth_crash"] < budget["honest_vol"]
@@ -115,68 +115,71 @@ def test_tail_budget_reports_the_actual_multimonth_loss_not_an_annualized_loss()
     )
     close = pd.DataFrame(50.0, index=index, columns=close_columns)
 
-    budget = CARRY_TAIL_BUDGET_EXTRACTOR.read(_StubPortfolio(value, close), ReportConfig())
+    budget = CONVERGENT_TAIL_BUDGET_EXTRACTOR.read(_StubPortfolio(value, close), ReportConfig())
 
     # Worked value: mean actual loss across 42/63/84/126-day windows at -10bp/day.
     assert budget["steady_loss"] == pytest.approx(-0.0753211516091514)
 
 
-def test_carry_metric_metadata_names_tail_loss_and_realized_sample_shape() -> None:
-    from research.aegis_research.metrics.custom.carry import (
-        CARRY_DOWNSIDE_LSKEW_DEFINITION,
-        CARRY_TAIL_BUDGET_DEFINITION,
+def test_convergent_metric_metadata_names_tail_loss_and_realized_sample_shape() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        CONVERGENT_DOWNSIDE_LSKEW_DEFINITION,
+        CONVERGENT_TAIL_BUDGET_DEFINITION,
     )
 
-    assert "actual" in CARRY_TAIL_BUDGET_DEFINITION.value_semantics
-    assert "realized sample shape" in CARRY_DOWNSIDE_LSKEW_DEFINITION.value_semantics
+    assert "actual" in CONVERGENT_TAIL_BUDGET_DEFINITION.value_semantics
+    assert "realized sample shape" in CONVERGENT_DOWNSIDE_LSKEW_DEFINITION.value_semantics
 
 
 def test_total_loss_scores_negative_infinity() -> None:
-    from research.aegis_research.metrics.custom.carry import _carry_income_utility
+    from research.aegis_research.metrics.custom.convergent import _convergent_income_utility
 
     ruined = np.array([0.001] * 100 + [-1.0])
-    assert _carry_income_utility(ruined) == float("-inf")
+    assert _convergent_income_utility(ruined) == float("-inf")
 
 
 def test_rho_sensitivity_is_deterministic_and_orders_by_risk_aversion() -> None:
     curve = EquityCurve.from_portfolio(_stub_portfolio())
-    sensitivity = carry_utility_rho_sensitivity_from_curve(curve)
+    sensitivity = convergent_utility_rho_sensitivity_from_curve(curve)
 
     # More risk aversion never raises the certainty equivalent of a risky stream.
     row = sensitivity.loc["smooth_crash"]
     assert (row.diff().dropna() <= 0.0).all()
     # The anti-gaming ordering holds across the whole evaluator band, not only at the pin.
     assert (sensitivity.loc["smooth_crash"] < sensitivity.loc["honest_vol"]).all()
-    pd.testing.assert_frame_equal(
-        sensitivity, carry_utility_rho_sensitivity_from_curve(curve)
-    )
+    pd.testing.assert_frame_equal(sensitivity, convergent_utility_rho_sensitivity_from_curve(curve))
 
 
-def test_carry_metrics_are_registered_opt_in() -> None:
+def test_convergent_metrics_are_registered_without_legacy_aliases() -> None:
     available = optional_custom_metrics()
-    assert CARRY_INCOME_UTILITY_ID in available
-    assert CARRY_TAIL_BUDGET_ID in available
-    assert available[CARRY_INCOME_UTILITY_ID][0] is CARRY_INCOME_UTILITY_DEFINITION
+
+    assert CONVERGENT_INCOME_UTILITY_ID in available
+    assert CONVERGENT_TAIL_BUDGET_ID in available
+    assert available[CONVERGENT_INCOME_UTILITY_ID][0] is CONVERGENT_INCOME_UTILITY_DEFINITION
+    assert "carry_income_utility" not in available
+    assert "carry_tail_budget" not in available
+    assert "carry_downside_lskew" not in available
 
 
 def test_short_stream_degrades_to_nan() -> None:
-    from research.aegis_research.metrics.custom.carry import _carry_income_utility
+    from research.aegis_research.metrics.custom.convergent import _convergent_income_utility
 
-    assert np.isnan(_carry_income_utility(np.array([0.001, 0.002])))
+    assert np.isnan(_convergent_income_utility(np.array([0.001, 0.002])))
 
 
-# ── Robust L-moment skew (the family-membership gate) ──────────────────────────
+# ── Robust L-moment skew (the realized-shape report) ──────────────────────────
+
 
 def test_lskew_is_far_more_outlier_robust_than_moment_skew() -> None:
     """A single injected crash barely moves L-skew but swings moment skew.
 
     Kim-White's whole point: the third-moment skew is an average of cubed
     deviations, so one outlier dominates it; the L-moment tau_3 moves only
-    linearly. The robust gate must not be flipped by a lone print.
+    linearly. The robust report must not be dominated by a lone print.
     """
     from scipy.stats import skew as moment_skew
 
-    from research.aegis_research.metrics.custom.carry import _l_skewness
+    from research.aegis_research.metrics.custom.convergent import _l_skewness
 
     rng = np.random.default_rng(7)
     base = rng.normal(0.0, 0.01, 500)  # symmetric
@@ -192,39 +195,41 @@ def test_lskew_is_far_more_outlier_robust_than_moment_skew() -> None:
 
 
 def test_lskew_orders_left_skewed_below_symmetric() -> None:
-    from research.aegis_research.metrics.custom.carry import _l_skewness
+    from research.aegis_research.metrics.custom.convergent import _l_skewness
 
     rng = np.random.default_rng(11)
     symmetric = rng.normal(0.0, 0.01, 2000)
     # Left-skewed: a light-tailed positive body with occasional deep losses.
-    left = np.where(rng.random(2000) < 0.05, rng.normal(-0.05, 0.01, 2000),
-                    rng.normal(0.003, 0.004, 2000))
+    left = np.where(
+        rng.random(2000) < 0.05, rng.normal(-0.05, 0.01, 2000), rng.normal(0.003, 0.004, 2000)
+    )
     assert _l_skewness(left) < -0.05
     assert abs(_l_skewness(symmetric)) < 0.03
     assert _l_skewness(left) < _l_skewness(symmetric)
 
 
-def test_carry_downside_lskew_reads_negative_for_smooth_crash() -> None:
-    from research.aegis_research.metrics.custom.carry import _carry_downside_lskew
+def test_convergent_downside_lskew_reads_negative_for_smooth_crash() -> None:
+    from research.aegis_research.metrics.custom.convergent import _convergent_downside_lskew
 
-    assert _carry_downside_lskew(_smooth_crash_returns()) < 0.0
+    assert _convergent_downside_lskew(_smooth_crash_returns()) < 0.0
 
 
 def test_downside_lskew_registered_opt_in() -> None:
-    from research.aegis_research.metrics.custom.carry import CARRY_DOWNSIDE_LSKEW_ID
+    from research.aegis_research.metrics.custom.convergent import CONVERGENT_DOWNSIDE_LSKEW_ID
 
-    assert CARRY_DOWNSIDE_LSKEW_ID in optional_custom_metrics()
+    assert CONVERGENT_DOWNSIDE_LSKEW_ID in optional_custom_metrics()
 
 
 # ── Allocator: role fidelity (the property no single-book metric can see) ──────
 
-def _matched_carry_pair(seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """A trend stream and two carry candidates with identical standalone stats.
 
-    Both carry candidates are the SAME multiset of daily returns (so identical
+def _matched_convergent_pair(seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A trend stream and two convergent candidates with identical standalone stats.
+
+    Both convergent candidates are the SAME multiset of daily returns (so identical
     mean, vol, skew, tail, MPPM standalone) - they differ only in WHERE their
     losses land relative to trend: ``independent`` leaves them on their original
-    (trend-decoupled) days, while ``cocrashing`` permutes them so the worst carry
+    (trend-decoupled) days, while ``cocrashing`` permutes them so the worst convergent
     days coincide with trend's worst days. Only a portfolio-aware metric can tell
     them apart. (A perfect anti-sort is deliberately NOT the diversifying ideal: a
     short-gamma pole has no large gains to offset a crash, so anti-sorting only
@@ -234,29 +239,31 @@ def _matched_carry_pair(seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
     n = 1500
     trend = rng.normal(0.0004, 0.011, n)  # convex-ish pole proxy
-    # A short-gamma carry stream: steady premium, occasional multi-day losses.
+    # A short-gamma convergent stream: steady premium, occasional multi-day losses.
     independent = np.full(n, 0.0004)
     loss_days = rng.choice(n, size=90, replace=False)
     independent[loss_days] = rng.normal(-0.03, 0.01, 90)
 
     cocrashing = np.empty(n)
-    cocrashing[np.argsort(trend)] = np.sort(independent)  # worst carry on worst trend
+    cocrashing[np.argsort(trend)] = np.sort(independent)  # worst convergent on worst trend
     return trend, independent, cocrashing
 
 
 def test_allocator_utility_penalizes_co_crashing_at_matched_standalone_stats() -> None:
-    from research.aegis_research.metrics.custom.carry import (
-        _carry_income_utility,
+    from research.aegis_research.metrics.custom.convergent import (
+        _convergent_income_utility,
         composite_allocator_utility,
         downside_correlation,
     )
 
-    trend, independent, cocrashing = _matched_carry_pair(3)
+    trend, independent, cocrashing = _matched_convergent_pair(3)
 
     # Standalone the two candidates are identical (same multiset of returns), so no
     # single-book metric - MPPM, tail budget, skew - can separate them.
     np.testing.assert_allclose(np.sort(independent), np.sort(cocrashing))
-    assert _carry_income_utility(independent) == pytest.approx(_carry_income_utility(cocrashing))
+    assert _convergent_income_utility(independent) == pytest.approx(
+        _convergent_income_utility(cocrashing)
+    )
 
     # In the book, the decoupled pole contributes strictly more certainty-equivalent
     # growth: co-crashing deepens the book's joint tail, which the MPPM prices.
@@ -270,8 +277,8 @@ def test_allocator_utility_penalizes_co_crashing_at_matched_standalone_stats() -
 
 
 def test_allocator_utility_nan_on_length_mismatch_or_degenerate() -> None:
-    from research.aegis_research.metrics.custom.carry import composite_allocator_utility
+    from research.aegis_research.metrics.custom.convergent import composite_allocator_utility
 
     trend = np.random.default_rng(1).normal(0.0, 0.01, 500)
     assert np.isnan(composite_allocator_utility(np.zeros(400), trend))  # length mismatch
-    assert np.isnan(composite_allocator_utility(np.zeros(500), trend))  # zero-vol carry
+    assert np.isnan(composite_allocator_utility(np.zeros(500), trend))  # zero-vol convergent

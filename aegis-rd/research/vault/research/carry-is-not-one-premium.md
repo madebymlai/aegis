@@ -43,7 +43,7 @@ This table is a research prior, not an attribution result. The marginal payer ca
 
 **Mechanical accrual is not expected excess return.** Carry states what happens if the market state is unchanged. The price can move enough to offset it.
 
-**Carry level is not carry richness.** A yield is a level. Richness asks whether it is high relative to expected loss, history, comparable instruments, and risk. [[what-makes-a-carry-sleeve-an-income-engine]] develops this distinction for credit.
+**Carry level is not carry richness.** A yield is a level. Richness asks whether it is high relative to expected loss, history, comparable instruments, and risk. [[what-makes-a-convergent-sleeve-an-income-engine]] develops this distinction for credit.
 
 **Cross-sectional carry is not time-series carry.** The first buys high-carry assets and sells low-carry peers. The second takes exposure when an asset's own carry clears a reference level. They differ in beta, breadth, and crash exposure.
 

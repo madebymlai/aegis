@@ -21,7 +21,7 @@
 # vol_target is PINNED BY MANDATE (single-value param), not swept: the 2026-07-03 ranker
 # A/B showed a swept scale axis feeds mu-estimation noise to a utility ranker; this grid
 # sweeps SHAPE only (defensive x fx_weight x carry_gain), which is the grid the
-# carry_income_utility ranker is legitimate on.
+# convergent_income_utility ranker is legitimate on.
 #
 # Nested control: (defensive=0, fx_weight=0) zero-weights SDHY and IEML, reproducing the
 # incumbent IHYU+LQDH inverse-vol book — the sweep contains its own baseline.

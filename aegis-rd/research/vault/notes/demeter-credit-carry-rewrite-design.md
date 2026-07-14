@@ -132,7 +132,7 @@ Report the residual honestly. Do not infer hedge cost from LQDH's effective dura
 
 The family is selected between the static control and active candidate on paired held-out blocks. The active candidate receives no presumption of superiority.
 
-The ranker is the candidate's marginal certainty-equivalent contribution to the locked trend composite, as required by [[what-makes-a-carry-sleeve-an-income-engine]] and [[the-skew-is-the-product]]. Standalone income utility remains diagnostic.
+The ranker is the candidate's marginal certainty-equivalent contribution to the locked trend composite, as required by [[what-makes-a-convergent-sleeve-an-income-engine]] and [[the-skew-is-the-product]]. Standalone income utility remains diagnostic.
 
 The primary standalone experiment uses four expanding walk-forward folds. Each fold holds out a fixed 252-session year; the selection window begins with 504 sessions and expands through all prior observations. This matches the cumulative information set available to a slow monthly strategy, retains the latest observations in the final fold, and avoids tuning a rolling-history length. Rolling-window results may be reported as robustness evidence but cannot replace the preregistered expanding result.
 
