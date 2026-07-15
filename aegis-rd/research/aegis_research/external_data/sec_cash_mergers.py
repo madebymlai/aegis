@@ -26,6 +26,7 @@ from research.aegis_research.external_data._snapshot_cache import (
 
 _INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/master.idx"
 _ARCHIVE_URL = "https://www.sec.gov/Archives/{path}"
+_SEC_USER_AGENT = "Aegis Research m@laimk.dev"
 _DISCOVERY_FORMS = frozenset({"DEFM14A", "SC 14D9", "SC 14D9/A"})
 _FOLLOW_UP_FORMS = frozenset({"8-K", "8-K/A", "DEFA14A", "DEFM14A"})
 _SYMBOL_FORMS = frozenset({"8-K", "10-K", "10-Q"})
@@ -240,23 +241,12 @@ class EdgarMasterIndexClient:
     the previous business day, which matches the scheduled ingestion cadence.
     """
 
-    user_agent: str
     timeout_seconds: int = 30
     minimum_request_interval_seconds: float = 0.20
     max_retries: int = 5
 
-    @classmethod
-    def from_environment(cls) -> EdgarMasterIndexClient:
-        user_agent = os.environ.get("SEC_USER_AGENT", "").strip()
-        if not user_agent:
-            raise CashMergerSourceError(
-                "SEC_USER_AGENT is required for live EDGAR access (for example, "
-                "'Name email@example.com')"
-            )
-        return cls(user_agent=user_agent)
-
     def filings(self, start: date, end: date) -> Iterator[SecFiling]:
-        headers = {"User-Agent": self.user_agent, "Accept-Encoding": "gzip, deflate"}
+        headers = {"User-Agent": _SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
         lookup_start = start - timedelta(days=_SYMBOL_LOOKBACK_DAYS)
         with requests.Session() as session:
             session.headers.update(headers)
@@ -275,7 +265,7 @@ class SecCashMergerEventSource:
     def refresh(self, start: date, end: date) -> None:
         if end < start:
             raise ValueError("cash-merger event range end precedes start")
-        client = self.client or EdgarMasterIndexClient.from_environment()
+        client = self.client or EdgarMasterIndexClient()
         events = tuple(
             sorted(
                 filter(None, (_event_from_filing(filing) for filing in client.filings(start, end))),

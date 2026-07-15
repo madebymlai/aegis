@@ -209,6 +209,19 @@ class _Fx:
         )
 
 
+def test_edgar_client_uses_the_repository_contact_identity(monkeypatch) -> None:
+    session = _EdgarSession({})
+    monkeypatch.setattr(requests, "Session", lambda: session)
+
+    tuple(
+        EdgarMasterIndexClient(minimum_request_interval_seconds=0.0).filings(
+            date(2026, 1, 1), date(2026, 1, 15)
+        )
+    )
+
+    assert session.headers["User-Agent"] == "Aegis Research m@laimk.dev"
+
+
 def test_event_source_preserves_each_causal_filing_and_reads_validated_offline_cache(
     tmp_path,
 ) -> None:
@@ -340,7 +353,6 @@ def test_edgar_source_resolves_the_announcement_ticker_from_a_preceding_cover_fi
     source = SecCashMergerEventSource(
         tmp_path / "events",
         client=EdgarMasterIndexClient(
-            user_agent="Researcher researcher@example.com",
             minimum_request_interval_seconds=0.0,
         ),
     )
@@ -374,7 +386,6 @@ def test_edgar_source_uses_the_proxy_ticker_disclosure_without_a_cover_lookup(
     source = SecCashMergerEventSource(
         tmp_path / "events",
         client=EdgarMasterIndexClient(
-            user_agent="Researcher researcher@example.com",
             minimum_request_interval_seconds=0.0,
         ),
     )
@@ -416,7 +427,6 @@ def test_edgar_source_selects_latest_eligible_cover_by_acceptance_time(
     source = SecCashMergerEventSource(
         tmp_path / "events",
         client=EdgarMasterIndexClient(
-            user_agent="Researcher researcher@example.com",
             minimum_request_interval_seconds=0.0,
         ),
     )
@@ -458,7 +468,6 @@ def test_edgar_source_closes_symbol_lineage_after_resolution(tmp_path, monkeypat
     source = SecCashMergerEventSource(
         tmp_path / "events",
         client=EdgarMasterIndexClient(
-            user_agent="Researcher researcher@example.com",
             minimum_request_interval_seconds=0.0,
         ),
     )
