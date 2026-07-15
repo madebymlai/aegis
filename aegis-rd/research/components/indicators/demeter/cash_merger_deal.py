@@ -119,11 +119,18 @@ def _aligned_deals(close, events, eur_per_usd, params):
 
     for symbol, updates in by_symbol.items():
         column = symbol_index[symbol]
-        first_effective = updates[0][0]
-        first_row = int(normalized.searchsorted(first_effective, side="left"))
-        history = prices[max(0, first_row - break_lookback) : first_row, column]
+        first_event = updates[0][1]
+        announcement_date = pd.Timestamp(first_event.available_at).tz_localize(None).normalize()
+        announcement_row = int(normalized.searchsorted(announcement_date, side="left"))
+        history = (
+            prices[max(0, announcement_row - break_lookback) : announcement_row, column]
+            if first_event.is_announcement_filing
+            else np.array([], dtype=float)
+        )
         history = history[np.isfinite(history) & (history > 0.0)]
-        break_value = float(np.median(history)) if len(history) >= min(5, break_lookback) else np.nan
+        break_value = (
+            float(np.median(history)) if len(history) >= min(5, break_lookback) else np.nan
+        )
         state = None
         announcement = None
         update_index = 0
@@ -153,7 +160,9 @@ def _aligned_deals(close, events, eur_per_usd, params):
             outputs["deal_executable_price"][row, column] = price
             outputs["deal_break_value"][row, column] = break_value
             outputs["deal_completion_probability"][row, column] = q
-            outputs["deal_news"][row, column] = float(news_until is not None and today <= news_until)
+            outputs["deal_news"][row, column] = float(
+                news_until is not None and today <= news_until
+            )
             outputs["deal_status"][row, column] = {
                 "pending": 1.0,
                 "completed": 2.0,
@@ -179,9 +188,7 @@ def _aligned_deals(close, events, eur_per_usd, params):
             outputs["deal_total_cost"][row, column] = cost
             outputs["deal_expected_value"][row, column] = expected_value
             outputs["deal_break_loss"][row, column] = failure / price
-            outputs["deal_annualized_spread"][row, column] = (
-                (offer / price - 1.0) * 365.0 / days
-            )
+            outputs["deal_annualized_spread"][row, column] = (offer / price - 1.0) * 365.0 / days
             if row >= residual_lookback and benchmark_position is not None:
                 target_start = prices[row - residual_lookback, column]
                 benchmark_start = prices[row - residual_lookback, benchmark_position]

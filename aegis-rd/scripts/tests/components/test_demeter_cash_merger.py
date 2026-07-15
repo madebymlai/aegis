@@ -64,15 +64,31 @@ class _Filings:
         ]
 
 
+class _ProxyOnlyFilings:
+    def filings(self, start, end):
+        return [
+            SecFiling(
+                cik="1001",
+                company_name="Example Target Inc.",
+                symbol="TGTX",
+                form="DEFM14A",
+                accession="0001",
+                filed_at="2026-01-06T16:00:00+00:00",
+                source_url="https://www.sec.gov/Archives/edgar/data/1001/0001.txt",
+                text="Agreement and Plan of Merger for $100.00 in cash per share.",
+            )
+        ]
+
+
 class _Fx:
     def usd_per_eur(self, start, end):
         return pd.Series(1.0, index=pd.date_range(start, end, freq="D"))
 
 
-def _deal_indicator_case(tmp_path):
+def _deal_indicator_case(tmp_path, filings=None):
     events = tmp_path / "events"
     fx = tmp_path / "fx"
-    event_source = SecCashMergerEventSource(events, client=_Filings())
+    event_source = SecCashMergerEventSource(events, client=filings or _Filings())
     event_source.sync(date(2026, 1, 1), date(2026, 1, 15))
     fx_source = EcbUsdEurSource(fx, client=_Fx())
     fx_source.sync(date(2026, 1, 1), date(2026, 1, 15))
@@ -83,7 +99,23 @@ def _deal_indicator_case(tmp_path):
     index = pd.date_range("2026-01-01", "2026-01-15", freq="D")
     close = pd.DataFrame(
         {
-            InstrumentId.from_str("TGTX.XNAS"): [70, 71, 72, 73, 74, 75, 90, 91, 92, 93, 94, 95, 96, 80, 79],
+            InstrumentId.from_str("TGTX.XNAS"): [
+                70,
+                71,
+                72,
+                73,
+                74,
+                75,
+                90,
+                91,
+                92,
+                93,
+                94,
+                95,
+                96,
+                80,
+                79,
+            ],
             InstrumentId.from_str("SPY.ARCA"): np.linspace(500, 514, len(index)),
         },
         index=index,
@@ -119,14 +151,32 @@ def test_deal_indicator_reveals_terms_only_after_filings_and_stops_after_termina
     assert result["deal_cash_offer"][6, 0] == 100.0
     assert result["deal_cash_offer"][10, 0] == 110.0
     assert result["deal_eligible"][13, 0] == 0.0
-    assert result["deal_break_value"][6, 0] == 72.5
     assert result["deal_expected_value"][6, 0] > 0.0
     assert result["deal_annualized_spread"][6, 0] > 0.0
 
 
-def test_deal_indicator_reuses_covering_cache_without_network(
-    tmp_path, monkeypatch
+def test_deal_indicator_estimates_break_value_strictly_before_announcement(
+    tmp_path,
 ) -> None:
+    component, data, params = _deal_indicator_case(tmp_path)
+
+    result = component.run(data, n_candidates=1, **params)
+
+    assert result["deal_break_value"][6, 0] == 72.0
+
+
+def test_deal_indicator_rejects_a_proxy_date_as_an_unaffected_price_anchor(
+    tmp_path,
+) -> None:
+    component, data, params = _deal_indicator_case(tmp_path, _ProxyOnlyFilings())
+
+    result = component.run(data, n_candidates=1, **params)
+
+    assert np.isnan(result["deal_break_value"][6, 0])
+    assert result["deal_eligible"][6, 0] == 0.0
+
+
+def test_deal_indicator_reuses_covering_cache_without_network(tmp_path, monkeypatch) -> None:
     component, data, params = _deal_indicator_case(tmp_path)
     monkeypatch.setattr("requests.Session", _unexpected_network)
     monkeypatch.setattr("requests.get", _unexpected_network)
@@ -191,9 +241,7 @@ def test_break_risk_strategy_equalizes_failure_contribution_and_deploys_the_slee
     ).reshape(3, 3)
 
     np.testing.assert_allclose(result[0], [2.0 / 3.0, 1.0 / 3.0, 0.0])
-    np.testing.assert_allclose(
-        result[0] * [0.10, 0.20, 0.40], [1.0 / 15.0, 1.0 / 15.0, 0.0]
-    )
+    np.testing.assert_allclose(result[0] * [0.10, 0.20, 0.40], [1.0 / 15.0, 1.0 / 15.0, 0.0])
     assert np.isclose(result[0].sum(), 1.0)
 
 

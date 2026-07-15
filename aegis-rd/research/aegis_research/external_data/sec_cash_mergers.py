@@ -9,6 +9,7 @@ import re
 import tempfile
 import time
 import warnings
+from calendar import month_abbr, month_name, monthrange
 from collections.abc import Iterable, Iterator
 from contextlib import suppress
 from dataclasses import asdict, dataclass
@@ -26,9 +27,13 @@ _ARCHIVE_URL = "https://www.sec.gov/Archives/{path}"
 _SEC_USER_AGENT = "Aegis Research m@laimk.dev"
 _DISCOVERY_FORMS = frozenset({"DEFM14A", "SC 14D9", "SC 14D9/A"})
 _FOLLOW_UP_FORMS = frozenset({"8-K", "8-K/A", "DEFA14A", "DEFM14A"})
+_ANNOUNCEMENT_FORMS = frozenset({"8-K"})
+_ANNOUNCEMENT_FILING_WINDOW_DAYS = 4
 _SYMBOL_FORMS = frozenset({"8-K", "10-K", "10-Q"})
 _SYMBOL_LOOKBACK_DAYS = 370
-_DEFINITIVE = re.compile(r"agreement\s+and\s+plan\s+of\s+merger|definitive\s+(?:merger\s+)?agreement", re.I)
+_DEFINITIVE = re.compile(
+    r"agreement\s+and\s+plan\s+of\s+merger|definitive\s+(?:merger\s+)?agreement", re.I
+)
 _CASH = re.compile(r"(?:per\s+share\s+)?in\s+cash|cash\s+consideration", re.I)
 _TERMINATED = re.compile(
     r"(?:"
@@ -143,6 +148,18 @@ class CashMergerEvent:
     source_url: str
     accession: str
 
+    @property
+    def is_pending(self) -> bool:
+        return self.status == "pending"
+
+    @property
+    def is_resolution(self) -> bool:
+        return self.status in {"completed", "terminated"}
+
+    @property
+    def is_announcement_filing(self) -> bool:
+        return self.is_pending and self.source_form in _ANNOUNCEMENT_FORMS
+
 
 @dataclass(frozen=True)
 class CashMergerSnapshot:
@@ -171,6 +188,24 @@ class _ObservedFiling:
     row: _MasterIndexRow
     text: str
     filed_at: str
+
+
+@dataclass(frozen=True)
+class _ClassifiedFiling:
+    observed: _ObservedFiling
+    filing: SecFiling
+    event: CashMergerEvent
+
+
+@dataclass(frozen=True)
+class _DiscoveredDeal:
+    agreement_date: date | None
+
+
+@dataclass(frozen=True)
+class _CausalReplay:
+    filings: tuple[SecFiling, ...]
+    candidate_events: int
 
 
 class _EdgarArchive:
@@ -231,11 +266,12 @@ class _EdgarArchive:
 class EdgarMasterIndexClient:
     """Read a causal merger subset from EDGAR's official master indexes.
 
-    Definitive proxy and target-recommendation filings discover a target. Later
-    current reports for that CIK supply amendments and resolutions. This avoids
-    scanning every historical 8-K and never relies on today's survivor ticker map.
-    Completed quarters are immutable; SEC updates the current full index through
-    the previous business day, which matches the scheduled ingestion cadence.
+    Definitive proxy and target-recommendation filings identify candidate CIKs.
+    Only those targets' current reports are then replayed from the announcement,
+    supplying the original terms, amendments, and resolutions without downloading
+    every historical 8-K or relying on today's survivor ticker map. Completed
+    quarters are immutable; SEC updates the current full index through the previous
+    business day, which matches the scheduled ingestion cadence.
     """
 
     timeout_seconds: int = 30
@@ -294,30 +330,22 @@ class SecCashMergerEventSource:
         destination = _cached_snapshot_path(self.cache_dir, snapshot)
         _write_once(destination, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
+
 def _event_from_filing(filing: SecFiling) -> CashMergerEvent | None:
     primary_document = _primary_document(filing.text, filing.form)
     if primary_document is None:
         return None
     text = _plain_text(primary_document)
     pending = _DEFINITIVE.search(text) and _CASH.search(text)
-    if (
-        pending
-        and filing.form in _DISCOVERY_FORMS
-        and _COMPLEX_MERGER_SUMMARY.search(text[:100_000]) is not None
-    ):
-        return None
-    if filing.form in _DISCOVERY_FORMS and pending:
-        status = "pending"
-        offer_price = _offer_price(text)
-        if offer_price is None:
-            return None
-    elif _TERMINATED.search(text):
+    if _TERMINATED.search(text):
         status = "terminated"
         offer_price = None
     elif _COMPLETED.search(text):
         status = "completed"
         offer_price = None
     elif pending:
+        if _COMPLEX_MERGER_SUMMARY.search(text[:100_000]) is not None:
+            return None
         status = "pending"
         offer_price = _offer_price(text)
         if offer_price is None:
@@ -383,6 +411,44 @@ def _expected_close(text: str) -> str | None:
     return None
 
 
+def _agreement_date(filing: SecFiling) -> date | None:
+    primary_document = _primary_document(filing.text, filing.form)
+    if primary_document is None:
+        return None
+    text = _plain_text(primary_document)
+    month_date = (
+        r"(?:January|February|March|April|May|June|July|August|September|October|"
+        r"November|December|Jan\.?|Feb\.?|Mar\.?|Apr\.?|Jun\.?|Jul\.?|Aug\.?|"
+        r"Sep\.?|Sept\.?|Oct\.?|Nov\.?|Dec\.?)\s+\d{1,2},\s+20\d{2}"
+    )
+    patterns = (
+        rf"\bon\s+({month_date})[^.]{{0,300}}?entered\s+into[^.]{{0,200}}?"
+        r"agreement\s+and\s+plan\s+of\s+merger",
+        r"agreement\s+and\s+plan\s+of\s+merger[^.]{0,120}?"
+        rf"(?:dated|as\s+of)\s+({month_date})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match is None:
+            continue
+        date_parts = re.fullmatch(
+            r"([A-Za-z]+)\.?\s+(\d{1,2}),\s+(20\d{2})",
+            match.group(1),
+        )
+        if date_parts is None:
+            continue
+        month_text, day_text, year_text = date_parts.groups()
+        months = {name.lower(): number for number, name in enumerate(month_name) if name}
+        months.update({name.lower(): number for number, name in enumerate(month_abbr) if name})
+        months["sept"] = 9
+        month = months.get(month_text.lower())
+        day = int(day_text)
+        year = int(year_text)
+        if month is not None and 1 <= day <= monthrange(year, month)[1]:
+            return date(year, month, day)
+    return None
+
+
 def _quarters(start: date, end: date) -> Iterator[tuple[int, int]]:
     year = start.year
     quarter = (start.month - 1) // 3 + 1
@@ -415,39 +481,135 @@ def _causal_merger_filings(
     event_rows = tuple(
         row
         for row in rows
-        if row.form in _DISCOVERY_FORMS | _FOLLOW_UP_FORMS
-        and start <= row.filed_on <= end
+        if row.form in _DISCOVERY_FORMS | _FOLLOW_UP_FORMS and start <= row.filed_on <= end
     )
     symbol_rows = _symbol_rows_by_cik(rows, start - timedelta(days=_SYMBOL_LOOKBACK_DAYS), end)
-    active_symbols: dict[str, str] = {}
-    candidate_events = 0
-    emitted_events = 0
-    observed_filings = tuple(_observe_filing(row, archive) for row in event_rows)
-    for observed in sorted(
-        observed_filings,
-        key=lambda item: (item.filed_at, item.row.archive_path),
-    ):
-        row = observed.row
-        if row.form not in _DISCOVERY_FORMS and row.cik not in active_symbols:
-            continue
-        filing = _causal_filing(observed, archive, symbol_rows, active_symbols)
-        event = _event_from_filing(filing)
-        if event is None:
-            continue
-        candidate_events += 1
-        if not filing.symbol:
-            continue
-        if event.status == "pending":
-            active_symbols[row.cik] = filing.symbol
-        elif event.status in {"completed", "terminated"}:
-            active_symbols.pop(row.cik, None)
-        emitted_events += 1
-        yield filing
-    if candidate_events and not emitted_events:
+    discoveries, classified_by_path = _discover_deals(event_rows, archive, symbol_rows)
+    observations = _candidate_observations(event_rows, archive, discoveries, classified_by_path)
+    replay = _replay_deal_filings(
+        observations,
+        archive,
+        symbol_rows,
+        discoveries,
+        classified_by_path,
+    )
+    if replay.candidate_events and not replay.filings:
         raise CashMergerSourceError(
             "EDGAR merger candidates were found, but no point-in-time trading "
             "symbols could be resolved"
         )
+    yield from replay.filings
+
+
+def _discover_deals(
+    event_rows: tuple[_MasterIndexRow, ...],
+    archive: _EdgarArchive,
+    symbol_rows: dict[str, tuple[_MasterIndexRow, ...]],
+) -> tuple[dict[str, _DiscoveredDeal], dict[str, _ClassifiedFiling]]:
+    discoveries: dict[str, _DiscoveredDeal] = {}
+    classified_by_path: dict[str, _ClassifiedFiling] = {}
+    for row in event_rows:
+        if row.form not in _DISCOVERY_FORMS:
+            continue
+        observed = _observe_filing(row, archive)
+        classified = _classify_filing(observed, archive, symbol_rows, {})
+        if classified is None or not classified.event.is_pending:
+            continue
+        classified_by_path[row.archive_path] = classified
+        existing = discoveries.get(row.cik)
+        discoveries[row.cik] = _DiscoveredDeal(
+            agreement_date=(
+                existing.agreement_date
+                if existing and existing.agreement_date
+                else _agreement_date(classified.filing)
+            ),
+        )
+    return discoveries, classified_by_path
+
+
+def _candidate_observations(
+    event_rows: tuple[_MasterIndexRow, ...],
+    archive: _EdgarArchive,
+    discoveries: dict[str, _DiscoveredDeal],
+    classified_by_path: dict[str, _ClassifiedFiling],
+) -> tuple[_ObservedFiling, ...]:
+    observations = [classified.observed for classified in classified_by_path.values()]
+    observations.extend(
+        _observe_filing(row, archive)
+        for row in event_rows
+        if row.cik in discoveries and row.archive_path not in classified_by_path
+    )
+    return tuple(sorted(observations, key=lambda item: (item.filed_at, item.row.archive_path)))
+
+
+def _replay_deal_filings(
+    observations: tuple[_ObservedFiling, ...],
+    archive: _EdgarArchive,
+    symbol_rows: dict[str, tuple[_MasterIndexRow, ...]],
+    discoveries: dict[str, _DiscoveredDeal],
+    classified_by_path: dict[str, _ClassifiedFiling],
+) -> _CausalReplay:
+    active_symbols: dict[str, str] = {}
+    resolved_ciks: set[str] = set()
+    candidate_events = 0
+    emitted_filings: list[SecFiling] = []
+    for observed in observations:
+        classified = classified_by_path.get(observed.row.archive_path)
+        if classified is None or observed.row.cik in active_symbols:
+            classified = _classify_filing(observed, archive, symbol_rows, active_symbols)
+        if classified is None:
+            continue
+        filing = classified.filing
+        event = classified.event
+        cik = filing.cik
+        if cik in resolved_ciks:
+            continue
+        if not _belongs_to_discovered_deal(filing, event, discoveries[cik]):
+            continue
+        if event.is_resolution and cik not in active_symbols:
+            continue
+        candidate_events += 1
+        if not filing.symbol:
+            continue
+        if event.is_pending:
+            active_symbols[cik] = filing.symbol
+        elif event.is_resolution:
+            active_symbols.pop(cik, None)
+            resolved_ciks.add(cik)
+        emitted_filings.append(filing)
+    return _CausalReplay(tuple(emitted_filings), candidate_events)
+
+
+def _classify_filing(
+    observed: _ObservedFiling,
+    archive: _EdgarArchive,
+    symbol_rows: dict[str, tuple[_MasterIndexRow, ...]],
+    active_symbols: dict[str, str],
+) -> _ClassifiedFiling | None:
+    filing = _causal_filing(observed, archive, symbol_rows, active_symbols)
+    event = _event_from_filing(filing)
+    if event is None:
+        return None
+    return _ClassifiedFiling(observed=observed, filing=filing, event=event)
+
+
+def _belongs_to_discovered_deal(
+    filing: SecFiling,
+    event: CashMergerEvent,
+    discovery: _DiscoveredDeal,
+) -> bool:
+    if event.source_form in _DISCOVERY_FORMS:
+        return True
+    if discovery.agreement_date is None:
+        return False
+    if event.is_announcement_filing:
+        announcement_date = datetime.fromisoformat(event.available_at).date()
+        return (
+            discovery.agreement_date
+            <= announcement_date
+            <= discovery.agreement_date + timedelta(days=_ANNOUNCEMENT_FILING_WINDOW_DAYS)
+        )
+    return _agreement_date(filing) == discovery.agreement_date
 
 
 def _symbol_rows_by_cik(
@@ -471,7 +633,7 @@ def _causal_filing(
 ) -> SecFiling:
     row = observed.row
     symbol = active_symbols.get(row.cik)
-    if symbol is None and row.form in _DISCOVERY_FORMS:
+    if symbol is None:
         symbol = _preceding_symbol(row.cik, observed.filed_at, symbol_rows, archive)
     if symbol is None:
         symbol = _trading_symbol(observed.text)
@@ -567,9 +729,7 @@ def _utc_iso(value: str) -> str:
     return stamp.astimezone(UTC).isoformat()
 
 
-def _snapshot(
-    events: tuple[CashMergerEvent, ...], *, start: date, end: date
-) -> CashMergerSnapshot:
+def _snapshot(events: tuple[CashMergerEvent, ...], *, start: date, end: date) -> CashMergerSnapshot:
     observations = [asdict(event) for event in events]
     source_hash = hashlib.sha256(
         json.dumps(observations, sort_keys=True, separators=(",", ":")).encode()
@@ -622,7 +782,14 @@ def load_snapshot(path: Path) -> CashMergerSnapshot:
     if identity != payload.get("snapshot_sha256") or identity[:16] not in path.name:
         raise CashMergerIntegrityError("cash-merger snapshot content does not match its identity")
     events = tuple(CashMergerEvent(**item) for item in observations)
-    if tuple(sorted(events, key=lambda event: (event.available_at, event.target_cik, event.accession))) != events:
+    if (
+        tuple(
+            sorted(
+                events, key=lambda event: (event.available_at, event.target_cik, event.accession)
+            )
+        )
+        != events
+    ):
         raise CashMergerIntegrityError("cash-merger events must be ordered causally")
     return CashMergerSnapshot(
         events=events,

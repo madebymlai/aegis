@@ -130,6 +130,26 @@ class _TenderWithCvrFiling:
         ]
 
 
+class _EightKWithCvrFiling:
+    def filings(self, start: date, end: date):
+        return [
+            SecFiling(
+                cik="1004",
+                company_name="Tender Target Inc.",
+                symbol="CVRT",
+                form="8-K",
+                accession="0007",
+                filed_at="2026-01-08T16:00:00+00:00",
+                source_url="https://www.sec.gov/Archives/edgar/data/1004/0007.txt",
+                text=(
+                    "The company entered into a definitive merger agreement. "
+                    "Holders will receive $20.00 in cash per share and one contingent "
+                    "value right payable after regulatory approval."
+                ),
+            )
+        ]
+
+
 class _PendingEightKFiling:
     def filings(self, start: date, end: date):
         return [
@@ -186,6 +206,7 @@ class _EdgarSession:
     def __init__(self, pages: dict[str, str]) -> None:
         self.pages = pages
         self.headers = {}
+        self.requested_urls: list[str] = []
 
     def __enter__(self):
         return self
@@ -194,6 +215,7 @@ class _EdgarSession:
         return None
 
     def get(self, url: str, *, timeout: int) -> _Response:
+        self.requested_urls.append(url)
         if url in self.pages:
             return _Response(self.pages[url])
         if "/full-index/" in url:
@@ -234,9 +256,7 @@ def test_event_source_preserves_each_causal_filing_and_reads_validated_offline_c
 
     source.sync(date(2026, 1, 1), date(2026, 1, 15))
     live = source.load(date(2026, 1, 1), date(2026, 1, 15))
-    cached_source = SecCashMergerEventSource(
-        tmp_path / "events", client=_UnavailableFilings()
-    )
+    cached_source = SecCashMergerEventSource(tmp_path / "events", client=_UnavailableFilings())
     cached_source.sync(date(2026, 1, 1), date(2026, 1, 15))
     cached = cached_source.load(date(2026, 1, 1), date(2026, 1, 15))
 
@@ -294,6 +314,15 @@ def test_event_source_excludes_tender_offers_with_contingent_value_rights(tmp_pa
         source.sync(date(2026, 1, 1), date(2026, 1, 15))
 
 
+def test_event_source_excludes_eight_k_announcements_with_contingent_value_rights(
+    tmp_path,
+) -> None:
+    source = SecCashMergerEventSource(tmp_path / "events", client=_EightKWithCvrFiling())
+
+    with pytest.raises(CashMergerSourceError, match="no fixed-cash merger events"):
+        source.sync(date(2026, 1, 1), date(2026, 1, 15))
+
+
 def test_event_source_does_not_treat_a_termination_clause_as_a_termination(tmp_path) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_PendingEightKFiling())
 
@@ -307,9 +336,7 @@ def test_event_source_does_not_treat_a_termination_clause_as_a_termination(tmp_p
 def test_event_source_rejects_submission_without_the_filing_primary_document(
     tmp_path,
 ) -> None:
-    source = SecCashMergerEventSource(
-        tmp_path / "events", client=_MissingPrimaryDocumentFiling()
-    )
+    source = SecCashMergerEventSource(tmp_path / "events", client=_MissingPrimaryDocumentFiling())
 
     with pytest.raises(CashMergerSourceError, match="no fixed-cash merger events"):
         source.sync(date(2026, 1, 1), date(2026, 1, 15))
@@ -334,22 +361,22 @@ def test_edgar_source_resolves_the_announcement_ticker_from_a_preceding_cover_fi
             f"1001|Example Target Inc.|8-K|2026-01-13|{resolution_path}\n"
         ),
         archive.format(path=cover_path): (
-            "<ACCEPTANCE-DATETIME>20251101120000\n"
-            "<dei:TradingSymbol>OLD</dei:TradingSymbol>"
+            "<ACCEPTANCE-DATETIME>20251101120000\n<dei:TradingSymbol>OLD</dei:TradingSymbol>"
         ),
         archive.format(path=proxy_path): (
             "<ACCEPTANCE-DATETIME>20260105160000\n"
             "Buyer common stock is listed under the symbol BUY. "
-            "The company entered into an Agreement and Plan of Merger. "
+            "On January 4, 2026, the company entered into an Agreement and Plan "
+            "of Merger. "
             "Holders will receive $100.00 in cash per share."
         ),
         archive.format(path=resolution_path): (
             "<ACCEPTANCE-DATETIME>20260113160000\n"
+            "The Agreement and Plan of Merger dated January 4, 2026 was terminated. "
             "The parties terminated the merger agreement."
         ),
         archive.format(path=later_cover_path): (
-            "<ACCEPTANCE-DATETIME>20260105170000\n"
-            "<dei:TradingSymbol>FUTURE</dei:TradingSymbol>"
+            "<ACCEPTANCE-DATETIME>20260105170000\n<dei:TradingSymbol>FUTURE</dei:TradingSymbol>"
         ),
     }
     monkeypatch.setattr(
@@ -373,6 +400,130 @@ def test_edgar_source_resolves_the_announcement_ticker_from_a_preceding_cover_fi
         "OLD",
         "terminated",
     )
+
+
+def _announcement_history_snapshot(tmp_path, monkeypatch):
+    index = "https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/master.idx"
+    archive = "https://www.sec.gov/Archives/{path}"
+    cover_path = "edgar/data/1001/cover.txt"
+    changed_cover_path = "edgar/data/1001/changed-cover.txt"
+    unrelated_same_cik_path = "edgar/data/1001/unrelated-acquisition.txt"
+    announcement_path = "edgar/data/1001/announcement.txt"
+    proxy_path = "edgar/data/1001/proxy.txt"
+    amendment_path = "edgar/data/1001/amendment.txt"
+    pages = {
+        index.format(year=2025, quarter=4): (
+            f"1001|Example Target Inc.|10-Q|2025-11-01|{cover_path}\n"
+        ),
+        index.format(year=2026, quarter=1): (
+            f"1001|Example Target Inc.|8-K|2026-01-02|{unrelated_same_cik_path}\n"
+            f"1001|Example Target Inc.|8-K|2026-01-05|{announcement_path}\n"
+            f"1001|Example Target Inc.|10-Q|2026-01-20|{changed_cover_path}\n"
+            f"1001|Example Target Inc.|DEFM14A|2026-02-02|{proxy_path}\n"
+            f"1001|Example Target Inc.|8-K/A|2026-03-01|{amendment_path}\n"
+        ),
+        archive.format(path=cover_path): (
+            "<ACCEPTANCE-DATETIME>20251101120000\n<dei:TradingSymbol>TGTX</dei:TradingSymbol>"
+        ),
+        archive.format(path=unrelated_same_cik_path): (
+            "<ACCEPTANCE-DATETIME>20260102160000\n"
+            "The company entered into an Agreement and Plan of Merger to acquire "
+            "another issuer. Holders of the other issuer will receive $25.00 in "
+            "cash per share."
+        ),
+        archive.format(path=changed_cover_path): (
+            "<ACCEPTANCE-DATETIME>20260120160000\n<dei:TradingSymbol>NEW</dei:TradingSymbol>"
+        ),
+        archive.format(path=announcement_path): (
+            "<ACCEPTANCE-DATETIME>20260105160000\n"
+            "The company entered into an Agreement and Plan of Merger. "
+            "Holders will receive $90.00 in cash per share."
+        ),
+        archive.format(path=proxy_path): (
+            "<ACCEPTANCE-DATETIME>20260202160000\n"
+            "On January 4, 2026, the company entered into an Agreement and Plan "
+            "of Merger. The agreement was later amended. "
+            "Holders will receive $100.00 in cash per share."
+        ),
+        archive.format(path=amendment_path): (
+            "<ACCEPTANCE-DATETIME>20260301160000\n"
+            "The Agreement and Plan of Merger dated January 4, 2026 was amended. "
+            "The revised cash consideration is $105.00 in cash per share."
+        ),
+    }
+    monkeypatch.setattr(requests, "Session", lambda: _EdgarSession(pages))
+    source = SecCashMergerEventSource(
+        tmp_path / "events",
+        client=EdgarMasterIndexClient(minimum_request_interval_seconds=0.0),
+    )
+
+    source.sync(date(2026, 1, 1), date(2026, 3, 15))
+    return source.load(date(2026, 1, 1), date(2026, 3, 15))
+
+
+def test_edgar_source_starts_the_deal_at_the_definitive_announcement(tmp_path, monkeypatch) -> None:
+    snapshot = _announcement_history_snapshot(tmp_path, monkeypatch)
+
+    assert snapshot.events[0].source_form == "8-K"
+    assert snapshot.events[0].available_at == "2026-01-05T16:00:00+00:00"
+    assert snapshot.events[0].offer_price == 90.0
+
+
+def test_edgar_source_propagates_a_linked_offer_amendment(tmp_path, monkeypatch) -> None:
+    snapshot = _announcement_history_snapshot(tmp_path, monkeypatch)
+
+    assert snapshot.events[-1].offer_price == 105.0
+
+
+def test_edgar_source_preserves_announcement_symbol_through_later_filings(
+    tmp_path, monkeypatch
+) -> None:
+    snapshot = _announcement_history_snapshot(tmp_path, monkeypatch)
+
+    assert len(snapshot.events) == 3
+    assert snapshot.events[0].target_symbol == "TGTX"
+    assert snapshot.events[1].target_symbol == "TGTX"
+    assert snapshot.events[2].target_symbol == "TGTX"
+
+
+def test_edgar_source_does_not_download_unrelated_eight_k_filings(tmp_path, monkeypatch) -> None:
+    index = "https://www.sec.gov/Archives/edgar/full-index/2026/QTR1/master.idx"
+    archive = "https://www.sec.gov/Archives/{path}"
+    announcement_path = "edgar/data/1001/announcement.txt"
+    proxy_path = "edgar/data/1001/proxy.txt"
+    unrelated_path = "edgar/data/2002/unrelated.txt"
+    pages = {
+        index: (
+            f"1001|Example Target Inc.|8-K|2026-01-05|{announcement_path}\n"
+            f"2002|Unrelated Inc.|8-K|2026-01-06|{unrelated_path}\n"
+            f"1001|Example Target Inc.|DEFM14A|2026-02-02|{proxy_path}\n"
+        ),
+        archive.format(path=announcement_path): (
+            "<ACCEPTANCE-DATETIME>20260105160000\n"
+            "<dei:TradingSymbol>TGTX</dei:TradingSymbol> "
+            "The company entered into an Agreement and Plan of Merger. "
+            "Holders will receive $100.00 in cash per share."
+        ),
+        archive.format(path=unrelated_path): (
+            "<ACCEPTANCE-DATETIME>20260106160000\n<dei:TradingSymbol>NOPE</dei:TradingSymbol>"
+        ),
+        archive.format(path=proxy_path): (
+            "<ACCEPTANCE-DATETIME>20260202160000\n"
+            "The company entered into an Agreement and Plan of Merger. "
+            "Holders will receive $100.00 in cash per share."
+        ),
+    }
+    session = _EdgarSession(pages)
+    expected_unrelated_url = "https://www.sec.gov/Archives/edgar/data/2002/unrelated.txt"
+    monkeypatch.setattr(requests, "Session", lambda: session)
+    source = SecCashMergerEventSource(
+        tmp_path / "events",
+        client=EdgarMasterIndexClient(minimum_request_interval_seconds=0.0),
+    )
+
+    source.sync(date(2026, 1, 1), date(2026, 2, 15))
+
+    assert expected_unrelated_url not in session.requested_urls
 
 
 def test_edgar_source_uses_the_proxy_ticker_disclosure_without_a_cover_lookup(
@@ -417,12 +568,10 @@ def test_edgar_source_selects_latest_eligible_cover_by_acceptance_time(
             f"1001|Example Target Inc.|DEFM14A|2026-01-05|{proxy_path}\n"
         ),
         f"https://www.sec.gov/Archives/{older_cover_path}": (
-            "<ACCEPTANCE-DATETIME>20260105140000\n"
-            "<dei:TradingSymbol>OLD</dei:TradingSymbol>"
+            "<ACCEPTANCE-DATETIME>20260105140000\n<dei:TradingSymbol>OLD</dei:TradingSymbol>"
         ),
         f"https://www.sec.gov/Archives/{newer_cover_path}": (
-            "<ACCEPTANCE-DATETIME>20260105150000\n"
-            "<dei:TradingSymbol>NEW</dei:TradingSymbol>"
+            "<ACCEPTANCE-DATETIME>20260105150000\n<dei:TradingSymbol>NEW</dei:TradingSymbol>"
         ),
         f"https://www.sec.gov/Archives/{proxy_path}": (
             "<ACCEPTANCE-DATETIME>20260105160000\n"
@@ -447,22 +596,32 @@ def test_edgar_source_selects_latest_eligible_cover_by_acceptance_time(
 def test_edgar_source_closes_symbol_lineage_after_resolution(tmp_path, monkeypatch) -> None:
     index = "https://www.sec.gov/Archives/edgar/full-index/2026/QTR1/master.idx"
     discovery_path = "edgar/data/1001/z-discovery.txt"
+    unrelated_resolution_path = "edgar/data/1001/unrelated-termination.txt"
     termination_path = "edgar/data/1001/a-termination.txt"
     stale_follow_up_path = "edgar/data/1001/m-stale-follow-up.txt"
     pages = {
         index: (
             f"1001|Example Target Inc.|DEFM14A|2026-01-05|{discovery_path}\n"
+            f"1001|Example Target Inc.|8-K|2026-01-05|{unrelated_resolution_path}\n"
             f"1001|Example Target Inc.|8-K|2026-01-05|{termination_path}\n"
             f"1001|Example Target Inc.|8-K|2026-01-05|{stale_follow_up_path}\n"
         ),
         f"https://www.sec.gov/Archives/{discovery_path}": (
             "<ACCEPTANCE-DATETIME>20260105160000\n"
             "Common stock is listed under the symbol TGTX. "
-            "The company entered into an Agreement and Plan of Merger. "
+            "On January 4, 2026, the company entered into an Agreement and Plan "
+            "of Merger. "
             "Holders will receive $100.00 in cash per share."
         ),
         f"https://www.sec.gov/Archives/{termination_path}": (
             "<ACCEPTANCE-DATETIME>20260105170000\n"
+            "The Agreement and Plan of Merger dated January 4, 2026 provided for "
+            "$100.00 in cash per share. "
+            "The parties terminated the merger agreement."
+        ),
+        f"https://www.sec.gov/Archives/{unrelated_resolution_path}": (
+            "<ACCEPTANCE-DATETIME>20260105163000\n"
+            "The Agreement and Plan of Merger dated December 1, 2025 was terminated. "
             "The parties terminated the merger agreement."
         ),
         f"https://www.sec.gov/Archives/{stale_follow_up_path}": (
@@ -485,6 +644,7 @@ def test_edgar_source_closes_symbol_lineage_after_resolution(tmp_path, monkeypat
     assert len(snapshot.events) == 2
     assert snapshot.events[0].status == "pending"
     assert snapshot.events[1].status == "terminated"
+    assert snapshot.events[1].source_url.endswith("/a-termination.txt")
 
 
 def test_immutable_snapshot_identity_preserves_extended_coverage(tmp_path) -> None:
@@ -518,9 +678,7 @@ def test_event_source_selects_the_newest_snapshot_that_covers_the_requested_rang
     covering = source.load(date(2026, 1, 1), date(2026, 1, 15))
     source.sync(date(2026, 1, 10), date(2026, 1, 20))
 
-    cached = SecCashMergerEventSource(
-        tmp_path / "events", client=_UnavailableFilings()
-    )
+    cached = SecCashMergerEventSource(tmp_path / "events", client=_UnavailableFilings())
     cached.sync(date(2026, 1, 1), date(2026, 1, 15))
     selected = cached.load(date(2026, 1, 1), date(2026, 1, 15))
 
