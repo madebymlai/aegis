@@ -117,6 +117,18 @@ def _load_from_port(
     currency_conversion = _currency_conversion(
         config, window.instruments, raw_frames, continuous_currencies
     )
+    size_increments = {
+        **{
+            instrument_id: window.size_increment_by_instrument[instrument_id]
+            for instrument_id in instrument_ids(config.instruments)
+        },
+        **{
+            continuous_id: data_port.continuous_size_increment(root)
+            for root, continuous_id in zip(
+                config.futures, continuous_frames, strict=True
+            )
+        },
+    }
     port_metadata: dict[str, object] = {"source": "nautilus_data_provider_port"}
     # A synthetic root has no raw bars, so it can never enter the window
     # request — but its not-applicable coverage rows are real Run evidence,
@@ -147,12 +159,17 @@ def _load_from_port(
                 root_id.value: currency
                 for root_id, currency in continuous_currencies.items()
             },
+            "size_increment_by_instrument": {
+                instrument_id.value: increment
+                for instrument_id, increment in size_increments.items()
+            },
         },
         evidence=index_evidence(native_index(native_data), source="nautilus_catalog"),
         port_metadata=port_metadata,
         currency_conversion=currency_conversion,
         adjustment_mode=adjustment_mode,
         distributions=window.distributions,
+        size_increment_by_instrument=size_increments,
     )
 
 
@@ -164,7 +181,10 @@ def _continuous_frames(
     end: str,
     timeframe: str,
     adjustment_mode: ContinuousFutureAdjustmentType | None,
-) -> tuple[dict[InstrumentId, pd.DataFrame], dict[InstrumentId, str]]:
+) -> tuple[
+    dict[InstrumentId, pd.DataFrame],
+    dict[InstrumentId, str],
+]:
     """Materialise each root's adjusted frame plus its derived quote currency.
 
     The currency is the model's leg-derived fact — a synthetic root carries no

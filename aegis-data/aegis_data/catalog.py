@@ -15,6 +15,7 @@ from platformdirs import user_data_dir
 
 from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
 from aegis_data.distributions import Distribution, query_distribution_data
+from aegis_data.instrument import native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.ohlcv import bars_to_ohlcv
 from aegis_data.roll import DatedContract
@@ -122,14 +123,14 @@ class CatalogWindowRequest:
 class CatalogWindow:
     """One coherent catalog read: the requested window's run-constant facts (ADR-0012).
 
-    OHLCV per requested id, the complete definitions (guaranteed — the read
-    fails loud naming every missing id before any verification runs), the
-    verified distributions, and the distribution coverage report (defaulted so
-    consumers that never read it never mention it).
+    OHLCV per requested id, complete definitions (guaranteed — the read fails
+    loud naming every missing id before verification), native size increments,
+    verified distributions, and their coverage report.
     """
 
     ohlcv: dict[InstrumentId, pd.DataFrame]
     instruments: dict[InstrumentId, "Instrument"]
+    size_increment_by_instrument: dict[InstrumentId, float]
     distributions: tuple[Distribution, ...]
     distribution_coverage: tuple[dict[str, Any], ...] = ()
 
@@ -220,6 +221,10 @@ class CatalogBackedDataPort:
         return CatalogWindow(
             ohlcv=ohlcv,
             instruments=instruments,
+            size_increment_by_instrument={
+                instrument_id: native_size_increment(instrument)
+                for instrument_id, instrument in instruments.items()
+            },
             distributions=query_distribution_data(
                 self.catalog,
                 request.instrument_ids,
@@ -338,6 +343,31 @@ class CatalogBackedDataPort:
         and keyed back to the caller's authored id — callers stay on their ids (#81).
         """
         return catalog_definitions(self.catalog, instrument_ids)
+
+    def size_increment_for(self, instrument_id: InstrumentId) -> float:
+        """Return the native increment from one stored instrument definition."""
+
+        definitions = self._complete_definitions((instrument_id,))
+        return native_size_increment(definitions[instrument_id])
+
+    def continuous_size_increment(self, root: str) -> float:
+        """Return the one native increment shared by a root's dated legs."""
+
+        leg_ids = tuple(
+            InstrumentId.from_str(leg.symbol)
+            for leg in self.resolve_continuous(root).legs
+        )
+        definitions = self._complete_definitions(leg_ids)
+        increments = {
+            native_size_increment(definitions[instrument_id])
+            for instrument_id in leg_ids
+        }
+        if len(increments) != 1:
+            raise ValueError(
+                f"continuous-future root {root!r} has inconsistent native size "
+                f"increments across dated legs: {sorted(increments)}"
+            )
+        return next(iter(increments))
 
     def distribution_coverage_report(
         self,

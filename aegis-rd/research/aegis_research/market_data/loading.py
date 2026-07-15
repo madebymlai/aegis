@@ -120,4 +120,5 @@ def result_from_load(
         currency_conversion=source.currency_conversion,
         adjustment_mode=source.adjustment_mode,
         distributions=source.distributions,
+        size_increment_by_instrument=source.size_increment_by_instrument,
     )

@@ -416,6 +416,7 @@ def _build_portfolio(
         group_by=group_by,
         fees=_resolve_fees(price_frame, config, book.fees_by_symbol),
         fixed_fees=config.fixed_fee,
+        size_granularity=_size_granularity(masked.columns, book),
         slippage=config.slippage,
         init_cash=config.init_cash,
         leverage=config.gross_cap * _GROSS_CAP_LEVERAGE_MULTIPLIER,
@@ -428,6 +429,33 @@ def _build_portfolio(
     )
     _assert_no_nocash_rejection(pf)
     return pf
+
+
+def _size_granularity(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
+    """Broadcast catalog size increments over each Candidate's symbol columns."""
+
+    if book.size_increment_by_instrument is None:
+        return np.full((1, len(columns)), np.nan, dtype=float)
+    symbols = columns.get_level_values(SYMBOL_LEVEL)
+    missing = sorted(
+        {
+            as_instrument_id(symbol).value
+            for symbol in symbols
+            if as_instrument_id(symbol) not in book.size_increment_by_instrument
+        }
+    )
+    if missing:
+        raise ValueError(
+            "portfolio simulation has no catalog size increment for tradeable columns: "
+            f"{missing}"
+        )
+    increments = np.array(
+        [book.size_increment_by_instrument[as_instrument_id(symbol)] for symbol in symbols],
+        dtype=float,
+    )
+    if (~np.isfinite(increments) | (increments <= 0.0)).any():
+        raise ValueError("portfolio simulation size increments must be finite and positive")
+    return increments.reshape(1, -1)
 
 
 def _margin_day_offsets(index: pd.Index) -> np.ndarray:

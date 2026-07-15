@@ -16,14 +16,14 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 import pandas as pd
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
+from aegis_data.instrument import native_size_increment
+from aegis_trader.domain.sizing import InstrumentSizing
 from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Currency, Quantity
-from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
-from aegis_trader.domain.sizing import InstrumentSizing
-
 
 @dataclass(frozen=True)
 class MarketBar:
@@ -135,7 +135,7 @@ class NautilusMarketData:
             return None
         return InstrumentSizing(
             currency=instrument.quote_currency.code,
-            size_increment=float(instrument.size_increment),
+            size_increment=native_size_increment(instrument),
             multiplier=float(instrument.multiplier),
         )
 

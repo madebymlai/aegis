@@ -140,7 +140,11 @@ def load_locked_strategy_returns(config_path: str | Path) -> LockedStrategyRetur
     precomputed = source.precompute(close, 1, **fixed_params)
     evaluator = WindowEvaluator(
         source=source,
-        book=ResolvedBook.resolve(config, arrays.currency_conversion),
+        book=ResolvedBook.resolve(
+            config,
+            arrays.currency_conversion,
+            arrays.size_increment_by_instrument,
+        ),
         report=config.report,
         arrays=arrays,
         store=precomputed,

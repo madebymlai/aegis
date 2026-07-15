@@ -68,7 +68,11 @@ def run_pipeline_execution(
             arrays=setup.arrays,
             source=setup.optimization_source,
             optimization=config.optimization,
-            book=ResolvedBook.resolve(config, setup.arrays.currency_conversion),
+            book=ResolvedBook.resolve(
+                config,
+                setup.arrays.currency_conversion,
+                setup.arrays.size_increment_by_instrument,
+            ),
             report=config.report,
             ranking=config.ranking,
             metric_registry=metric_registry,

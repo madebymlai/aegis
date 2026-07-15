@@ -424,6 +424,45 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     engine.dispose()
 
 
+def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    catalog = ParquetDataCatalog(catalog_path)
+    catalog.write_data(
+        [
+            Equity(
+                instrument_id=_INSTRUMENT_ID,
+                raw_symbol=Symbol(_INSTRUMENT_ID.symbol.value),
+                currency=Currency.from_str("EUR"),
+                price_precision=2,
+                price_increment=Price.from_str("0.01"),
+                lot_size=Quantity.from_int(1),
+                ts_event=0,
+                ts_init=0,
+            )
+        ]
+    )
+    _seed_catalog_bars_only(catalog_path, _INSTRUMENT_ID, [30.0] * 4)
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.4)})
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        starting_cash=100.0,
+    )
+    try:
+        fills = _closed_orders(result.engine)
+        assert len(fills) == 1
+        assert float(fills[0].quantity) == 1.0
+    finally:
+        result.engine.dispose()
+
+
 def test_run_book_backtest_trades_a_declared_continuous_root(
     tmp_path, monkeypatch
 ) -> None:

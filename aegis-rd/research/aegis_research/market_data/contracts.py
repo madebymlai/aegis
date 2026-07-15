@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -88,6 +89,9 @@ class MarketDataLoad:
     adjustment_mode: ContinuousFutureAdjustmentType | None = None
     # Listed-ETF cash events read from the same Nautilus catalog as bars.
     distributions: tuple[Distribution, ...] = ()
+    # Nautilus-definition-authoritative order quantity increment for each tradeable.
+    # Exchange-only conversion legs are deliberately absent.
+    size_increment_by_instrument: Mapping[InstrumentId, float] = field(default_factory=dict)
     # Set only by ``failed_market_data_load``: the loader raises, it never
     # returns a failed load. Carrying the failure as data lets the one
     # observe → judge → describe sequence handle both outcomes.
@@ -233,6 +237,7 @@ class MarketDataResult:
     currency_conversion: CurrencyConversion | None = None
     adjustment_mode: ContinuousFutureAdjustmentType | None = None
     distributions: tuple[Distribution, ...] = ()
+    size_increment_by_instrument: Mapping[InstrumentId, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Adjustment mode is a materialisation fact: it exists iff continuous

@@ -39,10 +39,14 @@ class ResolvedBook:
     # Resolved instrument → DriftBand map (the same one the bundle carries).
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
     futures_roots: tuple[str, ...] = ()
+    size_increment_by_instrument: Mapping[InstrumentId, float] | None = None
 
     @classmethod
     def resolve(
-        cls, config: RunConfig, currency_conversion: CurrencyConversion | None
+        cls,
+        config: RunConfig,
+        currency_conversion: CurrencyConversion | None,
+        size_increment_by_instrument: Mapping[InstrumentId, float] | None = None,
     ) -> ResolvedBook:
         """Resolve the book's per-instrument facts from the declared config.
 
@@ -71,6 +75,7 @@ class ResolvedBook:
             ),
             instrument_bands=resolve_instrument_bands(config),
             futures_roots=tuple(config.data.futures),
+            size_increment_by_instrument=size_increment_by_instrument,
         )
 
 
