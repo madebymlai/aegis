@@ -203,6 +203,14 @@ def test_conversion_and_distributions_are_carried_on_the_value() -> None:
     assert arrays.distributions == (distribution,)
 
 
+def test_instrument_size_increment_is_not_an_array_coherence_fact() -> None:
+    arrays = prepare_run_arrays(
+        _result(size_increment_by_instrument={_AAPL: 0.01})
+    )
+
+    assert not hasattr(arrays, "size_increment_by_instrument")
+
+
 def test_run_arrays_is_frozen() -> None:
     arrays = prepare_run_arrays(_result())
 

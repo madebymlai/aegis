@@ -10,14 +10,12 @@ A misaligned or unusable pairing cannot exist as a :class:`RunArrays` value.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pandas as pd
 from aegis_data.distributions import Distribution
 from aegis_runtime import MarketDataBundle
 from aegis_runtime.currency import CurrencyConversion
-from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.market_data.contracts import MarketDataResult
 from research.aegis_research.market_data.panels import (
@@ -87,7 +85,6 @@ class RunArrays:
     pnl_open: pd.DataFrame
     currency_conversion: CurrencyConversion | None  # the one applied to both views
     distributions: tuple[Distribution, ...]
-    size_increment_by_instrument: Mapping[InstrumentId, float] = field(default_factory=dict)
 
 
 def prepare_run_arrays(data_result: MarketDataResult) -> RunArrays:
@@ -127,7 +124,6 @@ def prepare_run_arrays(data_result: MarketDataResult) -> RunArrays:
         pnl_open=pnl_open,
         currency_conversion=data_result.currency_conversion,
         distributions=data_result.distributions,
-        size_increment_by_instrument=data_result.size_increment_by_instrument,
     )
 
 

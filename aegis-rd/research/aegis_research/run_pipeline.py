@@ -33,6 +33,7 @@ from research.aegis_research.optimization.run_data_contract import (
     RunDataFacts,
     build_run_data_array_contract,
 )
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.provenance.capture import capture_config_evidence
 from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
@@ -113,12 +114,18 @@ def run_strategy_sweep(
         # FX-converted, alignment proven, usability gated (unusable data keeps
         # its recorded metadata artifact above).
         arrays = prepare_run_arrays(data_result)
+        book = ResolvedBook.resolve(
+            config,
+            data_result.currency_conversion,
+            data_result.size_increment_by_instrument,
+        )
         return _run_optimization_strategy_sweep(
             config,
             component_registry=component_registry,
             recorder=recorder,
             facts=facts,
             arrays=arrays,
+            book=book,
             metric_registry=metric_registry,
             run_evidence=run_evidence,
         )
@@ -150,6 +157,7 @@ def _run_optimization_strategy_sweep(
     recorder: RunRecorder,
     facts: RunDataFacts,
     arrays: RunArrays,
+    book: ResolvedBook,
     metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
@@ -170,6 +178,7 @@ def _run_optimization_strategy_sweep(
     execution = run_pipeline_execution(
         config=config,
         setup=setup,
+        book=book,
         metric_registry=metric_registry,
         run_evidence=run_evidence,
     )

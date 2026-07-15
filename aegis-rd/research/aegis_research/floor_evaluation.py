@@ -142,8 +142,8 @@ def load_locked_strategy_returns(config_path: str | Path) -> LockedStrategyRetur
         source=source,
         book=ResolvedBook.resolve(
             config,
-            arrays.currency_conversion,
-            arrays.size_increment_by_instrument,
+            data_result.currency_conversion,
+            data_result.size_increment_by_instrument,
         ),
         report=config.report,
         arrays=arrays,

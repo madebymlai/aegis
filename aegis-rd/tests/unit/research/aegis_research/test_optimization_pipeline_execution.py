@@ -11,6 +11,7 @@ from research.aegis_research.metrics.registry import empty_metric_registry
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
 from research.aegis_research.optimization.source import OptimizationSourceError
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from tests.support.research.aegis_research.factories import make_setup_result
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
@@ -46,6 +47,7 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
         run_pipeline_execution(
             config=config,
             setup=setup,
+            book=ResolvedBook.resolve(config, None),
             metric_registry=empty_metric_registry().freeze(),
             run_evidence=run_evidence,
         )
