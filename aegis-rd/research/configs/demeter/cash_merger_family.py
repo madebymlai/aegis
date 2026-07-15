@@ -17,8 +17,8 @@ class CashMergerConfigError(ValueError):
 
 @dataclass(frozen=True)
 class CashMergerConfigRequest:
-    event_cache_dir: Path
-    fx_cache_dir: Path
+    event_snapshot_path: Path
+    fx_snapshot_path: Path
     instrument_ids: Mapping[str, str]
     benchmark_instrument_id: str
     start: str
@@ -104,11 +104,8 @@ def _config_document(
             {
                 "id": "demeter.cash_merger_deal",
                 "params": {
-                    "cache_dir": str(request.event_cache_dir),
-                    "fx_cache_dir": str(request.fx_cache_dir),
-                    "event_start": request.start,
-                    "refresh_live": True,
-                    "refresh_fx_live": True,
+                    "event_snapshot_path": str(request.event_snapshot_path),
+                    "fx_snapshot_path": str(request.fx_snapshot_path),
                     "filing_lag_days": 1,
                     "break_lookback": 20,
                     "completion_probability": 0.9,

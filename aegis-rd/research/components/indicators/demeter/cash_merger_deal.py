@@ -1,15 +1,16 @@
 # %% component overview
 # Causal fixed-cash merger economics reconstructed from point-in-time SEC filings.
 
-from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
-from research.aegis_research.external_data.ecb_fx import EcbUsdEurSource
-from research.aegis_research.external_data.sec_cash_mergers import SecCashMergerEventSource
+from research.aegis_research.external_data.ecb_fx import load_covering_snapshot as load_fx_snapshot
+from research.aegis_research.external_data.sec_cash_mergers import (
+    load_covering_snapshot as load_event_snapshot,
+)
 
 COMPONENT_MANIFEST = {
     "family": "indicators",
@@ -17,11 +18,8 @@ COMPONENT_MANIFEST = {
     "version": "1.0.0",
     "input_names": ["Close"],
     "param_names": [
-        "cache_dir",
-        "fx_cache_dir",
-        "event_start",
-        "refresh_live",
-        "refresh_fx_live",
+        "event_snapshot_path",
+        "fx_snapshot_path",
         "filing_lag_days",
         "break_lookback",
         "completion_probability",
@@ -48,11 +46,6 @@ COMPONENT_MANIFEST = {
         "deal_status",
     ],
     "defaults": {
-        "cache_dir": "research/data/cache/sec/cash-mergers",
-        "fx_cache_dir": "research/data/cache/ecb/eur-per-usd",
-        "event_start": "2020-01-01",
-        "refresh_live": True,
-        "refresh_fx_live": True,
         "filing_lag_days": 1,
         "break_lookback": 20,
         "completion_probability": 0.90,
@@ -70,7 +63,7 @@ def lookback(**params):
     return max(int(params.get("break_lookback", 20)), int(params.get("residual_lookback", 5)))
 
 
-def _cache_path(value):
+def _snapshot_path(value):
     path = Path(value)
     return path if path.is_absolute() else Path(__file__).resolve().parents[4] / path
 
@@ -214,9 +207,9 @@ def run(data, *, n_candidates, **param_lists):
     close_dates = pd.DatetimeIndex(close.index)
     if close_dates.empty:
         raise ValueError("demeter.cash_merger_deal: Close cannot be empty")
-    market_end = (
-        close_dates.tz_localize(None) if close_dates.tz is not None else close_dates
-    ).max().date()
+    market_dates = close_dates.tz_localize(None) if close_dates.tz is not None else close_dates
+    market_start = market_dates.min().date()
+    market_end = market_dates.max().date()
     n_symbols = len(close.columns)
     combined = {
         name: np.full((len(close), n_candidates * n_symbols), np.nan)
@@ -226,31 +219,12 @@ def run(data, *, n_candidates, **param_lists):
     fx_snapshots = {}
     for candidate in range(n_candidates):
         params = {name: param_lists[name][candidate] for name in COMPONENT_MANIFEST["param_names"]}
-        key = (
-            str(_cache_path(params["cache_dir"])),
-            str(params["event_start"]),
-            market_end.isoformat(),
-            bool(params["refresh_live"]),
-        )
+        key = str(_snapshot_path(params["event_snapshot_path"]))
         if key not in snapshots:
-            source = SecCashMergerEventSource(Path(key[0]))
-            snapshots[key] = source.load(
-                date.fromisoformat(key[1]),
-                date.fromisoformat(key[2]),
-                refresh=key[3],
-            )
-        fx_key = (
-            str(_cache_path(params["fx_cache_dir"])),
-            str(params["event_start"]),
-            market_end.isoformat(),
-            bool(params["refresh_fx_live"]),
-        )
+            snapshots[key] = load_event_snapshot(Path(key), market_start, market_end)
+        fx_key = str(_snapshot_path(params["fx_snapshot_path"]))
         if fx_key not in fx_snapshots:
-            fx_snapshots[fx_key] = EcbUsdEurSource(Path(fx_key[0])).load(
-                date.fromisoformat(fx_key[1]),
-                date.fromisoformat(fx_key[2]),
-                refresh=fx_key[3],
-            )
+            fx_snapshots[fx_key] = load_fx_snapshot(Path(fx_key), market_start, market_end)
         aligned = _aligned_deals(
             close,
             snapshots[key].events,

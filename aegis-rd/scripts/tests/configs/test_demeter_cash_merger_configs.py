@@ -47,8 +47,8 @@ def test_materialized_family_is_six_valid_native_configs_with_preregistered_fron
     paths = materialize_cash_merger_configs(
         _snapshot(),
         CashMergerConfigRequest(
-            event_cache_dir=tmp_path / "events",
-            fx_cache_dir=tmp_path / "fx",
+            event_snapshot_path=tmp_path / "events" / "events-abc.json",
+            fx_snapshot_path=tmp_path / "fx" / "fx-def.json",
             instrument_ids={"AAA": "AAA.XNAS", "BBB": "BBB.XNYS", "CCC": "CCC.XNAS"},
             benchmark_instrument_id="SPY.ARCA",
             start="2025-01-01",
@@ -84,3 +84,29 @@ def test_materialized_family_is_six_valid_native_configs_with_preregistered_fron
     assert all("max_name_weight" not in item.config.strategy.params for item in resolved)
     assert all(item.config.portfolio.init_cash == 5_000.0 for item in resolved)
     assert all(item.config.data.instruments[-1] == "SPY.ARCA" for item in resolved)
+
+
+def test_materialized_family_pins_exact_external_snapshots_without_refresh_switches(
+    tmp_path,
+) -> None:
+    paths = materialize_cash_merger_configs(
+        _snapshot(),
+        CashMergerConfigRequest(
+            event_snapshot_path=tmp_path / "events" / "events-abc.json",
+            fx_snapshot_path=tmp_path / "fx" / "fx-def.json",
+            instrument_ids={"AAA": "AAA.XNAS", "BBB": "BBB.XNYS", "CCC": "CCC.XNAS"},
+            benchmark_instrument_id="SPY.ARCA",
+            start="2025-01-01",
+            end="2026-01-01",
+        ),
+        tmp_path / "configs",
+    )
+    registry = discover_component_registry(root=_ROOT / "research/components", repo_root=_ROOT)
+
+    resolved = load_run_config(paths[0], component_registry=registry)
+    params = resolved.config.indicators[0].params
+
+    assert params["event_snapshot_path"] == str(tmp_path / "events" / "events-abc.json")
+    assert params["fx_snapshot_path"] == str(tmp_path / "fx" / "fx-def.json")
+    assert "refresh_live" not in params
+    assert "refresh_fx_live" not in params

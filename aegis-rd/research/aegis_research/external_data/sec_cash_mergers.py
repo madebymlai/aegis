@@ -12,26 +12,99 @@ import warnings
 from collections.abc import Iterable, Iterator
 from contextlib import suppress
 from dataclasses import asdict, dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from html import unescape
 from pathlib import Path
 from typing import Protocol
 
 import requests
 
+from research.aegis_research.external_data._snapshot_cache import (
+    newest_covering,
+    require_covering,
+)
+
 _INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/master.idx"
 _ARCHIVE_URL = "https://www.sec.gov/Archives/{path}"
 _DISCOVERY_FORMS = frozenset({"DEFM14A", "SC 14D9", "SC 14D9/A"})
 _FOLLOW_UP_FORMS = frozenset({"8-K", "8-K/A", "DEFA14A", "DEFM14A"})
+_SYMBOL_FORMS = frozenset({"8-K", "10-K", "10-Q"})
+_SYMBOL_LOOKBACK_DAYS = 370
 _DEFINITIVE = re.compile(r"agreement\s+and\s+plan\s+of\s+merger|definitive\s+(?:merger\s+)?agreement", re.I)
 _CASH = re.compile(r"(?:per\s+share\s+)?in\s+cash|cash\s+consideration", re.I)
-_TERMINATED = re.compile(r"terminat(?:ed|ion)\s+(?:of\s+)?(?:the\s+)?merger\s+agreement", re.I)
+_TERMINATED = re.compile(
+    r"(?:"
+    r"(?:the\s+)?(?:parties|company|parent|purchaser|buyer|seller)\s+"
+    r"(?:has\s+|have\s+)?terminated\s+(?:the\s+)?merger\s+agreement"
+    r"|(?:the\s+)?merger\s+agreement\s+(?:has\s+been|was)\s+terminated"
+    r"|item\s+1\.02.{0,160}?termination\s+of\s+a\s+material\s+definitive\s+agreement"
+    r")",
+    re.I,
+)
 _COMPLETED = re.compile(
     r"(?:completed|consummated)\s+(?:the\s+)?merger|became\s+(?:a\s+)?wholly[- ]owned\s+subsidiary",
     re.I,
 )
 _OFFER_PATTERNS = (
-    re.compile(r"\$\s*(\d{1,4}(?:\.\d{1,4})?)\s+(?:in\s+cash\s+)?per\s+share", re.I),
-    re.compile(r"per[- ]share\s+(?:cash\s+)?consideration\s+of\s+\$\s*(\d{1,4}(?:\.\d{1,4})?)", re.I),
+    re.compile(
+        r"(?:agreement|transaction).{0,300}?\$\s*(\d{1,4}(?:\.\d{1,4})?)\s+"
+        r"(?:in\s+cash\s+per\s+share|per\s+share\s+in\s+cash)",
+        re.I,
+    ),
+    re.compile(
+        r"(?:agreement|transaction).{0,500}?(?:at|for)\s+(?:a\s+)?"
+        r"(?:purchase\s+)?price\s+of\s+\$\s*(\d{1,4}(?:\.\d{1,4})?)"
+        r"\s+per\s+share\s+in\s+cash",
+        re.I,
+    ),
+    re.compile(
+        r"(?:acquire|purchase).{0,500}?(?:all|any).{0,200}?"
+        r"(?:shares?|common\s+stock).{0,300}?"
+        r"(?:at|for)\s+(?:a\s+)?(?:purchase\s+)?price\s+of\s+\$\s*"
+        r"(\d{1,4}(?:\.\d{1,4})?)\s+per\s+share\s+in\s+cash",
+        re.I,
+    ),
+    re.compile(
+        r"(?:offer|merger)\s+price\s+of\s+\$\s*(\d{1,4}(?:\.\d{1,4})?)"
+        r"\s+per\s+share",
+        re.I,
+    ),
+    re.compile(
+        r"(?:each|every)[^.]{0,160}?shares?[^.]{0,300}?"
+        r"(?:converted\s+into[^.]{0,100}?(?:right\s+to\s+)?receive|"
+        r"(?:right\s+to\s+)?receive)[^.]{0,100}?\$\s*"
+        r"(\d{1,4}(?:\.\d{1,4})?)[^.]{0,40}?(?:\bin\s+cash\b|\bper\s+share\b)",
+        re.I,
+    ),
+    re.compile(
+        r"holders?[^.]{0,160}?\breceive\s+\$\s*(\d{1,4}(?:\.\d{1,4})?)"
+        r"\s+in\s+cash\s+(?:for\s+each|per)\s+share",
+        re.I,
+    ),
+    re.compile(
+        r"(?:revised\s+)?(?:per[- ]share\s+)?cash\s+consideration\s+"
+        r"(?:is|of)\s+\$\s*(\d{1,4}(?:\.\d{1,4})?)",
+        re.I,
+    ),
+)
+_NON_CASH_CONSIDERATION = re.compile(
+    r"(?:"
+    r"shares?\s+of\s+[^.]{0,160}?(?:common\s+)?stock[^.]{0,160}?(?:and|plus)"
+    r"[^.]{0,120}?\$"
+    r"|\$\s*\d[^.]{0,100}?(?:and|plus)\s+[^.]{0,160}?shares?\s+of\s+"
+    r"[^.]{0,80}?(?:common\s+)?stock"
+    r"|exchange\s+ratio"
+    r"|stock\s+consideration"
+    r"|amount\s+of\s+stock\s+per"
+    r"|contingent\s+value\s+rights?"
+    r"|\bCVRs?\b"
+    r")",
+    re.I,
+)
+_COMPLEX_MERGER_SUMMARY = re.compile(
+    r"(?:stock[- ]and[- ]cash|exchange\s+ratio|stock\s+consideration|"
+    r"contingent\s+value\s+rights?|\bCVRs?\b)",
+    re.I,
 )
 
 
@@ -87,12 +160,84 @@ class FilingClient(Protocol):
 
 
 @dataclass(frozen=True)
-class EdgarDailyIndexClient:
-    """Read a causal merger subset from EDGAR's quarterly master indexes.
+class _MasterIndexRow:
+    cik: str
+    company_name: str
+    form: str
+    filed_on: date
+    archive_path: str
+
+
+@dataclass(frozen=True)
+class _ObservedFiling:
+    row: _MasterIndexRow
+    text: str
+    filed_at: str
+
+
+class _EdgarArchive:
+    """Own SEC request pacing, retries, and bounded filing-document reuse."""
+
+    def __init__(self, session: requests.Session, client: EdgarMasterIndexClient) -> None:
+        self._session = session
+        self._client = client
+        self._last_request_at = 0.0
+        self._documents: dict[str, str] = {}
+
+    def index(self, year: int, quarter: int) -> str | None:
+        response = self._get(_INDEX_URL.format(year=year, quarter=quarter))
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.text
+
+    def document(self, archive_path: str) -> str:
+        cached = self._documents.get(archive_path)
+        if cached is not None:
+            return cached
+        response = self._get(_ARCHIVE_URL.format(path=archive_path))
+        response.raise_for_status()
+        if len(self._documents) == 16:
+            self._documents.pop(next(iter(self._documents)))
+        self._documents[archive_path] = response.text
+        return response.text
+
+    def _get(self, url: str) -> requests.Response:
+        for attempt in range(self._client.max_retries + 1):
+            wait = self._client.minimum_request_interval_seconds - (
+                time.monotonic() - self._last_request_at
+            )
+            if wait > 0.0:
+                time.sleep(wait)
+            response = self._session.get(url, timeout=self._client.timeout_seconds)
+            self._last_request_at = time.monotonic()
+            if response.status_code not in {429, 503} or attempt == self._client.max_retries:
+                return response
+            retry_after = response.headers.get("Retry-After")
+            if retry_after is not None:
+                try:
+                    delay = float(retry_after)
+                except ValueError:
+                    warnings.warn(
+                        f"SEC returned invalid Retry-After header {retry_after!r}",
+                        stacklevel=2,
+                    )
+                else:
+                    time.sleep(delay)
+                    continue
+            time.sleep(min(2.0**attempt, 30.0))
+        raise AssertionError("unreachable EDGAR retry loop")
+
+
+@dataclass(frozen=True)
+class EdgarMasterIndexClient:
+    """Read a causal merger subset from EDGAR's official master indexes.
 
     Definitive proxy and target-recommendation filings discover a target. Later
     current reports for that CIK supply amendments and resolutions. This avoids
     scanning every historical 8-K and never relies on today's survivor ticker map.
+    Completed quarters are immutable; SEC updates the current full index through
+    the previous business day, which matches the scheduled ingestion cadence.
     """
 
     user_agent: str
@@ -101,7 +246,7 @@ class EdgarDailyIndexClient:
     max_retries: int = 5
 
     @classmethod
-    def from_environment(cls) -> EdgarDailyIndexClient:
+    def from_environment(cls) -> EdgarMasterIndexClient:
         user_agent = os.environ.get("SEC_USER_AGENT", "").strip()
         if not user_agent:
             raise CashMergerSourceError(
@@ -112,75 +257,12 @@ class EdgarDailyIndexClient:
 
     def filings(self, start: date, end: date) -> Iterator[SecFiling]:
         headers = {"User-Agent": self.user_agent, "Accept-Encoding": "gzip, deflate"}
-        rows: list[tuple[str, str, str, str, str]] = []
-        relevant_forms = _DISCOVERY_FORMS | _FOLLOW_UP_FORMS
+        lookup_start = start - timedelta(days=_SYMBOL_LOOKBACK_DAYS)
         with requests.Session() as session:
             session.headers.update(headers)
-            last_request_at = 0.0
-
-            def get(url: str) -> requests.Response:
-                nonlocal last_request_at
-                for attempt in range(self.max_retries + 1):
-                    wait = self.minimum_request_interval_seconds - (
-                        time.monotonic() - last_request_at
-                    )
-                    if wait > 0.0:
-                        time.sleep(wait)
-                    response = session.get(url, timeout=self.timeout_seconds)
-                    last_request_at = time.monotonic()
-                    if response.status_code not in {429, 503}:
-                        return response
-                    if attempt == self.max_retries:
-                        return response
-                    retry_after = response.headers.get("Retry-After")
-                    with suppress(TypeError, ValueError):
-                        if retry_after is not None:
-                            time.sleep(float(retry_after))
-                            continue
-                    delay = min(2.0**attempt, 30.0)
-                    time.sleep(delay)
-                raise AssertionError("unreachable EDGAR retry loop")
-
-            for year, quarter in _quarters(start, end):
-                index_url = _INDEX_URL.format(year=year, quarter=quarter)
-                response = get(index_url)
-                if response.status_code == 404:
-                    continue
-                response.raise_for_status()
-                rows.extend(
-                    row
-                    for row in _index_rows(response.text)
-                    if row[2] in relevant_forms
-                    and start <= date.fromisoformat(row[3]) <= end
-                )
-
-            tracked_symbols: dict[str, str] = {}
-            for cik, name, form, filed_on, archive_path in sorted(
-                rows, key=lambda row: (row[3], row[4])
-            ):
-                if form not in _DISCOVERY_FORMS and cik not in tracked_symbols:
-                    continue
-                source_url = _ARCHIVE_URL.format(path=archive_path)
-                response = get(source_url)
-                response.raise_for_status()
-                text = response.text
-                symbol = tracked_symbols.get(cik) or _trading_symbol(text)
-                if symbol is None:
-                    continue
-                filing = SecFiling(
-                    accession=Path(archive_path).stem,
-                    cik=cik,
-                    company_name=name,
-                    symbol=symbol,
-                    form=form,
-                    filed_at=_acceptance_timestamp(text, filed_on),
-                    source_url=source_url,
-                    text=text,
-                )
-                event = _event_from_filing(filing)
-                if event is not None and event.status == "pending":
-                    tracked_symbols[cik] = symbol
-                yield filing
+            archive = _EdgarArchive(session, self)
+            rows = _master_index_rows(archive, lookup_start, end)
+            yield from _causal_merger_filings(rows, archive, start, end)
 
 
 @dataclass(frozen=True)
@@ -190,23 +272,25 @@ class SecCashMergerEventSource:
     cache_dir: Path
     client: FilingClient | None = None
 
-    def refresh(self, start: date, end: date) -> CashMergerSnapshot:
+    def refresh(self, start: date, end: date) -> None:
         if end < start:
             raise ValueError("cash-merger event range end precedes start")
-        client = self.client or EdgarDailyIndexClient.from_environment()
+        client = self.client or EdgarMasterIndexClient.from_environment()
         events = tuple(
             sorted(
                 filter(None, (_event_from_filing(filing) for filing in client.filings(start, end))),
                 key=lambda event: (event.available_at, event.target_cik, event.accession),
             )
         )
+        if not events:
+            raise CashMergerSourceError(
+                f"EDGAR returned no fixed-cash merger events for {start} through {end}"
+            )
         snapshot = _snapshot(events, start=start, end=end)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         payload = _snapshot_payload(snapshot)
-        identity = str(payload["snapshot_sha256"])
-        destination = self.cache_dir / f"cash-merger-events-{identity[:16]}.json"
+        destination = _cached_snapshot_path(self.cache_dir, snapshot)
         _write_once(destination, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-        return snapshot
 
     def latest(self) -> CashMergerSnapshot:
         paths = tuple(self.cache_dir.glob("cash-merger-events-*.json"))
@@ -217,32 +301,53 @@ class SecCashMergerEventSource:
         snapshots = tuple(load_snapshot(path) for path in paths)
         return max(snapshots, key=lambda item: (item.covered_end, item.retrieved_at))
 
-    def load(self, start: date, end: date, *, refresh: bool = True) -> CashMergerSnapshot:
-        """Prefer a live point-in-time tape and fall back to the newest validated cache."""
+    def load_cached(self, start: date, end: date) -> CashMergerSnapshot:
+        """Read a validated covering tape without contacting EDGAR."""
 
-        if refresh:
-            try:
-                return self.refresh(start, end)
-            except (requests.RequestException, CashMergerSourceError, ValueError) as error:
-                warnings.warn(f"EDGAR refresh failed; using cash-merger cache: {error}", stacklevel=2)
-        snapshot = self.latest()
-        if snapshot.covered_start > start.isoformat() or snapshot.covered_end < end.isoformat():
-            raise CashMergerSourceError(
-                "newest cash-merger cache does not cover the requested point-in-time range"
-            )
-        return snapshot
+        return newest_covering(
+            self.cache_dir.glob("cash-merger-events-*.json"),
+            load_snapshot,
+            start,
+            end,
+            empty_error=CashMergerSourceError(
+                "cash-merger event cache is empty and no live EDGAR snapshot is available"
+            ),
+            coverage_error=CashMergerSourceError(
+                "cash-merger cache has no snapshot covering the requested point-in-time range"
+            ),
+        )
+
+    def cached_path(self, snapshot: CashMergerSnapshot) -> Path:
+        path = _cached_snapshot_path(self.cache_dir, snapshot)
+        if not path.is_file():
+            raise CashMergerIntegrityError("cash-merger snapshot is not present in its cache")
+        return path
 
 
 def _event_from_filing(filing: SecFiling) -> CashMergerEvent | None:
-    text = re.sub(r"<[^>]+>", " ", filing.text)
-    text = re.sub(r"\s+", " ", text)
-    if _TERMINATED.search(text):
+    primary_document = _primary_document(filing.text, filing.form)
+    if primary_document is None:
+        return None
+    text = _plain_text(primary_document)
+    pending = _DEFINITIVE.search(text) and _CASH.search(text)
+    if (
+        pending
+        and filing.form in _DISCOVERY_FORMS
+        and _COMPLEX_MERGER_SUMMARY.search(text[:100_000]) is not None
+    ):
+        return None
+    if filing.form in _DISCOVERY_FORMS and pending:
+        status = "pending"
+        offer_price = _offer_price(text)
+        if offer_price is None:
+            return None
+    elif _TERMINATED.search(text):
         status = "terminated"
         offer_price = None
     elif _COMPLETED.search(text):
         status = "completed"
         offer_price = None
-    elif _DEFINITIVE.search(text) and _CASH.search(text):
+    elif pending:
         status = "pending"
         offer_price = _offer_price(text)
         if offer_price is None:
@@ -264,9 +369,34 @@ def _event_from_filing(filing: SecFiling) -> CashMergerEvent | None:
 
 
 def _offer_price(text: str) -> float | None:
-    values = [float(match.group(1)) for pattern in _OFFER_PATTERNS for match in pattern.finditer(text)]
-    plausible = [value for value in values if 0.01 <= value <= 10_000]
-    return max(plausible) if plausible else None
+    for pattern in _OFFER_PATTERNS:
+        for match in pattern.finditer(text):
+            value = float(match.group(1))
+            context = text[max(0, match.start() - 300) : match.end() + 200]
+            if 0.01 <= value <= 10_000 and _NON_CASH_CONSIDERATION.search(context) is None:
+                return value
+    return None
+
+
+def _primary_document(submission: str, form: str) -> str | None:
+    documents = re.findall(r"<DOCUMENT>(.*?)</DOCUMENT>", submission, re.I | re.S)
+    if not documents:
+        return submission
+    normalized_form = form.upper().replace(" ", "")
+    for document in documents:
+        type_match = re.search(r"<TYPE>\s*([^<\r\n]+)", document, re.I)
+        if type_match is None:
+            continue
+        document_type = type_match.group(1).strip().upper().replace(" ", "")
+        if document_type != normalized_form:
+            continue
+        text_match = re.search(r"<TEXT>(.*?)</TEXT>", document, re.I | re.S)
+        return text_match.group(1) if text_match is not None else document
+    return None
+
+
+def _plain_text(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", unescape(text)))
 
 
 def _expected_close(text: str) -> str | None:
@@ -295,6 +425,123 @@ def _quarters(start: date, end: date) -> Iterator[tuple[int, int]]:
             quarter = 1
 
 
+def _master_index_rows(
+    archive: _EdgarArchive, start: date, end: date
+) -> tuple[_MasterIndexRow, ...]:
+    rows: list[_MasterIndexRow] = []
+    for year, quarter in _quarters(start, end):
+        index = archive.index(year, quarter)
+        if index is not None:
+            rows.extend(_index_rows(index))
+    return tuple(rows)
+
+
+def _causal_merger_filings(
+    rows: tuple[_MasterIndexRow, ...],
+    archive: _EdgarArchive,
+    start: date,
+    end: date,
+) -> Iterator[SecFiling]:
+    event_rows = tuple(
+        row
+        for row in rows
+        if row.form in _DISCOVERY_FORMS | _FOLLOW_UP_FORMS
+        and start <= row.filed_on <= end
+    )
+    symbol_rows = _symbol_rows_by_cik(rows, start - timedelta(days=_SYMBOL_LOOKBACK_DAYS), end)
+    active_symbols: dict[str, str] = {}
+    candidate_events = 0
+    emitted_events = 0
+    observed_filings = tuple(_observe_filing(row, archive) for row in event_rows)
+    for observed in sorted(
+        observed_filings,
+        key=lambda item: (item.filed_at, item.row.archive_path),
+    ):
+        row = observed.row
+        if row.form not in _DISCOVERY_FORMS and row.cik not in active_symbols:
+            continue
+        filing = _causal_filing(observed, archive, symbol_rows, active_symbols)
+        event = _event_from_filing(filing)
+        if event is None:
+            continue
+        candidate_events += 1
+        if not filing.symbol:
+            continue
+        if event.status == "pending":
+            active_symbols[row.cik] = filing.symbol
+        elif event.status in {"completed", "terminated"}:
+            active_symbols.pop(row.cik, None)
+        emitted_events += 1
+        yield filing
+    if candidate_events and not emitted_events:
+        raise CashMergerSourceError(
+            "EDGAR merger candidates were found, but no point-in-time trading "
+            "symbols could be resolved"
+        )
+
+
+def _symbol_rows_by_cik(
+    rows: tuple[_MasterIndexRow, ...], start: date, end: date
+) -> dict[str, tuple[_MasterIndexRow, ...]]:
+    grouped: dict[str, list[_MasterIndexRow]] = {}
+    for row in rows:
+        if row.form in _SYMBOL_FORMS and start <= row.filed_on <= end:
+            grouped.setdefault(row.cik, []).append(row)
+    return {
+        cik: tuple(sorted(items, key=lambda item: (item.filed_on, item.archive_path)))
+        for cik, items in grouped.items()
+    }
+
+
+def _causal_filing(
+    observed: _ObservedFiling,
+    archive: _EdgarArchive,
+    symbol_rows: dict[str, tuple[_MasterIndexRow, ...]],
+    active_symbols: dict[str, str],
+) -> SecFiling:
+    row = observed.row
+    symbol = active_symbols.get(row.cik)
+    if symbol is None and row.form in _DISCOVERY_FORMS:
+        symbol = _preceding_symbol(row.cik, observed.filed_at, symbol_rows, archive)
+    if symbol is None:
+        symbol = _trading_symbol(observed.text)
+    return SecFiling(
+        accession=Path(row.archive_path).stem,
+        cik=row.cik,
+        company_name=row.company_name,
+        symbol=symbol or "",
+        form=row.form,
+        filed_at=observed.filed_at,
+        source_url=_ARCHIVE_URL.format(path=row.archive_path),
+        text=observed.text,
+    )
+
+
+def _observe_filing(row: _MasterIndexRow, archive: _EdgarArchive) -> _ObservedFiling:
+    text = archive.document(row.archive_path)
+    filed_at = _utc_iso(_acceptance_timestamp(text, row.filed_on.isoformat()))
+    return _ObservedFiling(row=row, text=text, filed_at=filed_at)
+
+
+def _preceding_symbol(
+    cik: str,
+    available_at: str,
+    symbol_rows: dict[str, tuple[_MasterIndexRow, ...]],
+    archive: _EdgarArchive,
+) -> str | None:
+    candidates: list[tuple[str, str, str]] = []
+    filing_available_at = _utc_iso(available_at)
+    for row in symbol_rows.get(cik, ()):
+        text = archive.document(row.archive_path)
+        observed_at = _utc_iso(_acceptance_timestamp(text, row.filed_on.isoformat()))
+        if observed_at > filing_available_at:
+            continue
+        symbol = _trading_symbol(text)
+        if symbol is not None:
+            candidates.append((observed_at, row.archive_path, symbol))
+    return max(candidates)[2] if candidates else None
+
+
 def _acceptance_timestamp(text: str, filed_on: str) -> str:
     match = re.search(r"<ACCEPTANCE-DATETIME>\s*(\d{14})", text, re.I)
     if match is None:
@@ -303,24 +550,44 @@ def _acceptance_timestamp(text: str, filed_on: str) -> str:
     return stamp.isoformat()
 
 
+def _cached_snapshot_path(cache_dir: Path, snapshot: CashMergerSnapshot) -> Path:
+    identity = str(_snapshot_payload(snapshot)["snapshot_sha256"])
+    return cache_dir / f"cash-merger-events-{identity[:16]}.json"
+
+
 def _trading_symbol(text: str) -> str | None:
-    patterns = (
+    xbrl_patterns = (
         r"name=[\"']dei:(?:Entity)?TradingSymbol[\"'][^>]*>\s*(?:<[^>]+>\s*)*([A-Z][A-Z0-9.-]{0,9})",
         r"<dei:(?:Entity)?TradingSymbol[^>]*>\s*([A-Z][A-Z0-9.-]{0,9})\s*</",
     )
-    for pattern in patterns:
+    for pattern in xbrl_patterns:
         match = re.search(pattern, text, re.I)
+        if match is not None:
+            return match.group(1).upper()
+    plain_text = _plain_text(text)
+    prose_patterns = (
+        r"\bunder\s+(?:the\s+)?(?:ticker\s+)?symbol\s+[\"'“”]?([A-Z][A-Z0-9.-]{0,9})\b",
+        r"\bticker\s+symbol\s+(?:is\s+)?[\"'“”]?([A-Z][A-Z0-9.-]{0,9})\b",
+    )
+    for pattern in prose_patterns:
+        match = re.search(pattern, plain_text, re.I)
         if match is not None:
             return match.group(1).upper()
     return None
 
 
-def _index_rows(text: str) -> Iterator[tuple[str, str, str, str, str]]:
+def _index_rows(text: str) -> Iterator[_MasterIndexRow]:
     for line in text.splitlines():
         fields = line.split("|")
         if len(fields) != 5 or not fields[0].isdigit():
             continue
-        yield fields[0], fields[1], fields[2], fields[3], fields[4]
+        yield _MasterIndexRow(
+            cik=fields[0],
+            company_name=fields[1],
+            form=fields[2],
+            filed_on=date.fromisoformat(fields[3]),
+            archive_path=fields[4],
+        )
 
 
 def _utc_iso(value: str) -> str:
@@ -393,6 +660,19 @@ def load_snapshot(path: Path) -> CashMergerSnapshot:
         retrieved_at=str(payload["retrieved_at"]),
         covered_start=str(payload["covered_start"]),
         covered_end=str(payload["covered_end"]),
+    )
+
+
+def load_covering_snapshot(path: Path, start: date, end: date) -> CashMergerSnapshot:
+    """Load one exact immutable tape and verify its requested coverage."""
+
+    return require_covering(
+        load_snapshot(path),
+        start,
+        end,
+        coverage_error=CashMergerSourceError(
+            "cash-merger snapshot does not cover the requested point-in-time range"
+        ),
     )
 
 

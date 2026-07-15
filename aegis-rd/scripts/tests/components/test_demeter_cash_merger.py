@@ -27,6 +27,10 @@ def _load(relative_path: str, module_name: str):
     return module
 
 
+def _unexpected_network(*_args, **_kwargs):
+    raise AssertionError("indicator attempted network access")
+
+
 class _Filings:
     def filings(self, start, end):
         common = {
@@ -65,15 +69,15 @@ class _Fx:
         return pd.Series(1.0, index=pd.date_range(start, end, freq="D"))
 
 
-def test_deal_indicator_reveals_terms_only_after_filings_and_stops_after_termination(
-    tmp_path,
-) -> None:
+def _deal_indicator_case(tmp_path):
     events = tmp_path / "events"
     fx = tmp_path / "fx"
-    SecCashMergerEventSource(events, client=_Filings()).refresh(
-        date(2026, 1, 1), date(2026, 1, 15)
-    )
-    EcbUsdEurSource(fx, client=_Fx()).refresh(date(2026, 1, 1), date(2026, 1, 15))
+    event_source = SecCashMergerEventSource(events, client=_Filings())
+    event_source.refresh(date(2026, 1, 1), date(2026, 1, 15))
+    event_snapshot = event_source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    fx_source = EcbUsdEurSource(fx, client=_Fx())
+    fx_source.refresh(date(2026, 1, 1), date(2026, 1, 15))
+    fx_snapshot = fx_source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
     component = _load(
         "research/components/indicators/demeter/cash_merger_deal.py",
         "demeter_cash_merger_deal_behavior",
@@ -86,24 +90,31 @@ def test_deal_indicator_reveals_terms_only_after_filings_and_stops_after_termina
         },
         index=index,
     )
+    params = {
+        "event_snapshot_path": [str(event_source.cached_path(event_snapshot))],
+        "fx_snapshot_path": [str(fx_source.cached_path(fx_snapshot))],
+        "filing_lag_days": [1],
+        "break_lookback": [20],
+        "completion_probability": [0.9],
+        "default_close_days": [120],
+        "roundtrip_cost_bps": [20.0],
+        "min_expected_value_bps": [0.0],
+        "benchmark_symbol": ["SPY"],
+        "residual_lookback": [5],
+        "news_exclusion_days": [2],
+    }
+    return component, MarketDataBundle({"Close": close}), params
+
+
+def test_deal_indicator_reveals_terms_only_after_filings_and_stops_after_termination(
+    tmp_path,
+) -> None:
+    component, data, params = _deal_indicator_case(tmp_path)
 
     result = component.run(
-        MarketDataBundle({"Close": close}),
+        data,
         n_candidates=1,
-        cache_dir=[str(events)],
-        fx_cache_dir=[str(fx)],
-        event_start=["2026-01-01"],
-        refresh_live=[False],
-        refresh_fx_live=[False],
-        filing_lag_days=[1],
-        break_lookback=[20],
-        completion_probability=[0.9],
-        default_close_days=[120],
-        roundtrip_cost_bps=[20.0],
-        min_expected_value_bps=[0.0],
-        benchmark_symbol=["SPY"],
-        residual_lookback=[5],
-        news_exclusion_days=[2],
+        **params,
     )
 
     assert result["deal_eligible"][5, 0] == 0.0
@@ -113,6 +124,32 @@ def test_deal_indicator_reveals_terms_only_after_filings_and_stops_after_termina
     assert result["deal_break_value"][6, 0] == 72.5
     assert result["deal_expected_value"][6, 0] > 0.0
     assert result["deal_annualized_spread"][6, 0] > 0.0
+
+
+def test_deal_indicator_consumes_pinned_snapshots_without_network(
+    tmp_path, monkeypatch
+) -> None:
+    component, data, params = _deal_indicator_case(tmp_path)
+    monkeypatch.setattr("requests.Session", _unexpected_network)
+    monkeypatch.setattr("requests.get", _unexpected_network)
+
+    result = component.run(data, n_candidates=1, **params)
+
+    assert result["deal_cash_offer"][6, 0] == 100.0
+
+
+def test_deal_indicator_has_no_network_refresh_configuration() -> None:
+    component = _load(
+        "research/components/indicators/demeter/cash_merger_deal.py",
+        "demeter_cash_merger_deal_interface",
+    )
+
+    assert "refresh_live" not in component.COMPONENT_MANIFEST["param_names"]
+    assert "refresh_fx_live" not in component.COMPONENT_MANIFEST["param_names"]
+    assert "cache_dir" not in component.COMPONENT_MANIFEST["param_names"]
+    assert "fx_cache_dir" not in component.COMPONENT_MANIFEST["param_names"]
+    assert "event_snapshot_path" not in component.COMPONENT_MANIFEST["defaults"]
+    assert "fx_snapshot_path" not in component.COMPONENT_MANIFEST["defaults"]
 
 
 def _strategy_inputs() -> ComponentStrategyInputs:
