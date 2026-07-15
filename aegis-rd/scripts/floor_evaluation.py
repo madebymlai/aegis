@@ -399,4 +399,4 @@ def _percentile_interval(values: np.ndarray) -> list[float]:
 
 
 def _repository_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]

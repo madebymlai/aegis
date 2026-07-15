@@ -13,7 +13,7 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from research.aegis_research.floor_evaluation import (  # noqa: E402
+from scripts.floor_evaluation import (  # noqa: E402
     FloorEvaluationSettings,
     evaluate_locked_floor_configs,
 )

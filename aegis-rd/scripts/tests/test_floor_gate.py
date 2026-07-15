@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 import yaml
 
-from research.aegis_research.floor_evaluation import (
+from scripts.floor_evaluation import (
     FloorEvaluationError,
     FloorEvaluationSettings,
     evaluate_floor_pair,
