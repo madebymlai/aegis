@@ -209,6 +209,11 @@ class _Fx:
         )
 
 
+class _UnavailableFx:
+    def usd_per_eur(self, start: date, end: date) -> pd.Series:
+        raise requests.ConnectionError("offline")
+
+
 def test_edgar_client_uses_the_repository_contact_identity(monkeypatch) -> None:
     session = _EdgarSession({})
     monkeypatch.setattr(requests, "Session", lambda: session)
@@ -227,13 +232,13 @@ def test_event_source_preserves_each_causal_filing_and_reads_validated_offline_c
 ) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_Filings())
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    live = SecCashMergerEventSource(tmp_path / "events").load_cached(
-        date(2026, 1, 1), date(2026, 1, 15)
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    live = source.load(date(2026, 1, 1), date(2026, 1, 15))
+    cached_source = SecCashMergerEventSource(
+        tmp_path / "events", client=_UnavailableFilings()
     )
-    cached = SecCashMergerEventSource(tmp_path / "events").load_cached(
-        date(2026, 1, 1), date(2026, 1, 15)
-    )
+    cached_source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    cached = cached_source.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert len(live.events) == 3
     assert (live.events[0].status, live.events[0].offer_price) == ("pending", 100.0)
@@ -245,18 +250,20 @@ def test_event_source_preserves_each_causal_filing_and_reads_validated_offline_c
     assert live.source_sha256
 
 
-def test_event_source_fails_clearly_without_live_data_or_cache(tmp_path) -> None:
-    source = SecCashMergerEventSource(tmp_path / "empty")
+def test_event_source_surfaces_live_failure_when_cache_has_no_covering_snapshot(
+    tmp_path,
+) -> None:
+    source = SecCashMergerEventSource(tmp_path / "empty", client=_UnavailableFilings())
 
-    with pytest.raises(CashMergerSourceError, match="cache is empty"):
-        source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    with pytest.raises(requests.ConnectionError, match="offline"):
+        source.sync(date(2026, 1, 1), date(2026, 1, 15))
 
 
-def test_event_source_rejects_an_empty_refresh_without_caching_it(tmp_path) -> None:
+def test_event_source_rejects_an_empty_fetch_without_caching_it(tmp_path) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_NoFilings())
 
     with pytest.raises(CashMergerSourceError, match="no fixed-cash merger events"):
-        source.refresh(date(2026, 1, 1), date(2026, 1, 15))
+        source.sync(date(2026, 1, 1), date(2026, 1, 15))
 
     assert not tuple((tmp_path / "events").glob("cash-merger-events-*.json"))
 
@@ -266,8 +273,8 @@ def test_event_source_reads_the_primary_transaction_terms_not_boilerplate_or_his
 ) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_NoisyProxyFiling())
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    snapshot = source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    snapshot = source.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert len(snapshot.events) == 1
     assert (snapshot.events[0].status, snapshot.events[0].offer_price) == ("pending", 48.0)
@@ -277,21 +284,21 @@ def test_event_source_excludes_stock_and_cash_consideration(tmp_path) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_StockAndCashFiling())
 
     with pytest.raises(CashMergerSourceError, match="no fixed-cash merger events"):
-        source.refresh(date(2026, 1, 1), date(2026, 1, 15))
+        source.sync(date(2026, 1, 1), date(2026, 1, 15))
 
 
 def test_event_source_excludes_tender_offers_with_contingent_value_rights(tmp_path) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_TenderWithCvrFiling())
 
     with pytest.raises(CashMergerSourceError, match="no fixed-cash merger events"):
-        source.refresh(date(2026, 1, 1), date(2026, 1, 15))
+        source.sync(date(2026, 1, 1), date(2026, 1, 15))
 
 
 def test_event_source_does_not_treat_a_termination_clause_as_a_termination(tmp_path) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_PendingEightKFiling())
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    snapshot = source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    snapshot = source.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert len(snapshot.events) == 1
     assert (snapshot.events[0].status, snapshot.events[0].offer_price) == ("pending", 25.0)
@@ -305,7 +312,7 @@ def test_event_source_rejects_submission_without_the_filing_primary_document(
     )
 
     with pytest.raises(CashMergerSourceError, match="no fixed-cash merger events"):
-        source.refresh(date(2026, 1, 1), date(2026, 1, 15))
+        source.sync(date(2026, 1, 1), date(2026, 1, 15))
 
 
 def test_edgar_source_resolves_the_announcement_ticker_from_a_preceding_cover_filing(
@@ -357,8 +364,8 @@ def test_edgar_source_resolves_the_announcement_ticker_from_a_preceding_cover_fi
         ),
     )
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    snapshot = source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    snapshot = source.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert len(snapshot.events) == 2
     assert (snapshot.events[0].target_symbol, snapshot.events[0].status) == ("OLD", "pending")
@@ -390,8 +397,8 @@ def test_edgar_source_uses_the_proxy_ticker_disclosure_without_a_cover_lookup(
         ),
     )
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    snapshot = source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    snapshot = source.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert snapshot.events[0].target_symbol == "TGTX"
 
@@ -431,8 +438,8 @@ def test_edgar_source_selects_latest_eligible_cover_by_acceptance_time(
         ),
     )
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    snapshot = source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    snapshot = source.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert snapshot.events[0].target_symbol == "NEW"
 
@@ -472,8 +479,8 @@ def test_edgar_source_closes_symbol_lineage_after_resolution(tmp_path, monkeypat
         ),
     )
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    snapshot = source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    snapshot = source.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert len(snapshot.events) == 2
     assert snapshot.events[0].status == "pending"
@@ -483,20 +490,21 @@ def test_edgar_source_closes_symbol_lineage_after_resolution(tmp_path, monkeypat
 def test_immutable_snapshot_identity_preserves_extended_coverage(tmp_path) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_Filings())
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    source.refresh(date(2026, 1, 1), date(2026, 1, 20))
-    extended = source.load_cached(date(2026, 1, 1), date(2026, 1, 20))
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    source.sync(date(2026, 1, 1), date(2026, 1, 20))
+    extended = source.load(date(2026, 1, 1), date(2026, 1, 20))
 
     assert len(tuple((tmp_path / "events").glob("cash-merger-events-*.json"))) == 2
-    assert source.latest().covered_end == extended.covered_end == "2026-01-20"
+    assert extended.covered_end == "2026-01-20"
 
 
-def test_event_source_load_cached_never_contacts_edgar(tmp_path) -> None:
+def test_event_source_cache_hit_never_contacts_edgar(tmp_path) -> None:
     live = SecCashMergerEventSource(tmp_path / "events", client=_Filings())
-    live.refresh(date(2026, 1, 1), date(2026, 1, 15))
+    live.sync(date(2026, 1, 1), date(2026, 1, 15))
     cached = SecCashMergerEventSource(tmp_path / "events", client=_UnavailableFilings())
 
-    snapshot = cached.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    cached.sync(date(2026, 1, 1), date(2026, 1, 15))
+    snapshot = cached.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert snapshot.covered_start == "2026-01-01"
     assert snapshot.covered_end == "2026-01-15"
@@ -506,11 +514,15 @@ def test_event_source_selects_the_newest_snapshot_that_covers_the_requested_rang
     tmp_path,
 ) -> None:
     source = SecCashMergerEventSource(tmp_path / "events", client=_Filings())
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    covering = source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
-    source.refresh(date(2026, 1, 10), date(2026, 1, 20))
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    covering = source.load(date(2026, 1, 1), date(2026, 1, 15))
+    source.sync(date(2026, 1, 10), date(2026, 1, 20))
 
-    selected = source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    cached = SecCashMergerEventSource(
+        tmp_path / "events", client=_UnavailableFilings()
+    )
+    cached.sync(date(2026, 1, 1), date(2026, 1, 15))
+    selected = cached.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert selected.source_sha256 == covering.source_sha256
 
@@ -518,13 +530,11 @@ def test_event_source_selects_the_newest_snapshot_that_covers_the_requested_rang
 def test_ecb_source_converts_usd_offers_to_eur_and_reuses_cache(tmp_path) -> None:
     source = EcbUsdEurSource(tmp_path / "fx", client=_Fx())
 
-    source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    live = EcbUsdEurSource(tmp_path / "fx").load_cached(
-        date(2026, 1, 1), date(2026, 1, 15)
-    )
-    cached = EcbUsdEurSource(tmp_path / "fx").load_cached(
-        date(2026, 1, 1), date(2026, 1, 15)
-    )
+    source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    live = source.load(date(2026, 1, 1), date(2026, 1, 15))
+    cached_source = EcbUsdEurSource(tmp_path / "fx", client=_UnavailableFx())
+    cached_source.sync(date(2026, 1, 1), date(2026, 1, 15))
+    cached = cached_source.load(date(2026, 1, 1), date(2026, 1, 15))
 
     assert live.eur_per_usd.iloc[0] == 0.8
     assert cached.eur_per_usd.equals(live.eur_per_usd)

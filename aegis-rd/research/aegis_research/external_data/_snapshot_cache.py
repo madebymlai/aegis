@@ -19,6 +19,10 @@ class CoveredSnapshot(Protocol):
     def retrieved_at(self) -> str: ...
 
 
+class SnapshotCacheMiss(RuntimeError):
+    pass
+
+
 def covers(snapshot: CoveredSnapshot, start: date, end: date) -> bool:
     """Return whether one immutable snapshot contains the requested interval."""
 
@@ -30,26 +34,20 @@ def newest_covering[SnapshotT: CoveredSnapshot](
     loader: Callable[[Path], SnapshotT],
     start: date,
     end: date,
-    *,
-    empty_error: Exception,
-    coverage_error: Exception,
 ) -> SnapshotT:
     snapshots = tuple(loader(path) for path in paths)
     if not snapshots:
-        raise empty_error
+        raise SnapshotCacheMiss("snapshot cache is empty")
     covering = tuple(snapshot for snapshot in snapshots if covers(snapshot, start, end))
     if not covering:
-        raise coverage_error
+        raise SnapshotCacheMiss("snapshot cache has no entry covering the requested range")
     return max(covering, key=lambda item: (item.covered_end, item.retrieved_at))
 
 
-def require_covering[SnapshotT: CoveredSnapshot](
-    snapshot: SnapshotT,
-    start: date,
-    end: date,
-    *,
-    coverage_error: Exception,
-) -> SnapshotT:
-    if not covers(snapshot, start, end):
-        raise coverage_error
-    return snapshot
+def sync_on_miss(read: Callable[[], CoveredSnapshot], fetch: Callable[[], None]) -> None:
+    """Fetch once only when the validated cache query cannot cover a request."""
+
+    try:
+        read()
+    except SnapshotCacheMiss:
+        fetch()

@@ -19,10 +19,7 @@ from typing import Protocol
 
 import requests
 
-from research.aegis_research.external_data._snapshot_cache import (
-    newest_covering,
-    require_covering,
-)
+from research.aegis_research.external_data._snapshot_cache import newest_covering, sync_on_miss
 
 _INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/master.idx"
 _ARCHIVE_URL = "https://www.sec.gov/Archives/{path}"
@@ -262,7 +259,22 @@ class SecCashMergerEventSource:
     cache_dir: Path
     client: FilingClient | None = None
 
-    def refresh(self, start: date, end: date) -> None:
+    def sync(self, start: date, end: date) -> None:
+        """Ensure the cache covers the requested range, fetching only on a miss."""
+
+        sync_on_miss(lambda: self.load(start, end), lambda: self._fetch(start, end))
+
+    def load(self, start: date, end: date) -> CashMergerSnapshot:
+        """Read a validated covering tape without contacting EDGAR."""
+
+        return newest_covering(
+            self.cache_dir.glob("cash-merger-events-*.json"),
+            load_snapshot,
+            start,
+            end,
+        )
+
+    def _fetch(self, start: date, end: date) -> None:
         if end < start:
             raise ValueError("cash-merger event range end precedes start")
         client = self.client or EdgarMasterIndexClient()
@@ -281,38 +293,6 @@ class SecCashMergerEventSource:
         payload = _snapshot_payload(snapshot)
         destination = _cached_snapshot_path(self.cache_dir, snapshot)
         _write_once(destination, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-    def latest(self) -> CashMergerSnapshot:
-        paths = tuple(self.cache_dir.glob("cash-merger-events-*.json"))
-        if not paths:
-            raise CashMergerSourceError(
-                "cash-merger event cache is empty and no live EDGAR snapshot is available"
-            )
-        snapshots = tuple(load_snapshot(path) for path in paths)
-        return max(snapshots, key=lambda item: (item.covered_end, item.retrieved_at))
-
-    def load_cached(self, start: date, end: date) -> CashMergerSnapshot:
-        """Read a validated covering tape without contacting EDGAR."""
-
-        return newest_covering(
-            self.cache_dir.glob("cash-merger-events-*.json"),
-            load_snapshot,
-            start,
-            end,
-            empty_error=CashMergerSourceError(
-                "cash-merger event cache is empty and no live EDGAR snapshot is available"
-            ),
-            coverage_error=CashMergerSourceError(
-                "cash-merger cache has no snapshot covering the requested point-in-time range"
-            ),
-        )
-
-    def cached_path(self, snapshot: CashMergerSnapshot) -> Path:
-        path = _cached_snapshot_path(self.cache_dir, snapshot)
-        if not path.is_file():
-            raise CashMergerIntegrityError("cash-merger snapshot is not present in its cache")
-        return path
-
 
 def _event_from_filing(filing: SecFiling) -> CashMergerEvent | None:
     primary_document = _primary_document(filing.text, filing.form)
@@ -650,19 +630,6 @@ def load_snapshot(path: Path) -> CashMergerSnapshot:
         retrieved_at=str(payload["retrieved_at"]),
         covered_start=str(payload["covered_start"]),
         covered_end=str(payload["covered_end"]),
-    )
-
-
-def load_covering_snapshot(path: Path, start: date, end: date) -> CashMergerSnapshot:
-    """Load one exact immutable tape and verify its requested coverage."""
-
-    return require_covering(
-        load_snapshot(path),
-        start,
-        end,
-        coverage_error=CashMergerSourceError(
-            "cash-merger snapshot does not cover the requested point-in-time range"
-        ),
     )
 
 

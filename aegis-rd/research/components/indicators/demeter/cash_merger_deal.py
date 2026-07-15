@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
-from research.aegis_research.external_data.ecb_fx import load_covering_snapshot as load_fx_snapshot
+from research.aegis_research.external_data.ecb_fx import EcbUsdEurSource
 from research.aegis_research.external_data.sec_cash_mergers import (
-    load_covering_snapshot as load_event_snapshot,
+    SecCashMergerEventSource,
 )
 
 COMPONENT_MANIFEST = {
@@ -18,8 +18,8 @@ COMPONENT_MANIFEST = {
     "version": "1.0.0",
     "input_names": ["Close"],
     "param_names": [
-        "event_snapshot_path",
-        "fx_snapshot_path",
+        "event_cache_dir",
+        "fx_cache_dir",
         "filing_lag_days",
         "break_lookback",
         "completion_probability",
@@ -46,6 +46,8 @@ COMPONENT_MANIFEST = {
         "deal_status",
     ],
     "defaults": {
+        "event_cache_dir": "research/data/cache/sec/cash-mergers",
+        "fx_cache_dir": "research/data/cache/ecb/eur-per-usd",
         "filing_lag_days": 1,
         "break_lookback": 20,
         "completion_probability": 0.90,
@@ -63,7 +65,7 @@ def lookback(**params):
     return max(int(params.get("break_lookback", 20)), int(params.get("residual_lookback", 5)))
 
 
-def _snapshot_path(value):
+def _cache_dir(value):
     path = Path(value)
     return path if path.is_absolute() else Path(__file__).resolve().parents[4] / path
 
@@ -201,7 +203,7 @@ def _aligned_deals(close, events, eur_per_usd, params):
 
 # %% main compute
 def run(data, *, n_candidates, **param_lists):
-    """Align only filing information available by each market observation."""
+    """Load cache-first deal context and align only causally available filings."""
 
     close = data.array("Close")
     close_dates = pd.DatetimeIndex(close.index)
@@ -215,20 +217,24 @@ def run(data, *, n_candidates, **param_lists):
         name: np.full((len(close), n_candidates * n_symbols), np.nan)
         for name in COMPONENT_MANIFEST["output_names"]
     }
-    snapshots = {}
-    fx_snapshots = {}
+    event_contexts = {}
+    fx_contexts = {}
     for candidate in range(n_candidates):
         params = {name: param_lists[name][candidate] for name in COMPONENT_MANIFEST["param_names"]}
-        key = str(_snapshot_path(params["event_snapshot_path"]))
-        if key not in snapshots:
-            snapshots[key] = load_event_snapshot(Path(key), market_start, market_end)
-        fx_key = str(_snapshot_path(params["fx_snapshot_path"]))
-        if fx_key not in fx_snapshots:
-            fx_snapshots[fx_key] = load_fx_snapshot(Path(fx_key), market_start, market_end)
+        event_key = str(_cache_dir(params["event_cache_dir"]))
+        if event_key not in event_contexts:
+            event_source = SecCashMergerEventSource(Path(event_key))
+            event_source.sync(market_start, market_end)
+            event_contexts[event_key] = event_source.load(market_start, market_end)
+        fx_key = str(_cache_dir(params["fx_cache_dir"]))
+        if fx_key not in fx_contexts:
+            fx_source = EcbUsdEurSource(Path(fx_key))
+            fx_source.sync(market_start, market_end)
+            fx_contexts[fx_key] = fx_source.load(market_start, market_end)
         aligned = _aligned_deals(
             close,
-            snapshots[key].events,
-            fx_snapshots[fx_key].eur_per_usd,
+            event_contexts[event_key].events,
+            fx_contexts[fx_key].eur_per_usd,
             params,
         )
         start = candidate * n_symbols

@@ -8,8 +8,6 @@ from pathlib import Path
 
 import yaml
 
-from research.aegis_research.external_data.sec_cash_mergers import CashMergerSnapshot
-
 
 class CashMergerConfigError(ValueError):
     pass
@@ -17,8 +15,6 @@ class CashMergerConfigError(ValueError):
 
 @dataclass(frozen=True)
 class CashMergerConfigRequest:
-    event_snapshot_path: Path
-    fx_snapshot_path: Path
     instrument_ids: Mapping[str, str]
     benchmark_instrument_id: str
     start: str
@@ -27,28 +23,14 @@ class CashMergerConfigRequest:
 
 
 def materialize_cash_merger_configs(
-    snapshot: CashMergerSnapshot,
     request: CashMergerConfigRequest,
     output_dir: Path,
 ) -> tuple[Path, ...]:
     """Write the preregistered complete/sparse/residual config family."""
 
-    symbols = tuple(
-        sorted(
-            {
-                event.target_symbol
-                for event in snapshot.events
-                if event.status == "pending" and event.offer_price is not None
-            }
-        )
-    )
-    missing = tuple(symbol for symbol in symbols if symbol not in request.instrument_ids)
-    if missing:
-        raise CashMergerConfigError(
-            f"no native InstrumentId mapping for event symbols: {list(missing)}"
-        )
+    symbols = tuple(sorted(request.instrument_ids))
     if not symbols:
-        raise CashMergerConfigError("event snapshot contains no definitive fixed-cash targets")
+        raise CashMergerConfigError("cash-merger config requires at least one instrument")
 
     instruments = [request.instrument_ids[symbol] for symbol in symbols]
     instruments.append(request.benchmark_instrument_id)
@@ -104,8 +86,6 @@ def _config_document(
             {
                 "id": "demeter.cash_merger_deal",
                 "params": {
-                    "event_snapshot_path": str(request.event_snapshot_path),
-                    "fx_snapshot_path": str(request.fx_snapshot_path),
                     "filing_lag_days": 1,
                     "break_lookback": 20,
                     "completion_probability": 0.9,

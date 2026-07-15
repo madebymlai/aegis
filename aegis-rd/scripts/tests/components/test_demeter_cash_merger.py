@@ -73,11 +73,9 @@ def _deal_indicator_case(tmp_path):
     events = tmp_path / "events"
     fx = tmp_path / "fx"
     event_source = SecCashMergerEventSource(events, client=_Filings())
-    event_source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    event_snapshot = event_source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    event_source.sync(date(2026, 1, 1), date(2026, 1, 15))
     fx_source = EcbUsdEurSource(fx, client=_Fx())
-    fx_source.refresh(date(2026, 1, 1), date(2026, 1, 15))
-    fx_snapshot = fx_source.load_cached(date(2026, 1, 1), date(2026, 1, 15))
+    fx_source.sync(date(2026, 1, 1), date(2026, 1, 15))
     component = _load(
         "research/components/indicators/demeter/cash_merger_deal.py",
         "demeter_cash_merger_deal_behavior",
@@ -91,8 +89,8 @@ def _deal_indicator_case(tmp_path):
         index=index,
     )
     params = {
-        "event_snapshot_path": [str(event_source.cached_path(event_snapshot))],
-        "fx_snapshot_path": [str(fx_source.cached_path(fx_snapshot))],
+        "event_cache_dir": [str(events)],
+        "fx_cache_dir": [str(fx)],
         "filing_lag_days": [1],
         "break_lookback": [20],
         "completion_probability": [0.9],
@@ -126,7 +124,7 @@ def test_deal_indicator_reveals_terms_only_after_filings_and_stops_after_termina
     assert result["deal_annualized_spread"][6, 0] > 0.0
 
 
-def test_deal_indicator_consumes_pinned_snapshots_without_network(
+def test_deal_indicator_reuses_covering_cache_without_network(
     tmp_path, monkeypatch
 ) -> None:
     component, data, params = _deal_indicator_case(tmp_path)
@@ -138,18 +136,20 @@ def test_deal_indicator_consumes_pinned_snapshots_without_network(
     assert result["deal_cash_offer"][6, 0] == 100.0
 
 
-def test_deal_indicator_has_no_network_refresh_configuration() -> None:
+def test_deal_indicator_configures_cache_locations_not_snapshot_files() -> None:
     component = _load(
         "research/components/indicators/demeter/cash_merger_deal.py",
         "demeter_cash_merger_deal_interface",
     )
 
-    assert "refresh_live" not in component.COMPONENT_MANIFEST["param_names"]
-    assert "refresh_fx_live" not in component.COMPONENT_MANIFEST["param_names"]
-    assert "cache_dir" not in component.COMPONENT_MANIFEST["param_names"]
-    assert "fx_cache_dir" not in component.COMPONENT_MANIFEST["param_names"]
-    assert "event_snapshot_path" not in component.COMPONENT_MANIFEST["defaults"]
-    assert "fx_snapshot_path" not in component.COMPONENT_MANIFEST["defaults"]
+    assert "event_snapshot_path" not in component.COMPONENT_MANIFEST["param_names"]
+    assert "fx_snapshot_path" not in component.COMPONENT_MANIFEST["param_names"]
+    assert component.COMPONENT_MANIFEST["defaults"]["event_cache_dir"].endswith(
+        "research/data/cache/sec/cash-mergers"
+    )
+    assert component.COMPONENT_MANIFEST["defaults"]["fx_cache_dir"].endswith(
+        "research/data/cache/ecb/eur-per-usd"
+    )
 
 
 def _strategy_inputs() -> ComponentStrategyInputs:

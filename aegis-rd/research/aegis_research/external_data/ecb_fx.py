@@ -16,10 +16,7 @@ from typing import Protocol
 import pandas as pd
 import requests
 
-from research.aegis_research.external_data._snapshot_cache import (
-    newest_covering,
-    require_covering,
-)
+from research.aegis_research.external_data._snapshot_cache import newest_covering, sync_on_miss
 
 _URL = "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A"
 
@@ -71,7 +68,22 @@ class EcbUsdEurSource:
     cache_dir: Path
     client: FxClient | None = None
 
-    def refresh(self, start: date, end: date) -> None:
+    def sync(self, start: date, end: date) -> None:
+        """Ensure the cache covers the requested range, fetching only on a miss."""
+
+        sync_on_miss(lambda: self.load(start, end), lambda: self._fetch(start, end))
+
+    def load(self, start: date, end: date) -> EcbFxSnapshot:
+        """Read validated covering FX observations without contacting the ECB."""
+
+        return newest_covering(
+            self.cache_dir.glob("eur-per-usd-*.json"),
+            load_snapshot,
+            start,
+            end,
+        )
+
+    def _fetch(self, start: date, end: date) -> None:
         usd_per_eur = (self.client or EcbClient()).usd_per_eur(start, end)
         if usd_per_eur.empty or (usd_per_eur <= 0.0).any():
             raise EcbFxError("ECB USD/EUR history is empty or non-positive")
@@ -85,32 +97,6 @@ class EcbUsdEurSource:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         destination = _cached_snapshot_path(self.cache_dir, snapshot)
         _write_once(destination, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-    def latest(self) -> EcbFxSnapshot:
-        paths = tuple(self.cache_dir.glob("eur-per-usd-*.json"))
-        if not paths:
-            raise EcbFxError("ECB FX cache is empty and no live snapshot is available")
-        snapshots = tuple(load_snapshot(path) for path in paths)
-        return max(snapshots, key=lambda item: (item.covered_end, item.retrieved_at))
-
-    def load_cached(self, start: date, end: date) -> EcbFxSnapshot:
-        """Read validated covering FX observations without contacting the ECB."""
-
-        return newest_covering(
-            self.cache_dir.glob("eur-per-usd-*.json"),
-            load_snapshot,
-            start,
-            end,
-            empty_error=EcbFxError("ECB FX cache is empty and no live snapshot is available"),
-            coverage_error=EcbFxError("ECB FX cache has no snapshot covering the requested range"),
-        )
-
-    def cached_path(self, snapshot: EcbFxSnapshot) -> Path:
-        path = _cached_snapshot_path(self.cache_dir, snapshot)
-        if not path.is_file():
-            raise EcbFxError("ECB FX snapshot is not present in its cache")
-        return path
-
 
 def _payload(snapshot: EcbFxSnapshot) -> dict[str, object]:
     observations = [
@@ -162,17 +148,6 @@ def load_snapshot(path: Path) -> EcbFxSnapshot:
         retrieved_at=str(payload["retrieved_at"]),
         covered_start=str(payload["covered_start"]),
         covered_end=str(payload["covered_end"]),
-    )
-
-
-def load_covering_snapshot(path: Path, start: date, end: date) -> EcbFxSnapshot:
-    """Load one exact immutable FX snapshot and verify its requested coverage."""
-
-    return require_covering(
-        load_snapshot(path),
-        start,
-        end,
-        coverage_error=EcbFxError("ECB FX snapshot does not cover the requested range"),
     )
 
 

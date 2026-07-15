@@ -4,10 +4,6 @@ from pathlib import Path
 
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import load_run_config
-from research.aegis_research.external_data.sec_cash_mergers import (
-    CashMergerEvent,
-    CashMergerSnapshot,
-)
 from research.configs.demeter.cash_merger_family import (
     CashMergerConfigRequest,
     materialize_cash_merger_configs,
@@ -16,39 +12,11 @@ from research.configs.demeter.cash_merger_family import (
 _ROOT = Path(__file__).resolve().parents[3]
 
 
-def _snapshot() -> CashMergerSnapshot:
-    events = tuple(
-        CashMergerEvent(
-            target_cik=str(index),
-            target_name=f"Target {symbol}",
-            target_symbol=symbol,
-            status="pending",
-            available_at="2025-01-02T00:00:00+00:00",
-            offer_price=100.0,
-            expected_close=None,
-            source_form="8-K",
-            source_url=f"https://www.sec.gov/{symbol}",
-            accession=str(index),
-        )
-        for index, symbol in enumerate(("AAA", "BBB", "CCC"), start=1)
-    )
-    return CashMergerSnapshot(
-        events=events,
-        source_sha256="abc",
-        retrieved_at="2026-01-01T00:00:00+00:00",
-        covered_start="2025-01-01",
-        covered_end="2026-01-01",
-    )
-
-
 def test_materialized_family_is_six_valid_native_configs_with_preregistered_frontier(
     tmp_path,
 ) -> None:
     paths = materialize_cash_merger_configs(
-        _snapshot(),
         CashMergerConfigRequest(
-            event_snapshot_path=tmp_path / "events" / "events-abc.json",
-            fx_snapshot_path=tmp_path / "fx" / "fx-def.json",
             instrument_ids={"AAA": "AAA.XNAS", "BBB": "BBB.XNYS", "CCC": "CCC.XNAS"},
             benchmark_instrument_id="SPY.ARCA",
             start="2025-01-01",
@@ -86,14 +54,11 @@ def test_materialized_family_is_six_valid_native_configs_with_preregistered_fron
     assert all(item.config.data.instruments[-1] == "SPY.ARCA" for item in resolved)
 
 
-def test_materialized_family_pins_exact_external_snapshots_without_refresh_switches(
+def test_materialized_family_leaves_external_context_to_indicator_defaults(
     tmp_path,
 ) -> None:
     paths = materialize_cash_merger_configs(
-        _snapshot(),
         CashMergerConfigRequest(
-            event_snapshot_path=tmp_path / "events" / "events-abc.json",
-            fx_snapshot_path=tmp_path / "fx" / "fx-def.json",
             instrument_ids={"AAA": "AAA.XNAS", "BBB": "BBB.XNYS", "CCC": "CCC.XNAS"},
             benchmark_instrument_id="SPY.ARCA",
             start="2025-01-01",
@@ -106,7 +71,7 @@ def test_materialized_family_pins_exact_external_snapshots_without_refresh_switc
     resolved = load_run_config(paths[0], component_registry=registry)
     params = resolved.config.indicators[0].params
 
-    assert params["event_snapshot_path"] == str(tmp_path / "events" / "events-abc.json")
-    assert params["fx_snapshot_path"] == str(tmp_path / "fx" / "fx-def.json")
-    assert "refresh_live" not in params
-    assert "refresh_fx_live" not in params
+    assert "event_snapshot_path" not in params
+    assert "fx_snapshot_path" not in params
+    assert "event_cache_dir" not in params
+    assert "fx_cache_dir" not in params
