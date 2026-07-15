@@ -1,13 +1,14 @@
 name: demeter_eu_credit_bucket_yield
 schema_version: 10
 output_dir: runs/demeter_eu/credit_bucket_yield
-lock: 20260713T200047206608Z_demeter_eu_credit_bucket_yield
+# Static four-fund control selected over the active duration-matched challenger.
+lock: 20260713T205822067406Z_demeter_eu_credit_bucket_yield
 
-# Static broad-credit control and active maturity-within-quality challenger.
-# The active cells select exactly one IG and one HY fund while preserving a fixed 50/50
-# quality split. Point-in-time YTW and modified duration use the investable UCITS funds'
-# own historical weights, joined by ISIN to iShares security analytics. selection_strength=0
-# is the static LQDE+IHYU control; selection_strength=1 activates the maturity selector.
+# Static equal-weight control and active duration-matched challenger. Both keep 50% in
+# investment grade and 50% in high yield. Point-in-time YTW and modified duration use
+# the funds' historical holdings; the nominal GSW curve supplies a maturity-matched
+# Treasury yield. The active candidate tilts 5%-45% within each quality bucket to
+# maximize the resulting excess-yield proxy without changing the control's duration.
 data:
   base_currency: EUR
   instruments: [SDIG.LSEETF, LQDE.LSEETF, SDHY.LSEETF, IHYU.LSEETF]

@@ -44,8 +44,9 @@ def _credit_panel() -> pd.DataFrame:
             "as_of_date": pd.Timestamp("2020-08-31"),
             "instrument_id": instrument,
             "available_at": pd.Timestamp("2020-09-01"),
-            "net_ytw": value,
+            "excess_yield_proxy": value,
             "modified_duration": duration,
+            "proxy_dts": value * duration,
             "coverage": coverage,
         }
         for instrument, value, duration, coverage in (
@@ -88,9 +89,14 @@ def test_credit_indicator_publishes_month_end_analytics_on_the_next_session(
         max_age_days=[45],
     )
 
-    assert np.isnan(outputs["credit_net_ytw"][0]).all()
-    np.testing.assert_allclose(outputs["credit_net_ytw"][1], [0.56, 1.92, 3.82, 3.88])
+    assert np.isnan(outputs["credit_excess_yield_proxy"][0]).all()
+    np.testing.assert_allclose(
+        outputs["credit_excess_yield_proxy"][1], [0.56, 1.92, 3.82, 3.88]
+    )
     np.testing.assert_allclose(outputs["credit_modified_duration"][1], [2.6, 9.8, 2.7, 4.3])
+    np.testing.assert_allclose(
+        outputs["credit_proxy_dts"][1], [1.456, 18.816, 10.314, 16.684]
+    )
     np.testing.assert_array_equal(outputs["credit_data_fresh"][:, 0], [0.0, 1.0, 1.0])
     np.testing.assert_array_equal(outputs["credit_rebalance_due"][:, 0], [1.0, 1.0, 0.0])
 
@@ -123,7 +129,7 @@ def test_credit_indicator_rejects_a_bucket_below_the_coverage_contract(
         max_age_days=[45],
     )
 
-    assert np.isnan(outputs["credit_net_ytw"][0, 0])
+    assert np.isnan(outputs["credit_excess_yield_proxy"][0, 0])
     assert outputs["credit_data_fresh"][0, 0] == 0.0
 
 
@@ -154,7 +160,7 @@ def test_credit_indicator_exposes_static_fallback_when_source_is_unavailable(
             max_age_days=[45],
         )
 
-    assert np.isnan(outputs["credit_net_ytw"]).all()
+    assert np.isnan(outputs["credit_excess_yield_proxy"]).all()
     assert (outputs["credit_data_fresh"] == 0.0).all()
     assert (outputs["credit_rebalance_due"] == 1.0).all()
 
@@ -162,18 +168,18 @@ def test_credit_indicator_exposes_static_fallback_when_source_is_unavailable(
 def _strategy_inputs(
     *,
     due: np.ndarray,
-    net_ytw: np.ndarray,
+    excess_yield: np.ndarray,
     duration: np.ndarray,
     fresh: np.ndarray | None = None,
 ) -> ComponentStrategyInputs:
     periods = len(due)
     close = _close(pd.date_range("2020-09-01", periods=periods, freq="D"))
-    live = np.ones_like(net_ytw) if fresh is None else fresh
+    live = np.ones_like(excess_yield) if fresh is None else fresh
     return ComponentStrategyInputs(
         data=MarketDataBundle(arrays={"Close": close}),
         indicators={
             "credit_rebalance_due": due,
-            "credit_net_ytw": net_ytw,
+            "credit_excess_yield_proxy": excess_yield,
             "credit_modified_duration": duration,
             "credit_data_fresh": live,
         },
@@ -183,14 +189,14 @@ def _strategy_inputs(
     )
 
 
-def test_static_credit_control_holds_the_two_broad_buckets() -> None:
+def test_static_credit_control_equally_weights_all_four_buckets() -> None:
     component = _load(
         "research/components/strategies/demeter/credit_yield_proxy_selector.py",
         "demeter_credit_static_test",
     )
     inputs = _strategy_inputs(
         due=np.ones((1, 4)),
-        net_ytw=np.array([[4.5, 4.8, 6.5, 6.7]]),
+        excess_yield=np.array([[4.5, 4.8, 6.5, 6.7]]),
         duration=np.array([[2.0, 8.0, 2.5, 4.0]]),
     )
 
@@ -198,35 +204,29 @@ def test_static_credit_control_holds_the_two_broad_buckets() -> None:
         inputs,
         n_candidates=1,
         selection_strength=[0.0],
-        high_yield_weight=[0.5],
-        duration_penalty_bps=[0.0],
-        max_modified_duration=[6.0],
     )
 
-    np.testing.assert_allclose(result[0], [0.0, 0.5, 0.0, 0.5])
+    np.testing.assert_allclose(result[0], [0.25, 0.25, 0.25, 0.25])
 
 
-def test_active_credit_selector_prefers_compensated_duration() -> None:
+def test_active_credit_portfolio_maximizes_proxy_at_static_duration() -> None:
     component = _load(
         "research/components/strategies/demeter/credit_yield_proxy_selector.py",
         "demeter_credit_active_test",
     )
     inputs = _strategy_inputs(
         due=np.ones((1, 4)),
-        net_ytw=np.array([[4.5, 4.8, 6.5, 6.7]]),
-        duration=np.array([[2.0, 8.0, 2.5, 4.0]]),
+        excess_yield=np.array([[5.0, 3.0, 4.0, 6.0]]),
+        duration=np.array([[2.0, 6.0, 2.0, 4.0]]),
     )
 
     result = component.run(
         inputs,
         n_candidates=1,
         selection_strength=[1.0],
-        high_yield_weight=[0.5],
-        duration_penalty_bps=[10.0],
-        max_modified_duration=[6.0],
     )
 
-    np.testing.assert_allclose(result[0], [0.5, 0.0, 0.0, 0.5])
+    np.testing.assert_allclose(result[0], [0.35, 0.15, 0.05, 0.45])
 
 
 def test_active_credit_selector_falls_back_to_static_when_one_bucket_is_unavailable() -> None:
@@ -236,7 +236,7 @@ def test_active_credit_selector_falls_back_to_static_when_one_bucket_is_unavaila
     )
     inputs = _strategy_inputs(
         due=np.ones((1, 4)),
-        net_ytw=np.array([[np.nan, 4.8, 6.5, 6.7]]),
+        excess_yield=np.array([[np.nan, 4.8, 6.5, 6.7]]),
         duration=np.array([[np.nan, 8.0, 2.5, 4.0]]),
         fresh=np.array([[0.0, 1.0, 1.0, 1.0]]),
     )
@@ -245,35 +245,9 @@ def test_active_credit_selector_falls_back_to_static_when_one_bucket_is_unavaila
         inputs,
         n_candidates=1,
         selection_strength=[1.0],
-        high_yield_weight=[0.5],
-        duration_penalty_bps=[10.0],
-        max_modified_duration=[6.0],
     )
 
-    np.testing.assert_allclose(result[0], [0.0, 0.5, 0.0, 0.5])
-
-
-def test_active_credit_selector_uses_lowest_duration_pair_when_cap_is_infeasible() -> None:
-    component = _load(
-        "research/components/strategies/demeter/credit_yield_proxy_selector.py",
-        "demeter_credit_infeasible_duration_test",
-    )
-    inputs = _strategy_inputs(
-        due=np.ones((1, 4)),
-        net_ytw=np.array([[4.5, 9.0, 6.5, 8.0]]),
-        duration=np.array([[2.0, 8.0, 2.5, 4.0]]),
-    )
-
-    result = component.run(
-        inputs,
-        n_candidates=1,
-        selection_strength=[1.0],
-        high_yield_weight=[0.5],
-        duration_penalty_bps=[0.0],
-        max_modified_duration=[1.0],
-    )
-
-    np.testing.assert_allclose(result[0], [0.5, 0.0, 0.5, 0.0])
+    np.testing.assert_allclose(result[0], [0.25, 0.25, 0.25, 0.25])
 
 
 def test_active_credit_selector_emits_targets_only_on_monthly_decisions() -> None:
@@ -283,18 +257,15 @@ def test_active_credit_selector_emits_targets_only_on_monthly_decisions() -> Non
     )
     inputs = _strategy_inputs(
         due=np.array([[1.0] * 4, [0.0] * 4]),
-        net_ytw=np.array([[4.5, 4.8, 6.5, 6.7], [4.5, 4.8, 6.5, 6.7]]),
-        duration=np.array([[2.0, 8.0, 2.5, 4.0], [2.0, 8.0, 2.5, 4.0]]),
+        excess_yield=np.array([[5.0, 3.0, 4.0, 6.0], [5.0, 3.0, 4.0, 6.0]]),
+        duration=np.array([[2.0, 6.0, 2.0, 4.0], [2.0, 6.0, 2.0, 4.0]]),
     )
 
     result = component.run(
         inputs,
         n_candidates=1,
         selection_strength=[1.0],
-        high_yield_weight=[0.5],
-        duration_penalty_bps=[0.0],
-        max_modified_duration=[4.0],
     )
 
-    np.testing.assert_allclose(result[0], [0.5, 0.0, 0.0, 0.5])
+    np.testing.assert_allclose(result[0], [0.35, 0.15, 0.05, 0.45])
     assert np.isnan(result[1]).all()

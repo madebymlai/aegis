@@ -6,10 +6,26 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from research.aegis_research.external_data.gsw import GswNominalCurveSource
 from research.aegis_research.external_data.ishares_credit import (
     IsharesCreditDataError,
     IsharesCreditSource,
 )
+
+
+def _curve_source(cache_dir: Path) -> GswNominalCurveSource:
+    payload = b"""Date,BETA0,BETA1,BETA2,BETA3,TAU1,TAU2
+2020-08-28,1,0,0,0,5,6
+"""
+    return GswNominalCurveSource(cache_dir, fetch=lambda: payload)
+
+
+def _source(tmp_path: Path, fetch) -> IsharesCreditSource:
+    return IsharesCreditSource(
+        tmp_path,
+        fetch=fetch,
+        curve_source=_curve_source(tmp_path / "gsw"),
+    )
 
 
 def _ucits_payload() -> bytes:
@@ -77,29 +93,30 @@ class _IssuerResponses:
 
 def test_source_returns_ucits_weighted_security_analytics(tmp_path: Path) -> None:
     responses = _IssuerResponses()
-    source = IsharesCreditSource(tmp_path, fetch=responses)
+    source = _source(tmp_path, responses)
 
     panel = source.load_window(pd.Timestamp("2020-08-01"), pd.Timestamp("2020-08-31"))
 
     sdhy = panel.loc[(pd.Timestamp("2020-08-31"), "SDHY.LSEETF")]
-    assert sdhy.to_dict() == {
-        "available_at": pd.Timestamp("2020-09-01"),
-        "net_ytw": 5.35,
-        "modified_duration": 2.8,
-        "coverage": 1.0,
-    }
+    assert sdhy["available_at"] == pd.Timestamp("2020-09-01")
+    assert sdhy["excess_yield_proxy"] == pytest.approx(4.265227648231172)
+    assert sdhy["modified_duration"] == 2.8
+    assert sdhy["proxy_dts"] == pytest.approx(11.942637415047281)
+    assert sdhy["coverage"] == 1.0
+    assert sdhy["treasury_curve_date"] == pd.Timestamp("2020-08-28")
+    assert len(sdhy["treasury_snapshot_sha256"]) == 64
 
 
 def test_source_reuses_immutable_cache_when_offline(tmp_path: Path) -> None:
     responses = _IssuerResponses()
-    online = IsharesCreditSource(tmp_path, fetch=responses)
+    online = _source(tmp_path, responses)
     expected = online.load_window(pd.Timestamp("2020-08-01"), pd.Timestamp("2020-08-31"))
     cached_paths = sorted(tmp_path.glob("*.json"))
 
     def offline(url: str) -> bytes:
         raise OSError(f"offline: {url}")
 
-    actual = IsharesCreditSource(tmp_path, fetch=offline).load_window(
+    actual = _source(tmp_path, offline).load_window(
         pd.Timestamp("2020-08-01"), pd.Timestamp("2020-08-31")
     )
 
@@ -109,7 +126,7 @@ def test_source_reuses_immutable_cache_when_offline(tmp_path: Path) -> None:
 
 def test_source_does_not_query_an_incomplete_calendar_month(tmp_path: Path) -> None:
     responses = _IssuerResponses()
-    source = IsharesCreditSource(tmp_path, fetch=responses)
+    source = _source(tmp_path, responses)
 
     panel = source.load_window(pd.Timestamp("2020-08-01"), pd.Timestamp("2020-09-01"))
 
@@ -120,7 +137,7 @@ def test_source_does_not_query_an_incomplete_calendar_month(tmp_path: Path) -> N
 
 def test_source_accepts_timezone_aware_window_boundaries(tmp_path: Path) -> None:
     responses = _IssuerResponses()
-    source = IsharesCreditSource(tmp_path, fetch=responses)
+    source = _source(tmp_path, responses)
 
     panel = source.load_window(
         pd.Timestamp("2020-08-01", tz="UTC"),
@@ -144,13 +161,39 @@ def test_source_exposes_low_match_coverage_without_inventing_values(tmp_path: Pa
             points[name]["value"] = points[name]["value"][:1]
         return json.dumps(payload).encode()
 
-    source = IsharesCreditSource(tmp_path, fetch=missing_beta)
+    source = _source(tmp_path, missing_beta)
 
     panel = source.load_window(pd.Timestamp("2020-08-01"), pd.Timestamp("2020-08-31"))
 
     sdhy = panel.loc[(pd.Timestamp("2020-08-31"), "SDHY.LSEETF")]
     assert sdhy["coverage"] == 0.6
-    assert sdhy["net_ytw"] == 4.55
+    assert sdhy["excess_yield_proxy"] == pytest.approx(3.4885225180743)
+    assert sdhy["modified_duration"] == 2.0
+
+
+def test_source_excludes_rounded_zero_duration_bonds_from_coverage(
+    tmp_path: Path,
+) -> None:
+    def near_maturity_bond(url: str) -> bytes:
+        if "asOfDate=20200831" not in url:
+            return json.dumps({"aaData": []}).encode()
+        if "component=holdings.all" not in url:
+            return _ucits_payload()
+        payload = json.loads(_analytics_payload())
+        points = payload["componentsByNameMap"]["holdings"]["containersByNameMap"][
+            "all"
+        ]["dataPointsByNameMap"]
+        points["yieldToWorst"]["value"][1] = 0.0
+        points["modifiedDuration"]["value"][1] = 0.0
+        return json.dumps(payload).encode()
+
+    source = _source(tmp_path, near_maturity_bond)
+
+    panel = source.load_window(pd.Timestamp("2020-08-01"), pd.Timestamp("2020-08-31"))
+
+    sdhy = panel.loc[(pd.Timestamp("2020-08-31"), "SDHY.LSEETF")]
+    assert sdhy["coverage"] == 0.6
+    assert sdhy["excess_yield_proxy"] == pytest.approx(3.4885225180743)
     assert sdhy["modified_duration"] == 2.0
 
 
@@ -167,7 +210,7 @@ def test_source_rejects_analytics_from_a_different_as_of_date(tmp_path: Path) ->
         points["asOfDate"]["value"] = 20200930
         return json.dumps(payload).encode()
 
-    source = IsharesCreditSource(tmp_path, fetch=mismatched_date)
+    source = _source(tmp_path, mismatched_date)
 
     with pytest.raises(IsharesCreditDataError, match="different as-of date"):
         source.load_window(pd.Timestamp("2020-08-01"), pd.Timestamp("2020-08-31"))

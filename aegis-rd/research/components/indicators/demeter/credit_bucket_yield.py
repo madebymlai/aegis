@@ -1,5 +1,5 @@
 # %% component overview
-# Point-in-time net YTW and modified duration for Demeter's four UCITS credit buckets.
+# Point-in-time Treasury-matched excess-yield proxy for four UCITS credit buckets.
 # Exact UCITS weights are joined by ISIN to first-party iShares security analytics; an
 # observation is causal only from the session after its holdings date.
 
@@ -18,12 +18,13 @@ from research.aegis_research.external_data.ishares_credit import (
 COMPONENT_MANIFEST = {
     "family": "indicators",
     "id": "demeter.credit_bucket_yield",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "input_names": ["Close"],
     "param_names": ["cache_dir", "min_coverage", "max_age_days"],
     "output_names": [
-        "credit_net_ytw",
+        "credit_excess_yield_proxy",
         "credit_modified_duration",
+        "credit_proxy_dts",
         "credit_data_coverage",
         "credit_data_fresh",
         "credit_rebalance_due",
@@ -73,7 +74,10 @@ def _align_bucket(index, rows, min_coverage, max_age_days):
         aligned["coverage"].ge(min_coverage)
         & (age <= np.timedelta64(max_age_days, "D"))
     )
-    aligned.loc[~fresh, ["net_ytw", "modified_duration"]] = np.nan
+    aligned.loc[
+        ~fresh,
+        ["excess_yield_proxy", "modified_duration", "proxy_dts"],
+    ] = np.nan
     aligned["fresh"] = fresh.astype(float)
     aligned.index = index
     return aligned
@@ -92,9 +96,12 @@ def _load_panel(cache_dir, start, end):
                 "as_of_date",
                 "instrument_id",
                 "available_at",
-                "net_ytw",
+                "excess_yield_proxy",
                 "modified_duration",
+                "proxy_dts",
                 "coverage",
+                "treasury_curve_date",
+                "treasury_snapshot_sha256",
             ]
         ).set_index(["as_of_date", "instrument_id"])
 
@@ -137,8 +144,9 @@ def run(data, *, n_candidates, **param_lists):
                 int(param_lists["max_age_days"][candidate]),
             )
             for output, field in {
-                "credit_net_ytw": "net_ytw",
+                "credit_excess_yield_proxy": "excess_yield_proxy",
                 "credit_modified_duration": "modified_duration",
+                "credit_proxy_dts": "proxy_dts",
                 "credit_data_coverage": "coverage",
                 "credit_data_fresh": "fresh",
             }.items():

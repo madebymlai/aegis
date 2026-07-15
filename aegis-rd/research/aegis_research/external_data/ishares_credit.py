@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 from collections.abc import Callable
@@ -14,6 +15,11 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+
+from research.aegis_research.external_data.gsw import (
+    GswNominalCurveSnapshot,
+    GswNominalCurveSource,
+)
 
 Fetch = Callable[[str], bytes]
 
@@ -29,6 +35,12 @@ class CreditBucket:
     ucits_slug: str
     analytics_product_id: int
     annual_fee_pct: float
+
+
+@dataclass(frozen=True)
+class SecurityAnalytics:
+    yield_to_worst_pct: float
+    modified_duration: float
 
 
 BUCKETS = (
@@ -78,6 +90,7 @@ class IsharesCreditSource:
 
     cache_dir: Path
     fetch: Fetch = _http_fetch
+    curve_source: GswNominalCurveSource | None = None
 
     def load_window(self, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
         """Return one observation per bucket and completed calendar month in ``[start, end]``."""
@@ -87,21 +100,33 @@ class IsharesCreditSource:
         if end.normalize() < last_period.end_time.normalize():
             last_period -= 1
         periods = pd.period_range(start.to_period("M"), last_period, freq="M")
+        curve = (
+            self.curve_source or GswNominalCurveSource(self.cache_dir / "gsw")
+        ).load()
         observations = []
         for period in periods:
-            observations.extend(self._load_month(period.end_time.normalize()))
+            observations.extend(self._load_month(period.end_time.normalize(), curve))
         if not observations:
             return _empty_panel()
         frame = pd.DataFrame(observations)
         return frame.set_index(["as_of_date", "instrument_id"]).sort_index()
 
-    def _load_month(self, calendar_month_end: pd.Timestamp) -> list[dict]:
+    def _load_month(
+        self,
+        calendar_month_end: pd.Timestamp,
+        curve: GswNominalCurveSnapshot,
+    ) -> list[dict]:
         for days_back in range(_MAX_MONTH_END_LOOKBACK_DAYS + 1):
             as_of_date = calendar_month_end - pd.Timedelta(days=days_back)
             payloads = self._payloads_for_date(as_of_date)
             if all(_payload_has_holdings(payload) for payload in payloads.values()):
                 return [
-                    _aggregate_bucket(bucket, as_of_date, *payloads[bucket.instrument_id])
+                    _aggregate_bucket(
+                        bucket,
+                        as_of_date,
+                        *payloads[bucket.instrument_id],
+                        curve,
+                    )
                     for bucket in BUCKETS
                 ]
         raise IsharesCreditDataError(
@@ -156,9 +181,12 @@ def _empty_panel() -> pd.DataFrame:
             "as_of_date",
             "instrument_id",
             "available_at",
-            "net_ytw",
+            "excess_yield_proxy",
             "modified_duration",
+            "proxy_dts",
             "coverage",
+            "treasury_curve_date",
+            "treasury_snapshot_sha256",
         ]
     )
     return frame.set_index(["as_of_date", "instrument_id"])
@@ -280,6 +308,7 @@ def _aggregate_bucket(
     as_of_date: pd.Timestamp,
     ucits_payload: dict,
     analytics_payload: dict,
+    curve: GswNominalCurveSnapshot,
 ) -> dict:
     points = _analytics_points(analytics_payload)
     analytics = _security_analytics(points)
@@ -291,33 +320,68 @@ def _aggregate_bucket(
         raise IsharesCreditDataError(
             f"{bucket.instrument_id} has no matchable fixed-income weight on {as_of_date.date()}"
         )
-    gross_ytw = sum(weight * values[0] for weight, values in matched) / matched_weight
-    duration = sum(weight * values[1] for weight, values in matched) / matched_weight
+    matched_excess_yields = [
+        (
+            weight,
+            _semiannual_to_continuous(values.yield_to_worst_pct)
+            - curve.zero_yield(as_of_date, values.modified_duration).zero_yield_pct,
+            values.modified_duration,
+        )
+        for weight, values in matched
+    ]
+    excess_yield = (
+        sum(weight * value for weight, value, _ in matched_excess_yields) / matched_weight
+        - bucket.annual_fee_pct
+    )
+    duration = (
+        sum(weight * value for weight, _, value in matched_excess_yields) / matched_weight
+    )
+    curve_observation = curve.zero_yield(as_of_date, duration)
     return {
         "as_of_date": as_of_date,
         "instrument_id": bucket.instrument_id,
         "available_at": as_of_date + pd.Timedelta(days=1),
-        "net_ytw": gross_ytw - bucket.annual_fee_pct,
+        "excess_yield_proxy": excess_yield,
         "modified_duration": duration,
+        "proxy_dts": excess_yield * duration,
         "coverage": matched_weight / total_weight,
+        "treasury_curve_date": curve_observation.curve_date,
+        "treasury_snapshot_sha256": curve.provenance.sha256,
     }
 
 
-def _security_analytics(points: dict) -> dict[str, tuple[float, float]]:
+def _security_analytics(points: dict) -> dict[str, SecurityAnalytics]:
     isins = points.get("isin", {}).get("value", [])
     yields = points.get("yieldToWorst", {}).get("value", [])
     durations = points.get("modifiedDuration", {}).get("value", [])
     if not (len(isins) == len(yields) == len(durations)):
         raise IsharesCreditDataError("iShares security analytics columns are not aligned")
-    result: dict[str, tuple[float, float]] = {}
+    result: dict[str, SecurityAnalytics] = {}
     for isin, ytw, duration in zip(isins, yields, durations, strict=True):
         if not isin or ytw is None or duration is None:
             continue
-        values = (float(ytw), float(duration))
+        try:
+            values = SecurityAnalytics(float(ytw), float(duration))
+        except (TypeError, ValueError):
+            continue
+        if not (
+            math.isfinite(values.yield_to_worst_pct)
+            and values.yield_to_worst_pct > -200.0
+            and math.isfinite(values.modified_duration)
+            and values.modified_duration > 0.0
+        ):
+            continue
         if isin in result and result[isin] != values:
             raise IsharesCreditDataError(f"conflicting analytics for ISIN {isin}")
         result[isin] = values
     return result
+
+
+def _semiannual_to_continuous(yield_pct: float) -> float:
+    """Convert the US corporate bond-equivalent YTW quote to continuous percent."""
+    if not math.isfinite(yield_pct) or yield_pct <= -200.0:
+        raise IsharesCreditDataError("iShares yield-to-worst cannot be compounded")
+    return 200.0 * math.log1p(yield_pct / 200.0)
 
 
 def _ucits_fixed_income_weights(payload: dict) -> list[tuple[str, float]]:

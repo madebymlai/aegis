@@ -43,7 +43,7 @@ data:
   exchange: [EUR/USD.IDEALPRO]
   arrays: [OHLCV]
   start: '2018-01-01'
-  end: '2025-01-01'
+  end: '2026-07-01'
   timeframe: 1D
   missing_index: drop
 

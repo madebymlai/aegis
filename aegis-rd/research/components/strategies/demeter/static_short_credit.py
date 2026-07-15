@@ -1,7 +1,7 @@
 # %% component overview
-# Fixed short-duration corporate-credit income allocation. The Run Config chooses
-# either the EUR-hedged pair or its matched unhedged control; this Strategy only
-# emits their preregistered, fully invested 50/50 target.
+# Fixed corporate-credit income allocations. The Run Config chooses a
+# preregistered two- or four-fund comparator; this Strategy only emits its fully
+# invested equal-weight target.
 
 # %% imports
 import numpy as np
@@ -10,7 +10,7 @@ import numpy as np
 COMPONENT_MANIFEST = {
     "family": "strategies",
     "id": "demeter.static_short_credit",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "input_names": ["Close"],
     "output_name": "target_weights",
     "owns_portfolio": False,
@@ -19,7 +19,17 @@ COMPONENT_MANIFEST = {
 _HEDGED_PAIR = frozenset({"CBUS5E.XBRU", "STEA.LSEETF"})
 _HEDGED_FALLBACK_PAIR = frozenset({"CBUS5E.XBRU", "STHE.LSEETF"})
 _UNHEDGED_CONTROL_PAIR = frozenset({"SDIG.LSEETF", "SDHY.LSEETF"})
-_SUPPORTED_PAIRS = frozenset({_HEDGED_PAIR, _HEDGED_FALLBACK_PAIR, _UNHEDGED_CONTROL_PAIR})
+_HEDGED_DURATION_COMPARATOR = frozenset(
+    {"CBUS5E.XBRU", "LQEE.LSEETF", "STEA.LSEETF", "IHYE.LSEETF"}
+)
+_SUPPORTED_PORTFOLIOS = frozenset(
+    {
+        _HEDGED_PAIR,
+        _HEDGED_FALLBACK_PAIR,
+        _UNHEDGED_CONTROL_PAIR,
+        _HEDGED_DURATION_COMPARATOR,
+    }
+)
 
 
 class UnsupportedStaticCreditPairError(ValueError):
@@ -28,13 +38,14 @@ class UnsupportedStaticCreditPairError(ValueError):
 
 # %% main compute
 def run(inputs, *, n_candidates, **param_lists):
-    """Emit one fully invested equal-weight target for the two credit roles."""
+    """Emit one fully invested equal-weight target for a preregistered comparator."""
 
     close = inputs.data.array("Close")
-    pair = frozenset(str(column) for column in close.columns)
-    if pair not in _SUPPORTED_PAIRS or len(close.columns) != 2:
+    portfolio = frozenset(str(column) for column in close.columns)
+    if portfolio not in _SUPPORTED_PORTFOLIOS or len(portfolio) != len(close.columns):
         raise UnsupportedStaticCreditPairError(
-            f"demeter.static_short_credit: unsupported instrument pair {sorted(pair)!r}"
+            f"demeter.static_short_credit: unsupported instrument pair {sorted(portfolio)!r}"
         )
     periods = len(close)
-    return np.full((periods, n_candidates * inputs.n_symbols), 0.5, dtype=float)
+    target_weight = 1.0 / inputs.n_symbols
+    return np.full((periods, n_candidates * inputs.n_symbols), target_weight, dtype=float)

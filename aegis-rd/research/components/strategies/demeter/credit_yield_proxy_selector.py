@@ -1,35 +1,24 @@
 # %% component overview
-# Sparse, full-budget credit-yield selector. One IG and one HY bucket are always held;
-# selection changes maturity within quality and never becomes a credit-quality timing gate.
-
-import itertools
+# Duration-matched credit-carry selector. The active candidate keeps 50% in IG and
+# 50% in HY, matches the static four-fund portfolio's contemporaneous duration, and
+# tilts only within each quality bucket toward the larger excess-yield proxy.
 
 import numpy as np
 
 COMPONENT_MANIFEST = {
     "family": "strategies",
     "id": "demeter.credit_yield_proxy_selector",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "input_names": ["Close"],
-    "param_names": [
-        "selection_strength",
-        "high_yield_weight",
-        "duration_penalty_bps",
-        "max_modified_duration",
-    ],
+    "param_names": ["selection_strength"],
     "output_name": "target_weights",
     "consumes_outputs": [
         "credit_rebalance_due",
-        "credit_net_ytw",
+        "credit_excess_yield_proxy",
         "credit_modified_duration",
         "credit_data_fresh",
     ],
-    "defaults": {
-        "selection_strength": 1.0,
-        "high_yield_weight": 0.5,
-        "duration_penalty_bps": 10.0,
-        "max_modified_duration": 6.0,
-    },
+    "defaults": {"selection_strength": 1.0},
     "owns_portfolio": False,
 }
 
@@ -37,20 +26,18 @@ _SHORT_IG = frozenset({"SDIG.LSEETF"})
 _BROAD_IG = frozenset({"LQDE.LSEETF"})
 _SHORT_HY = frozenset({"SDHY.LSEETF"})
 _BROAD_HY = frozenset({"IHYU.LSEETF"})
+_STATIC_WEIGHT = 0.25
+_QUALITY_WEIGHT = 0.50
+_MIN_FUND_WEIGHT = 0.05
+_MAX_FUND_WEIGHT = 0.45
+_TOLERANCE = 1e-10
 
 
 def param_space():
-    """Return one static control plus six coupled active configurations."""
+    """Return exactly the static control and duration-matched active candidate."""
     from vectorbtpro import vbt
 
-    return {
-        "selection_strength": vbt.Param([0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], level=0),
-        "high_yield_weight": vbt.Param([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], level=0),
-        "duration_penalty_bps": vbt.Param(
-            [0.0, 0.0, 0.0, 10.0, 10.0, 25.0, 25.0], level=0
-        ),
-        "max_modified_duration": vbt.Param([6.0, 4.0, 6.0, 4.0, 6.0, 4.0, 6.0], level=0),
-    }
+    return {"selection_strength": vbt.Param([0.0, 1.0])}
 
 
 def lookback(**params):
@@ -75,66 +62,83 @@ def _role_indices(columns):
     )
 
 
-def _validate_params(selection_strength, high_yield_weight, duration_penalty_bps, max_duration):
-    if selection_strength not in (0.0, 1.0):
-        raise ValueError("selection_strength must be either 0.0 or 1.0")
-    if not np.isfinite(high_yield_weight) or not 0.0 < high_yield_weight < 1.0:
-        raise ValueError("high_yield_weight must be finite and strictly between zero and one")
-    if not np.isfinite(duration_penalty_bps) or duration_penalty_bps < 0.0:
-        raise ValueError("duration_penalty_bps must be finite and non-negative")
-    if not np.isfinite(max_duration) or max_duration <= 0.0:
-        raise ValueError("max_modified_duration must be finite and positive")
-
-
-def _static_weights(n_symbols, broad_ig, broad_hy, high_yield_weight):
+def _static_weights(n_symbols, roles):
     weights = np.zeros(n_symbols)
-    weights[broad_ig] = 1.0 - high_yield_weight
-    weights[broad_hy] = high_yield_weight
+    weights[list(roles)] = _STATIC_WEIGHT
     return weights
 
 
-def _active_weights(
-    ytw,
-    duration,
-    fresh,
-    roles,
-    high_yield_weight,
-    duration_penalty_bps,
-    max_duration,
-):
-    short_ig, broad_ig, short_hy, broad_hy = roles
-    if not (
-        np.isfinite(ytw[list(roles)]).all()
-        and np.isfinite(duration[list(roles)]).all()
-        and (fresh[list(roles)] > 0.5).all()
-    ):
-        return _static_weights(len(ytw), broad_ig, broad_hy, high_yield_weight)
+def _within_bounds(value):
+    return _MIN_FUND_WEIGHT - _TOLERANCE <= value <= _MAX_FUND_WEIGHT + _TOLERANCE
 
-    ig_weight = 1.0 - high_yield_weight
-    penalty = duration_penalty_bps / 100.0
-    candidates = []
-    for ig, hy in itertools.product((short_ig, broad_ig), (short_hy, broad_hy)):
-        portfolio_duration = ig_weight * duration[ig] + high_yield_weight * duration[hy]
-        adjusted_yield = (
-            ig_weight * (ytw[ig] - penalty * duration[ig])
-            + high_yield_weight * (ytw[hy] - penalty * duration[hy])
+
+def _feasible_quality_weights(duration_deltas):
+    """Return vertices for two within-quality tilts under one duration equality."""
+    ig_delta, hy_delta = duration_deltas
+    target = _STATIC_WEIGHT * (ig_delta + hy_delta)
+    candidates = [(_STATIC_WEIGHT, _STATIC_WEIGHT)]
+
+    if abs(hy_delta) > _TOLERANCE:
+        for short_ig_weight in (_MIN_FUND_WEIGHT, _MAX_FUND_WEIGHT):
+            short_hy_weight = (target - short_ig_weight * ig_delta) / hy_delta
+            if _within_bounds(short_hy_weight):
+                candidates.append((short_ig_weight, short_hy_weight))
+    if abs(ig_delta) > _TOLERANCE:
+        for short_hy_weight in (_MIN_FUND_WEIGHT, _MAX_FUND_WEIGHT):
+            short_ig_weight = (target - short_hy_weight * hy_delta) / ig_delta
+            if _within_bounds(short_ig_weight):
+                candidates.append((short_ig_weight, short_hy_weight))
+    if abs(ig_delta) <= _TOLERANCE and abs(hy_delta) <= _TOLERANCE:
+        candidates.extend(
+            (short_ig_weight, short_hy_weight)
+            for short_ig_weight in (_MIN_FUND_WEIGHT, _MAX_FUND_WEIGHT)
+            for short_hy_weight in (_MIN_FUND_WEIGHT, _MAX_FUND_WEIGHT)
         )
-        candidates.append((portfolio_duration <= max_duration, adjusted_yield, -portfolio_duration, ig, hy))
-    feasible = [candidate for candidate in candidates if candidate[0]]
-    selected = (
-        max(feasible, key=lambda candidate: candidate[1:3])
-        if feasible
-        else max(candidates, key=lambda candidate: candidate[2])
+    return candidates
+
+
+def _active_weights(excess_yield, duration, fresh, roles):
+    static = _static_weights(len(excess_yield), roles)
+    role_positions = list(roles)
+    if not (
+        np.isfinite(excess_yield[role_positions]).all()
+        and np.isfinite(duration[role_positions]).all()
+        and (fresh[role_positions] > 0.5).all()
+    ):
+        return static
+
+    short_ig, broad_ig, short_hy, broad_hy = roles
+    duration_deltas = (
+        duration[short_ig] - duration[broad_ig],
+        duration[short_hy] - duration[broad_hy],
     )
-    weights = np.zeros(len(ytw))
-    weights[selected[3]] = ig_weight
-    weights[selected[4]] = high_yield_weight
+    candidates = _feasible_quality_weights(duration_deltas)
+
+    def objective(candidate):
+        short_ig_weight, short_hy_weight = candidate
+        portfolio_proxy = (
+            short_ig_weight * excess_yield[short_ig]
+            + (_QUALITY_WEIGHT - short_ig_weight) * excess_yield[broad_ig]
+            + short_hy_weight * excess_yield[short_hy]
+            + (_QUALITY_WEIGHT - short_hy_weight) * excess_yield[broad_hy]
+        )
+        distance_from_static = abs(short_ig_weight - _STATIC_WEIGHT) + abs(
+            short_hy_weight - _STATIC_WEIGHT
+        )
+        return portfolio_proxy, -distance_from_static
+
+    short_ig_weight, short_hy_weight = max(candidates, key=objective)
+    weights = np.zeros(len(excess_yield))
+    weights[short_ig] = short_ig_weight
+    weights[broad_ig] = _QUALITY_WEIGHT - short_ig_weight
+    weights[short_hy] = short_hy_weight
+    weights[broad_hy] = _QUALITY_WEIGHT - short_hy_weight
     return weights
 
 
 # %% main compute
 def run(inputs, *, n_candidates, **param_lists):
-    """Emit monthly static-control or active credit-bucket targets for all candidates."""
+    """Emit monthly static-control or active duration-matched targets."""
     close = inputs.data.array("Close")
     columns = [str(column) for column in close.columns]
     roles = _role_indices(columns)
@@ -143,7 +147,9 @@ def run(inputs, *, n_candidates, **param_lists):
     due = inputs.indicators["credit_rebalance_due"].reshape(
         periods, n_candidates, n_symbols
     )
-    ytw = inputs.indicators["credit_net_ytw"].reshape(periods, n_candidates, n_symbols)
+    excess_yield = inputs.indicators["credit_excess_yield_proxy"].reshape(
+        periods, n_candidates, n_symbols
+    )
     duration = inputs.indicators["credit_modified_duration"].reshape(
         periods, n_candidates, n_symbols
     )
@@ -154,29 +160,20 @@ def run(inputs, *, n_candidates, **param_lists):
 
     for candidate in range(n_candidates):
         selection_strength = float(param_lists["selection_strength"][candidate])
-        high_yield_weight = float(param_lists["high_yield_weight"][candidate])
-        duration_penalty_bps = float(param_lists["duration_penalty_bps"][candidate])
-        max_duration = float(param_lists["max_modified_duration"][candidate])
-        _validate_params(
-            selection_strength,
-            high_yield_weight,
-            duration_penalty_bps,
-            max_duration,
-        )
-        static = _static_weights(n_symbols, roles[1], roles[3], high_yield_weight)
+        if selection_strength not in (0.0, 1.0):
+            raise ValueError("selection_strength must be either 0.0 or 1.0")
+        static = _static_weights(n_symbols, roles)
         for row in range(periods):
             if not (due[row, candidate] > 0.5).any():
                 continue
-            if selection_strength == 0.0:
-                result[row, candidate] = static
-                continue
-            result[row, candidate] = _active_weights(
-                ytw[row, candidate],
-                duration[row, candidate],
-                fresh[row, candidate],
-                roles,
-                high_yield_weight,
-                duration_penalty_bps,
-                max_duration,
+            result[row, candidate] = (
+                static
+                if selection_strength == 0.0
+                else _active_weights(
+                    excess_yield[row, candidate],
+                    duration[row, candidate],
+                    fresh[row, candidate],
+                    roles,
+                )
             )
     return result.reshape(periods, n_candidates * n_symbols)

@@ -18,7 +18,6 @@ def _load(name: str):
 def _assert_static_baseline_contract(resolved) -> None:
     config = resolved.config
     assert config.data.start == "2020-08-10"
-    assert config.data.end == "2026-07-01"
     assert config.strategy.id == "demeter.static_short_credit"
     assert config.strategy.params == {}
     assert config.indicators == []
@@ -34,6 +33,7 @@ def test_static_short_credit_config_uses_the_qualified_eur_hedged_pair() -> None
 
     assert hedged.config.data.instruments == ["CBUS5E.XBRU", "STEA.LSEETF"]
     assert hedged.config.data.mark_modes == {"CBUS5E.XBRU": "QUOTE"}
+    assert hedged.config.data.end == "2026-07-11"
     _assert_static_baseline_contract(hedged)
 
 
@@ -44,6 +44,7 @@ def test_unhedged_control_matches_the_hedged_execution_contract() -> None:
     assert unhedged.config.data.instruments == ["SDIG.LSEETF", "SDHY.LSEETF"]
     assert unhedged.config.data.mark_modes == {}
     assert unhedged.config.portfolio == hedged.config.portfolio
+    assert unhedged.config.data.end == "2026-07-01"
     _assert_static_baseline_contract(unhedged)
 
 
@@ -54,4 +55,27 @@ def test_accumulating_stea_config_declares_no_synthetic_income_input() -> None:
     assert authored["data"]["arrays"] == ["OHLCV"]
     assert authored["indicators"] == []
     assert "distribution" not in str(authored).lower()
+    assert "fred" not in str(authored).lower()
+
+
+def test_duration_comparator_uses_the_four_qualified_eur_hedged_contracts() -> None:
+    baseline = _load("static_short_credit_hedged.yaml")
+    comparator = _load("static_credit_duration_comparator.yaml")
+
+    assert comparator.config.data.instruments == [
+        "CBUS5E.XBRU",
+        "LQEE.LSEETF",
+        "STEA.LSEETF",
+        "IHYE.LSEETF",
+    ]
+    assert comparator.config.data.mark_modes == {"CBUS5E.XBRU": "QUOTE"}
+    assert comparator.config.portfolio == baseline.config.portfolio
+    assert comparator.config.optimization == baseline.config.optimization
+    assert comparator.config.data.end == "2026-07-01"
+    _assert_static_baseline_contract(comparator)
+
+    authored = comparator.authored_config_document()
+    assert authored["data"]["arrays"] == ["OHLCV"]
+    assert authored["indicators"] == []
+    assert authored["strategy"] == {"id": "demeter.static_short_credit"}
     assert "fred" not in str(authored).lower()

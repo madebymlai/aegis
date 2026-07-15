@@ -25,7 +25,7 @@ def _load_strategy():
     return module
 
 
-def _inputs(instruments: tuple[str, str]) -> ComponentStrategyInputs:
+def _inputs(instruments: tuple[str, ...]) -> ComponentStrategyInputs:
     index = pd.date_range("2020-08-10", periods=3, freq="D")
     close = pd.DataFrame(
         {
@@ -38,7 +38,7 @@ def _inputs(instruments: tuple[str, str]) -> ComponentStrategyInputs:
         data=MarketDataBundle(arrays={"Close": close}),
         indicators={},
         n_candidates=1,
-        n_symbols=2,
+        n_symbols=len(instruments),
         metadata={},
     )
 
@@ -52,6 +52,17 @@ def test_hedged_short_credit_pair_is_always_fully_invested_fifty_fifty() -> None
     )
 
     np.testing.assert_allclose(result, [[0.5, 0.5]] * 3)
+
+
+def test_hedged_duration_comparator_is_always_fully_invested_equal_weight() -> None:
+    strategy = _load_strategy()
+
+    result = strategy.run(
+        _inputs(("CBUS5E.XBRU", "LQEE.LSEETF", "STEA.LSEETF", "IHYE.LSEETF")),
+        n_candidates=1,
+    )
+
+    np.testing.assert_allclose(result, [[0.25, 0.25, 0.25, 0.25]] * 3)
 
 
 def test_static_short_credit_rejects_a_mixed_hedging_pair() -> None:
