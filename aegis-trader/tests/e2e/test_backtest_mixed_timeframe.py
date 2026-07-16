@@ -27,12 +27,19 @@ from aegis_runtime import (
 from aegis_runtime.currency import CurrencyConversion
 
 from aegis_data.bar_type import timeframe_to_ns
-from aegis_trader.backtest import book_return_stats, run_book_backtest
+from aegis_trader.backtest import (
+    CatalogBacktestDataSource,
+    book_return_stats,
+    run_book_backtest,
+)
+from aegis_data.catalog import CatalogBackedDataPort
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.bundles.stub import StubBundleRegistry
 
 from tests.e2e.test_backtest_catalog_runner import (
+    _AdjustedLastProvider,
     _bar,
+    _book_nav,
     _closed_orders,
     _equity,
     _verified_zero_distribution_source,
@@ -669,7 +676,23 @@ def _seed_weekly(catalog_path, instrument_id: InstrumentId, fridays) -> None:
     catalog.write_data(daily_bars, start=start, end=end)
 
 
-def _run_weekly_book(tmp_path) -> Any:
+def _weekly_distribution_source(
+    catalog_path, ex_date: str, amount: float
+) -> CatalogBacktestDataSource:
+    """A verified source whose ADJUSTED_LAST steps at *ex_date*: the decode
+    yields one Distribution of *amount* per share on that date."""
+    dates = pd.date_range("2020-01-01", "2020-02-04", freq="B", tz="UTC")
+    values = pd.Series([100.0] * len(dates), index=dates)
+    values.loc[pd.Timestamp(ex_date, tz="UTC")] = 100.0 / (1.0 - amount / 100.0)
+    return CatalogBacktestDataSource(
+        port=CatalogBackedDataPort(
+            ParquetDataCatalog(catalog_path),
+            distribution_provider=_AdjustedLastProvider({_WEEKLY_ID: values}),
+        )
+    )
+
+
+def _run_weekly_book(tmp_path, *, distribution_ex_date: str | None = None) -> Any:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_WEEKLY_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
@@ -677,6 +700,11 @@ def _run_weekly_book(tmp_path) -> Any:
         ["2020-01-03", "2020-01-10", "2020-01-17", "2020-01-24", "2020-01-31"]
     ) + pd.Timedelta(hours=16, minutes=30)
     _seed_weekly(catalog_path, _WEEKLY_ID, fridays)
+    source = (
+        _verified_zero_distribution_source(catalog_path, (_WEEKLY_ID,))
+        if distribution_ex_date is None
+        else _weekly_distribution_source(catalog_path, distribution_ex_date, 1.0)
+    )
     return run_book_backtest(
         book_path,
         start="2020-01-01",
@@ -685,7 +713,7 @@ def _run_weekly_book(tmp_path) -> Any:
         registry=StubBundleRegistry(
             {"glacial.whl": _AlternatingWeightBundle(_WEEKLY_ID, "1W")}
         ),
-        data_source=_verified_zero_distribution_source(catalog_path, (_WEEKLY_ID,)),
+        data_source=source,
     )
 
 
@@ -716,3 +744,25 @@ def test_weekly_book_derives_its_horizon_and_trades_weekly(tmp_path) -> None:
     finally:
         engine.dispose()
         second.engine.dispose()
+
+
+def test_weekly_book_books_mid_week_ex_date_distribution_cash(tmp_path) -> None:
+    """A Wednesday ex-date between weekly bars must credit its dividend cash:
+    the schedule is decoded from the daily series regardless of trading
+    cadence, so booking must span sparse bar events (aegis-rd-vzu2).
+    Differential: identical bars either way, so the NAV gap IS the cash."""
+    (tmp_path / "with").mkdir()
+    (tmp_path / "without").mkdir()
+    with_dividend = _run_weekly_book(
+        tmp_path / "with", distribution_ex_date="2020-01-22"
+    )
+    without_dividend = _run_weekly_book(tmp_path / "without")
+    try:
+        nav_with = _book_nav(with_dividend.engine, (_WEEKLY_ID,))
+        nav_without = _book_nav(without_dividend.engine, (_WEEKLY_ID,))
+
+        # 1.0/share on the held ~3-4k share weekly position: thousands of EUR.
+        assert nav_with - nav_without > 1_000.0
+    finally:
+        with_dividend.engine.dispose()
+        without_dividend.engine.dispose()

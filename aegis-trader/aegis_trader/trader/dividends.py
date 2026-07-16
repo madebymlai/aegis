@@ -26,7 +26,14 @@ class DividendTotals:
 
 
 class DividendModule(SimulationModule):
-    """Books scheduled distribution cash once per ex-date."""
+    """Books scheduled distribution cash once per ex-date.
+
+    The exact-date match is sound for ANY bar cadence because the backtest
+    injects every ``Distribution`` as an engine data event at its ex-date
+    timestamp (``_add_distribution_data``), so ``process`` is guaranteed a
+    tick on each ex-date even when no bar lands there (e.g. a weekly Book
+    with a Wednesday ex-date) — pinned by the weekly distribution e2e.
+    """
 
     def __init__(self, distributions: Sequence[Distribution]) -> None:
         super().__init__(SimulationModuleConfig())
