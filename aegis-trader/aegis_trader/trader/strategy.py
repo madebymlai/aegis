@@ -33,6 +33,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, assert_never
 
+from nautilus_trader.common.component import TimeEvent
 from nautilus_trader.model.data import Bar, BarType, MarkPriceUpdate, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
@@ -89,7 +90,6 @@ from aegis_trader.trader.book_startup import (
 )
 from aegis_trader.trader.roll_desk import RollDesk
 
-_NS_PER_DAY: int = 86_400_000_000_000
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -135,10 +135,21 @@ class RebalanceStrategy(Strategy):
         # subscribe/unsubscribe/request and cache read resolves through it.
         self._bar_type_resolver = bar_type_resolver
         self._assembled_book: AssembledBook | None = None
-        # ── bar-driven cadence state ─────────────────────────────────────
-        self._current_period: int | None = None
-        # Rebalance-period width in ns; set from the book timeframe in on_start.
-        self._period_ns: int = _NS_PER_DAY
+        # ── bar-driven per-Sleeve cadence state (aegis-rd-9qkr.3) ─────────
+        # A Sleeve's clock advances only on bars of streams it consumes; its
+        # period width comes from its own DataContract timeframe.
+        self._consumers_by_bar_type: dict[BarType, tuple[SleeveName, ...]] = {}
+        self._timeframe_by_bar_type: dict[BarType, str] = {}
+        self._period_ns_by_sleeve: dict[SleeveName, int] = {}
+        self._current_period_by_sleeve: dict[SleeveName, int | None] = {}
+        # Continuous front-leg bars carry dated-leg BarTypes that change at
+        # rolls; any bar outside the cash-stream map advances the futures
+        # Sleeves, which share one timeframe until aegis-rd-9qkr.5.
+        self._futures_sleeves: tuple[SleeveName, ...] = ()
+        # Due transitions accumulated for one event timestamp, flushed by a
+        # native time alert into one deterministic Book re-net.
+        self._pending_due: dict[SleeveName, CompletedRebalancePeriod] = {}
+        self._pending_due_timestamp: int | None = None
         # ── Slice 8: RiskEngine guards ───────────────────────────────────
         self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
         # Slice 7: startup gates + global halt
@@ -271,7 +282,7 @@ class RebalanceStrategy(Strategy):
             return
 
         self._pipeline = boot.pipeline
-        self._period_ns = timeframe_to_ns(boot.timeframe)
+        self._build_sleeve_cadence(assembled_book)
         self._startup_result = boot.startup_result
         self._log_startup_pass(boot.startup_result)
         instrument_ids = assembled_book.loadable_instrument_ids
@@ -301,13 +312,14 @@ class RebalanceStrategy(Strategy):
         self.cache.set_mark_xrate(instrument.base_currency, instrument.quote_currency, mid)
 
     def on_bar(self, bar: Bar) -> None:
-        """Trigger a period-level rebalance when the period advances.
+        """Advance the consuming Sleeves' clocks and coalesce due transitions.
 
-        Debounce (Slice 6): only one re-net per completed period, not
-        per-instrument.  When the first bar of a new period arrives the
-        strategy rebalances from the Cache-backed completed-period window and
-        submits orders that will fill at the *new* period's close — one-bar
-        execution lag.
+        Each Sleeve debounces to one recomputation per completed period of its
+        own cadence.  Due transitions at one event timestamp accumulate and a
+        native time alert (1ns after the trigger, firing once every same-
+        timestamp bar has been processed) flushes them into one deterministic
+        Book re-net -- orders still submit within the trigger close, preserving
+        next-close execution and one-bar lag per cadence (aegis-rd-9qkr.3).
         """
         if self._assembled_book is None or self._is_halted:
             return
@@ -317,15 +329,88 @@ class RebalanceStrategy(Strategy):
         if self._apply_roll_intents(self._require_roll_desk().on_bar(bar)):
             return
 
-        self._publish_derived_mark(bar)
+        derived_mark = self._publish_derived_mark(bar)
+        self._record_market_observation(bar, derived_mark)
 
-        period = self._extract_period(bar)
+        for sleeve_name in self._bar_consumers(bar.bar_type):
+            self._advance_sleeve_clock(sleeve_name, bar.ts_event)
 
-        # ── period-advance → rebalance the completed period ──────────────
-        if self._current_period is not None and period != self._current_period:
-            self._rebalance_for_period(bar.ts_event)
+    def _build_sleeve_cadence(self, book: AssembledBook) -> None:
+        """Wire each Sleeve's period width and its streams' native BarTypes."""
+        consumers: dict[BarType, dict[SleeveName, None]] = {}
+        for sleeve_name, streams in book.sleeve_streams.items():
+            bundle = book.sleeves[sleeve_name]
+            self._period_ns_by_sleeve[sleeve_name] = timeframe_to_ns(
+                bundle.contract.timeframe
+            )
+            self._current_period_by_sleeve[sleeve_name] = None
+            for stream in streams:
+                for bar_type in self._mark_bars(stream.instrument_id, stream.timeframe):
+                    consumers.setdefault(bar_type, {})[sleeve_name] = None
+                    self._timeframe_by_bar_type[bar_type] = stream.timeframe
+        self._consumers_by_bar_type = {
+            bar_type: tuple(names) for bar_type, names in consumers.items()
+        }
+        self._futures_sleeves = tuple(
+            sleeve_name
+            for sleeve_name, bundle in book.sleeves.items()
+            if bundle.contract.futures
+        )
 
-        self._current_period = period
+    def _bar_consumers(self, bar_type: BarType) -> tuple[SleeveName, ...]:
+        """The Sleeves a bar advances: its cash-stream consumers, or — for the
+        dated front legs the Roll Desk subscribes outside the cash map — the
+        futures Sleeves."""
+        consumers = self._consumers_by_bar_type.get(bar_type)
+        if consumers is not None:
+            return consumers
+        return self._futures_sleeves
+
+    def _advance_sleeve_clock(self, sleeve_name: SleeveName, timestamp_ns: int) -> None:
+        period_ns = self._period_ns_by_sleeve[sleeve_name]
+        period = timestamp_ns // period_ns
+        completed = self._current_period_by_sleeve[sleeve_name]
+        self._current_period_by_sleeve[sleeve_name] = period
+        if completed is None or period == completed:
+            return
+        self._pending_due[sleeve_name] = CompletedRebalancePeriod(
+            period=completed,
+            period_ns=period_ns,
+        )
+        self._schedule_re_net(timestamp_ns)
+
+    def _schedule_re_net(self, trigger_timestamp_ns: int) -> None:
+        """One alert per due-transition cluster: 1ns after the trigger event,
+        so every same-timestamp bar routes before the Book re-nets once."""
+        if self._pending_due_timestamp == trigger_timestamp_ns:
+            return
+        self._pending_due_timestamp = trigger_timestamp_ns
+        self.clock.set_time_alert_ns(
+            f"re-net-{trigger_timestamp_ns}",
+            trigger_timestamp_ns + 1,
+            callback=self._on_re_net_alert,
+        )
+
+    def _on_re_net_alert(self, event: TimeEvent) -> None:
+        due = dict(sorted(self._pending_due.items(), key=lambda item: item[0].value))
+        self._pending_due = {}
+        self._pending_due_timestamp = None
+        if not due or self._is_halted:
+            return
+        self._rebalance_due_sleeves(due, event.ts_event)
+
+    def _record_market_observation(
+        self, bar: Bar, derived_mark: tuple[InstrumentId, float] | None
+    ) -> None:
+        """Record the advancing stream's mark as a full-Book observation --
+        retained Sleeves stay marked whether or not anything is due."""
+        if self._pipeline is None:
+            return
+        if derived_mark is not None:
+            instrument_id, mark = derived_mark
+        else:
+            instrument_id, mark = bar.bar_type.instrument_id, float(bar.close)
+        self._pipeline.record_market_observation(bar.ts_event, {instrument_id: mark})
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -385,23 +470,25 @@ class RebalanceStrategy(Strategy):
     def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
         return self._bar_type_resolver.resolve(instrument_id, timeframe).mark_bars
 
-    def _publish_derived_mark(self, bar: Bar) -> None:
+    def _publish_derived_mark(self, bar: Bar) -> tuple[InstrumentId, float] | None:
         """Publish a quote-marked leg's derived mid mark from its completed pair.
 
         The one marking path research and live share (aegis-rd-tggo.3/.5): the
         mark is ``reference_price = (bid + ask) / 2`` over the leg's own BID/ASK
         bars, handed to the Portfolio exactly as the data engine would deliver a
-        vendor mark (cache + the mark-prices topic).  A bar-marked leg publishes
+        vendor mark (cache + the mark-prices topic).  Resolution follows the
+        bar's own stream, never a Book-wide timeframe.  A bar-marked leg publishes
         nothing — its bar close is the native valuation.
         """
-        marking = self._bar_type_resolver.resolve(
-            bar.bar_type.instrument_id, self._require_assembled_book().timeframe
-        )
+        timeframe = self._timeframe_by_bar_type.get(bar.bar_type)
+        if timeframe is None:
+            return None
+        marking = self._bar_type_resolver.resolve(bar.bar_type.instrument_id, timeframe)
         mark = marking.derived_mark(
             {bar_type: self.cache.bar(bar_type) for bar_type in marking.mark_bars}
         )
         if mark is None:
-            return
+            return None
         update = MarkPriceUpdate(
             instrument_id=marking.instrument_id,
             value=mark,
@@ -415,6 +502,7 @@ class RebalanceStrategy(Strategy):
             topic=f"data.mark_prices.{marking.instrument_id.venue}.{marking.instrument_id.symbol}",
             msg=update,
         )
+        return (marking.instrument_id, mark)
 
     def _halt_from_roll_intent(self, intent: Halt) -> None:
         startup_result = StartupResult(
@@ -426,31 +514,18 @@ class RebalanceStrategy(Strategy):
         self._is_halted = True
         self._log_startup_halt(startup_result)
 
-    def _extract_period(self, bar: Bar) -> int:
-        """The rebalance period index for *bar*: its event timestamp floored to
-        the book's bar width (set from the contract timeframe in on_start)."""
-        return bar.ts_event // self._period_ns
-
-    def _rebalance_for_period(self, timestamp_ns: int) -> None:
-        """Delegate completed-period orchestration to RebalancePipeline."""
-        if self._is_halted:
-            return
-
+    def _rebalance_due_sleeves(
+        self,
+        due: dict[SleeveName, CompletedRebalancePeriod],
+        timestamp_ns: int,
+    ) -> None:
+        """Delegate the coalesced due set to RebalancePipeline as one re-net."""
         pipeline = self._require_pipeline()
-        if self._current_period is None:
-            return
-        # Every Sleeve is due on the one shared completed period; per-Sleeve
-        # cadence tracking replaces this in the mixed-timeframe enablement
-        # (aegis-rd-9qkr.3).
-        period = CompletedRebalancePeriod(
-            period=self._current_period,
-            period_ns=self._period_ns,
-        )
         result = pipeline.rebalance(
             RebalanceRequest(
                 due=tuple(
                     DueSleeve(sleeve=sleeve_name, period=period)
-                    for sleeve_name in self._require_assembled_book().sleeves
+                    for sleeve_name, period in due.items()
                 ),
                 timestamp_ns=timestamp_ns,
             )

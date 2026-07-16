@@ -63,7 +63,6 @@ class BootResult:
     """A successful book boot."""
 
     pipeline: RebalancePipeline
-    timeframe: str
     startup_result: StartupResult
     intents: BootIntentBatch
 
@@ -90,14 +89,14 @@ def bootstrap(
     if startup_result.should_halt:
         return _halt_from_startup_result(startup_result)
 
-    history_start = startup_history_start(
-        now,
-        timeframe=book.timeframe,
-        required_bar_window=book.required_bar_window,
-    )
+    roll_timeframe = _roll_timeframe(book)
     roll_intents = roll_desk.start(
-        timeframe=book.timeframe,
-        history_start=history_start,
+        timeframe=roll_timeframe,
+        history_start=startup_history_start(
+            now,
+            timeframe=roll_timeframe,
+            required_bar_window=book.continuous_history_bars,
+        ),
         end=now,
         warmup=warmup_cache_on_start,
         declarations=book.continuous_declarations,
@@ -130,10 +129,18 @@ def bootstrap(
 
     return BootResult(
         pipeline=pipeline,
-        timeframe=book.timeframe,
         startup_result=startup_result,
         intents=tuple(intents),
     )
+
+
+def _roll_timeframe(book: AssembledBook) -> str:
+    """The Roll Desk's one timeframe: the futures Sleeves' shared cadence, or
+    (for a Book with no continuous declarations, where it is inert) the first
+    Sleeve's contract timeframe."""
+    if book.continuous_timeframe is not None:
+        return book.continuous_timeframe
+    return next(iter(book.sleeves.values())).contract.timeframe
 
 
 def startup_history_start(

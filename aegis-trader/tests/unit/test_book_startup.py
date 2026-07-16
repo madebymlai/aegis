@@ -403,7 +403,6 @@ def test_bootstrap_pass_returns_pipeline_startup_result_and_intent_batch() -> No
     )
 
     assert isinstance(result, BootResult)
-    assert result.timeframe == "1D"
     assert result.startup_result.trading_enabled is True
     assert result.startup_result.nav == 100_000.0
     assert result.startup_result.cash == 100_000.0

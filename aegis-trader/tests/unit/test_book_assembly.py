@@ -18,8 +18,8 @@ from aegis_trader.bundles.book import (
 )
 from aegis_trader.bundles.bands import BundleBands
 from aegis_trader.bundles.stub import StubBundleRegistry
+from aegis_trader.bundles.book import ContinuousTimeframeError
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
-from aegis_trader.domain.book_timeframe import MixedTimeframeError
 from aegis_trader.domain.streams import MarketStream, StreamRequirement
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.strategy import (
@@ -82,10 +82,11 @@ def test_assemble_book_derives_every_book_fact_from_loaded_sleeves() -> None:
             SleeveName("carry"): carry_bundle,
             SleeveName("trend"): trend_bundle,
         },
-        timeframe="1D",
         loadable_instrument_ids=(_AAPL, _EURUSD, _MSFT),
         required_bar_window=42,
         requires_margin=True,
+        continuous_timeframe="1D",
+        continuous_history_bars=42,
         bands=BundleBands(
             bands={_AAPL: carry_band, _ES: root_band, _MSFT: trend_band},
             owner_by_instrument={
@@ -218,16 +219,57 @@ def test_assemble_book_orders_sleeves_ids_and_bands_deterministically() -> None:
     )
 
 
-def test_assemble_book_rejects_every_declared_timeframe_when_they_differ() -> None:
+def test_assemble_book_accepts_hourly_and_daily_cash_sleeves() -> None:
     config = _book(("trend", "trend.whl"), ("carry", "carry.whl"))
     registry = StubBundleRegistry(
         {
-            "trend.whl": make_bundle(timeframe="1H"),
-            "carry.whl": make_bundle(timeframe="1D"),
+            "trend.whl": make_bundle(
+                timeframe="1H",
+                native_instrument_ids=(_MSFT,),
+                lookback_bars=30,
+            ),
+            "carry.whl": make_bundle(timeframe="1D", lookback_bars=20),
         }
     )
 
-    with pytest.raises(MixedTimeframeError) as excinfo:
+    assembled = assemble_book(config, registry)
+
+    assert assembled.required_streams == (
+        StreamRequirement(
+            stream=MarketStream(_AAPL, "1D"),
+            history_bars=21,
+            consumers=(SleeveName("carry"),),
+        ),
+        StreamRequirement(
+            stream=MarketStream(_MSFT, "1H"),
+            history_bars=31,
+            consumers=(SleeveName("trend"),),
+        ),
+    )
+    assert not hasattr(assembled, "timeframe")
+
+
+def test_assemble_book_rejects_mixed_continuous_future_timeframes() -> None:
+    # Interim gate until per-root Roll Desk timeframes (aegis-rd-9qkr.5): the
+    # one Roll Desk runs the Book's continuous roots on one timeframe.
+    nq = InstrumentId.from_str("NQ.XCME")
+    config = _book(("trend", "trend.whl"), ("carry", "carry.whl"))
+    registry = StubBundleRegistry(
+        {
+            "trend.whl": make_bundle(
+                timeframe="1H",
+                native_instrument_ids=(),
+                continuous_futures={"ES": _ES},
+            ),
+            "carry.whl": make_bundle(
+                timeframe="1D",
+                native_instrument_ids=(),
+                continuous_futures={"NQ": nq},
+            ),
+        }
+    )
+
+    with pytest.raises(ContinuousTimeframeError) as excinfo:
         assemble_book(config, registry)
 
     assert excinfo.value.timeframes == ("1D", "1H")
@@ -334,7 +376,7 @@ def test_assembled_book_fields_are_frozen() -> None:
     assembled = assemble_book(config, registry)
 
     with pytest.raises(FrozenInstanceError):
-        cast(Any, assembled).timeframe = "1H"
+        cast(Any, assembled).required_bar_window = 7
 
 
 def test_assembled_book_sleeve_mapping_is_frozen() -> None:

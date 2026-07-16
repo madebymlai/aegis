@@ -30,8 +30,8 @@ from aegis_data.catalog import catalog_root
 
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.config import IBConnectionSettings
+from aegis_trader.bundles.bands import InstrumentBandError
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
-from aegis_trader.domain.book_timeframe import MixedTimeframeError
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.node import (
     LIVE_FILL_TIME_IN_FORCE,
@@ -205,13 +205,11 @@ def test_build_live_node_rejects_an_invalid_book_before_broker_attachment(
             SleeveConfig(name=carry, wheel_filename="carry.whl", risk_share=0.5),
         )
     )
+    shared_instrument = InstrumentId.from_str("MSFT.NASDAQ")
     registry = StubBundleRegistry(
         {
-            "trend.whl": make_bundle(timeframe="1D"),
-            "carry.whl": make_bundle(
-                timeframe="1H",
-                native_instrument_ids=(InstrumentId.from_str("MSFT.NASDAQ"),),
-            ),
+            "trend.whl": make_bundle(native_instrument_ids=(shared_instrument,)),
+            "carry.whl": make_bundle(native_instrument_ids=(shared_instrument,)),
         }
     )
     broker_attachments: list[object] = []
@@ -226,7 +224,7 @@ def test_build_live_node_rejects_an_invalid_book_before_broker_attachment(
         trader_id="BOOK-EU-01",
     )
 
-    with pytest.raises(MixedTimeframeError):
+    with pytest.raises(InstrumentBandError):
         build_live_node(book, connection, registry=registry)
 
     assert broker_attachments == []

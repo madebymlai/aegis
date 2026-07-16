@@ -248,7 +248,10 @@ def run_book_backtest(
     )
     _add_strategy(engine, book=assembled_book, resolver=resolver)
 
-    engine.run()
+    # ``end`` keeps the engine advancing the clock past the final data event,
+    # so a re-net alert scheduled 1ns after the last bar still fires and the
+    # final completed periods rebalance exactly as they do live.
+    engine.run(end=end)
     financing_totals = (
         financing_module.totals.by_currency if financing_module is not None else {}
     )
@@ -260,18 +263,19 @@ def _stream_load_groups(
 ) -> tuple[tuple[str, tuple[InstrumentId, ...]], ...]:
     """The catalog load plan: the Book's required streams grouped per timeframe.
 
-    A futures-only Book has no cash streams but still makes one load call at
-    the Book timeframe — continuous-root material (dated legs, definitions)
-    arrives through the port beside whatever cash ids are requested.
+    Continuous-root material (dated legs, definitions) arrives through the
+    port beside whatever cash ids are requested, so a Book with continuous
+    declarations always has a load group at the continuous timeframe — a
+    futures-only Book makes that one call with no cash ids at all.
     """
     ids_by_timeframe: dict[str, dict[str, InstrumentId]] = {}
+    if book.continuous_timeframe is not None:
+        ids_by_timeframe[book.continuous_timeframe] = {}
     for requirement in book.required_streams:
         stream = requirement.stream
         ids_by_timeframe.setdefault(stream.timeframe, {})[
             stream.instrument_id.value
         ] = stream.instrument_id
-    if not ids_by_timeframe:
-        return ((book.timeframe, ()),)
     return tuple(
         (timeframe, tuple(ids[key] for key in sorted(ids)))
         for timeframe, ids in sorted(ids_by_timeframe.items())

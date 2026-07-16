@@ -14,7 +14,6 @@ from aegis_runtime import DriftBand, ExecutionBundle
 from aegis_trader.bundles.bands import BundleBands, InstrumentBandError
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.book_timeframe import _resolve_book_timeframe
 from aegis_trader.domain.streams import MarketStream, StreamRequirement, stream_sort_key
 from aegis_trader.domain.types import SleeveName
 
@@ -24,6 +23,22 @@ class ContinuousRootDeclaration:
 
     continuous_id: InstrumentId
     adjustment_mode: ContinuousFutureAdjustmentType
+
+
+class ContinuousTimeframeError(ValueError):
+    """Continuous-future Sleeves declare more than one timeframe.
+
+    The Roll Desk currently runs the Book's continuous roots on one timeframe;
+    per-root timeframes arrive with aegis-rd-9qkr.5.  Until then a Book mixing
+    futures cadences fails closed at assembly.
+    """
+
+    def __init__(self, timeframes: tuple[str, ...]) -> None:
+        self.timeframes = timeframes
+        super().__init__(
+            f"continuous-future sleeves declare mixed timeframes {list(timeframes)}; "
+            "per-root continuous timeframes are not supported yet (aegis-rd-9qkr.5)"
+        )
 
 
 class ContinuousDeclarationConflictError(ValueError):
@@ -53,12 +68,16 @@ class ContinuousDeclarationConflictError(ValueError):
 class AssembledBook:
     config: BookConfig
     sleeves: _Mapping[SleeveName, ExecutionBundle]
-    timeframe: str
     loadable_instrument_ids: tuple[InstrumentId, ...]
     required_bar_window: int
     requires_margin: bool
     bands: BundleBands
     continuous_declarations: _Mapping[str, ContinuousRootDeclaration]
+    # The futures-declaring Sleeves' one shared timeframe (None without
+    # futures) and their deepest history need — the Roll Desk's stream facts
+    # until per-root timeframes land (aegis-rd-9qkr.5).
+    continuous_timeframe: str | None
+    continuous_history_bars: int
     sleeve_streams: _Mapping[SleeveName, tuple[MarketStream, ...]]
     required_streams: tuple[StreamRequirement, ...]
 
@@ -71,9 +90,6 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
     return AssembledBook(
         config=book_config,
         sleeves=sleeves,
-        timeframe=_resolve_book_timeframe(
-            bundle.contract.timeframe for bundle in sleeves.values()
-        ),
         loadable_instrument_ids=_loadable_instrument_ids(sleeves),
         required_bar_window=max(
             bundle.contract.lookback_bars for bundle in sleeves.values()
@@ -87,9 +103,35 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
         continuous_declarations=_MappingProxyType(
             dict(sorted(continuous_declarations.items()))
         ),
+        continuous_timeframe=_continuous_timeframe(sleeves),
+        continuous_history_bars=max(
+            (
+                bundle.contract.lookback_bars + 1
+                for bundle in sleeves.values()
+                if bundle.contract.futures
+            ),
+            default=0,
+        ),
         sleeve_streams=_sleeve_streams(sleeves),
         required_streams=_required_streams(sleeves),
     )
+
+
+def _continuous_timeframe(
+    sleeves: _Mapping[SleeveName, ExecutionBundle],
+) -> str | None:
+    timeframes = tuple(
+        dict.fromkeys(
+            bundle.contract.timeframe
+            for bundle in sleeves.values()
+            if bundle.contract.futures
+        )
+    )
+    if not timeframes:
+        return None
+    if len(timeframes) > 1:
+        raise ContinuousTimeframeError(timeframes)
+    return timeframes[0]
 
 
 def _sleeve_streams(
@@ -211,5 +253,6 @@ __all__ = [
     "AssembledBook",
     "ContinuousDeclarationConflictError",
     "ContinuousRootDeclaration",
+    "ContinuousTimeframeError",
     "assemble_book",
 ]

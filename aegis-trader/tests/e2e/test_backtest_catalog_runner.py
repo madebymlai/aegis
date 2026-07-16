@@ -59,7 +59,12 @@ _ES_OLD = InstrumentId.from_str("ESM4.XCME")
 _ES_NEW = InstrumentId.from_str("ESU4.XCME")
 _WHEEL = "synth-trend.whl"
 _TREND = SleeveName("trend")
-_FINANCING_FIXTURE_EXPECTED_COST = 200.08901085064
+# One accrual per night actually held: the coalesced re-net alert submits
+# orders 1ns after the trigger bar, so the venue's financing module no longer
+# sees a just-created borrow during the same event and never charges the
+# phantom day-of-borrowing that the pre-coalescing flow accrued
+# (aegis-rd-9qkr.3).
+_FINANCING_FIXTURE_EXPECTED_COST = 150.059254
 
 _BOOK_TOML = f"""
 base_currency = "EUR"
