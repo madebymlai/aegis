@@ -26,7 +26,7 @@ from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing
-from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
@@ -409,16 +409,20 @@ def _all_due(*names: SleeveName) -> RebalanceRequest:
     period = _period()
     due_names = names or (_SLEEVE,)
     return RebalanceRequest(
-        due=tuple(DueSleeve(sleeve=name, period=period) for name in due_names)
+        due=tuple(DueSleeve(sleeve=name, period=period) for name in due_names),
+        timestamp_ns=3 * _DAY_NS,
     )
 
 
-def _record_close(ledger: SleeveLedger, close: float) -> None:
+def _record_close(ledger: SleeveLedger, close: float, day: int) -> None:
     ledger.record(
-        nav=100.0,
-        realized_weights={_ES: 1.0},
-        sleeve_targets={_SLEEVE: {_ES: 1.0}},
-        closes={_ES: close},
+        BookObservation(
+            timestamp_ns=day * _DAY_NS,
+            nav=100.0,
+            realized_weights={_ES: 1.0},
+            sleeve_targets={_SLEEVE: {_ES: 1.0}},
+            marks={_ES: close},
+        )
     )
 
 
@@ -607,8 +611,8 @@ def test_rebalance_pipeline_uses_bands_proven_by_book_assembly() -> None:
 
 def test_apply_roll_rebases_ledger_by_spread_event() -> None:
     ledger = SleeveLedger()
-    _record_close(ledger, 100.0)
-    _record_close(ledger, 110.0)
+    _record_close(ledger, 100.0, 0)
+    _record_close(ledger, 110.0, 1)
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
@@ -620,7 +624,7 @@ def test_apply_roll_rebases_ledger_by_spread_event() -> None:
     )
 
     pipeline.apply_roll(RollEvent(continuous_id=_ES, rebasing=spread_rebasing(50.0)))
-    _record_close(ledger, 170.0)
+    _record_close(ledger, 170.0, 2)
     attribution = ledger.attribution({_SLEEVE: 1.0})
 
     assert attribution[_SLEEVE] == pytest.approx(12.9166666667)
@@ -628,8 +632,8 @@ def test_apply_roll_rebases_ledger_by_spread_event() -> None:
 
 def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
     ledger = SleeveLedger()
-    _record_close(ledger, 100.0)
-    _record_close(ledger, 110.0)
+    _record_close(ledger, 100.0, 0)
+    _record_close(ledger, 110.0, 1)
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
@@ -641,7 +645,7 @@ def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
     )
 
     pipeline.apply_roll(RollEvent(continuous_id=_ES, rebasing=ratio_rebasing(1.5)))
-    _record_close(ledger, 180.0)
+    _record_close(ledger, 180.0, 2)
     attribution = ledger.attribution({_SLEEVE: 1.0})
 
     assert attribution[_SLEEVE] == pytest.approx(19.0909090909)
@@ -1088,9 +1092,29 @@ def test_each_due_sleeve_computes_on_its_own_period_coordinates() -> None:
                     sleeve=slow,
                     period=CompletedRebalancePeriod(period=1, period_ns=_DAY_NS),
                 ),
-            )
+            ),
+            timestamp_ns=25 * _DAY_NS,
         )
     )
 
     assert market_data.read_periods[_INSTRUMENT_ID] == 24
     assert market_data.read_periods[_LSE_LEG] == 1
+
+
+def test_market_observation_records_the_full_book_without_invoking_sleeves() -> None:
+    # aegis-rd-9qkr.7: a relevant stream advance records a timestamped
+    # full-Book observation even when no Sleeve is due.  The poison bundle
+    # proves no Execution Bundle is invoked on this path.
+    ledger = SleeveLedger()
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=assemble_test_book(_book(), {"trend.whl": _PoisonBundle()}),
+        ledger=ledger,
+    )
+
+    pipeline.record_market_observation(_DAY_NS, {_LSE_LEG: 11.0})
+    pipeline.record_market_observation(2 * _DAY_NS, {_LSE_LEG: 12.0})
+
+    assert ledger.observation_count == 2
+    assert ledger.nav_history == (100_000.0, 100_000.0)

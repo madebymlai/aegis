@@ -1,4 +1,4 @@
-"""Unit tests for SleeveLedger — pure cross-period book analytics."""
+"""Unit tests for SleeveLedger — pure event-time book analytics."""
 
 from __future__ import annotations
 
@@ -6,9 +6,11 @@ import numpy as np
 import pytest
 
 import aegis_trader.domain.sleeve_ledger as sleeve_ledger_module
+from aegis_trader.domain.annualization import EQUITY_BOOK_ANNUALIZATION_PERIODS
 from aegis_trader.domain.sleeve_ledger import (
     EWMA_COVARIANCE_ALPHA,
-    TRADING_DAYS_PER_YEAR,
+    BookObservation,
+    DecreasingTimestampError,
     SleeveLedger,
     _ewma_covariance,
     _ledoit_wolf_intensity,
@@ -28,42 +30,55 @@ _TAIL = SleeveName("tail")
 _A = _iid("A")
 _B = _iid("B")
 _C = _iid("C")
+_DAY_NS = 86_400_000_000_000
+_HOUR_NS = 3_600_000_000_000
+
+
+def _observe(
+    ledger: SleeveLedger,
+    *,
+    timestamp_ns: int,
+    closes: dict[InstrumentId, float],
+    sleeve_targets: dict[SleeveName, dict[InstrumentId, float]] | None = None,
+    nav: float = 100_000.0,
+    realized_weights: dict[InstrumentId, float] | None = None,
+) -> None:
+    ledger.record(
+        BookObservation(
+            timestamp_ns=timestamp_ns,
+            nav=nav,
+            realized_weights=realized_weights or {},
+            sleeve_targets=(
+                sleeve_targets
+                if sleeve_targets is not None
+                else {_TREND: {_A: 1.0}, _CARRY: {_B: 1.0}}
+            ),
+            marks=closes,
+        )
+    )
 
 
 def _record_three_sleeve_history(ledger: SleeveLedger, observations: int) -> None:
-    """Deterministic noisy closes for three single-instrument sleeves."""
+    """Deterministic noisy closes for three single-instrument sleeves, one per day."""
     rng = np.random.default_rng(3)
     closes = np.array([100.0, 100.0, 100.0])
-    for _ in range(observations):
-        ledger.record(
-            nav=100_000.0,
-            realized_weights={},
+    for day in range(observations):
+        _observe(
+            ledger,
+            timestamp_ns=day * _DAY_NS,
             sleeve_targets={_TREND: {_A: 1.0}, _CARRY: {_B: 1.0}, _TAIL: {_C: 1.0}},
             closes={_A: closes[0], _B: closes[1], _C: closes[2]},
         )
         closes = closes * (1.0 + rng.normal(0.0, 0.01, size=3))
 
 
-def test_realized_covariance_uses_complete_sleeve_return_rows():
+def test_realized_covariance_uses_complete_daily_sleeve_return_rows():
     ledger = SleeveLedger()
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}, _CARRY: {_B: 1.0}},
-        closes={_A: 100.0, _B: 100.0},
-    )
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}, _CARRY: {_B: 1.0}},
-        closes={_A: 110.0, _B: 95.0},
-    )
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}, _CARRY: {_B: 1.0}},
-        closes={_A: 88.0, _B: 104.5},
-    )
+    _observe(ledger, timestamp_ns=0 * _DAY_NS, closes={_A: 100.0, _B: 100.0})
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_A: 110.0, _B: 95.0})
+    _observe(ledger, timestamp_ns=2 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+    # A later day's timestamp proves day 2 complete; day 3 itself stays open.
+    _observe(ledger, timestamp_ns=3 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
 
     covariance = ledger.realized_covariance((_TREND, _CARRY), min_returns=2)
 
@@ -75,22 +90,95 @@ def test_realized_covariance_uses_complete_sleeve_return_rows():
 
 def test_realized_covariance_returns_none_until_history_is_sufficient():
     ledger = SleeveLedger()
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}},
-        closes={_A: 100.0},
-    )
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}},
-        closes={_A: 101.0},
-    )
+    _observe(ledger, timestamp_ns=0 * _DAY_NS, closes={_A: 100.0})
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_A: 101.0})
 
     covariance = ledger.realized_covariance((_TREND,), min_returns=2)
 
     assert covariance is None
+
+
+def test_realized_covariance_excludes_the_open_day():
+    """Three completed days would suffice, but the newest day is not yet
+    proven complete, so covariance stays undefined."""
+    ledger = SleeveLedger()
+    _observe(ledger, timestamp_ns=0 * _DAY_NS, closes={_A: 100.0, _B: 100.0})
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_A: 110.0, _B: 95.0})
+    _observe(ledger, timestamp_ns=2 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+
+    covariance = ledger.realized_covariance((_TREND, _CARRY), min_returns=2)
+
+    assert covariance is None
+
+
+def test_intraday_observations_compound_to_the_daily_covariance_input():
+    """Many intraday observations within a day produce the same covariance as
+    one end-of-day observation on the equivalent economic path; duplicate and
+    zero-effect observations change nothing (aegis-rd-9qkr.7)."""
+    daily = SleeveLedger()
+    _observe(daily, timestamp_ns=0 * _DAY_NS, closes={_A: 100.0, _B: 100.0})
+    _observe(daily, timestamp_ns=1 * _DAY_NS, closes={_A: 110.0, _B: 95.0})
+    _observe(daily, timestamp_ns=2 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+    _observe(daily, timestamp_ns=3 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+
+    intraday = SleeveLedger()
+    _observe(intraday, timestamp_ns=0 * _DAY_NS, closes={_A: 100.0, _B: 100.0})
+    _observe(
+        intraday,
+        timestamp_ns=1 * _DAY_NS + 3 * _HOUR_NS,
+        closes={_A: 104.0, _B: 99.0},
+    )
+    _observe(
+        intraday,
+        timestamp_ns=1 * _DAY_NS + 9 * _HOUR_NS,
+        closes={_A: 110.0, _B: 95.0},
+    )
+    # Zero-effect repeat of the same marks later in the day.
+    _observe(
+        intraday,
+        timestamp_ns=1 * _DAY_NS + 10 * _HOUR_NS,
+        closes={_A: 110.0, _B: 95.0},
+    )
+    _observe(intraday, timestamp_ns=2 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+    _observe(intraday, timestamp_ns=3 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+
+    assert intraday.realized_covariance(
+        (_TREND, _CARRY), min_returns=2
+    ) == daily.realized_covariance((_TREND, _CARRY), min_returns=2)
+
+
+def test_partial_marks_hold_the_previous_valid_mark():
+    """A non-advancing instrument keeps its held mark: the hourly stream moves
+    while the daily sleeve's instrument stays marked at its last close."""
+    ledger = SleeveLedger()
+    _observe(ledger, timestamp_ns=0 * _DAY_NS, closes={_A: 100.0, _B: 100.0})
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_A: 110.0})
+    _observe(ledger, timestamp_ns=2 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+    _observe(ledger, timestamp_ns=3 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+
+    covariance = ledger.realized_covariance((_TREND, _CARRY), min_returns=2)
+
+    # Day 1: B held at 100.0 (zero movement); day 2 realizes the gap return.
+    assert covariance is not None
+    assert covariance[_CARRY][_CARRY] > 0.0
+
+
+def test_same_timestamp_recording_replaces_without_a_new_interval():
+    ledger = SleeveLedger()
+    _observe(ledger, timestamp_ns=0 * _DAY_NS, closes={_A: 100.0})
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_A: 999.0})
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_A: 101.0})
+
+    assert ledger.observation_count == 2
+    assert ledger.nav_history == (100_000.0, 100_000.0)
+
+
+def test_decreasing_timestamps_fail_fast():
+    ledger = SleeveLedger()
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_A: 100.0})
+
+    with pytest.raises(DecreasingTimestampError):
+        _observe(ledger, timestamp_ns=0, closes={_A: 101.0})
 
 
 def test_realized_covariance_without_shrinkage_is_the_plain_ewma_estimate(monkeypatch):
@@ -101,9 +189,12 @@ def test_realized_covariance_without_shrinkage_is_the_plain_ewma_estimate(monkey
 
     covariance = ledger.realized_covariance((_TREND, _CARRY, _TAIL), min_returns=20)
 
-    periods = ledger._observations[-21:]
+    periods = ledger._completed_daily_snapshots()[-21:]
     rows = sleeve_ledger_module._complete_sleeve_return_rows(periods, (_TREND, _CARRY, _TAIL))
-    expected = _ewma_covariance(rows, alpha=EWMA_COVARIANCE_ALPHA) * TRADING_DAYS_PER_YEAR
+    expected = (
+        _ewma_covariance(rows, alpha=EWMA_COVARIANCE_ALPHA)
+        * EQUITY_BOOK_ANNUALIZATION_PERIODS
+    )
     names = (_TREND, _CARRY, _TAIL)
     for i, left in enumerate(names):
         for j, right in enumerate(names):
@@ -117,9 +208,12 @@ def test_realized_covariance_shrinkage_engages_but_preserves_sleeve_variances():
 
     covariance = ledger.realized_covariance((_TREND, _CARRY, _TAIL), min_returns=20)
 
-    periods = ledger._observations[-21:]
+    periods = ledger._completed_daily_snapshots()[-21:]
     rows = sleeve_ledger_module._complete_sleeve_return_rows(periods, (_TREND, _CARRY, _TAIL))
-    raw = _ewma_covariance(rows, alpha=EWMA_COVARIANCE_ALPHA) * TRADING_DAYS_PER_YEAR
+    raw = (
+        _ewma_covariance(rows, alpha=EWMA_COVARIANCE_ALPHA)
+        * EQUITY_BOOK_ANNUALIZATION_PERIODS
+    )
     assert _ledoit_wolf_intensity(rows) > 0.0
     names = (_TREND, _CARRY, _TAIL)
     for i, name in enumerate(names):
@@ -165,36 +259,21 @@ def test_ledoit_wolf_intensity_stays_within_the_unit_interval():
     assert 0.0 <= intensity <= 1.0
 
 
-def test_realized_book_skew_measures_the_weighted_return_stream():
+def test_realized_book_skew_measures_the_weighted_daily_return_stream():
     ledger = SleeveLedger()
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}},
-        closes={_A: 100.0},
-    )
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}},
-        closes={_A: 101.0},
-    )
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}},
-        closes={_A: 102.01},
-    )
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}},
-        closes={_A: 103.0301},
-    )
-    ledger.record(
-        nav=100_000.0,
-        realized_weights={},
-        sleeve_targets={_TREND: {_A: 1.0}},
+    trend_only = {_TREND: {_A: 1.0}}
+    for day, close in enumerate([100.0, 101.0, 102.01, 103.0301, 82.42408]):
+        _observe(
+            ledger,
+            timestamp_ns=day * _DAY_NS,
+            sleeve_targets=trend_only,
+            closes={_A: close},
+        )
+    # Prove the crash day complete without adding a new return row.
+    _observe(
+        ledger,
+        timestamp_ns=5 * _DAY_NS,
+        sleeve_targets=trend_only,
         closes={_A: 82.42408},
     )
 
@@ -206,16 +285,19 @@ def test_realized_book_skew_measures_the_weighted_return_stream():
 
 def test_attribution_decomposes_realized_book_pnl_by_sleeve_targets():
     ledger = SleeveLedger()
-    ledger.record(
-        nav=100_000.0,
+    targets = {_TREND: {_A: 1.0}, _CARRY: {_A: 0.5}}
+    _observe(
+        ledger,
+        timestamp_ns=0 * _DAY_NS,
+        sleeve_targets=targets,
         realized_weights={_A: 0.8},
-        sleeve_targets={_TREND: {_A: 1.0}, _CARRY: {_A: 0.5}},
         closes={_A: 100.0},
     )
-    ledger.record(
-        nav=100_000.0,
+    _observe(
+        ledger,
+        timestamp_ns=1 * _DAY_NS,
+        sleeve_targets=targets,
         realized_weights={_A: 0.8},
-        sleeve_targets={_TREND: {_A: 1.0}, _CARRY: {_A: 0.5}},
         closes={_A: 110.0},
     )
 
@@ -224,11 +306,50 @@ def test_attribution_decomposes_realized_book_pnl_by_sleeve_targets():
     assert attribution == {_TREND: pytest.approx(6_000.0), _CARRY: pytest.approx(2_000.0)}
 
 
-def test_current_drawdown_uses_the_recorded_nav_peak_plus_current_nav():
+def test_attribution_keeps_event_time_intervals_for_intraday_weight_changes():
+    """An intraday de-risk is attributed at its actual event cadence: the
+    second interval's loss lands on the reduced weight, not the day-open one."""
     ledger = SleeveLedger()
-    ledger.record(nav=100.0, realized_weights={}, sleeve_targets={}, closes={})
-    ledger.record(nav=120.0, realized_weights={}, sleeve_targets={}, closes={})
-    ledger.record(nav=90.0, realized_weights={}, sleeve_targets={}, closes={})
+    _observe(
+        ledger,
+        timestamp_ns=1 * _DAY_NS,
+        sleeve_targets={_TREND: {_A: 1.0}},
+        realized_weights={_A: 1.0},
+        closes={_A: 100.0},
+    )
+    _observe(
+        ledger,
+        timestamp_ns=1 * _DAY_NS + 3 * _HOUR_NS,
+        sleeve_targets={_TREND: {_A: 1.0}},
+        realized_weights={_A: 0.5},
+        closes={_A: 110.0},
+    )
+    _observe(
+        ledger,
+        timestamp_ns=1 * _DAY_NS + 9 * _HOUR_NS,
+        sleeve_targets={_TREND: {_A: 1.0}},
+        realized_weights={_A: 0.5},
+        closes={_A: 99.0},
+    )
+
+    attribution = ledger.attribution({_TREND: 1.0})
+
+    # +10% at weight 1.0, then -10% at the de-risked weight 0.5:
+    # 10_000 - 5_000.  A daily-collapsed view would report -1_000.
+    assert attribution == {_TREND: pytest.approx(5_000.0)}
+
+
+def test_current_drawdown_uses_every_event_nav_plus_current_nav():
+    ledger = SleeveLedger()
+    _observe(ledger, timestamp_ns=0, nav=100.0, sleeve_targets={}, closes={})
+    _observe(
+        ledger,
+        timestamp_ns=3 * _HOUR_NS,
+        nav=120.0,
+        sleeve_targets={},
+        closes={},
+    )
+    _observe(ledger, timestamp_ns=6 * _HOUR_NS, nav=90.0, sleeve_targets={}, closes={})
 
     drawdown = ledger.current_drawdown(96.0)
 

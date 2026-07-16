@@ -12,6 +12,8 @@ statistics over that single-currency equity curve.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 from nautilus_trader.analysis import (
     PortfolioAnalyzer,
@@ -29,6 +31,7 @@ from nautilus_trader.config import ActorConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.objects import Currency
 
+from aegis_trader.domain.annualization import EQUITY_BOOK_ANNUALIZATION_PERIODS
 from aegis_trader.portfolio.book_state import NautilusBookState
 
 
@@ -82,17 +85,27 @@ class BookEquityRecorder(Actor):
 
 # The return-based statistics Nautilus' Portfolio registers by default (PnL- and
 # order-based ones don't apply to a bare returns series); kept in sync so the
-# reported keys match the engine's native ``stats_returns``.
-_RETURN_STATISTICS: tuple[type, ...] = (
-    ReturnsVolatility,
-    ReturnsAverage,
-    ReturnsAverageLoss,
-    ReturnsAverageWin,
-    SharpeRatio,
-    SortinoRatio,
-    ProfitFactor,
-    RiskReturnRatio,
-)
+# reported keys match the engine's native ``stats_returns``.  Nautilus natively
+# compounds intraday returns into daily returns before these run; the
+# annualized ones are constructed with the one internal equity-Book convention
+# (aegis-rd-9qkr.7), never a cadence inferred from callbacks.
+_ANNUALIZATION_PERIOD = int(EQUITY_BOOK_ANNUALIZATION_PERIODS)
+
+
+def _return_statistics() -> list[Any]:
+    # list[Any]: the nautilus stubs don't expose PortfolioStatistic as the
+    # statistics' base class, so a precise annotation cannot type-check.
+    statistics: list[Any] = [
+        ReturnsVolatility(period=_ANNUALIZATION_PERIOD),
+        ReturnsAverage(),
+        ReturnsAverageLoss(),
+        ReturnsAverageWin(),
+        SharpeRatio(period=_ANNUALIZATION_PERIOD),
+        SortinoRatio(period=_ANNUALIZATION_PERIOD),
+        ProfitFactor(),
+        RiskReturnRatio(),
+    ]
+    return statistics
 
 
 def return_stats(equity: pd.Series) -> dict[str, float]:
@@ -109,8 +122,8 @@ def return_stats(equity: pd.Series) -> dict[str, float]:
     if returns.empty:
         return {}
     analyzer = PortfolioAnalyzer()
-    for statistic in _RETURN_STATISTICS:
-        analyzer.register_statistic(statistic())
+    for statistic in _return_statistics():
+        analyzer.register_statistic(statistic)
     for timestamp, value in returns.items():
         analyzer.add_return(timestamp.to_pydatetime(), float(value))
     stats = dict(analyzer.get_performance_stats_returns())

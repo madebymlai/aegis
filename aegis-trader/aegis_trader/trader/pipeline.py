@@ -33,7 +33,7 @@ from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.integrity import check_account_integrity
 from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
-from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain import startup as _startup
 from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
 from aegis_trader.trader._rebalancer import (
@@ -102,9 +102,12 @@ class RebalanceRequest:
 
     Only the listed Sleeves recompute; every other Sleeve holds its latest
     valid target, and the whole retained Book is allocated, gated, and netted.
+    ``timestamp_ns`` is the integer UTC event time driving the re-net (the
+    triggering bar), stamping the Book observation the ledger records.
     """
 
     due: tuple[DueSleeve, ...]
+    timestamp_ns: int
 
 
 @dataclass(frozen=True)
@@ -234,9 +237,18 @@ class RebalancePipeline:
 
     def rebalance(self, request: RebalanceRequest) -> RebalanceResult:
         """Recompute the due Sleeves, then allocate, gate, and net the full
-        retained Book into one order set."""
+        retained Book into one order set.
+
+        The Book observation is recorded before planning, so the covariance
+        the allocator queries already excludes the day this event opened —
+        risk inputs use only completed UTC days (aegis-rd-9qkr.7).
+        """
         sleeve_failures = self._compute_due_targets(request)
         nav = self._book_state.nav()
+        realized_weights = self._book_state.realized_weights()
+        instrument_metas, fx_rates, prices = self._collect_sizing_params()
+        self._record_observation(request.timestamp_ns, nav, realized_weights, prices)
+
         pending = dict(self._retained_targets)
         if not pending:
             return RebalanceResult(
@@ -245,7 +257,6 @@ class RebalancePipeline:
                 sleeve_failures=sleeve_failures,
             )
 
-        realized_weights = self._book_state.realized_weights()
         try:
             plan = self._build_rebalance_plan(pending, nav, realized_weights)
         except ValueError as exc:
@@ -257,7 +268,13 @@ class RebalancePipeline:
                 sleeve_failures=sleeve_failures,
             )
 
-        sized_orders, prices = self._size_plan(plan.deltas, nav)
+        sized_orders = size_deltas(
+            plan.deltas,
+            nav,
+            instrument_metas=instrument_metas,
+            fx_rates=fx_rates,
+            prices=prices,
+        )
         executable_orders = _orders_for_fresh_instruments(
             sized_orders,
             self._fresh_instrument_ids(),
@@ -265,8 +282,6 @@ class RebalancePipeline:
 
         self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
         total_notional = sum(abs(order.quantity) for order in executable_orders)
-
-        self._record_period(nav, realized_weights, pending, prices)
 
         return RebalanceResult(
             orders=executable_orders,
@@ -279,6 +294,40 @@ class RebalancePipeline:
                 total_notional,
             ),
             sleeve_failures=sleeve_failures,
+        )
+
+    def record_market_observation(
+        self, timestamp_ns: int, marks: Mapping[InstrumentId, float]
+    ) -> None:
+        """Record a timestamped full-Book observation for an advancing stream.
+
+        Called whenever a relevant subscribed stream advances, whether or not
+        any Sleeve is due — retained Sleeves stay marked independently of
+        recomputation.  The pipeline records facts only; day bucketing,
+        compounding, and annualization belong to the ledger.
+        """
+        self._record_observation(
+            timestamp_ns,
+            self._book_state.nav(),
+            self._book_state.realized_weights(),
+            marks,
+        )
+
+    def _record_observation(
+        self,
+        timestamp_ns: int,
+        nav: float,
+        realized_weights: Mapping[InstrumentId, float],
+        marks: Mapping[InstrumentId, float],
+    ) -> None:
+        self._ledger.record(
+            BookObservation(
+                timestamp_ns=timestamp_ns,
+                nav=nav,
+                realized_weights=dict(realized_weights),
+                sleeve_targets=_sleeve_target_snapshot(self._retained_targets),
+                marks=dict(marks),
+            )
         )
 
     def _compute_due_targets(
@@ -405,35 +454,6 @@ class RebalancePipeline:
             ),
             previous_sleeve_weights=self._last_sleeve_weights,
             realized_drawdown=self._ledger.current_drawdown(_nav),
-        )
-
-    def _size_plan(
-        self,
-        deltas: tuple[WeightDelta, ...],
-        nav: float,
-    ) -> tuple[tuple[OrderIntent, ...], dict[InstrumentId, float]]:
-        instrument_metas, fx_rates, prices = self._collect_sizing_params()
-        orders = size_deltas(
-            deltas,
-            nav,
-            instrument_metas=instrument_metas,
-            fx_rates=fx_rates,
-            prices=prices,
-        )
-        return orders, prices
-
-    def _record_period(
-        self,
-        nav: float,
-        realized_weights: Mapping[InstrumentId, float],
-        pending: Mapping[SleeveName, pd.DataFrame],
-        prices: Mapping[InstrumentId, float],
-    ) -> None:
-        self._ledger.record(
-            nav=nav,
-            realized_weights=dict(realized_weights),
-            sleeve_targets=_sleeve_target_snapshot(pending),
-            closes=dict(prices),
         )
 
     def _contract_target_ids(self, contract: DataContract) -> tuple[InstrumentId, ...]:

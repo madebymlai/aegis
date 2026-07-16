@@ -33,7 +33,7 @@ from collections.abc import Sequence
 
 import pytest
 from aegis_data.rebasing import Rebasing, ratio_rebasing, spread_rebasing
-from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain.types import SleeveName
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -44,9 +44,10 @@ _ROOT = InstrumentId.from_str(
 
 _PRECISION = 2  # the instrument tick: the materializer rounds every adjusted close to this many dp
 _ROLL = 4  # observations [0.._ROLL) are pre-roll; [_ROLL:] are post-roll
-# The un-quantized ratio carry drifts ~3e-5 from the quantized research read; this tolerance clears that
-# with margin yet is astronomically below a real cross-basis error (order 1), so a missed re-base fails.
-_RATIO_CARRY_TOL = 1e-4
+# The un-quantized ratio carry drifts ~2e-4 from the quantized research read (over the completed-day
+# EWMA window); this tolerance clears that with margin yet is astronomically below a real cross-basis
+# error (order 1), so a missed re-base fails.
+_RATIO_CARRY_TOL = 5e-4
 
 # Raw front-leg closes (already tick-valued), one observation per period; the front segment carries no
 # adjustment (offset 0 / factor 1), so a period recorded live IS its raw close.  Returns vary so the
@@ -63,21 +64,27 @@ _CASES: dict[str, tuple[Rebasing, bool]] = {
 }
 
 
-def _record(ledger: SleeveLedger, close: float) -> None:
-    """Record one full-weight single-root observation at *close*."""
+_DAY_NS = 86_400_000_000_000
+
+
+def _record(ledger: SleeveLedger, close: float, day: int) -> None:
+    """Record one full-weight single-root observation at *close* on *day*."""
     ledger.record(
-        nav=1_000_000.0,
-        realized_weights={_ROOT: 1.0},
-        sleeve_targets={_MOM: {_ROOT: 1.0}},
-        closes={_ROOT: close},
+        BookObservation(
+            timestamp_ns=day * _DAY_NS,
+            nav=1_000_000.0,
+            realized_weights={_ROOT: 1.0},
+            sleeve_targets={_MOM: {_ROOT: 1.0}},
+            marks={_ROOT: close},
+        )
     )
 
 
 def _ledger(closes: Sequence[float]) -> SleeveLedger:
     """A single-sleeve, single-root ledger recording one observation per close (full weight)."""
     ledger = SleeveLedger()
-    for close in closes:
-        _record(ledger, close)
+    for day, close in enumerate(closes):
+        _record(ledger, close, day)
     return ledger
 
 
@@ -96,11 +103,11 @@ def _live_ledger_across_roll(rebasing: Rebasing) -> SleeveLedger:
     raw close), then ``rebase_closes`` carries the recorded history into the new basis as the feed
     re-materializes; the ledger multiplies/shifts its stored closes and does NOT re-quantize to the tick."""
     ledger = SleeveLedger()
-    for close in _RAW_CLOSES[:_ROLL]:
-        _record(ledger, close)
+    for day, close in enumerate(_RAW_CLOSES[:_ROLL]):
+        _record(ledger, close, day)
     ledger.rebase_closes({_ROOT: rebasing})
-    for close in _RAW_CLOSES[_ROLL:]:
-        _record(ledger, close)
+    for day, close in enumerate(_RAW_CLOSES[_ROLL:], start=_ROLL):
+        _record(ledger, close, day)
     return ledger
 
 

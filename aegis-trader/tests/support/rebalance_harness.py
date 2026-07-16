@@ -273,7 +273,8 @@ class RebalanceHarness:
         )
         return self.pipeline.rebalance(
             RebalanceRequest(
-                due=tuple(DueSleeve(sleeve=name, period=period) for name in due_names)
+                due=tuple(DueSleeve(sleeve=name, period=period) for name in due_names),
+                timestamp_ns=self._period * _DAY_NS,
             )
         )
 

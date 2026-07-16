@@ -323,7 +323,7 @@ class RebalanceStrategy(Strategy):
 
         # ── period-advance → rebalance the completed period ──────────────
         if self._current_period is not None and period != self._current_period:
-            self._rebalance_for_period()
+            self._rebalance_for_period(bar.ts_event)
 
         self._current_period = period
 
@@ -431,7 +431,7 @@ class RebalanceStrategy(Strategy):
         the book's bar width (set from the contract timeframe in on_start)."""
         return bar.ts_event // self._period_ns
 
-    def _rebalance_for_period(self) -> None:
+    def _rebalance_for_period(self, timestamp_ns: int) -> None:
         """Delegate completed-period orchestration to RebalancePipeline."""
         if self._is_halted:
             return
@@ -451,7 +451,8 @@ class RebalanceStrategy(Strategy):
                 due=tuple(
                     DueSleeve(sleeve=sleeve_name, period=period)
                     for sleeve_name in self._require_assembled_book().sleeves
-                )
+                ),
+                timestamp_ns=timestamp_ns,
             )
         )
         self._last_sleeve_weights = pipeline.last_sleeve_weights

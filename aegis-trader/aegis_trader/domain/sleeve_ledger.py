@@ -1,63 +1,135 @@
-"""Pure cross-period sleeve ledger for Commingled Book analytics.
+"""Pure event-time sleeve ledger for Commingled Book analytics.
 
-The ledger owns the rebalance-period observation history and answers the
-analytics that need that history: realized sleeve covariance, realized book
-skew, per-sleeve P&L attribution, and current drawdown.  It imports no Nautilus
-objects and performs no I/O.
+The ledger owns the Book's timestamped market-observation history and answers
+the analytics that need it: realized sleeve covariance, realized book skew,
+per-sleeve P&L attribution, and current drawdown.  It alone owns event
+ordering, same-timestamp idempotency, held marks and targets, UTC-day
+compounding, complete daily return rows, the internal equity-Book
+annualization convention, insufficient-history behavior, and continuous-future
+rebasing (aegis-rd-9qkr.7).  It performs no I/O.
+
+Timing contract:
+
+- Drawdown and attribution run at event cadence over every recorded
+  observation, so genuine intraday Book risk stays visible.
+- Covariance and realized book skew consume only completed UTC-day rows —
+  the last observation of each day whose completion a later day's timestamp
+  has proven.  A Sleeve callback count is never a statistical horizon.
+- A held mark contributes zero movement while a venue is closed; the next
+  valid mark realizes the gap return on that later day.  The first observed
+  day seeds the basis and yields no return row.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import numpy as np
 from aegis_data.rebasing import Rebasing
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import portfolio_skew
+from aegis_trader.domain.annualization import EQUITY_BOOK_ANNUALIZATION_PERIODS
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.types import SleeveName
 
 MIN_SLEEVE_VOL_RETURNS = 20
 MIN_BOOK_SKEW_RETURNS = 8
-TRADING_DAYS_PER_YEAR = 252.0
 EWMA_COVARIANCE_ALPHA = 0.06
+
+_NS_PER_DAY = 86_400_000_000_000
+
+
+@dataclass(frozen=True)
+class BookObservation:
+    """One timestamped full-Book market observation.
+
+    ``timestamp_ns`` is the integer UTC event time of the market fact.
+    ``marks`` may be partial: only the streams that advanced.  Non-finite or
+    missing marks hold the previous valid mark.  ``sleeve_targets`` and
+    ``realized_weights`` are full snapshots of the retained Book.
+    """
+
+    timestamp_ns: int
+    nav: float
+    realized_weights: Mapping[InstrumentId, float]
+    sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]]
+    marks: Mapping[InstrumentId, float]
+
+
+class DecreasingTimestampError(ValueError):
+    """An observation timestamp moved backwards — event order is broken."""
+
+    def __init__(self, timestamp_ns: int, last_timestamp_ns: int) -> None:
+        self.timestamp_ns = timestamp_ns
+        self.last_timestamp_ns = last_timestamp_ns
+        super().__init__(
+            f"observation timestamp {timestamp_ns} precedes the last recorded "
+            f"timestamp {last_timestamp_ns}; observations must arrive in event order"
+        )
 
 
 class SleeveLedger:
-    """Accumulate completed rebalance observations and answer book analytics."""
+    """Accumulate timestamped Book observations and answer book analytics."""
 
     def __init__(self) -> None:
+        self._timestamps: list[int] = []
         self._observations: list[AttributionPeriod] = []
+        # Held marks as of the observation BEFORE the latest one — the merge
+        # base that makes same-timestamp replacement idempotent.
+        self._marks_before_last: dict[InstrumentId, float] = {}
 
     @property
     def observation_count(self) -> int:
-        """Number of completed rebalance observations recorded."""
+        """Number of recorded market observations."""
         return len(self._observations)
 
     @property
     def nav_history(self) -> tuple[float, ...]:
-        """Recorded NAV path, one value per completed rebalance observation."""
+        """Recorded NAV path, one value per recorded observation."""
         return tuple(period.nav for period in self._observations)
 
-    def record(
-        self,
-        *,
-        nav: float,
-        realized_weights: Mapping[InstrumentId, float],
-        sleeve_targets: Mapping[SleeveName, Mapping[InstrumentId, float]],
-        closes: Mapping[InstrumentId, float],
-    ) -> None:
-        """Record one completed rebalance period's observation."""
-        observation = AttributionPeriod(
-            nav=float(nav),
-            realized_weights=dict(realized_weights),
-            sleeve_targets={name: dict(targets) for name, targets in sleeve_targets.items()},
-            closes=dict(closes),
+    def record(self, observation: BookObservation) -> None:
+        """Record one timestamped full-Book market observation.
+
+        Re-recording at the last timestamp replaces that observation without
+        creating another return interval; a decreasing timestamp fails fast.
+        """
+        last_timestamp = self._timestamps[-1] if self._timestamps else None
+        if last_timestamp is not None and observation.timestamp_ns < last_timestamp:
+            raise DecreasingTimestampError(observation.timestamp_ns, last_timestamp)
+
+        replacing = last_timestamp is not None and observation.timestamp_ns == last_timestamp
+        base_marks = (
+            self._marks_before_last
+            if replacing
+            else (dict(self._observations[-1].closes) if self._observations else {})
         )
-        self._observations.append(observation)
+        merged_marks = {
+            **base_marks,
+            **{
+                instrument_id: float(mark)
+                for instrument_id, mark in observation.marks.items()
+                if math.isfinite(mark)
+            },
+        }
+        period = AttributionPeriod(
+            nav=float(observation.nav),
+            realized_weights=dict(observation.realized_weights),
+            sleeve_targets={
+                name: dict(targets)
+                for name, targets in observation.sleeve_targets.items()
+            },
+            closes=merged_marks,
+        )
+        if replacing:
+            self._observations[-1] = period
+            return
+        self._marks_before_last = dict(base_marks)
+        self._timestamps.append(observation.timestamp_ns)
+        self._observations.append(period)
 
     def rebase_closes(self, rebasings: Mapping[InstrumentId, Rebasing]) -> None:
         """Carry every recorded close for each ref into the new basis via its :class:`Rebasing`.
@@ -74,6 +146,10 @@ class SleeveLedger:
         if not rebasings:
             return
         self._observations = [_rebased_period(period, rebasings) for period in self._observations]
+        self._marks_before_last = {
+            ref: (rebasings[ref].apply(close) if ref in rebasings else close)
+            for ref, close in self._marks_before_last.items()
+        }
 
     def realized_covariance(
         self,
@@ -81,18 +157,17 @@ class SleeveLedger:
         *,
         min_returns: int = MIN_SLEEVE_VOL_RETURNS,
     ) -> dict[SleeveName, dict[SleeveName, float]] | None:
-        """Annualized EWMA covariance for complete sleeve return rows.
+        """Annualized EWMA covariance over complete UTC-daily sleeve return rows.
 
-        Until every requested sleeve has enough complete, non-degenerate returns,
-        return ``None`` so the caller can use its base allocation rather than an
-        undefined covariance matrix.
+        Until every requested sleeve has enough complete, non-degenerate daily
+        returns, return ``None`` so the caller can use its base allocation
+        rather than an undefined covariance matrix.
         """
         sleeve_names = tuple(names)
-        if len(self._observations) < min_returns + 1:
+        days = self._completed_daily_snapshots()
+        if len(days) < min_returns + 1:
             return None
-
-        periods = self._observations[-(min_returns + 1):]
-        rows = _complete_sleeve_return_rows(periods, sleeve_names)
+        rows = _complete_sleeve_return_rows(days[-(min_returns + 1):], sleeve_names)
         if len(rows) < min_returns:
             return None
         return _annualized_covariance_by_sleeve(sleeve_names, rows)
@@ -104,15 +179,17 @@ class SleeveLedger:
         *,
         min_returns: int = MIN_BOOK_SKEW_RETURNS,
     ) -> float | None:
-        """Realized skew of the weighted book stream, or ``None`` if too short."""
+        """Realized skew of the weighted daily book stream, or ``None`` if too short."""
         sleeve_names = tuple(names)
-        rows = _complete_sleeve_return_rows(self._observations, sleeve_names)
+        rows = _complete_sleeve_return_rows(
+            self._completed_daily_snapshots(), sleeve_names
+        )
         if len(rows) < min_returns:
             return None
         return portfolio_skew(weights, _return_series_by_sleeve(sleeve_names, rows))
 
     def attribution(self, budgets: Mapping[SleeveName, float]) -> dict[SleeveName, float]:
-        """Per-sleeve P&L attribution over the recorded observations."""
+        """Per-sleeve P&L attribution over the recorded event intervals."""
         return compute_sleeve_attribution(self._observations, budgets=budgets)
 
     def current_drawdown(self, current_nav: float) -> float:
@@ -124,6 +201,21 @@ class SleeveLedger:
             return 0.0
         drawdown = 1.0 - float(current_nav) / peak
         return min(max(drawdown, 0.0), 1.0)
+
+    def _completed_daily_snapshots(self) -> list[AttributionPeriod]:
+        """The last observation of each completed UTC day, in day order.
+
+        The latest observed day is never returned: only a later day's
+        timestamp proves a day complete, so the current (possibly still open)
+        day stays out of risk inputs.
+        """
+        by_day: dict[int, AttributionPeriod] = {}
+        for timestamp, period in zip(self._timestamps, self._observations, strict=True):
+            by_day[timestamp // _NS_PER_DAY] = period
+        if not by_day:
+            return []
+        days = sorted(by_day)
+        return [by_day[day] for day in days[:-1]]
 
 
 def _rebased_period(
@@ -199,7 +291,7 @@ def _annualized_covariance_by_sleeve(
 ) -> dict[SleeveName, dict[SleeveName, float]] | None:
     covariance = _ewma_covariance(rows, alpha=EWMA_COVARIANCE_ALPHA)
     covariance = _shrink_covariance(covariance, _ledoit_wolf_intensity(rows))
-    covariance *= TRADING_DAYS_PER_YEAR
+    covariance *= EQUITY_BOOK_ANNUALIZATION_PERIODS
     if not np.all(np.isfinite(covariance)):
         return None
     if np.any(np.diag(covariance) <= 0.0):

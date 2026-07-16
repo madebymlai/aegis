@@ -155,7 +155,8 @@ def test_pipeline_collects_sizing_params_by_native_instrument_id() -> None:
                         period=1, period_ns=86_400_000_000_000
                     ),
                 ),
-            )
+            ),
+            timestamp_ns=86_400_000_000_000,
         )
     )
     instrument_metas, fx_rates, prices = pipeline._collect_sizing_params()
