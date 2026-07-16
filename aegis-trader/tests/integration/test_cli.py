@@ -15,6 +15,7 @@ import types
 import pytest
 
 from aegis_trader.backtest import BookBacktestResult
+from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.cli import main
 from aegis_trader.config import ConnectionConfigError
 
@@ -72,6 +73,7 @@ def _fake_backtest_result(
     return BookBacktestResult(
         engine=_FakeEngine(),
         financing_totals=financing_totals or {},
+        analytics_horizon=derive_horizon(("1D",)),
     )
 
 
@@ -157,7 +159,7 @@ def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, ca
     )
     monkeypatch.setattr(
         "aegis_trader.backtest.book_return_stats",
-        lambda engine: {"Sharpe Ratio (252 days)": 0.87},
+        lambda engine, horizon: {"Sharpe Ratio (252 days)": 0.87},
     )
 
     with caplog.at_level(logging.INFO, logger="aegis_trader"):

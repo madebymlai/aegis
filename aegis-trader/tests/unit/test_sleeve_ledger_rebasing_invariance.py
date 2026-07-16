@@ -33,6 +33,7 @@ from collections.abc import Sequence
 
 import pytest
 from aegis_data.rebasing import Rebasing, ratio_rebasing, spread_rebasing
+from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain.types import SleeveName
 from nautilus_trader.model.identifiers import InstrumentId
@@ -67,11 +68,16 @@ _CASES: dict[str, tuple[Rebasing, bool]] = {
 _DAY_NS = 86_400_000_000_000
 
 
+def _weekday_ns(index: int) -> int:
+    weeks, weekday = divmod(index, 5)
+    return (4 + weeks * 7 + weekday) * _DAY_NS
+
+
 def _record(ledger: SleeveLedger, close: float, day: int) -> None:
     """Record one full-weight single-root observation at *close* on *day*."""
     ledger.record(
         BookObservation(
-            timestamp_ns=day * _DAY_NS,
+            timestamp_ns=_weekday_ns(day),
             nav=1_000_000.0,
             realized_weights={_ROOT: 1.0},
             sleeve_targets={_MOM: {_ROOT: 1.0}},
@@ -82,7 +88,7 @@ def _record(ledger: SleeveLedger, close: float, day: int) -> None:
 
 def _ledger(closes: Sequence[float]) -> SleeveLedger:
     """A single-sleeve, single-root ledger recording one observation per close (full weight)."""
-    ledger = SleeveLedger()
+    ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
     for day, close in enumerate(closes):
         _record(ledger, close, day)
     return ledger
@@ -102,7 +108,7 @@ def _live_ledger_across_roll(rebasing: Rebasing) -> SleeveLedger:
     """The live ledger: pre-roll closes recorded in the OLD basis (the front — offset 0 / factor 1 — so the
     raw close), then ``rebase_closes`` carries the recorded history into the new basis as the feed
     re-materializes; the ledger multiplies/shifts its stored closes and does NOT re-quantize to the tick."""
-    ledger = SleeveLedger()
+    ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
     for day, close in enumerate(_RAW_CLOSES[:_ROLL]):
         _record(ledger, close, day)
     ledger.rebase_closes({_ROOT: rebasing})

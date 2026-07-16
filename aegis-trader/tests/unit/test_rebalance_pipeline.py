@@ -26,6 +26,7 @@ from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing
+from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import OrderSide, SleeveName
@@ -442,7 +443,7 @@ def _pipeline(
             config,
             {config.sleeves[0].wheel_filename: loaded_bundle},
         ),
-        ledger=SleeveLedger(),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
 
 
@@ -495,7 +496,7 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
             _book(),
             {"trend.whl": _ContinuousWeightBundle(0.5)},
         ),
-        ledger=SleeveLedger(),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
 
     startup_result = pipeline.startup_check()
@@ -610,7 +611,7 @@ def test_rebalance_pipeline_uses_bands_proven_by_book_assembly() -> None:
 
 
 def test_apply_roll_rebases_ledger_by_spread_event() -> None:
-    ledger = SleeveLedger()
+    ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
     _record_close(ledger, 100.0, 0)
     _record_close(ledger, 110.0, 1)
     pipeline = RebalancePipeline(
@@ -631,7 +632,7 @@ def test_apply_roll_rebases_ledger_by_spread_event() -> None:
 
 
 def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
-    ledger = SleeveLedger()
+    ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
     _record_close(ledger, 100.0, 0)
     _record_close(ledger, 110.0, 1)
     pipeline = RebalancePipeline(
@@ -752,7 +753,7 @@ def _two_sleeve_pipeline(
                 "poison.whl": poison_bundle,
             },
         ),
-        ledger=SleeveLedger(),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
     startup_result = pipeline.startup_check()
     assert startup_result.trading_enabled is True
@@ -1078,7 +1079,7 @@ def test_each_due_sleeve_computes_on_its_own_period_coordinates() -> None:
                 "slow.whl": _PoisonBundle(),
             },
         ),
-        ledger=SleeveLedger(),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
 
     pipeline.rebalance(
@@ -1105,7 +1106,7 @@ def test_market_observation_records_the_full_book_without_invoking_sleeves() -> 
     # aegis-rd-9qkr.7: a relevant stream advance records a timestamped
     # full-Book observation even when no Sleeve is due.  The poison bundle
     # proves no Execution Bundle is invoked on this path.
-    ledger = SleeveLedger()
+    ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
@@ -1236,7 +1237,7 @@ def test_shared_fx_leg_serves_each_sleeve_at_its_own_timeframe() -> None:
                 "hourly.whl": _ConversionSleeveBundle(_LSE_LEG, "1H"),
             },
         ),
-        ledger=SleeveLedger(),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
 
     result = pipeline.rebalance(_all_due(_SLEEVE, hourly))

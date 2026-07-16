@@ -27,7 +27,8 @@ from aegis_runtime import (
 from aegis_runtime.currency import CurrencyConversion
 
 from aegis_data.bar_type import timeframe_to_ns
-from aegis_trader.backtest import run_book_backtest
+from aegis_trader.backtest import book_return_stats, run_book_backtest
+from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.bundles.stub import StubBundleRegistry
 
 from tests.e2e.test_backtest_catalog_runner import (
@@ -631,3 +632,87 @@ def test_integrated_mixed_book_trades_every_sleeve_and_is_deterministic(
     finally:
         first_engine.dispose()
         second_engine.dispose()
+
+
+# ── weekly cadence (aegis-rd-cy7l) ─────────────────────────────────────────
+
+_WEEKLY_ID = InstrumentId.from_str("GLAC.XLON")
+
+_WEEKLY_BOOK_TOML = """
+base_currency = "EUR"
+
+[[sleeves]]
+name = "glacial"
+wheel_filename = "glacial.whl"
+risk_share = 1.0
+group = "Floor"
+"""
+
+
+def _seed_weekly(catalog_path, instrument_id: InstrumentId, fridays) -> None:
+    catalog = ParquetDataCatalog(catalog_path)
+    catalog.write_data([_equity(instrument_id)])
+    start = int(pd.Timestamp("2020-01-01", tz="UTC").value)
+    end = int(pd.Timestamp("2020-02-05", tz="UTC").value)
+    closes = [100.0, 102.0, 99.0, 103.0, 101.0]
+    weekly_bars = [
+        _bar(raw_bar_type(instrument_id, "1W"), ts, close)
+        for ts, close in zip(fridays, closes, strict=True)
+    ]
+    catalog.write_data(weekly_bars, start=start, end=end)
+    # Distribution verification reads every instrument's raw DAILY closes,
+    # so a weekly-traded instrument still carries its daily series.
+    daily_bars = [
+        _bar(raw_bar_type(instrument_id, "1D"), ts, 100.0)
+        for ts in pd.date_range("2020-01-01", "2020-02-04", freq="B")
+    ]
+    catalog.write_data(daily_bars, start=start, end=end)
+
+
+def _run_weekly_book(tmp_path) -> Any:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_WEEKLY_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    fridays = pd.DatetimeIndex(
+        ["2020-01-03", "2020-01-10", "2020-01-17", "2020-01-24", "2020-01-31"]
+    ) + pd.Timedelta(hours=16, minutes=30)
+    _seed_weekly(catalog_path, _WEEKLY_ID, fridays)
+    return run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-02-05",
+        catalog_path=catalog_path,
+        registry=StubBundleRegistry(
+            {"glacial.whl": _AlternatingWeightBundle(_WEEKLY_ID, "1W")}
+        ),
+        data_source=_verified_zero_distribution_source(catalog_path, (_WEEKLY_ID,)),
+    )
+
+
+def test_weekly_book_derives_its_horizon_and_trades_weekly(tmp_path) -> None:
+    """An all-weekly Book derives ("1W", 52) from its roster, trades at weekly
+    boundaries, reports under the 52-period convention, and is deterministic
+    run to run (aegis-rd-cy7l)."""
+    (tmp_path / "one").mkdir()
+    (tmp_path / "two").mkdir()
+    first = _run_weekly_book(tmp_path / "one")
+    second = _run_weekly_book(tmp_path / "two")
+    engine = first.engine
+    try:
+        assert first.analytics_horizon == AnalyticsHorizon("1W", 52)
+
+        fills = _fill_timestamps(engine, _WEEKLY_ID)
+        assert fills != []
+        # NEXT-CLOSE at weekly cadence: every fill sits on a weekly bar stamp
+        # (Friday 16:30) plus the 1ns re-net alert, across distinct weeks.
+        assert all(
+            (ts.hour, ts.minute, ts.nanosecond) == (16, 30, 1) for ts in fills
+        )
+        assert len({ts.date() for ts in fills}) >= 2
+        assert fills == _fill_timestamps(second.engine, _WEEKLY_ID)
+
+        stats = book_return_stats(engine, first.analytics_horizon)
+        assert "Sharpe Ratio (52 days)" in stats
+    finally:
+        engine.dispose()
+        second.engine.dispose()

@@ -26,6 +26,7 @@ from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import Halt, RequestBars, RollIntentBatch, SubscribeBars
 from aegis_trader.domain.sizing import InstrumentSizing
+from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import SleeveName
@@ -222,7 +223,7 @@ def _bootstrap(
     return bootstrap(
         now=_NOW,
         book=assembled,
-        ledger=SleeveLedger(),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
         book_state=book_state or _BookState(),
         market_data=_MarketData(),
         roll_desk=roll_desk or _RollDesk(),

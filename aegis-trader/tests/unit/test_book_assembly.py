@@ -18,6 +18,7 @@ from aegis_trader.bundles.book import (
 )
 from aegis_trader.bundles.bands import BundleBands
 from aegis_trader.bundles.stub import StubBundleRegistry
+from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.streams import MarketStream, StreamRequirement
 from aegis_trader.domain.types import SleeveName
@@ -123,6 +124,8 @@ def test_assemble_book_derives_every_book_fact_from_loaded_sleeves() -> None:
                 consumers=(SleeveName("trend"),),
             ),
         ),
+        # Golden: an all-daily roster derives the weekday convention.
+        analytics_horizon=AnalyticsHorizon("1D", 252),
     )
 
 

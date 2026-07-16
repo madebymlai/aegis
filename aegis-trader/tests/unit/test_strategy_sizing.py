@@ -14,6 +14,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_trader.data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
+from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.pipeline import (
@@ -143,7 +144,7 @@ def test_pipeline_collects_sizing_params_by_native_instrument_id() -> None:
         book_state=_BookState(),
         market_data=_MarketData(),
         book=assemble_test_book(book, {"uk.whl": bundle}),
-        ledger=SleeveLedger(),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
 
     pipeline.rebalance(

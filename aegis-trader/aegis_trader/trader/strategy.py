@@ -162,8 +162,10 @@ class RebalanceStrategy(Strategy):
         self._book_state: BookStatePort | None = None
         self._market_data: MarketDataPort | None = None
         self._roll_desk: RollDesk | None = None
-        # Pure cross-period analytics ledger is injected into the per-period pipeline.
-        self._sleeve_ledger: SleeveLedger = SleeveLedger()
+        # Pure cross-period analytics ledger is injected into the per-period
+        # pipeline; built in ``register_book`` where the Book's derived
+        # analytics horizon first becomes known (aegis-rd-cy7l).
+        self._sleeve_ledger: SleeveLedger | None = None
         self._pipeline: RebalancePipeline | None = None
         self._last_attribution: dict[SleeveName, float] = {}
         self._last_book_skew: float | None = None
@@ -178,6 +180,7 @@ class RebalanceStrategy(Strategy):
                 "assembled Book Config differs from the strategy's configured Book Config"
             )
         self._assembled_book = book
+        self._sleeve_ledger = SleeveLedger(horizon=book.analytics_horizon)
 
     @property
     def last_attribution(self) -> dict[SleeveName, float]:
@@ -218,6 +221,11 @@ class RebalanceStrategy(Strategy):
         if self._roll_desk is None:
             raise RuntimeError("roll desk queried before on_start wired it")
         return self._roll_desk
+
+    def _require_sleeve_ledger(self) -> SleeveLedger:
+        if self._sleeve_ledger is None:
+            raise RuntimeError("sleeve ledger queried before book registration built it")
+        return self._sleeve_ledger
 
     def _build_roll_desk(self) -> RollDesk:
         # Operational dependencies only: bundle contracts are unioned into coherent
@@ -270,10 +278,15 @@ class RebalanceStrategy(Strategy):
             resolver=self._bar_type_resolver,
         )
 
+        horizon = assembled_book.analytics_horizon
+        self.log.info(
+            f"Analytics horizon: {horizon.bucket_timeframe} "
+            f"({horizon.periods_per_year} periods/yr), derived from the roster"
+        )
         boot = bootstrap(
             now=self.clock.utc_now(),
             book=assembled_book,
-            ledger=self._sleeve_ledger,
+            ledger=self._require_sleeve_ledger(),
             book_state=self._require_book_state(),
             market_data=self._require_market_data(),
             roll_desk=roll_desk,

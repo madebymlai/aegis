@@ -13,6 +13,7 @@ from aegis_runtime import DriftBand, ExecutionBundle
 
 from aegis_trader.bundles.bands import BundleBands, InstrumentBandError
 from aegis_trader.bundles.port import BundleRegistryPort
+from aegis_trader.domain.analytics_horizon import AnalyticsHorizon, derive_horizon
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.streams import MarketStream, StreamRequirement, stream_sort_key
 from aegis_trader.domain.types import SleeveName
@@ -67,6 +68,9 @@ class AssembledBook:
     continuous_history_bars: _Mapping[str, int]
     sleeve_streams: _Mapping[SleeveName, tuple[MarketStream, ...]]
     required_streams: tuple[StreamRequirement, ...]
+    # Derived from the roster's declared cadences — the Book's one bucketing
+    # and annualization fact (aegis-rd-cy7l).
+    analytics_horizon: AnalyticsHorizon
 
 
 def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> AssembledBook:
@@ -89,6 +93,9 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
         continuous_history_bars=_continuous_history_bars(sleeves),
         sleeve_streams=_sleeve_streams(sleeves),
         required_streams=_required_streams(sleeves),
+        analytics_horizon=derive_horizon(
+            tuple(bundle.contract.timeframe for bundle in sleeves.values())
+        ),
     )
 
 

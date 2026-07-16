@@ -64,6 +64,17 @@ completed period; the whole **Commingled Book** is still allocated and netted
 centrally on every due update. Missing required data fails or holds explicitly.
 _Avoid_: backtest timeframe, book-wide timeframe, implicit resampling
 
+**Analytics Horizon**:
+The **Commingled Book**'s one bucketing-and-annualization fact: how observation
+timestamps group into return rows (`bucket_of`, epoch-floor with the weekend
+fold under the weekday convention) and how many rows a year holds. Derived at
+Book assembly from the roster's declared **Sleeve** cadences — width is the
+slowest cadence floored at one day; the count comes from an internal
+convention table (1D→252, 1W→52) — never from operator config and never from
+data. Consumers (the Sleeve Ledger and performance reporting) receive it as a
+required parameter; trading cadence stays per-Sleeve and untouched.
+_Avoid_: annualization config, inferred horizon, per-sleeve horizon
+
 **Security Master**:
 The resolution of an **InstrumentId** to its live, tradable venue contract — a
 *responsibility fulfilled by vendor-native services, not a bespoke Aegis module* (ADR-0005, root ADR-0007).

@@ -3,21 +3,22 @@
 The ledger owns the Book's timestamped market-observation history and answers
 the analytics that need it: realized sleeve covariance, realized book skew,
 per-sleeve P&L attribution, and current drawdown.  It alone owns event
-ordering, same-timestamp idempotency, held marks and targets, UTC-day
-compounding, complete daily return rows, the internal equity-Book
-annualization convention, insufficient-history behavior, and continuous-future
-rebasing (aegis-rd-9qkr.7).  It performs no I/O.
+ordering, same-timestamp idempotency, held marks and targets, within-bucket
+compounding, complete bucket return rows, insufficient-history behavior, and
+continuous-future rebasing (aegis-rd-9qkr.7).  It performs no I/O.
 
 Timing contract:
 
 - Drawdown and attribution run at event cadence over every recorded
   observation, so genuine intraday Book risk stays visible.
-- Covariance and realized book skew consume only completed UTC-day rows —
-  the last observation of each day whose completion a later day's timestamp
-  has proven.  A Sleeve callback count is never a statistical horizon.
+- Covariance and realized book skew consume only completed horizon-bucket
+  rows — the last observation of each bucket of the Book's derived
+  :class:`AnalyticsHorizon` (aegis-rd-cy7l), whose completion a later
+  bucket's timestamp has proven.  A Sleeve callback count is never a
+  statistical horizon.
 - A held mark contributes zero movement while a venue is closed; the next
-  valid mark realizes the gap return on that later day.  The first observed
-  day seeds the basis and yields no return row.
+  valid mark realizes the gap return in that later bucket.  The first
+  observed bucket seeds the basis and yields no return row.
 """
 
 from __future__ import annotations
@@ -27,20 +28,19 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
-from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.rebasing import Rebasing
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import portfolio_skew
-from aegis_trader.domain.annualization import EQUITY_BOOK_ANNUALIZATION_PERIODS
+from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.domain.attribution import AttributionPeriod, compute_sleeve_attribution
 from aegis_trader.domain.types import SleeveName
 
+# Row-count minimums are horizon-bucket counts: 20 days under a daily horizon,
+# 20 weeks under a weekly one (research prerequisite: revalidate per horizon).
 MIN_SLEEVE_VOL_RETURNS = 20
 MIN_BOOK_SKEW_RETURNS = 8
 EWMA_COVARIANCE_ALPHA = 0.06
-
-_NS_PER_DAY = timeframe_to_ns("1D")
 
 
 @dataclass(frozen=True)
@@ -75,7 +75,10 @@ class DecreasingTimestampError(ValueError):
 class SleeveLedger:
     """Accumulate timestamped Book observations and answer book analytics."""
 
-    def __init__(self) -> None:
+    def __init__(self, horizon: AnalyticsHorizon) -> None:
+        # Required, never defaulted: a defaulted horizon would let a future
+        # construction site silently annualize a weekly Book at 252.
+        self._horizon = horizon
         self._timestamps: list[int] = []
         self._observations: list[AttributionPeriod] = []
 
@@ -148,20 +151,22 @@ class SleeveLedger:
         *,
         min_returns: int = MIN_SLEEVE_VOL_RETURNS,
     ) -> dict[SleeveName, dict[SleeveName, float]] | None:
-        """Annualized EWMA covariance over complete UTC-daily sleeve return rows.
+        """Annualized EWMA covariance over complete horizon-bucket sleeve return rows.
 
-        Until every requested sleeve has enough complete, non-degenerate daily
-        returns, return ``None`` so the caller can use its base allocation
-        rather than an undefined covariance matrix.
+        Until every requested sleeve has enough complete, non-degenerate
+        bucket returns, return ``None`` so the caller can use its base
+        allocation rather than an undefined covariance matrix.
         """
         sleeve_names = tuple(names)
-        days = self._completed_daily_snapshots()
-        if len(days) < min_returns + 1:
+        buckets = self._completed_bucket_snapshots()
+        if len(buckets) < min_returns + 1:
             return None
-        rows = _complete_sleeve_return_rows(days[-(min_returns + 1):], sleeve_names)
+        rows = _complete_sleeve_return_rows(buckets[-(min_returns + 1):], sleeve_names)
         if len(rows) < min_returns:
             return None
-        return _annualized_covariance_by_sleeve(sleeve_names, rows)
+        return _annualized_covariance_by_sleeve(
+            sleeve_names, rows, periods_per_year=float(self._horizon.periods_per_year)
+        )
 
     def realized_book_skew(
         self,
@@ -170,10 +175,10 @@ class SleeveLedger:
         *,
         min_returns: int = MIN_BOOK_SKEW_RETURNS,
     ) -> float | None:
-        """Realized skew of the weighted daily book stream, or ``None`` if too short."""
+        """Realized skew of the weighted bucket book stream, or ``None`` if too short."""
         sleeve_names = tuple(names)
         rows = _complete_sleeve_return_rows(
-            self._completed_daily_snapshots(), sleeve_names
+            self._completed_bucket_snapshots(), sleeve_names
         )
         if len(rows) < min_returns:
             return None
@@ -193,20 +198,20 @@ class SleeveLedger:
         drawdown = 1.0 - float(current_nav) / peak
         return min(max(drawdown, 0.0), 1.0)
 
-    def _completed_daily_snapshots(self) -> list[AttributionPeriod]:
-        """The last observation of each completed UTC day, in day order.
+    def _completed_bucket_snapshots(self) -> list[AttributionPeriod]:
+        """The last observation of each completed horizon bucket, in order.
 
-        The latest observed day is never returned: only a later day's
-        timestamp proves a day complete, so the current (possibly still open)
-        day stays out of risk inputs.
+        The latest observed bucket is never returned: only a later bucket's
+        timestamp proves a bucket complete, so the current (possibly still
+        open) bucket stays out of risk inputs.
         """
-        by_day: dict[int, AttributionPeriod] = {}
+        by_bucket: dict[int, AttributionPeriod] = {}
         for timestamp, period in zip(self._timestamps, self._observations, strict=True):
-            by_day[timestamp // _NS_PER_DAY] = period
-        if not by_day:
+            by_bucket[self._horizon.bucket_of(timestamp)] = period
+        if not by_bucket:
             return []
-        days = sorted(by_day)
-        return [by_day[day] for day in days[:-1]]
+        buckets = sorted(by_bucket)
+        return [by_bucket[bucket] for bucket in buckets[:-1]]
 
 
 def _rebased_period(
@@ -279,10 +284,12 @@ def _return_series_by_sleeve(
 def _annualized_covariance_by_sleeve(
     names: tuple[SleeveName, ...],
     rows: Sequence[Sequence[float]],
+    *,
+    periods_per_year: float,
 ) -> dict[SleeveName, dict[SleeveName, float]] | None:
     covariance = _ewma_covariance(rows, alpha=EWMA_COVARIANCE_ALPHA)
     covariance = _shrink_covariance(covariance, _ledoit_wolf_intensity(rows))
-    covariance *= EQUITY_BOOK_ANNUALIZATION_PERIODS
+    covariance *= periods_per_year
     if not np.all(np.isfinite(covariance)):
         return None
     if np.any(np.diag(covariance) <= 0.0):

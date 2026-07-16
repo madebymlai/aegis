@@ -41,6 +41,7 @@ from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
 from aegis_trader.data import wrangle_bars, wrangle_fx_quotes, wrangle_quote_bars
+from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.domain.streams import MarketStream
@@ -104,6 +105,7 @@ class BookBacktestResult:
 
     engine: BacktestEngine
     financing_totals: dict[str, float]
+    analytics_horizon: AnalyticsHorizon
 
 
 class BacktestDataSource(Protocol):
@@ -261,7 +263,11 @@ def run_book_backtest(
     financing_totals = (
         financing_module.totals.by_currency if financing_module is not None else {}
     )
-    return BookBacktestResult(engine=engine, financing_totals=financing_totals)
+    return BookBacktestResult(
+        engine=engine,
+        financing_totals=financing_totals,
+        analytics_horizon=assembled_book.analytics_horizon,
+    )
 
 
 def _stream_load_groups(
@@ -328,11 +334,13 @@ def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | N
     return provider
 
 
-def book_return_stats(engine: BacktestEngine) -> dict[str, float]:
+def book_return_stats(
+    engine: BacktestEngine, horizon: AnalyticsHorizon
+) -> dict[str, float]:
     """Base-currency return statistics for a finished book backtest."""
     for actor in engine.trader.actors():
         if isinstance(actor, BookEquityRecorder):
-            return return_stats(actor.equity_curve)
+            return return_stats(actor.equity_curve, horizon=horizon)
     return {}
 
 
