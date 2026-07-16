@@ -60,7 +60,6 @@ class AssembledBook:
     config: BookConfig
     sleeves: _Mapping[SleeveName, ExecutionBundle]
     loadable_instrument_ids: tuple[InstrumentId, ...]
-    required_bar_window: int
     requires_margin: bool
     bands: BundleBands
     continuous_declarations: _Mapping[str, ContinuousRootDeclaration]
@@ -79,10 +78,6 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
         config=book_config,
         sleeves=sleeves,
         loadable_instrument_ids=_loadable_instrument_ids(sleeves),
-        required_bar_window=max(
-            bundle.contract.lookback_bars for bundle in sleeves.values()
-        )
-        + 1,
         requires_margin=any(
             bundle.direction in {"both", "shortonly"}
             for bundle in sleeves.values()

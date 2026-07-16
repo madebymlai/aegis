@@ -54,11 +54,15 @@ exposure caps, and drift bands. Inert — it selects trusted artifacts and param
 only; it is the live counterpart of Aegis RD's **Run Config**.
 _Avoid_: book manifest, manifest, portfolio config, roster
 
-**Backtest Timeframe**:
-The single bar timeframe a Trader backtest runs for all installed **Sleeves** in
-one **Commingled Book**. A backtest with mixed bundle timeframes is a closed
-failure, not a multi-timeframe simulation.
-_Avoid_: per-sleeve timeframe, mixed cadence backtest, implicit resampling
+**Market-Data Stream**:
+One instrument consumed at one bar timeframe — the pure-domain mirror of a
+Nautilus `BarType` subscription. Each **Sleeve** trades at its own **Execution
+Bundle** cadence: Book assembly derives every Sleeve's required streams and
+exposes the deduplicated Book union, and the runtime subscribes, warms, loads,
+and reads each stream independently. A Sleeve recomputes only on its own
+completed period; the whole **Commingled Book** is still allocated and netted
+centrally on every due update. Missing required data fails or holds explicitly.
+_Avoid_: backtest timeframe, book-wide timeframe, implicit resampling
 
 **Security Master**:
 The resolution of an **InstrumentId** to its live, tradable venue contract — a

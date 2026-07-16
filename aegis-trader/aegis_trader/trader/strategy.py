@@ -16,12 +16,14 @@ RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
 max-notional caps from NAV; the strategy logs every ``OrderDenied`` event
 so operators can trace rejected orders.
 
-Slice 6 — cadence (per-sleeve timeframe + calendar-aware):
-- Each sleeve rebalances off bar-close at its own DataContract.timeframe.
-- Debounced: one re-net per completed period, not per-instrument-bar churn.
+Per-Sleeve cadence (aegis-rd-9qkr):
+- Each Sleeve rebalances off bar-close at its own DataContract.timeframe;
+  its clock advances only on bars of streams it consumes.
+- Debounced: one recomputation per completed Sleeve period; same-timestamp
+  due transitions coalesce into one deterministic Book re-net.
 - Calendar-aware: orders emitted only for instruments whose venue is open
-  (had a fresh bar during the completed period).
-- Drift is evaluated every period even on an unchanged target.
+  (had a fresh bar during the relevant Sleeve period).
+- Drift is evaluated on every due update even on an unchanged target.
 
 Slice 7 - reconciliation (integrity-halt): an account-integrity check at
 startup (cache health, account ID, NAV/cash consistency) halts the book
@@ -116,12 +118,13 @@ class BookConfigMismatchError(ValueError):
 class RebalanceStrategy(Strategy):
     """Commingled-book rebalance overlay — submits orders NEXT-CLOSE.
 
-    Per-sleeve timeframe cadence (Slice 6):
-    - When the period (day) changes, a rebalance is triggered for the
-      *completed* period using the Cache-backed rolling bar window.
-    - Each sleeve's bundle computes targets from its own Cache-backed bars,
-      netted across sleeves, and orders are emitted only for instruments
-      whose venue was open (had a Cache bar) during the completed period.
+    Per-Sleeve timeframe cadence (aegis-rd-9qkr):
+    - When a Sleeve's own period completes, that Sleeve recomputes from the
+      Cache-backed completed-period window; every other Sleeve retains its
+      latest valid target.
+    - Due transitions at one event timestamp coalesce into one re-net that
+      allocates and nets the whole retained Book, and orders are emitted only
+      for instruments whose venue was open during the relevant Sleeve period.
     """
 
     def __init__(

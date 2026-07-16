@@ -73,8 +73,10 @@ what research validated, never loosen it. See `book.example.toml` for the full
 field reference, including drawdown de-lever, drift bands, the tail-convexity
 budget, and backtest cost models.
 
-All sleeves in one backtest must share a single bar timeframe. A mixed-timeframe
-book is a closed failure, not an implicit resample.
+Each sleeve runs at its own bundle-declared bar timeframe: an hourly and a
+daily sleeve trade side by side, each recomputing only on its own completed
+period while the book is re-netted centrally. Missing required data fails or
+holds explicitly — never an implicit resample.
 
 ## Broker connection
 

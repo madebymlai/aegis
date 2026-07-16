@@ -82,7 +82,6 @@ def test_assemble_book_derives_every_book_fact_from_loaded_sleeves() -> None:
             SleeveName("trend"): trend_bundle,
         },
         loadable_instrument_ids=(_AAPL, _EURUSD, _MSFT),
-        required_bar_window=42,
         requires_margin=True,
         continuous_history_bars={"ES": 42},
         bands=BundleBands(
@@ -413,7 +412,7 @@ def test_assembled_book_fields_are_frozen() -> None:
     assembled = assemble_book(config, registry)
 
     with pytest.raises(FrozenInstanceError):
-        cast(Any, assembled).required_bar_window = 7
+        cast(Any, assembled).requires_margin = False
 
 
 def test_assembled_book_sleeve_mapping_is_frozen() -> None:

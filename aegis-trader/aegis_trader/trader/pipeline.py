@@ -35,7 +35,7 @@ from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
 from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain import startup as _startup
-from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
+from aegis_trader.domain.types import OrderIntent, SleeveName
 from aegis_trader.trader._rebalancer import (
     PerNameExposureBreach,
     RebalancePlan,

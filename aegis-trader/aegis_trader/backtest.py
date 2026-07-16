@@ -217,7 +217,11 @@ def run_book_backtest(
             trader_id=trader_id,
             bar_capacity=max(
                 DEFAULT_BACKTEST_BAR_CAPACITY,
-                assembled_book.required_bar_window,
+                *(
+                    requirement.history_bars
+                    for requirement in assembled_book.required_streams
+                ),
+                *assembled_book.continuous_history_bars.values(),
             ),
             # Quote-marked legs mark P&L at the quote mid via MarkPriceUpdate;
             # bar-marked legs fall back to their bar close.
