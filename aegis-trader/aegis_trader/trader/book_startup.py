@@ -30,7 +30,7 @@ from aegis_trader.trader.pipeline import RebalancePipeline
 _DAILY_WARMUP_CALENDAR_MULTIPLIER: int = 3
 _INTRADAY_WARMUP_CALENDAR_MULTIPLIER: int = 6
 
-_NS_PER_DAY: int = 86_400_000_000_000
+_NS_PER_DAY: int = timeframe_to_ns("1D")
 
 
 class RollStartupPort(Protocol):

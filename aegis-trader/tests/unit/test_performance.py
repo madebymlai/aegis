@@ -51,3 +51,27 @@ def test_return_stats_sharpe_is_the_annualized_mean_over_std():
 def test_return_stats_of_empty_curve_is_empty():
     """No equity samples -> no stats to report (reporting never fails closed)."""
     assert return_stats(pd.Series(dtype=float)) == {}
+
+
+def test_intraday_sampling_matches_daily_sampling_for_the_same_economic_path():
+    """aegis-rd-9qkr.7: equivalent daily paths with one versus many intraday
+    NAV observations produce equivalent annualized statistics — Nautilus
+    compounds intraday returns into daily returns natively."""
+    daily_index = pd.DatetimeIndex(
+        ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-06"], tz="UTC"
+    )
+    daily_navs = [1_000_000.0, 1_010_000.0, 990_000.0, 1_005_000.0]
+    daily = pd.Series(daily_navs, index=daily_index)
+
+    intraday_points = {}
+    for day, nav in zip(daily_index, daily_navs, strict=True):
+        intraday_points[day + pd.Timedelta(hours=10)] = nav * 1.003
+        intraday_points[day + pd.Timedelta(hours=13)] = nav * 0.998
+        intraday_points[day + pd.Timedelta(hours=16)] = nav
+    intraday = pd.Series(intraday_points).sort_index()
+
+    daily_stats = return_stats(daily)
+    intraday_stats = return_stats(intraday)
+
+    for key in ("Sharpe Ratio (252 days)", "Returns Volatility (252 days)", "Sortino Ratio (252 days)"):
+        assert intraday_stats[key] == pytest.approx(daily_stats[key])

@@ -27,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
+from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.rebasing import Rebasing
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -39,7 +40,7 @@ MIN_SLEEVE_VOL_RETURNS = 20
 MIN_BOOK_SKEW_RETURNS = 8
 EWMA_COVARIANCE_ALPHA = 0.06
 
-_NS_PER_DAY = 86_400_000_000_000
+_NS_PER_DAY = timeframe_to_ns("1D")
 
 
 @dataclass(frozen=True)
@@ -77,9 +78,6 @@ class SleeveLedger:
     def __init__(self) -> None:
         self._timestamps: list[int] = []
         self._observations: list[AttributionPeriod] = []
-        # Held marks as of the observation BEFORE the latest one — the merge
-        # base that makes same-timestamp replacement idempotent.
-        self._marks_before_last: dict[InstrumentId, float] = {}
 
     @property
     def observation_count(self) -> int:
@@ -94,21 +92,19 @@ class SleeveLedger:
     def record(self, observation: BookObservation) -> None:
         """Record one timestamped full-Book market observation.
 
-        Re-recording at the last timestamp replaces that observation without
-        creating another return interval; a decreasing timestamp fails fast.
+        Re-recording at the last timestamp folds into that observation without
+        creating another return interval — simultaneous partial marks
+        accumulate, and recording the same observation twice is a no-op.  A
+        decreasing timestamp fails fast.
         """
         last_timestamp = self._timestamps[-1] if self._timestamps else None
         if last_timestamp is not None and observation.timestamp_ns < last_timestamp:
             raise DecreasingTimestampError(observation.timestamp_ns, last_timestamp)
 
         replacing = last_timestamp is not None and observation.timestamp_ns == last_timestamp
-        base_marks = (
-            self._marks_before_last
-            if replacing
-            else (dict(self._observations[-1].closes) if self._observations else {})
-        )
+        held_marks = dict(self._observations[-1].closes) if self._observations else {}
         merged_marks = {
-            **base_marks,
+            **held_marks,
             **{
                 instrument_id: float(mark)
                 for instrument_id, mark in observation.marks.items()
@@ -127,7 +123,6 @@ class SleeveLedger:
         if replacing:
             self._observations[-1] = period
             return
-        self._marks_before_last = dict(base_marks)
         self._timestamps.append(observation.timestamp_ns)
         self._observations.append(period)
 
@@ -146,10 +141,6 @@ class SleeveLedger:
         if not rebasings:
             return
         self._observations = [_rebased_period(period, rebasings) for period in self._observations]
-        self._marks_before_last = {
-            ref: (rebasings[ref].apply(close) if ref in rebasings else close)
-            for ref, close in self._marks_before_last.items()
-        }
 
     def realized_covariance(
         self,

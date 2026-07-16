@@ -354,3 +354,21 @@ def test_current_drawdown_uses_every_event_nav_plus_current_nav():
     drawdown = ledger.current_drawdown(96.0)
 
     assert drawdown == pytest.approx(0.20)
+
+
+def test_simultaneous_partial_marks_accumulate_within_one_timestamp():
+    """Two instruments' bars land at the same event time as separate partial
+    observations: both marks survive into the day's snapshot."""
+    ledger = SleeveLedger()
+    _observe(ledger, timestamp_ns=0 * _DAY_NS, closes={_A: 100.0, _B: 100.0})
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_A: 110.0})
+    _observe(ledger, timestamp_ns=1 * _DAY_NS, closes={_B: 95.0})
+    _observe(ledger, timestamp_ns=2 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+    _observe(ledger, timestamp_ns=3 * _DAY_NS, closes={_A: 88.0, _B: 104.5})
+
+    covariance = ledger.realized_covariance((_TREND, _CARRY), min_returns=2)
+
+    assert covariance == {
+        _TREND: {_TREND: pytest.approx(1.3608), _CARRY: pytest.approx(-0.6804)},
+        _CARRY: {_TREND: pytest.approx(-0.6804), _CARRY: pytest.approx(0.3402)},
+    }

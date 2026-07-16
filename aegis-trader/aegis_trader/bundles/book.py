@@ -92,15 +92,18 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
     )
 
 
+def _contract_history_bars(bundle: ExecutionBundle) -> int:
+    """The bar count a bundle's compute needs: its lookback plus the decision bar."""
+    return bundle.contract.lookback_bars + 1
+
+
 def _continuous_history_bars(
     sleeves: _Mapping[SleeveName, ExecutionBundle],
 ) -> _Mapping[str, int]:
     history: dict[str, int] = {}
     for bundle in sleeves.values():
         for root in bundle.contract.futures:
-            history[root] = max(
-                history.get(root, 0), bundle.contract.lookback_bars + 1
-            )
+            history[root] = max(history.get(root, 0), _contract_history_bars(bundle))
     return _MappingProxyType(dict(sorted(history.items())))
 
 
@@ -129,7 +132,7 @@ def _required_streams(
     history_bars: dict[MarketStream, int] = {}
     consumers: dict[MarketStream, dict[SleeveName, None]] = {}
     for sleeve_name, bundle in sleeves.items():
-        needed = bundle.contract.lookback_bars + 1
+        needed = _contract_history_bars(bundle)
         for instrument_id in bundle.contract.loadable_instrument_ids:
             stream = MarketStream(instrument_id, bundle.contract.timeframe)
             history_bars[stream] = max(history_bars.get(stream, 0), needed)

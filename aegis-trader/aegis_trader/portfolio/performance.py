@@ -114,11 +114,17 @@ def return_stats(equity: pd.Series) -> dict[str, float]:
 
     A fresh ``PortfolioAnalyzer`` has no statistics registered (the engine's
     Portfolio registers them), so the default return-based set is registered here
-    before feeding the per-bar returns derived from the equity curve.  The
-    base-currency headline ``Total Return (%)`` (end/start - 1) is added too.
-    An equity curve with no return (fewer than two points) yields no stats.
+    before feeding the returns derived from the equity curve.  The curve is
+    sampled at each UTC day's last NAV first: annualized statistics consume one
+    return per completed day, so a faster stream's intraday callbacks can never
+    multiply the sample count (aegis-rd-9qkr.7) — statistics themselves stay
+    Nautilus-native.  The base-currency headline ``Total Return (%)``
+    (end/start - 1) is added over the full event-time curve.  An equity curve
+    with no return (fewer than two points) yields no stats.
     """
-    returns = equity.pct_change().dropna()
+    if len(equity) < 2:
+        return {}
+    returns = equity.resample("1D").last().dropna().pct_change().dropna()
     if returns.empty:
         return {}
     analyzer = PortfolioAnalyzer()

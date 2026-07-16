@@ -332,7 +332,9 @@ class RebalanceStrategy(Strategy):
         if self._apply_roll_intents(self._require_roll_desk().on_bar(bar)):
             return
 
-        derived_mark = self._publish_derived_mark(bar)
+        derived_mark = self._resolve_derived_mark(bar)
+        if derived_mark is not None:
+            self._publish_mark(*derived_mark, bar=bar)
         self._record_market_observation(bar, derived_mark)
 
         for sleeve_name in self._bar_consumers(bar.bar_type):
@@ -420,8 +422,18 @@ class RebalanceStrategy(Strategy):
         if derived_mark is not None:
             instrument_id, mark = derived_mark
         else:
-            instrument_id, mark = bar.bar_type.instrument_id, float(bar.close)
+            instrument_id, mark = self._observed_instrument(bar), float(bar.close)
         self._pipeline.record_market_observation(bar.ts_event, {instrument_id: mark})
+
+    def _observed_instrument(self, bar: Bar) -> InstrumentId:
+        """The identity a bar marks: a dated front leg marks its continuous
+        root (targets and ledger closes key the root), a cash bar itself."""
+        continuous_id = self._require_roll_desk().continuous_id(
+            bar.bar_type.instrument_id
+        )
+        if continuous_id is not None:
+            return continuous_id
+        return bar.bar_type.instrument_id
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -481,15 +493,13 @@ class RebalanceStrategy(Strategy):
     def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
         return self._bar_type_resolver.resolve(instrument_id, timeframe).mark_bars
 
-    def _publish_derived_mark(self, bar: Bar) -> tuple[InstrumentId, float] | None:
-        """Publish a quote-marked leg's derived mid mark from its completed pair.
+    def _resolve_derived_mark(self, bar: Bar) -> tuple[InstrumentId, float] | None:
+        """The quote-marked mid mark a bar completes, or ``None``.
 
-        The one marking path research and live share (aegis-rd-tggo.3/.5): the
-        mark is ``reference_price = (bid + ask) / 2`` over the leg's own BID/ASK
-        bars, handed to the Portfolio exactly as the data engine would deliver a
-        vendor mark (cache + the mark-prices topic).  Resolution follows the
-        bar's own stream, never a Book-wide timeframe.  A bar-marked leg publishes
-        nothing — its bar close is the native valuation.
+        The one marking derivation research and live share (aegis-rd-tggo.3/.5):
+        ``reference_price = (bid + ask) / 2`` over the leg's own BID/ASK bars.
+        Resolution follows the bar's own stream, never a Book-wide timeframe.
+        A bar-marked leg derives nothing — its bar close is the native valuation.
         """
         timeframe = self._timeframe_by_bar_type.get(bar.bar_type)
         if timeframe is None:
@@ -500,8 +510,13 @@ class RebalanceStrategy(Strategy):
         )
         if mark is None:
             return None
+        return (marking.instrument_id, mark)
+
+    def _publish_mark(self, instrument_id: InstrumentId, mark: float, bar: Bar) -> None:
+        """Hand a derived mark to the Portfolio exactly as the data engine
+        would deliver a vendor mark (cache + the mark-prices topic)."""
         update = MarkPriceUpdate(
-            instrument_id=marking.instrument_id,
+            instrument_id=instrument_id,
             value=mark,
             ts_event=bar.ts_event,
             ts_init=bar.ts_init,
@@ -510,10 +525,9 @@ class RebalanceStrategy(Strategy):
         # The data engine's own mark-price delivery topic: the Portfolio
         # (use_mark_prices) subscribes to it in backtest and live alike.
         self.msgbus.publish(
-            topic=f"data.mark_prices.{marking.instrument_id.venue}.{marking.instrument_id.symbol}",
+            topic=f"data.mark_prices.{instrument_id.venue}.{instrument_id.symbol}",
             msg=update,
         )
-        return (marking.instrument_id, mark)
 
     def _halt_from_roll_intent(self, intent: Halt) -> None:
         startup_result = StartupResult(
