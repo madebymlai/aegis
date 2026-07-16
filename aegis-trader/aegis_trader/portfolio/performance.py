@@ -31,10 +31,12 @@ from nautilus_trader.config import ActorConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.objects import Currency
 
+from aegis_data.bar_type import timeframe_to_ns
+
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.portfolio.book_state import NautilusBookState
 
-_NS_PER_DAY = 86_400_000_000_000
+_NS_PER_DAY = timeframe_to_ns("1D")
 
 
 class BookEquityRecorderConfig(ActorConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs

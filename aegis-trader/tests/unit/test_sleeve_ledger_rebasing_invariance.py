@@ -38,6 +38,8 @@ from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain.types import SleeveName
 from nautilus_trader.model.identifiers import InstrumentId
 
+from tests.support.weekday_grid import weekday_ns as _weekday_ns
+
 _MOM = SleeveName("mom")
 _ROOT = InstrumentId.from_str(
     "ES.XCME"
@@ -67,10 +69,6 @@ _CASES: dict[str, tuple[Rebasing, bool]] = {
 
 _DAY_NS = 86_400_000_000_000
 
-
-def _weekday_ns(index: int) -> int:
-    weeks, weekday = divmod(index, 5)
-    return (4 + weeks * 7 + weekday) * _DAY_NS
 
 
 def _record(ledger: SleeveLedger, close: float, day: int) -> None:

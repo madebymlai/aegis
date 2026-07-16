@@ -9,16 +9,12 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from aegis_data.bar_type import timeframe_to_ns
 
 from aegis_trader.domain.analytics_horizon import (
     AnalyticsHorizon,
     UnsupportedAnalyticsWidthError,
     derive_horizon,
 )
-
-_NS_PER_DAY = timeframe_to_ns("1D")
-_NS_PER_WEEK = timeframe_to_ns("1W")
 
 
 def _ns(value: str) -> int:
@@ -42,45 +38,37 @@ def test_horizon_rejects_non_positive_periods() -> None:
 
 
 def test_daily_bucket_is_bit_identical_to_epoch_day_floor_on_weekdays() -> None:
+    # Literal epoch-day indices: the same values the pre-cy7l day floor gave.
     horizon = AnalyticsHorizon(bucket_timeframe="1D", periods_per_year=252)
 
-    weekday_timestamps = [
-        _ns("2024-01-03 15:30:00"),  # Wednesday
-        _ns("2024-01-05 21:00:00"),  # Friday close
-        _ns("2026-07-16 00:00:00"),  # Thursday midnight boundary
-    ]
-
-    assert all(
-        horizon.bucket_of(ts) == ts // _NS_PER_DAY for ts in weekday_timestamps
-    )
+    assert horizon.bucket_of(_ns("2024-01-03 15:30:00")) == 19725  # Wednesday
+    assert horizon.bucket_of(_ns("2024-01-05 21:00:00")) == 19727  # Friday close
+    assert horizon.bucket_of(_ns("2026-07-16 00:00:00")) == 20650  # Thu midnight
 
 
 def test_weekend_timestamps_fold_into_the_following_monday() -> None:
     horizon = AnalyticsHorizon(bucket_timeframe="1D", periods_per_year=252)
-    monday_bucket = _ns("2024-01-08") // _NS_PER_DAY
 
     saturday = horizon.bucket_of(_ns("2024-01-06 10:00:00"))
     sunday = horizon.bucket_of(_ns("2024-01-07 22:05:00"))
 
-    assert saturday == monday_bucket
-    assert sunday == monday_bucket
+    assert saturday == 19730  # Monday 2024-01-08
+    assert sunday == 19730
 
 
 def test_epoch_weekend_folds_to_first_epoch_monday() -> None:
     # 1970-01-03 was a Saturday, 1970-01-04 a Sunday; both belong to Monday
     # 1970-01-05 — pins the epoch-Thursday day-of-week arithmetic.
     horizon = AnalyticsHorizon(bucket_timeframe="1D", periods_per_year=252)
-    monday_bucket = _ns("1970-01-05") // _NS_PER_DAY
 
-    assert horizon.bucket_of(_ns("1970-01-03 12:00:00")) == monday_bucket
-    assert horizon.bucket_of(_ns("1970-01-04 23:00:00")) == monday_bucket
+    assert horizon.bucket_of(_ns("1970-01-03 12:00:00")) == 4  # Monday 1970-01-05
+    assert horizon.bucket_of(_ns("1970-01-04 23:00:00")) == 4
 
 
 def test_weekend_fold_applies_only_to_the_weekday_convention() -> None:
     non_weekday = AnalyticsHorizon(bucket_timeframe="1D", periods_per_year=365)
-    saturday = _ns("2024-01-06 10:00:00")
 
-    assert non_weekday.bucket_of(saturday) == saturday // _NS_PER_DAY
+    assert non_weekday.bucket_of(_ns("2024-01-06 10:00:00")) == 19728  # Saturday
 
 
 # ── bucket_of: weekly buckets ─────────────────────────────────────────────
@@ -98,9 +86,8 @@ def test_weekly_buckets_are_thursday_anchored_epoch_weeks() -> None:
 
 def test_weekly_buckets_do_not_fold_weekends() -> None:
     horizon = AnalyticsHorizon(bucket_timeframe="1W", periods_per_year=52)
-    saturday = _ns("2024-01-06 10:00:00")
 
-    assert horizon.bucket_of(saturday) == saturday // _NS_PER_WEEK
+    assert horizon.bucket_of(_ns("2024-01-06 10:00:00")) == 2818  # its own week
 
 
 def test_consecutive_vendor_weekly_closes_land_in_consecutive_buckets() -> None:
@@ -108,16 +95,10 @@ def test_consecutive_vendor_weekly_closes_land_in_consecutive_buckets() -> None:
     # closes (LSE 16:30 London = 16:30 UTC in winter) must advance the bucket
     # by exactly one — the property the per-Sleeve weekly clock relies on.
     horizon = AnalyticsHorizon(bucket_timeframe="1W", periods_per_year=52)
-    friday_closes = [
-        _ns("2024-01-05 16:30:00"),
-        _ns("2024-01-12 16:30:00"),
-        _ns("2024-01-19 16:30:00"),
-    ]
 
-    buckets = [horizon.bucket_of(ts) for ts in friday_closes]
-
-    assert buckets[1] == buckets[0] + 1
-    assert buckets[2] == buckets[1] + 1
+    assert horizon.bucket_of(_ns("2024-01-05 16:30:00")) == 2818
+    assert horizon.bucket_of(_ns("2024-01-12 16:30:00")) == 2819
+    assert horizon.bucket_of(_ns("2024-01-19 16:30:00")) == 2820
 
 
 # ── derive_horizon ────────────────────────────────────────────────────────

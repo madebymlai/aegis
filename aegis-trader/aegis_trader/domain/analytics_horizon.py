@@ -68,6 +68,10 @@ class AnalyticsHorizon:
         """The bucket width in nanoseconds."""
         return timeframe_to_ns(self.bucket_timeframe)
 
+    def describe(self) -> str:
+        """One-line label for logs and run reports — the format's single owner."""
+        return f"{self.bucket_timeframe} ({self.periods_per_year} periods/yr)"
+
     def bucket_of(self, timestamp_ns: int) -> int:
         """The bucket index holding *timestamp_ns* — the single bucketing rule.
 

@@ -37,6 +37,8 @@ from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.analytics_horizon import derive_horizon
+
+from tests.support.weekday_grid import weekday_ns as _weekday_ns
 from aegis_trader.domain.sleeve_ledger import (
     MIN_SLEEVE_VOL_RETURNS,
     SleeveLedger,
@@ -53,14 +55,6 @@ from tests.support.factories import assemble_test_book
 
 NAV = 1_000_000.0
 _DAY_NS = 86_400_000_000_000
-
-
-def _weekday_ns(index: int) -> int:
-    """The *index*-th weekday since Monday 1970-01-05 as a UTC timestamp —
-    observation stamps never land on weekends, matching real daily bars
-    (aegis-rd-cy7l weekend fold)."""
-    weeks, weekday = divmod(index, 5)
-    return (4 + weeks * 7 + weekday) * _DAY_NS
 
 
 def iid(symbol: str) -> InstrumentId:

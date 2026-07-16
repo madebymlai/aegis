@@ -17,6 +17,8 @@ from aegis_trader.domain.sleeve_ledger import (
     _shrink_covariance,
 )
 from aegis_trader.domain.types import SleeveName
+
+from tests.support.weekday_grid import weekday_ns as _weekday_ns
 from nautilus_trader.model.identifiers import InstrumentId
 
 
@@ -35,15 +37,6 @@ _HOUR_NS = 3_600_000_000_000
 _WEEK_NS = 7 * _DAY_NS
 _DAILY = derive_horizon(("1D",))
 _WEEKLY = derive_horizon(("1W",))
-
-
-def _weekday_ns(index: int) -> int:
-    """The *index*-th weekday since Monday 1970-01-05, as a UTC day timestamp.
-
-    Daily bars never stamp weekends; mapping test day indices onto weekdays
-    keeps the fixtures realistic under the weekend fold (aegis-rd-cy7l)."""
-    weeks, weekday = divmod(index, 5)
-    return (4 + weeks * 7 + weekday) * _DAY_NS
 
 
 def _observe(

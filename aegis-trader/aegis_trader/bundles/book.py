@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging as _logging
 from collections.abc import Mapping as _Mapping
 from dataclasses import dataclass as _dataclass
 from types import MappingProxyType as _MappingProxyType
@@ -17,6 +18,8 @@ from aegis_trader.domain.analytics_horizon import AnalyticsHorizon, derive_horiz
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.streams import MarketStream, StreamRequirement, stream_sort_key
 from aegis_trader.domain.types import SleeveName
+
+_log = _logging.getLogger(__name__)
 
 @_dataclass(frozen=True)
 class ContinuousRootDeclaration:
@@ -77,6 +80,12 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
     """Resolve every Sleeve and prove all structural Commingled Book invariants."""
     sleeves = _load_sleeves(book_config, registry)
     continuous_declarations = _continuous_declarations(sleeves)
+    analytics_horizon = derive_horizon(
+        tuple(bundle.contract.timeframe for bundle in sleeves.values())
+    )
+    _log.info(
+        "Analytics horizon: %s, derived from the roster", analytics_horizon.describe()
+    )
 
     return AssembledBook(
         config=book_config,
@@ -93,9 +102,7 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
         continuous_history_bars=_continuous_history_bars(sleeves),
         sleeve_streams=_sleeve_streams(sleeves),
         required_streams=_required_streams(sleeves),
-        analytics_horizon=derive_horizon(
-            tuple(bundle.contract.timeframe for bundle in sleeves.values())
-        ),
+        analytics_horizon=analytics_horizon,
     )
 
 

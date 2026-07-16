@@ -42,11 +42,7 @@ def _run_backtest(args: argparse.Namespace) -> int:
         "Backtest complete: %d fill(s) over %s..%s", len(fills), args.start, args.end
     )
     horizon = backtest.analytics_horizon
-    _log.info(
-        "Analytics horizon: %s (%d periods/yr), derived from the roster",
-        horizon.bucket_timeframe,
-        horizon.periods_per_year,
-    )
+    _log.info("Analytics horizon: %s", horizon.describe())
     _log_performance(result, book_return_stats(engine, horizon), backtest.financing_totals)
     engine.dispose()
     return 0

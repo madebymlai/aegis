@@ -278,11 +278,6 @@ class RebalanceStrategy(Strategy):
             resolver=self._bar_type_resolver,
         )
 
-        horizon = assembled_book.analytics_horizon
-        self.log.info(
-            f"Analytics horizon: {horizon.bucket_timeframe} "
-            f"({horizon.periods_per_year} periods/yr), derived from the roster"
-        )
         boot = bootstrap(
             now=self.clock.utc_now(),
             book=assembled_book,
