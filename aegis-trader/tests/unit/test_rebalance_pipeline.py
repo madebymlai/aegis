@@ -31,8 +31,10 @@ from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
+    DueSleeve,
     GateOutcome,
     RebalancePipeline,
+    RebalanceRequest,
 )
 from tests.support.factories import assemble_test_book
 
@@ -403,6 +405,14 @@ def _period() -> CompletedRebalancePeriod:
     return CompletedRebalancePeriod(period=1, period_ns=_DAY_NS)
 
 
+def _all_due(*names: SleeveName) -> RebalanceRequest:
+    period = _period()
+    due_names = names or (_SLEEVE,)
+    return RebalanceRequest(
+        due=tuple(DueSleeve(sleeve=name, period=period) for name in due_names)
+    )
+
+
 def _record_close(ledger: SleeveLedger, close: float) -> None:
     ledger.record(
         nav=100.0,
@@ -451,7 +461,7 @@ def _started_pipeline(
 
 
 def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
-    result = _started_pipeline().rebalance_period(_period())
+    result = _started_pipeline().rebalance(_all_due())
 
     assert result.orders[0].instrument_id == _INSTRUMENT_ID
     assert result.orders[0].side == OrderSide.BUY
@@ -485,7 +495,7 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
     )
 
     startup_result = pipeline.startup_check()
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert startup_result.trading_enabled is True
     assert result.orders[0].instrument_id == _ES
@@ -502,7 +512,7 @@ def test_rebalance_pipeline_intersects_drop_policy_mixed_calendar_panel() -> Non
         bundle=bundle,
     )
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     expected_index = pd.DatetimeIndex([0, _DAY_NS, 4 * _DAY_NS])
     expected_close = pd.DataFrame(
@@ -547,7 +557,7 @@ def test_rebalance_pipeline_holds_when_drop_policy_has_too_few_common_bars() -> 
         bundle=bundle,
     )
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert result.orders == ()
     assert result.summary.num_sleeves == 0
@@ -565,7 +575,7 @@ def test_rebalance_pipeline_surfaces_raise_policy_misalignment_as_sleeve_failure
         bundle=_CalendarParityBundle(missing_index=MissingIndexPolicy.RAISE),
     )
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert result.orders == ()
     assert [failure.sleeve for failure in result.sleeve_failures] == [_SLEEVE]
@@ -588,7 +598,7 @@ def test_rebalance_pipeline_uses_bands_proven_by_book_assembly() -> None:
     )
 
     startup_result = pipeline.startup_check()
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert startup_result.trading_enabled is True
     assert result.orders == ()
@@ -640,7 +650,7 @@ def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
 def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instrument() -> None:
     result = _started_pipeline(
         market_data=_MarketData(fresh_instrument_ids=frozenset())
-    ).rebalance_period(_period())
+    ).rebalance(_all_due())
 
     assert result.orders == ()
     assert result.summary.num_targets == 1
@@ -652,7 +662,7 @@ def test_rebalance_pipeline_does_not_gate_held_book_when_every_sleeve_fails() ->
         book=_book(gross_cap=0.60),
         book_state=_BookState({_INSTRUMENT_ID: 0.70}),
         bundle=_PoisonFixedInstrumentBundle(0.50),
-    ).rebalance_period(_period())
+    ).rebalance(_all_due())
 
     assert result.orders == ()
     assert result.summary.gate_outcome == GateOutcome.PASS
@@ -665,7 +675,7 @@ def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
         book=_book(per_name_cap=0.5),
         book_state=_BookState({_INSTRUMENT_ID: 0.7}),
         bundle=_FixedWeightBundle(0.8),
-    ).rebalance_period(_period())
+    ).rebalance(_all_due())
 
     assert result.orders == ()
     assert result.summary.gate_outcome == GateOutcome.ERROR
@@ -750,7 +760,7 @@ def test_rebalance_pipeline_isolates_a_sleeve_whose_compute_raises() -> None:
     # the healthy sleeve still rebalances and the failure is surfaced, not raised.
     pipeline = _two_sleeve_pipeline(_FixedWeightBundle(0.5), _PoisonBundle())
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due(_SLEEVE, SleeveName("poison")))
 
     assert result.summary.gate_outcome == GateOutcome.PASS
     assert [failure.sleeve for failure in result.sleeve_failures] == [SleeveName("poison")]
@@ -766,7 +776,7 @@ def test_rebalance_pipeline_failing_sleeve_holds_without_orders() -> None:
     # no fabricated weights.
     pipeline = _two_sleeve_pipeline(_FixedWeightBundle(0.5), _PoisonBundle())
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due(_SLEEVE, SleeveName("poison")))
 
     assert _LSE_LEG not in {order.instrument_id for order in result.orders}
 
@@ -775,7 +785,7 @@ def test_rebalance_pipeline_surfaces_failures_when_every_sleeve_fails() -> None:
     # All sleeves failing must still return a result (no orders), never raise.
     pipeline = _two_sleeve_pipeline(_PoisonFixedInstrumentBundle(0.5), _PoisonBundle())
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due(_SLEEVE, SleeveName("poison")))
 
     assert result.orders == ()
     assert {failure.sleeve for failure in result.sleeve_failures} == {
@@ -878,7 +888,7 @@ def test_sleeve_compute_receives_native_prices_and_the_resolved_conversion() -> 
     bundle = _SpyConversionBundle(0.5)
     pipeline = _started_pipeline(market_data=_fx_market_data(), bundle=bundle)
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert result.sleeve_failures == ()
     assert bundle.seen_close is not None
@@ -973,7 +983,7 @@ def test_continuous_root_conversion_matches_the_research_view_under_moving_fx() 
     bundle = _SpyContinuousConversionBundle()
     pipeline = _started_pipeline(market_data=market_data, bundle=bundle)
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert result.sleeve_failures == ()
     assert bundle.seen_close is not None
@@ -1002,8 +1012,85 @@ def test_missing_fx_bars_fail_the_sleeve_closed_not_the_book() -> None:
     bundle = _SpyConversionBundle(0.5)
     pipeline = _started_pipeline(market_data=market_data, bundle=bundle)
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert bundle.seen_close is None
     assert [failure.sleeve for failure in result.sleeve_failures] == [_SLEEVE]
     assert result.orders == ()
+
+
+# ---------------------------------------------------------------------------
+# Independently due Sleeves carry their own period coordinates (aegis-rd-9qkr.2)
+# ---------------------------------------------------------------------------
+
+
+class _PeriodRecordingMarketData(_MarketData):
+    """Records the period coordinates of every lookback read, per instrument."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.read_periods: dict[InstrumentId, int] = {}
+
+    def lookback_window(
+        self,
+        instrument_id: InstrumentId,
+        _timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+        limit: int,
+    ):
+        self.read_periods[instrument_id] = period
+        return super().lookback_window(
+            instrument_id, _timeframe, period=period, period_ns=period_ns, limit=limit
+        )
+
+
+def test_each_due_sleeve_computes_on_its_own_period_coordinates() -> None:
+    bars = _bars_by_instrument_id()
+    bars[_LSE_LEG] = (
+        MarketBar(0, 10.0, 10.0, 10.0, 10.0, 1_000.0),
+        MarketBar(_DAY_NS, 11.0, 11.0, 11.0, 11.0, 1_000.0),
+    )
+    slow = SleeveName("slow")
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=_SLEEVE, wheel_filename="trend.whl", risk_share=0.5),
+            SleeveConfig(name=slow, wheel_filename="slow.whl", risk_share=0.5),
+        ),
+        base_currency="EUR",
+    )
+    market_data = _PeriodRecordingMarketData(
+        bars_by_instrument_id=bars,
+        fresh_instrument_ids=frozenset({_INSTRUMENT_ID, _LSE_LEG}),
+    )
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=market_data,
+        book=assemble_test_book(
+            book,
+            {
+                "trend.whl": _FixedWeightBundle(0.5),
+                "slow.whl": _PoisonBundle(),
+            },
+        ),
+        ledger=SleeveLedger(),
+    )
+
+    pipeline.rebalance(
+        RebalanceRequest(
+            due=(
+                DueSleeve(
+                    sleeve=_SLEEVE,
+                    period=CompletedRebalancePeriod(period=24, period_ns=_DAY_NS),
+                ),
+                DueSleeve(
+                    sleeve=slow,
+                    period=CompletedRebalancePeriod(period=1, period_ns=_DAY_NS),
+                ),
+            )
+        )
+    )
+
+    assert market_data.read_periods[_INSTRUMENT_ID] == 24
+    assert market_data.read_periods[_LSE_LEG] == 1

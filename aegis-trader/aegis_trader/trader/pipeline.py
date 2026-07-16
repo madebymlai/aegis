@@ -89,6 +89,25 @@ class CompletedRebalancePeriod:
 
 
 @dataclass(frozen=True)
+class DueSleeve:
+    """One Sleeve due for recomputation on its own completed period."""
+
+    sleeve: SleeveName
+    period: CompletedRebalancePeriod
+
+
+@dataclass(frozen=True)
+class RebalanceRequest:
+    """One Book re-net: the Sleeves whose periods completed, with coordinates.
+
+    Only the listed Sleeves recompute; every other Sleeve holds its latest
+    valid target, and the whole retained Book is allocated, gated, and netted.
+    """
+
+    due: tuple[DueSleeve, ...]
+
+
+@dataclass(frozen=True)
 class SleeveComputeFailure:
     """One sleeve's failed weight computation, surfaced instead of raised."""
 
@@ -138,14 +157,24 @@ class RebalancePipeline:
         self._ledger = ledger
         self._bundle_bands = book.bands
         self._last_sleeve_weights: dict[SleeveName, float] = {}
+        # The latest valid target frame per Sleeve: due computations replace an
+        # entry; non-due, warming, stale, or failed Sleeves retain theirs.
+        self._retained_targets: dict[SleeveName, pd.DataFrame] = {}
+        # The most recent completed period seen per Sleeve — a market-time fact
+        # (recorded whether or not the compute succeeded) that scopes freshness
+        # and sizing reads for that Sleeve's instruments between its dues.
+        self._last_period_by_sleeve: dict[SleeveName, CompletedRebalancePeriod] = {}
         timeframe_by_instrument_id: dict[InstrumentId, str] = {}
-        for bundle in self._sleeves.values():
+        consumer_by_instrument_id: dict[InstrumentId, SleeveName] = {}
+        for sleeve_name, bundle in self._sleeves.items():
             for instrument_id in self._contract_target_ids(bundle.contract):
                 timeframe_by_instrument_id.setdefault(
                     instrument_id, bundle.contract.timeframe
                 )
+                consumer_by_instrument_id.setdefault(instrument_id, sleeve_name)
         self._all_instrument_ids = frozenset(timeframe_by_instrument_id)
         self._timeframe_by_instrument_id = timeframe_by_instrument_id
+        self._consumer_by_instrument_id = consumer_by_instrument_id
 
     @property
     def last_sleeve_weights(self) -> dict[SleeveName, float]:
@@ -203,10 +232,12 @@ class RebalancePipeline:
             )
         return _startup.StartupResult(trading_enabled=True, nav=nav, cash=cash)
 
-    def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
-        """Run one completed-period rebalance and return orders plus summary."""
-        pending, sleeve_failures = self._compute_sleeve_targets(period)
+    def rebalance(self, request: RebalanceRequest) -> RebalanceResult:
+        """Recompute the due Sleeves, then allocate, gate, and net the full
+        retained Book into one order set."""
+        sleeve_failures = self._compute_due_targets(request)
         nav = self._book_state.nav()
+        pending = dict(self._retained_targets)
         if not pending:
             return RebalanceResult(
                 orders=(),
@@ -226,10 +257,10 @@ class RebalancePipeline:
                 sleeve_failures=sleeve_failures,
             )
 
-        sized_orders, prices = self._size_plan(plan.deltas, nav, period)
+        sized_orders, prices = self._size_plan(plan.deltas, nav)
         executable_orders = _orders_for_fresh_instruments(
             sized_orders,
-            self._fresh_instrument_ids(period),
+            self._fresh_instrument_ids(),
         )
 
         self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
@@ -250,18 +281,27 @@ class RebalancePipeline:
             sleeve_failures=sleeve_failures,
         )
 
-    def _compute_sleeve_targets(
-        self, period: CompletedRebalancePeriod
-    ) -> tuple[dict[SleeveName, pd.DataFrame], tuple[SleeveComputeFailure, ...]]:
-        """Each sleeve's targets, computed in isolation: a sleeve whose compute raises
-        is excluded (it holds this period) and surfaced as a failure — one bad sleeve
-        must never abort the other sleeves' rebalance (aegis-rd-hd54)."""
-        pending: dict[SleeveName, pd.DataFrame] = {}
+    def _compute_due_targets(
+        self, request: RebalanceRequest
+    ) -> tuple[SleeveComputeFailure, ...]:
+        """Each due Sleeve's targets, computed in isolation on its own period.
+
+        A successful compute replaces the Sleeve's retained target; a compute
+        that raises is surfaced as a failure and the Sleeve holds its previous
+        valid target — one bad sleeve must never abort the other sleeves'
+        rebalance (aegis-rd-hd54).  A warming/stale Sleeve (no bars) holds
+        silently.  Non-due Sleeves are not invoked at all.
+        """
+        period_by_sleeve = {due.sleeve: due.period for due in request.due}
         failures: list[SleeveComputeFailure] = []
         for sleeve in self._book.sleeves:
+            period = period_by_sleeve.get(sleeve.name)
+            if period is None:
+                continue
             bundle = self._sleeves.get(sleeve.name)
             if bundle is None:
                 continue
+            self._last_period_by_sleeve[sleeve.name] = period
             try:
                 targets = self._sleeve_targets(bundle, period)
             except Exception as exc:  # noqa: BLE001 — fail closed per sleeve, not per book
@@ -274,8 +314,8 @@ class RebalancePipeline:
                 continue
             if targets is None:
                 continue
-            pending[sleeve.name] = targets
-        return pending, tuple(failures)
+            self._retained_targets[sleeve.name] = targets
+        return tuple(failures)
 
     def _sleeve_targets(
         self, bundle: ExecutionBundle, period: CompletedRebalancePeriod
@@ -371,9 +411,8 @@ class RebalancePipeline:
         self,
         deltas: tuple[WeightDelta, ...],
         nav: float,
-        period: CompletedRebalancePeriod,
     ) -> tuple[tuple[OrderIntent, ...], dict[InstrumentId, float]]:
-        instrument_metas, fx_rates, prices = self._collect_sizing_params(period)
+        instrument_metas, fx_rates, prices = self._collect_sizing_params()
         orders = size_deltas(
             deltas,
             nav,
@@ -437,12 +476,23 @@ class RebalancePipeline:
             )
         return sleeve_bars
 
-    def _fresh_instrument_ids(self, period: CompletedRebalancePeriod) -> frozenset[InstrumentId]:
+    def _fresh_instrument_ids(self) -> frozenset[InstrumentId]:
         return frozenset(
             instrument_id
             for instrument_id in self._all_instrument_ids
-            if self._has_bar_in_period(instrument_id, period)
+            if self._has_bar_in_instrument_period(instrument_id)
         )
+
+    def _instrument_period(
+        self, instrument_id: InstrumentId
+    ) -> CompletedRebalancePeriod | None:
+        """The completed period that scopes reads for *instrument_id*: the most
+        recent period seen by its consuming Sleeve, or ``None`` before that
+        Sleeve's first due."""
+        consumer = self._consumer_by_instrument_id.get(instrument_id)
+        if consumer is None:
+            return None
+        return self._last_period_by_sleeve.get(consumer)
 
     def _lookback_window(
         self,
@@ -460,9 +510,10 @@ class RebalancePipeline:
             limit=limit,
         )
 
-    def _has_bar_in_period(
-        self, instrument_id: InstrumentId, period: CompletedRebalancePeriod
-    ) -> bool:
+    def _has_bar_in_instrument_period(self, instrument_id: InstrumentId) -> bool:
+        period = self._instrument_period(instrument_id)
+        if period is None:
+            return False
         return self._market_data.has_bar_in_period(
             instrument_id,
             self._timeframe_by_instrument_id[instrument_id],
@@ -472,7 +523,6 @@ class RebalancePipeline:
 
     def _collect_sizing_params(
         self,
-        period: CompletedRebalancePeriod,
     ) -> tuple[dict[InstrumentId, InstrumentSizing], dict[str, float], dict[InstrumentId, float]]:
         instrument_metas: dict[InstrumentId, InstrumentSizing] = {}
         prices: dict[InstrumentId, float] = {}
@@ -483,11 +533,16 @@ class RebalancePipeline:
             if sizing is None:
                 continue
             instrument_metas[instrument_id] = sizing
-            bars = self._lookback_window(
-                instrument_id,
-                self._timeframe_by_instrument_id[instrument_id],
-                period,
-                limit=1,
+            period = self._instrument_period(instrument_id)
+            bars = (
+                ()
+                if period is None
+                else self._lookback_window(
+                    instrument_id,
+                    self._timeframe_by_instrument_id[instrument_id],
+                    period,
+                    limit=1,
+                )
             )
             if bars:
                 prices[instrument_id] = float(bars[-1].close)

@@ -1,6 +1,6 @@
 """Pipeline-seam harness for rebalance behavior tests.
 
-Stages weight-space scenarios through ``RebalancePipeline.rebalance_period``
+Stages weight-space scenarios through ``RebalancePipeline.rebalance``
 and reads them back in production observables (orders, halt reason, gate
 outcome, summary, applied sleeve weights).
 
@@ -43,7 +43,9 @@ from aegis_trader.domain.sleeve_ledger import (
 from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
+    DueSleeve,
     RebalancePipeline,
+    RebalanceRequest,
     RebalanceResult,
 )
 from tests.support.factories import assemble_test_book
@@ -249,15 +251,30 @@ class StagedLedger(SleeveLedger):
 
 @dataclass
 class RebalanceHarness:
-    """One staged book behind its pipeline; each ``run`` is one completed period."""
+    """One staged book behind its pipeline; each ``run`` is one completed period.
+
+    ``due`` names the Sleeves whose period completed this run; every Sleeve is
+    due when omitted (the single-timeframe driving of the current Strategy).
+    """
 
     pipeline: RebalancePipeline
+    sleeve_names: tuple[SleeveName, ...]
     _period: int = field(default=0, init=False)
 
-    def run(self) -> RebalanceResult:
+    def run(self, due: Sequence[str] | None = None) -> RebalanceResult:
         self._period += 1
-        return self.pipeline.rebalance_period(
-            CompletedRebalancePeriod(period=self._period, period_ns=self._period * _DAY_NS)
+        period = CompletedRebalancePeriod(
+            period=self._period, period_ns=self._period * _DAY_NS
+        )
+        due_names = (
+            self.sleeve_names
+            if due is None
+            else tuple(SleeveName(name) for name in due)
+        )
+        return self.pipeline.rebalance(
+            RebalanceRequest(
+                due=tuple(DueSleeve(sleeve=name, period=period) for name in due_names)
+            )
         )
 
 
@@ -266,9 +283,14 @@ def build_harness(
     *,
     realized: Mapping[str, float] | None = None,
     ledger: SleeveLedger | None = None,
+    bundle_overrides: Mapping[str, ExecutionBundle] | None = None,
     **book_kwargs: object,
 ) -> RebalanceHarness:
-    """Assemble a staged book through its real assembly path."""
+    """Assemble a staged book through its real assembly path.
+
+    ``bundle_overrides`` swaps a spec's default ``WeightSleeveBundle`` by wheel
+    filename — for staging compute failures and other bundle behaviors.
+    """
     book = BookConfig(
         sleeves=tuple(
             SleeveConfig(
@@ -283,7 +305,10 @@ def build_harness(
         base_currency="EUR",
         **book_kwargs,  # type: ignore[arg-type]
     )
-    bundles = {spec.wheel_filename: WeightSleeveBundle(spec) for spec in sleeves}
+    bundles: dict[str, ExecutionBundle] = {
+        spec.wheel_filename: WeightSleeveBundle(spec) for spec in sleeves
+    }
+    bundles.update(bundle_overrides or {})
     staged_ids = frozenset(
         iid(symbol) for spec in sleeves if not spec.stale for symbol in spec.targets
     ) | frozenset(iid(symbol) for symbol in (realized or {}))
@@ -293,7 +318,10 @@ def build_harness(
         book=assemble_test_book(book, bundles),
         ledger=ledger if ledger is not None else SleeveLedger(),
     )
-    return RebalanceHarness(pipeline)
+    return RebalanceHarness(
+        pipeline,
+        sleeve_names=tuple(spec.sleeve_name for spec in sleeves),
+    )
 
 
 def signed_order_weights(result: RebalanceResult) -> dict[str, float]:

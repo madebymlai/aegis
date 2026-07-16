@@ -74,8 +74,10 @@ from aegis_trader.domain.types import (
 )
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
+    DueSleeve,
     GateOutcome,
     RebalancePipeline,
+    RebalanceRequest,
     RebalanceSummary,
 )
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
@@ -437,10 +439,19 @@ class RebalanceStrategy(Strategy):
         pipeline = self._require_pipeline()
         if self._current_period is None:
             return
-        result = pipeline.rebalance_period(
-            CompletedRebalancePeriod(
-                period=self._current_period,
-                period_ns=self._period_ns,
+        # Every Sleeve is due on the one shared completed period; per-Sleeve
+        # cadence tracking replaces this in the mixed-timeframe enablement
+        # (aegis-rd-9qkr.3).
+        period = CompletedRebalancePeriod(
+            period=self._current_period,
+            period_ns=self._period_ns,
+        )
+        result = pipeline.rebalance(
+            RebalanceRequest(
+                due=tuple(
+                    DueSleeve(sleeve=sleeve_name, period=period)
+                    for sleeve_name in self._require_assembled_book().sleeves
+                )
             )
         )
         self._last_sleeve_weights = pipeline.last_sleeve_weights

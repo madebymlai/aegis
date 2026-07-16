@@ -22,6 +22,7 @@ from aegis_trader.trader.pipeline import GateOutcome, HaltCause
 from tests.support.rebalance_harness import (
     SleeveSpec,
     StagedLedger,
+    WeightSleeveBundle,
     build_harness,
     signed_order_weights,
 )
@@ -772,4 +773,102 @@ def test_cleanup_stays_subordinate_to_the_gross_ceiling() -> None:
     assert signed_order_weights(result) == {
         "AAA": pytest.approx(-0.074286),
         "BBB": pytest.approx(-0.045714),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Retained targets for independently due Sleeves (aegis-rd-9qkr.2)
+# ---------------------------------------------------------------------------
+
+
+class _ExplodesWhenComputedBundle(WeightSleeveBundle):
+    """A sleeve bundle that raises on every compute — due-invocation probe."""
+
+    def compute_weights(self, native_prices, *, currency_conversion=None):
+        raise RuntimeError("component exploded")
+
+
+class _ExplodesOnSecondComputeBundle(WeightSleeveBundle):
+    """A sleeve bundle whose first compute succeeds and later computes raise."""
+
+    def compute_weights(self, native_prices, *, currency_conversion=None):
+        calls = getattr(self, "_calls", 0) + 1
+        object.__setattr__(self, "_calls", calls)
+        if calls > 1:
+            raise RuntimeError("component exploded")
+        return super().compute_weights(
+            native_prices, currency_conversion=currency_conversion
+        )
+
+
+def test_rebalance_allocates_the_full_retained_book_when_one_sleeve_is_due() -> None:
+    harness = build_harness(
+        [
+            SleeveSpec("fast", 0.5, {"AAA": 0.4}),
+            SleeveSpec("slow", 0.5, {"BBB": 0.2}),
+        ]
+    )
+    harness.run()
+
+    result = harness.run(due=["fast"])
+
+    assert result.summary.num_sleeves == 2
+    assert set(harness.pipeline.last_sleeve_weights) == {
+        SleeveName("fast"),
+        SleeveName("slow"),
+    }
+
+
+def test_re_net_with_unchanged_targets_emits_no_orders_for_non_due_sleeves() -> None:
+    # Grilling amendment (aegis-rd-9qkr.2): a due update whose recomputed
+    # targets are unchanged, with no risk-control trip, must be a no-op for
+    # instruments owned by non-due Sleeves.
+    harness = build_harness(
+        [
+            SleeveSpec("fast", 0.5, {"AAA": 0.4}),
+            SleeveSpec("slow", 0.5, {"BBB": 0.2}),
+        ],
+        realized={"AAA": 0.2, "BBB": 0.1},
+    )
+    harness.run()
+
+    result = harness.run(due=["fast"])
+
+    assert result.orders == ()
+    assert result.summary.gate_outcome == GateOutcome.PASS
+
+
+def test_non_due_sleeve_is_not_invoked() -> None:
+    poison = SleeveSpec("poison", 0.5, {"BBB": 0.2})
+    harness = build_harness(
+        [SleeveSpec("fast", 0.5, {"AAA": 0.4}), poison],
+        bundle_overrides={"poison.whl": _ExplodesWhenComputedBundle(poison)},
+    )
+    first = harness.run()
+
+    second = harness.run(due=["fast"])
+
+    assert [failure.sleeve for failure in first.sleeve_failures] == [
+        SleeveName("poison")
+    ]
+    assert second.sleeve_failures == ()
+
+
+def test_failed_due_sleeve_retains_its_prior_valid_target() -> None:
+    fragile = SleeveSpec("fragile", 0.5, {"BBB": 0.2})
+    harness = build_harness(
+        [SleeveSpec("fast", 0.5, {"AAA": 0.4}), fragile],
+        bundle_overrides={"fragile.whl": _ExplodesOnSecondComputeBundle(fragile)},
+    )
+    first = harness.run()
+
+    second = harness.run()
+
+    assert first.sleeve_failures == ()
+    assert [failure.sleeve for failure in second.sleeve_failures] == [
+        SleeveName("fragile")
+    ]
+    assert signed_order_weights(second) == {
+        "AAA": pytest.approx(0.20),
+        "BBB": pytest.approx(0.10),
     }

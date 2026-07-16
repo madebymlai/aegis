@@ -1,7 +1,7 @@
 """The rebalancer: RebalancePipeline's planning implementation.
 
 Private to the pipeline — ``trader/pipeline.py`` is its only importer, and
-``RebalancePipeline.rebalance_period`` is the test surface for every behavior
+``RebalancePipeline.rebalance`` is the test surface for every behavior
 in here (ADR-0003 amendment 2026-07-10).  Zero Nautilus lifecycle, zero
 sizing: the rebalancer works entirely in dimensionless weight space (fractions
 of NAV); turning a weight delta into a native share count is a separate
