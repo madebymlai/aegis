@@ -326,7 +326,17 @@ class DistributionCoverageService:
         # how the strategy marks the position.  Comparing it with a BID/ASK mid
         # would turn ordinary quote changes into synthetic cash distributions.
         trade_type = raw_bar_type(instrument_id, "1D")
-        self.ensure_bar_coverage(trade_type, start_ns, end_ns)
+        try:
+            self.ensure_bar_coverage(trade_type, start_ns, end_ns)
+        except CatalogCoverageGapError as exc:
+            # The generic coverage mechanism cannot know why a daily series was
+            # demanded on a non-daily window; name the origin and the remedy
+            # here, where the domain fact lives (aegis-rd-qb7g).
+            raise CatalogCoverageGapError(
+                f"distribution verification needs {instrument_id.value}'s raw "
+                f"daily closes; seed {trade_type} or gap-fill it with a "
+                f"provider-backed load ({exc})"
+            ) from exc
         return bars_to_ohlcv(self._bars_for(trade_type, start_ns, end_ns))["Close"]
 
     def _clamped_to_bar_frontier(

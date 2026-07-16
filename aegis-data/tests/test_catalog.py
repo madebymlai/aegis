@@ -2097,3 +2097,51 @@ def test_catalog_port_probes_a_legs_daily_volume() -> None:
     )
 
     pd.testing.assert_series_equal(volume, frame["Volume"])
+
+
+def test_verification_daily_gap_on_intraday_window_names_its_origin_and_remedy(
+    tmp_path: Path,
+) -> None:
+    """An hourly-traded instrument without its daily series fails distribution
+    verification — the error must say the daily read belongs to verification
+    and how to cure it, not just complain about an unrequested 1D bar type
+    (aegis-rd-qb7g)."""
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    catalog = ParquetDataCatalog(catalog_path)
+    instrument_id = _id("FAST.XLON")
+    catalog.write_data([_equity(instrument_id)])
+    hourly_type = raw_bar_type(instrument_id, "1H")
+    catalog.write_data(
+        [
+            _bar(hourly_type, "2024-01-02 10:00", 100.0),
+            _bar(hourly_type, "2024-01-02 11:00", 100.0),
+            _bar(hourly_type, "2024-01-03 10:00", 100.0),
+        ],
+        start=pd.Timestamp("2024-01-01", tz="UTC").value,
+        end=pd.Timestamp("2024-01-04", tz="UTC").value,
+    )
+    adjusted = pd.Series(
+        [100.0, 100.0, 100.0],
+        index=pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC"),
+    )
+    port = CatalogBackedDataPort(
+        catalog,
+        distribution_provider=_AdjustedLastProvider({instrument_id: adjusted}),
+    )
+
+    with pytest.raises(CatalogCoverageGapError) as excinfo:
+        port.load_window(
+            CatalogWindowRequest(
+                instrument_ids=(instrument_id,),
+                start="2024-01-01",
+                end="2024-01-04",
+                timeframe="1H",
+            )
+        )
+
+    message = str(excinfo.value)
+    assert "distribution verification" in message
+    assert "daily" in message
+    assert "FAST.XLON" in message
+    assert "provider-backed" in message

@@ -76,6 +76,13 @@ projection of the catalog, but no module owned it.
 - Consumers hold one value with the window's run-constant facts; the fake
   surface for tests is the catalog beneath a real port (the port itself is
   never faked) or a hand-constructed `CatalogWindow`.
+- Every distribution-bearing instrument carries its raw **daily** series in
+  the catalog regardless of the timeframe it trades: the dividend decode
+  compares daily trade closes against the vendor's daily `ADJUSTED_LAST`, so
+  an hourly-traded instrument's `1D` bars are read by verification on every
+  window load. A provider-backed load gap-fills them automatically; an
+  offline load fails closed with the verification-origin error
+  (aegis-rd-qb7g).
 - A new catalog-owned window fact lands in one place (`CatalogWindow` and the
   read behind it) instead of once per consumer.
 - The request type keeps its `RawBarRequest` name until the contraction
