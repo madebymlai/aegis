@@ -20,6 +20,7 @@ from aegis_trader.bundles.bands import BundleBands
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.book_timeframe import MixedTimeframeError
+from aegis_trader.domain.streams import MarketStream, StreamRequirement
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.strategy import (
     BookConfigMismatchError,
@@ -99,6 +100,95 @@ def test_assemble_book_derives_every_book_fact_from_loaded_sleeves() -> None:
                 adjustment_mode=_RATIO,
             )
         },
+        sleeve_streams={
+            SleeveName("carry"): (MarketStream(_AAPL, "1D"),),
+            SleeveName("trend"): (
+                MarketStream(_EURUSD, "1D"),
+                MarketStream(_MSFT, "1D"),
+            ),
+        },
+        required_streams=(
+            StreamRequirement(
+                stream=MarketStream(_AAPL, "1D"),
+                history_bars=21,
+                consumers=(SleeveName("carry"),),
+            ),
+            StreamRequirement(
+                stream=MarketStream(_EURUSD, "1D"),
+                history_bars=42,
+                consumers=(SleeveName("trend"),),
+            ),
+            StreamRequirement(
+                stream=MarketStream(_MSFT, "1D"),
+                history_bars=42,
+                consumers=(SleeveName("trend"),),
+            ),
+        ),
+    )
+
+
+def test_assemble_book_exposes_stream_requirements_per_sleeve() -> None:
+    config = _book(("trend", "trend.whl"), ("carry", "carry.whl"))
+    registry = StubBundleRegistry(
+        {
+            "trend.whl": make_bundle(
+                native_instrument_ids=(_MSFT,),
+                exchange_instrument_ids=(_EURUSD,),
+                lookback_bars=41,
+            ),
+            "carry.whl": make_bundle(
+                native_instrument_ids=(_AAPL,),
+                lookback_bars=20,
+            ),
+        }
+    )
+
+    assembled = assemble_book(config, registry)
+
+    assert assembled.sleeve_streams == {
+        SleeveName("carry"): (MarketStream(_AAPL, "1D"),),
+        SleeveName("trend"): (
+            MarketStream(_EURUSD, "1D"),
+            MarketStream(_MSFT, "1D"),
+        ),
+    }
+
+
+def test_assemble_book_deduplicates_shared_streams_with_the_deepest_history() -> None:
+    config = _book(("trend", "trend.whl"), ("carry", "carry.whl"))
+    registry = StubBundleRegistry(
+        {
+            "trend.whl": make_bundle(
+                native_instrument_ids=(_MSFT,),
+                exchange_instrument_ids=(_EURUSD,),
+                lookback_bars=41,
+            ),
+            "carry.whl": make_bundle(
+                native_instrument_ids=(_AAPL,),
+                exchange_instrument_ids=(_EURUSD,),
+                lookback_bars=20,
+            ),
+        }
+    )
+
+    assembled = assemble_book(config, registry)
+
+    assert assembled.required_streams == (
+        StreamRequirement(
+            stream=MarketStream(_AAPL, "1D"),
+            history_bars=21,
+            consumers=(SleeveName("carry"),),
+        ),
+        StreamRequirement(
+            stream=MarketStream(_EURUSD, "1D"),
+            history_bars=42,
+            consumers=(SleeveName("carry"), SleeveName("trend")),
+        ),
+        StreamRequirement(
+            stream=MarketStream(_MSFT, "1D"),
+            history_bars=42,
+            consumers=(SleeveName("trend"),),
+        ),
     )
 
 

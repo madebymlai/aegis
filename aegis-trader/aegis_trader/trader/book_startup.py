@@ -21,7 +21,16 @@ from aegis_trader.domain.startup import StartupResult
 from aegis_trader.portfolio import BookStatePort
 from aegis_trader.trader.pipeline import RebalancePipeline
 
-_LIVE_WARMUP_CALENDAR_MULTIPLIER: int = 3
+# Calendar inflation from "bars of lookback" to "wall-clock span requested":
+# a daily bar accrues every calendar day the venue trades (365/252 ≈ 1.45), so
+# 3 is a generous daily cover.  An intraday bar only accrues inside the venue
+# session (~6.5h of 24 for equities), so the same lookback needs a much wider
+# calendar span: ~24/6.5 session coverage × ~7/5 weekend inflation ≈ 5.2 — 6 is
+# the intraday analogue of the daily 3 (aegis-rd-9qkr.1 amendment).
+_DAILY_WARMUP_CALENDAR_MULTIPLIER: int = 3
+_INTRADAY_WARMUP_CALENDAR_MULTIPLIER: int = 6
+
+_NS_PER_DAY: int = 86_400_000_000_000
 
 
 class RollStartupPort(Protocol):
@@ -98,16 +107,21 @@ def bootstrap(
         return halt
 
     intents: list[BootIntent] = list(roll_intents)
-    for instrument_id in book.loadable_instrument_ids:
+    for requirement in book.required_streams:
+        stream = requirement.stream
         intents.append(
-            SubscribeBars(instrument_id=instrument_id, timeframe=book.timeframe)
+            SubscribeBars(instrument_id=stream.instrument_id, timeframe=stream.timeframe)
         )
         if warmup_cache_on_start:
             intents.append(
                 RequestBars(
-                    instrument_id=instrument_id,
-                    timeframe=book.timeframe,
-                    start=history_start,
+                    instrument_id=stream.instrument_id,
+                    timeframe=stream.timeframe,
+                    start=startup_history_start(
+                        now,
+                        timeframe=stream.timeframe,
+                        required_bar_window=requirement.history_bars,
+                    ),
                     end=now,
                 )
             )
@@ -128,9 +142,15 @@ def startup_history_start(
     timeframe: str,
     required_bar_window: int,
 ) -> datetime:
-    periods = max(required_bar_window, 1) * _LIVE_WARMUP_CALENDAR_MULTIPLIER
+    periods = max(required_bar_window, 1) * _warmup_calendar_multiplier(timeframe)
     span_ns = timeframe_to_ns(timeframe) * periods
     return end - timedelta(microseconds=span_ns // 1000)
+
+
+def _warmup_calendar_multiplier(timeframe: str) -> int:
+    if timeframe_to_ns(timeframe) < _NS_PER_DAY:
+        return _INTRADAY_WARMUP_CALENDAR_MULTIPLIER
+    return _DAILY_WARMUP_CALENDAR_MULTIPLIER
 
 
 def _halt_from(intents: RollIntentBatch) -> Halt | None:

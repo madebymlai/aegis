@@ -15,6 +15,7 @@ from aegis_trader.bundles.bands import BundleBands, InstrumentBandError
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.book_timeframe import _resolve_book_timeframe
+from aegis_trader.domain.streams import MarketStream, StreamRequirement, stream_sort_key
 from aegis_trader.domain.types import SleeveName
 
 @_dataclass(frozen=True)
@@ -58,6 +59,8 @@ class AssembledBook:
     requires_margin: bool
     bands: BundleBands
     continuous_declarations: _Mapping[str, ContinuousRootDeclaration]
+    sleeve_streams: _Mapping[SleeveName, tuple[MarketStream, ...]]
+    required_streams: tuple[StreamRequirement, ...]
 
 
 def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> AssembledBook:
@@ -84,6 +87,48 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
         continuous_declarations=_MappingProxyType(
             dict(sorted(continuous_declarations.items()))
         ),
+        sleeve_streams=_sleeve_streams(sleeves),
+        required_streams=_required_streams(sleeves),
+    )
+
+
+def _sleeve_streams(
+    sleeves: _Mapping[SleeveName, ExecutionBundle],
+) -> _Mapping[SleeveName, tuple[MarketStream, ...]]:
+    return _MappingProxyType(
+        {
+            sleeve_name: tuple(
+                sorted(
+                    (
+                        MarketStream(instrument_id, bundle.contract.timeframe)
+                        for instrument_id in bundle.contract.loadable_instrument_ids
+                    ),
+                    key=stream_sort_key,
+                )
+            )
+            for sleeve_name, bundle in sleeves.items()
+        }
+    )
+
+
+def _required_streams(
+    sleeves: _Mapping[SleeveName, ExecutionBundle],
+) -> tuple[StreamRequirement, ...]:
+    history_bars: dict[MarketStream, int] = {}
+    consumers: dict[MarketStream, dict[SleeveName, None]] = {}
+    for sleeve_name, bundle in sleeves.items():
+        needed = bundle.contract.lookback_bars + 1
+        for instrument_id in bundle.contract.loadable_instrument_ids:
+            stream = MarketStream(instrument_id, bundle.contract.timeframe)
+            history_bars[stream] = max(history_bars.get(stream, 0), needed)
+            consumers.setdefault(stream, {})[sleeve_name] = None
+    return tuple(
+        StreamRequirement(
+            stream=stream,
+            history_bars=history_bars[stream],
+            consumers=tuple(sorted(consumers[stream], key=lambda name: name.value)),
+        )
+        for stream in sorted(history_bars, key=stream_sort_key)
     )
 
 

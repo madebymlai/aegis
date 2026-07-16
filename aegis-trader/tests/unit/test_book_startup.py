@@ -337,6 +337,62 @@ def test_bootstrap_returns_roll_halt_without_subscription_intents() -> None:
     assert roll_desk.calls[0]["timeframe"] == "1D"
 
 
+def test_bootstrap_warms_each_stream_from_its_own_sleeve_lookback() -> None:
+    deep = SleeveName("deep")
+    shallow = SleeveName("shallow")
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=deep, wheel_filename="deep.whl", risk_share=1.0),
+            SleeveConfig(name=shallow, wheel_filename="shallow.whl", risk_share=1.0),
+        ),
+        base_currency="EUR",
+    )
+
+    result = _bootstrap(
+        book=book,
+        bundles={
+            deep: _FixedWeightBundle(_INSTRUMENT_ID, lookback_bars=40),
+            shallow: _FixedWeightBundle(_SECOND_INSTRUMENT_ID, lookback_bars=20),
+        },
+        warmup_cache_on_start=True,
+    )
+
+    assert isinstance(result, BootResult)
+    requests = [intent for intent in result.intents if isinstance(intent, RequestBars)]
+    assert requests == [
+        RequestBars(
+            _SECOND_INSTRUMENT_ID,
+            "1D",
+            datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc),
+            _NOW,
+        ),
+        RequestBars(
+            _INSTRUMENT_ID,
+            "1D",
+            datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc),
+            _NOW,
+        ),
+    ]
+
+
+def test_bootstrap_warms_an_intraday_stream_with_the_session_aware_multiplier() -> None:
+    result = _bootstrap(
+        bundles={_SLEEVE: _FixedWeightBundle(timeframe="1H", lookback_bars=20)},
+        warmup_cache_on_start=True,
+    )
+
+    assert isinstance(result, BootResult)
+    requests = [intent for intent in result.intents if isinstance(intent, RequestBars)]
+    assert requests == [
+        RequestBars(
+            _INSTRUMENT_ID,
+            "1H",
+            datetime(2026, 6, 17, 6, 0, tzinfo=timezone.utc),
+            _NOW,
+        ),
+    ]
+
+
 def test_bootstrap_pass_returns_pipeline_startup_result_and_intent_batch() -> None:
     roll_desk = _RollDesk((SubscribeBars(_FRONT_LEG, "1D"),))
 

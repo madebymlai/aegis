@@ -43,6 +43,7 @@ from aegis_trader.config import load_book_config
 from aegis_trader.data import wrangle_bars, wrangle_fx_quotes, wrangle_quote_bars
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.risk_guard import RiskGuardConfig
+from aegis_trader.domain.streams import MarketStream
 from aegis_trader.portfolio.performance import (
     BookEquityRecorder,
     BookEquityRecorderConfig,
@@ -204,12 +205,11 @@ def run_book_backtest(
         provider=provider,
         resolver=resolver,
     )
-    market_data = source.load(
-        assembled_book.loadable_instrument_ids,
-        timeframe=assembled_book.timeframe,
-        start=start,
-        end=end,
+    loaded = tuple(
+        (timeframe, source.load(instrument_ids, timeframe=timeframe, start=start, end=end))
+        for timeframe, instrument_ids in _stream_load_groups(assembled_book)
     )
+    market_data = _merged_market_data(loaded)
     _validate_market_data(assembled_book, market_data)
 
     engine = BacktestEngine(
@@ -232,18 +232,18 @@ def run_book_backtest(
         starting_cash=starting_cash,
         quote_marked_ids=frozenset(market_data.quote_frames),
     )
-    _add_instruments_and_bars(
-        engine,
-        market_data=market_data,
-        timeframe=assembled_book.timeframe,
-        resolver=resolver,
-    )
+    for timeframe, group_data in loaded:
+        _add_instruments_and_bars(
+            engine,
+            market_data=group_data,
+            timeframe=timeframe,
+            resolver=resolver,
+        )
     engine.sort_data()
     _add_equity_recorder(
         engine,
         book=book,
-        instrument_ids=assembled_book.loadable_instrument_ids,
-        timeframe=assembled_book.timeframe,
+        streams=tuple(requirement.stream for requirement in assembled_book.required_streams),
         resolver=resolver,
     )
     _add_strategy(engine, book=assembled_book, resolver=resolver)
@@ -253,6 +253,52 @@ def run_book_backtest(
         financing_module.totals.by_currency if financing_module is not None else {}
     )
     return BookBacktestResult(engine=engine, financing_totals=financing_totals)
+
+
+def _stream_load_groups(
+    book: AssembledBook,
+) -> tuple[tuple[str, tuple[InstrumentId, ...]], ...]:
+    """The catalog load plan: the Book's required streams grouped per timeframe.
+
+    A futures-only Book has no cash streams but still makes one load call at
+    the Book timeframe — continuous-root material (dated legs, definitions)
+    arrives through the port beside whatever cash ids are requested.
+    """
+    ids_by_timeframe: dict[str, dict[str, InstrumentId]] = {}
+    for requirement in book.required_streams:
+        stream = requirement.stream
+        ids_by_timeframe.setdefault(stream.timeframe, {})[
+            stream.instrument_id.value
+        ] = stream.instrument_id
+    if not ids_by_timeframe:
+        return ((book.timeframe, ()),)
+    return tuple(
+        (timeframe, tuple(ids[key] for key in sorted(ids)))
+        for timeframe, ids in sorted(ids_by_timeframe.items())
+    )
+
+
+def _merged_market_data(
+    loaded: tuple[tuple[str, BacktestMarketData], ...],
+) -> BacktestMarketData:
+    """One Book-wide view of the per-timeframe loads, for validation and venues."""
+    if len(loaded) == 1:
+        return loaded[0][1]
+    instruments: dict[InstrumentId, Instrument] = {}
+    ohlcv: dict[InstrumentId, pd.DataFrame] = {}
+    distributions: list[Distribution] = []
+    quote_frames: dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = {}
+    for _timeframe, market_data in loaded:
+        instruments.update(market_data.instruments)
+        ohlcv.update(market_data.ohlcv)
+        distributions.extend(market_data.distributions)
+        quote_frames.update(market_data.quote_frames)
+    return BacktestMarketData(
+        instruments=instruments,
+        ohlcv=ohlcv,
+        distributions=tuple(distributions),
+        quote_frames=quote_frames,
+    )
 
 
 def _book_resolver(book: AssembledBook) -> RawBarTypeResolver:
@@ -562,8 +608,7 @@ def _add_equity_recorder(
     engine: BacktestEngine,
     *,
     book: BookConfig,
-    instrument_ids: tuple[InstrumentId, ...],
-    timeframe: str,
+    streams: tuple[MarketStream, ...],
     resolver: RawBarTypeResolver,
 ) -> None:
     engine.add_actor(
@@ -572,8 +617,10 @@ def _add_equity_recorder(
                 base_currency=book.base_currency,
                 bar_types=tuple(
                     str(bar_type)
-                    for instrument_id in instrument_ids
-                    for bar_type in resolver.resolve(instrument_id, timeframe).mark_bars
+                    for stream in streams
+                    for bar_type in resolver.resolve(
+                        stream.instrument_id, stream.timeframe
+                    ).mark_bars
                 ),
             )
         )
