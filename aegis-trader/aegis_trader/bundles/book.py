@@ -19,26 +19,16 @@ from aegis_trader.domain.types import SleeveName
 
 @_dataclass(frozen=True)
 class ContinuousRootDeclaration:
-    """One coherent continuous-root declaration."""
+    """One coherent continuous-root declaration.
+
+    ``timeframe`` is the owning Sleeve's contract cadence: one root has one
+    owning Sleeve and therefore one required stream (aegis-rd-9qkr.5) — a root
+    declared at two timeframes is an incoherent declaration and fails closed.
+    """
 
     continuous_id: InstrumentId
     adjustment_mode: ContinuousFutureAdjustmentType
-
-
-class ContinuousTimeframeError(ValueError):
-    """Continuous-future Sleeves declare more than one timeframe.
-
-    The Roll Desk currently runs the Book's continuous roots on one timeframe;
-    per-root timeframes arrive with aegis-rd-9qkr.5.  Until then a Book mixing
-    futures cadences fails closed at assembly.
-    """
-
-    def __init__(self, timeframes: tuple[str, ...]) -> None:
-        self.timeframes = timeframes
-        super().__init__(
-            f"continuous-future sleeves declare mixed timeframes {list(timeframes)}; "
-            "per-root continuous timeframes are not supported yet (aegis-rd-9qkr.5)"
-        )
+    timeframe: str
 
 
 class ContinuousDeclarationConflictError(ValueError):
@@ -59,8 +49,9 @@ class ContinuousDeclarationConflictError(ValueError):
         super().__init__(
             f"continuous root {root!r} is declared incoherently across sleeves "
             f"{[str(name) for name in sleeves]}: "
-            f"{existing.continuous_id.value}/{existing.adjustment_mode.value} "
-            f"vs {conflicting.continuous_id.value}/{conflicting.adjustment_mode.value}"
+            f"{existing.continuous_id.value}/{existing.adjustment_mode.value}"
+            f"/{existing.timeframe} vs {conflicting.continuous_id.value}"
+            f"/{conflicting.adjustment_mode.value}/{conflicting.timeframe}"
         )
 
 
@@ -73,11 +64,8 @@ class AssembledBook:
     requires_margin: bool
     bands: BundleBands
     continuous_declarations: _Mapping[str, ContinuousRootDeclaration]
-    # The futures-declaring Sleeves' one shared timeframe (None without
-    # futures) and their deepest history need — the Roll Desk's stream facts
-    # until per-root timeframes land (aegis-rd-9qkr.5).
-    continuous_timeframe: str | None
-    continuous_history_bars: int
+    # Each root's deepest consumer history need, in its own stream's bars.
+    continuous_history_bars: _Mapping[str, int]
     sleeve_streams: _Mapping[SleeveName, tuple[MarketStream, ...]]
     required_streams: tuple[StreamRequirement, ...]
 
@@ -103,35 +91,22 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
         continuous_declarations=_MappingProxyType(
             dict(sorted(continuous_declarations.items()))
         ),
-        continuous_timeframe=_continuous_timeframe(sleeves),
-        continuous_history_bars=max(
-            (
-                bundle.contract.lookback_bars + 1
-                for bundle in sleeves.values()
-                if bundle.contract.futures
-            ),
-            default=0,
-        ),
+        continuous_history_bars=_continuous_history_bars(sleeves),
         sleeve_streams=_sleeve_streams(sleeves),
         required_streams=_required_streams(sleeves),
     )
 
 
-def _continuous_timeframe(
+def _continuous_history_bars(
     sleeves: _Mapping[SleeveName, ExecutionBundle],
-) -> str | None:
-    timeframes = tuple(
-        dict.fromkeys(
-            bundle.contract.timeframe
-            for bundle in sleeves.values()
-            if bundle.contract.futures
-        )
-    )
-    if not timeframes:
-        return None
-    if len(timeframes) > 1:
-        raise ContinuousTimeframeError(timeframes)
-    return timeframes[0]
+) -> _Mapping[str, int]:
+    history: dict[str, int] = {}
+    for bundle in sleeves.values():
+        for root in bundle.contract.futures:
+            history[root] = max(
+                history.get(root, 0), bundle.contract.lookback_bars + 1
+            )
+    return _MappingProxyType(dict(sorted(history.items())))
 
 
 def _sleeve_streams(
@@ -191,6 +166,7 @@ def _continuous_declarations(
             declaration = ContinuousRootDeclaration(
                 continuous_id=continuous_by_root[root],
                 adjustment_mode=mode,
+                timeframe=contract.timeframe,
             )
             existing = declarations.setdefault(root, declaration)
             declaring_sleeves.setdefault(root, []).append(sleeve_name)
@@ -253,6 +229,5 @@ __all__ = [
     "AssembledBook",
     "ContinuousDeclarationConflictError",
     "ContinuousRootDeclaration",
-    "ContinuousTimeframeError",
     "assemble_book",
 ]

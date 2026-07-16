@@ -103,6 +103,9 @@ class _RollingDesk:
     def start(self, **_kwargs: object) -> tuple[SubscribeBars]:
         return (SubscribeBars(self._front, "1D"),)
 
+    def continuous_id(self, leg: object) -> object | None:
+        return self._continuous_id if leg == self._front else None
+
     def on_bar(self, bar: object) -> RollIntentBatch:
         if bar.bar_type.instrument_id != self._front:  # type: ignore[attr-defined]
             return ()
@@ -166,7 +169,6 @@ async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_
     strategy = _RollHarnessStrategy(RebalanceStrategyConfig(book=book, warmup_cache_on_start=False))
     portfolio = Portfolio(msgbus, cache, clock)
     strategy.register(trader_id, portfolio, msgbus, cache, clock)
-    strategy._book_timeframe = "1D"
     ledger = _RecordingLedger()
     pipeline = _RecordingPipeline(ledger)
     strategy._pipeline = pipeline  # type: ignore[assignment]

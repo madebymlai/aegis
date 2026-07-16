@@ -175,19 +175,17 @@ class _RollDesk:
     def start(
         self,
         *,
-        timeframe: str,
-        history_start: datetime,
         end: datetime,
         warmup: bool,
         declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
     ) -> RollIntentBatch:
         self.calls.append(
             {
-                "timeframe": timeframe,
-                "history_start": history_start,
                 "end": end,
                 "warmup": warmup,
                 "declarations": dict(declarations),
+                "history_starts": dict(history_starts),
             }
         )
         return self.intents
@@ -294,7 +292,11 @@ def test_bootstrap_passes_coherent_declarations_to_roll_desk() -> None:
         "ES": ContinuousRootDeclaration(
             continuous_id=es,
             adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+            timeframe="1D",
         )
+    }
+    assert roll_desk.calls[0]["history_starts"] == {
+        "ES": datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
     }
 
 
@@ -334,7 +336,7 @@ def test_bootstrap_returns_roll_halt_without_subscription_intents() -> None:
         StartupGate.CONTINUOUS_IDENTITY,
         "continuous venue drift",
     )
-    assert roll_desk.calls[0]["timeframe"] == "1D"
+    assert roll_desk.calls[0]["history_starts"] == {}
 
 
 def test_bootstrap_warms_each_stream_from_its_own_sleeve_lookback() -> None:

@@ -18,7 +18,6 @@ from aegis_trader.bundles.book import (
 )
 from aegis_trader.bundles.bands import BundleBands
 from aegis_trader.bundles.stub import StubBundleRegistry
-from aegis_trader.bundles.book import ContinuousTimeframeError
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.streams import MarketStream, StreamRequirement
 from aegis_trader.domain.types import SleeveName
@@ -85,8 +84,7 @@ def test_assemble_book_derives_every_book_fact_from_loaded_sleeves() -> None:
         loadable_instrument_ids=(_AAPL, _EURUSD, _MSFT),
         required_bar_window=42,
         requires_margin=True,
-        continuous_timeframe="1D",
-        continuous_history_bars=42,
+        continuous_history_bars={"ES": 42},
         bands=BundleBands(
             bands={_AAPL: carry_band, _ES: root_band, _MSFT: trend_band},
             owner_by_instrument={
@@ -99,6 +97,7 @@ def test_assemble_book_derives_every_book_fact_from_loaded_sleeves() -> None:
             "ES": ContinuousRootDeclaration(
                 continuous_id=_ES,
                 adjustment_mode=_RATIO,
+                timeframe="1D",
             )
         },
         sleeve_streams={
@@ -249,10 +248,44 @@ def test_assemble_book_accepts_hourly_and_daily_cash_sleeves() -> None:
     assert not hasattr(assembled, "timeframe")
 
 
-def test_assemble_book_rejects_mixed_continuous_future_timeframes() -> None:
-    # Interim gate until per-root Roll Desk timeframes (aegis-rd-9qkr.5): the
-    # one Roll Desk runs the Book's continuous roots on one timeframe.
+def test_assemble_book_accepts_different_roots_at_different_timeframes() -> None:
+    # One root = one owning Sleeve = one timeframe (aegis-rd-9qkr.5): distinct
+    # roots may run at distinct cadences, each declared with its own stream.
     nq = InstrumentId.from_str("NQ.XCME")
+    config = _book(("trend", "trend.whl"), ("carry", "carry.whl"))
+    registry = StubBundleRegistry(
+        {
+            "trend.whl": make_bundle(
+                timeframe="1H",
+                native_instrument_ids=(),
+                continuous_futures={"ES": _ES},
+                lookback_bars=30,
+            ),
+            "carry.whl": make_bundle(
+                timeframe="1D",
+                native_instrument_ids=(),
+                continuous_futures={"NQ": nq},
+                lookback_bars=20,
+            ),
+        }
+    )
+
+    assembled = assemble_book(config, registry)
+
+    assert assembled.continuous_declarations == {
+        "ES": ContinuousRootDeclaration(
+            continuous_id=_ES, adjustment_mode=_RATIO, timeframe="1H"
+        ),
+        "NQ": ContinuousRootDeclaration(
+            continuous_id=nq, adjustment_mode=_RATIO, timeframe="1D"
+        ),
+    }
+    assert assembled.continuous_history_bars == {"ES": 31, "NQ": 21}
+
+
+def test_assemble_book_rejects_one_root_required_at_two_timeframes() -> None:
+    # A root consumed at two cadences is an incoherent declaration: one root
+    # has one owning Sleeve and one required stream (aegis-rd-9qkr.5).
     config = _book(("trend", "trend.whl"), ("carry", "carry.whl"))
     registry = StubBundleRegistry(
         {
@@ -264,15 +297,17 @@ def test_assemble_book_rejects_mixed_continuous_future_timeframes() -> None:
             "carry.whl": make_bundle(
                 timeframe="1D",
                 native_instrument_ids=(),
-                continuous_futures={"NQ": nq},
+                continuous_futures={"ES": _ES},
             ),
         }
     )
 
-    with pytest.raises(ContinuousTimeframeError) as excinfo:
+    with pytest.raises(ContinuousDeclarationConflictError) as excinfo:
         assemble_book(config, registry)
 
-    assert excinfo.value.timeframes == ("1D", "1H")
+    assert excinfo.value.root == "ES"
+    assert excinfo.value.existing.timeframe == "1D"
+    assert excinfo.value.conflicting.timeframe == "1H"
 
 
 def test_assemble_book_rejects_bands_owned_by_two_sleeves() -> None:
@@ -322,10 +357,12 @@ def test_assemble_book_rejects_conflicting_continuous_root_declarations() -> Non
     assert excinfo.value.existing == ContinuousRootDeclaration(
         continuous_id=_ES,
         adjustment_mode=_SPREAD,
+        timeframe="1D",
     )
     assert excinfo.value.conflicting == ContinuousRootDeclaration(
         continuous_id=_ES,
         adjustment_mode=_RATIO,
+        timeframe="1D",
     )
 
 

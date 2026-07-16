@@ -271,8 +271,8 @@ def _stream_load_groups(
     futures-only Book makes that one call with no cash ids at all.
     """
     ids_by_timeframe: dict[str, dict[str, InstrumentId]] = {}
-    if book.continuous_timeframe is not None:
-        ids_by_timeframe[book.continuous_timeframe] = {}
+    for declaration in book.continuous_declarations.values():
+        ids_by_timeframe.setdefault(declaration.timeframe, {})
     for requirement in book.required_streams:
         stream = requirement.stream
         ids_by_timeframe.setdefault(stream.timeframe, {})[

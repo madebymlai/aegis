@@ -37,11 +37,10 @@ class RollStartupPort(Protocol):
     def start(
         self,
         *,
-        timeframe: str,
-        history_start: datetime,
         end: datetime,
         warmup: bool,
         declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
     ) -> RollIntentBatch:
         """Materialize the declared continuous roots and return front-leg startup intents."""
         ...
@@ -89,17 +88,18 @@ def bootstrap(
     if startup_result.should_halt:
         return _halt_from_startup_result(startup_result)
 
-    roll_timeframe = _roll_timeframe(book)
     roll_intents = roll_desk.start(
-        timeframe=roll_timeframe,
-        history_start=startup_history_start(
-            now,
-            timeframe=roll_timeframe,
-            required_bar_window=book.continuous_history_bars,
-        ),
         end=now,
         warmup=warmup_cache_on_start,
         declarations=book.continuous_declarations,
+        history_starts={
+            root: startup_history_start(
+                now,
+                timeframe=declaration.timeframe,
+                required_bar_window=book.continuous_history_bars[root],
+            )
+            for root, declaration in book.continuous_declarations.items()
+        },
     )
     halt = _halt_from(roll_intents)
     if halt is not None:
@@ -132,15 +132,6 @@ def bootstrap(
         startup_result=startup_result,
         intents=tuple(intents),
     )
-
-
-def _roll_timeframe(book: AssembledBook) -> str:
-    """The Roll Desk's one timeframe: the futures Sleeves' shared cadence, or
-    (for a Book with no continuous declarations, where it is inert) the first
-    Sleeve's contract timeframe."""
-    if book.continuous_timeframe is not None:
-        return book.continuous_timeframe
-    return next(iter(book.sleeves.values())).contract.timeframe
 
 
 def startup_history_start(

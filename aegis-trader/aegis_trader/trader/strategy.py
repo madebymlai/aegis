@@ -143,9 +143,9 @@ class RebalanceStrategy(Strategy):
         self._period_ns_by_sleeve: dict[SleeveName, int] = {}
         self._current_period_by_sleeve: dict[SleeveName, int | None] = {}
         # Continuous front-leg bars carry dated-leg BarTypes that change at
-        # rolls; any bar outside the cash-stream map advances the futures
-        # Sleeves, which share one timeframe until aegis-rd-9qkr.5.
-        self._futures_sleeves: tuple[SleeveName, ...] = ()
+        # rolls; the Roll Desk maps a leg to its root, and the root to its
+        # declaring Sleeves (one owning Sleeve per root — aegis-rd-9qkr.5).
+        self._sleeves_by_continuous_id: dict[InstrumentId, tuple[SleeveName, ...]] = {}
         # Due transitions accumulated for one event timestamp, flushed by a
         # native time alert into one deterministic Book re-net.
         self._pending_due: dict[SleeveName, CompletedRebalancePeriod] = {}
@@ -351,20 +351,28 @@ class RebalanceStrategy(Strategy):
         self._consumers_by_bar_type = {
             bar_type: tuple(names) for bar_type, names in consumers.items()
         }
-        self._futures_sleeves = tuple(
-            sleeve_name
-            for sleeve_name, bundle in book.sleeves.items()
-            if bundle.contract.futures
-        )
+        continuous_consumers: dict[InstrumentId, dict[SleeveName, None]] = {}
+        for sleeve_name, bundle in book.sleeves.items():
+            for continuous_id in bundle.contract.continuous_instrument_ids:
+                continuous_consumers.setdefault(continuous_id, {})[sleeve_name] = None
+        self._sleeves_by_continuous_id = {
+            continuous_id: tuple(names)
+            for continuous_id, names in continuous_consumers.items()
+        }
 
     def _bar_consumers(self, bar_type: BarType) -> tuple[SleeveName, ...]:
         """The Sleeves a bar advances: its cash-stream consumers, or — for the
         dated front legs the Roll Desk subscribes outside the cash map — the
-        futures Sleeves."""
+        Sleeves declaring the leg's continuous root."""
         consumers = self._consumers_by_bar_type.get(bar_type)
         if consumers is not None:
             return consumers
-        return self._futures_sleeves
+        continuous_id = self._require_roll_desk().continuous_id(
+            bar_type.instrument_id
+        )
+        if continuous_id is None:
+            return ()
+        return self._sleeves_by_continuous_id.get(continuous_id, ())
 
     def _advance_sleeve_clock(self, sleeve_name: SleeveName, timestamp_ns: int) -> None:
         period_ns = self._period_ns_by_sleeve[sleeve_name]

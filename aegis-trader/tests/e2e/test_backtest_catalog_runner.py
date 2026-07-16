@@ -304,6 +304,9 @@ class _StaticContinuousDesk:
             return None
         return _ES
 
+    def continuous_id(self, leg: InstrumentId) -> InstrumentId | None:
+        return _ES if leg == _ES else None
+
     def on_bar(self, _bar: Bar) -> tuple[object, ...]:
         return ()
 
@@ -338,6 +341,9 @@ class _RollingContinuousDesk:
         if instrument_id != _ES:
             return None
         return self._front
+
+    def continuous_id(self, leg: InstrumentId) -> InstrumentId | None:
+        return _ES if leg == self._front else None
 
     def on_bar(self, bar: Bar) -> tuple[object, ...]:
         if self._rolled or bar.bar_type.instrument_id != self._front:

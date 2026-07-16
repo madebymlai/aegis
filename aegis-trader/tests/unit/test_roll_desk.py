@@ -46,10 +46,13 @@ def _declarations(
     adjustment_mode: ContinuousFutureAdjustmentType = (
         ContinuousFutureAdjustmentType.BACKWARD_RATIO
     ),
+    timeframe: str = "1D",
 ) -> dict[str, ContinuousRootDeclaration]:
     return {
         "ES": ContinuousRootDeclaration(
-            continuous_id=declared, adjustment_mode=adjustment_mode
+            continuous_id=declared,
+            adjustment_mode=adjustment_mode,
+            timeframe=timeframe,
         )
     }
 
@@ -71,8 +74,7 @@ def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
     desk = _desk(port)
 
     intents = desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-02-15"),
         warmup=True,
         declarations=_declarations(),
@@ -92,8 +94,7 @@ def test_start_materializes_under_a_ratio_declaration() -> None:
     port, _ = es_port()
     desk = _desk(port)
     desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-04-30"),
         warmup=False,
         declarations=_declarations(),
@@ -111,8 +112,7 @@ def test_start_materializes_under_a_spread_declaration() -> None:
     port, _ = es_port()
     desk = _desk(port)
     desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-04-30"),
         warmup=False,
         declarations=_declarations(
@@ -130,8 +130,7 @@ def _roll_event_carry(mode: ContinuousFutureAdjustmentType) -> RollEvent:
     port, native = es_port_two_rolls()
     desk = _desk(port)
     desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-06-06"),
         warmup=False,
         declarations=_declarations(adjustment_mode=mode),
@@ -159,8 +158,7 @@ def test_start_halts_when_materialized_continuous_venue_differs_from_declaration
     desk = _desk(port)
 
     intents = desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-02-15"),
         warmup=True,
         declarations=_declarations(declared=_ES_IFUS),
@@ -178,8 +176,7 @@ def test_on_bar_without_a_roll_appends_offset_zero_and_emits_no_intents() -> Non
     port, native = es_port_two_rolls()
     desk = _desk(port)
     desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-05-10"),
         warmup=False,
         declarations=_declarations(),
@@ -200,8 +197,7 @@ def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> N
     port, native = es_port_two_rolls()
     desk = _desk(port)
     desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-06-06"),
         warmup=False,
         declarations=_declarations(),
@@ -223,8 +219,7 @@ def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument(
     port, native = es_port_two_rolls()
     desk = _desk(port, present=(_ESU4,))
     desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-06-06"),
         warmup=False,
         declarations=_declarations(),
@@ -240,8 +235,7 @@ def test_on_instrument_completes_a_deferred_front_leg_subscription() -> None:
     port, native = es_port_two_rolls()
     desk = _desk(port)
     desk.start(
-        timeframe="1D",
-        history_start=_HISTORY_START,
+        history_starts={"ES": _HISTORY_START},
         end=_dt("2024-06-06"),
         warmup=False,
         declarations=_declarations(),
