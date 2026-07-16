@@ -1118,3 +1118,129 @@ def test_market_observation_records_the_full_book_without_invoking_sleeves() -> 
 
     assert ledger.observation_count == 2
     assert ledger.nav_history == (100_000.0, 100_000.0)
+
+
+class _StreamRecordingMarketData(_MarketData):
+    """Records every (instrument, timeframe) lookback read — stream identity."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.read_streams: set[tuple[InstrumentId, str]] = set()
+
+    def lookback_window(
+        self,
+        instrument_id: InstrumentId,
+        timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+        limit: int,
+    ):
+        self.read_streams.add((instrument_id, timeframe))
+        return super().lookback_window(
+            instrument_id, timeframe, period=period, period_ns=period_ns, limit=limit
+        )
+
+
+class _ConversionSleeveBundle(ExecutionBundle):
+    """A fixed-weight sleeve over one USD instrument with an FX conversion leg,
+    at a caller-chosen timeframe."""
+
+    def __init__(self, instrument_id: InstrumentId, timeframe: str) -> None:
+        self._instrument_id = instrument_id
+        contract = DataContract(
+            instrument_ids=(instrument_id,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe=timeframe,
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+            exchange=(_EURUSD,),
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(instrument_id,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={instrument_id: DriftBand.symmetric(0.0)},
+            gross_cap=1.0,
+            net_cap=None,
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
+        target = pd.DataFrame({self._instrument_id: [0.5] * len(close)}, index=close.index)
+        target.columns.name = "instrument_id"
+        return target
+
+
+def test_shared_fx_leg_serves_each_sleeve_at_its_own_timeframe() -> None:
+    # One reference InstrumentId consumed at two timeframes (aegis-rd-9qkr.4):
+    # each sleeve's conversion window reads the concrete (id, timeframe) stream,
+    # never a collapsed per-instrument timeframe.
+    hourly = SleeveName("hourly")
+    fx_bars = (
+        MarketBar(0, 1.25, 1.25, 1.25, 1.25, 0.0),
+        MarketBar(_DAY_NS, 1.25, 1.25, 1.25, 1.25, 0.0),
+    )
+    market_data = _StreamRecordingMarketData(
+        bars_by_instrument_id={
+            _INSTRUMENT_ID: (
+                MarketBar(0, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+                MarketBar(_DAY_NS, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+            ),
+            _LSE_LEG: (
+                MarketBar(0, 10.0, 10.0, 10.0, 10.0, 1_000.0),
+                MarketBar(_DAY_NS, 11.0, 11.0, 11.0, 11.0, 1_000.0),
+            ),
+            _EURUSD: fx_bars,
+        },
+        fresh_instrument_ids=frozenset({_INSTRUMENT_ID, _LSE_LEG}),
+        currencies={_INSTRUMENT_ID: "USD", _LSE_LEG: "USD"},
+        pairs={_EURUSD: ("EUR", "USD")},
+        fx_rates={"USD": 1.25},
+    )
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=_SLEEVE, wheel_filename="trend.whl", risk_share=0.5),
+            SleeveConfig(name=hourly, wheel_filename="hourly.whl", risk_share=0.5),
+        ),
+        base_currency="EUR",
+    )
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=market_data,
+        book=assemble_test_book(
+            book,
+            {
+                "trend.whl": _ConversionSleeveBundle(_INSTRUMENT_ID, "1D"),
+                "hourly.whl": _ConversionSleeveBundle(_LSE_LEG, "1H"),
+            },
+        ),
+        ledger=SleeveLedger(),
+    )
+
+    result = pipeline.rebalance(_all_due(_SLEEVE, hourly))
+
+    assert result.sleeve_failures == ()
+    assert (_EURUSD, "1D") in market_data.read_streams
+    assert (_EURUSD, "1H") in market_data.read_streams

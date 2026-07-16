@@ -232,12 +232,14 @@ def run_book_backtest(
         starting_cash=starting_cash,
         quote_marked_ids=frozenset(market_data.quote_frames),
     )
+    added_instrument_ids: set[InstrumentId] = set()
     for timeframe, group_data in loaded:
         _add_instruments_and_bars(
             engine,
             market_data=group_data,
             timeframe=timeframe,
             resolver=resolver,
+            added_instrument_ids=added_instrument_ids,
         )
     engine.sort_data()
     _add_equity_recorder(
@@ -517,9 +519,19 @@ def _add_instruments_and_bars(
     market_data: BacktestMarketData,
     timeframe: str,
     resolver: RawBarTypeResolver,
+    added_instrument_ids: set[InstrumentId],
 ) -> None:
+    """Register one timeframe group's instruments and bars.
+
+    A reference instrument shared across timeframe groups (e.g. an FX
+    conversion leg consumed hourly and daily) registers its definition and
+    FX quotes once; its bars still load under every required BarType.
+    """
     for instrument_id, instrument in market_data.instruments.items():
-        engine.add_instrument(instrument)
+        already_added = instrument_id in added_instrument_ids
+        if not already_added:
+            engine.add_instrument(instrument)
+            added_instrument_ids.add(instrument_id)
         frame = market_data.ohlcv[instrument_id]
         sided = market_data.quote_frames.get(instrument_id)
         if sided is not None:
@@ -538,7 +550,7 @@ def _add_instruments_and_bars(
             continue
         bars = _wrangle_external_bars(instrument, frame, timeframe, resolver)
         engine.add_data(bars, sort=False)
-        if isinstance(instrument, CurrencyPair):
+        if isinstance(instrument, CurrencyPair) and not already_added:
             # An FX conversion leg feeds the cache mark xrate the same way live
             # does: one quote per bar close (strategy.on_quote_tick), so sizing's
             # fx_rate read works from the same series the panel conversion uses.

@@ -245,3 +245,149 @@ def test_simultaneous_due_transitions_coalesce_into_one_re_net(tmp_path) -> None
             assert set(instrument_ids) == {_HOURLY_ID, _SECOND_HOURLY_ID}
     finally:
         engine.dispose()
+
+
+class _QuoteMarkedHourlyBundle(ExecutionBundle):
+    """A fixed-weight hourly sleeve whose leg is quote-marked (BID/ASK bars)."""
+
+    def __init__(self, instrument_id: InstrumentId) -> None:
+        self._instrument_id = instrument_id
+        contract = DataContract(
+            instrument_ids=(instrument_id,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1H",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+            mark_modes={instrument_id: "QUOTE"},
+        )
+        manifest = BundleManifest(
+            run_id="mixed-timeframe-synth",
+            role="synth",
+            candidate_key="mixed-quote",
+            component_source_hashes={},
+            instrument_ids=(instrument_id,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed_weight_quote",
+                module="synth",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={instrument_id: DriftBand.symmetric(0.02)},
+            gross_cap=1.0,
+            net_cap=None,
+            direction="longonly",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
+        weights = pd.DataFrame(
+            {self._instrument_id: [0.25] * len(close)},
+            index=close.index,
+        )
+        weights.columns.name = "instrument_id"
+        return weights
+
+
+class _MixedMarkingDataSource:
+    """Hourly quote-marked leg (sided frames) beside a daily bar-marked leg."""
+
+    def load(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> Any:
+        from aegis_trader.backtest import BacktestMarketData
+
+        if timeframe == "1H":
+            bid = _sided_hourly_frame(99.95)
+            ask = _sided_hourly_frame(100.05)
+            return BacktestMarketData(
+                instruments={_HOURLY_ID: _equity(_HOURLY_ID)},
+                ohlcv={_HOURLY_ID: (bid + ask) / 2.0},
+                quote_frames={_HOURLY_ID: (bid, ask)},
+            )
+        assert timeframe == "1D"
+        days = pd.date_range("2020-01-01", periods=4, freq="D")
+        daily = pd.DataFrame(
+            {
+                "Open": [100.0] * len(days),
+                "High": [100.0] * len(days),
+                "Low": [100.0] * len(days),
+                "Close": [100.0] * len(days),
+                "Volume": [1_000_000.0] * len(days),
+            },
+            index=days,
+        )
+        return BacktestMarketData(
+            instruments={_DAILY_ID: _equity(_DAILY_ID)},
+            ohlcv={_DAILY_ID: daily},
+        )
+
+
+def _sided_hourly_frame(price: float) -> pd.DataFrame:
+    index = pd.DatetimeIndex(_hourly_session_timestamps(3))
+    return pd.DataFrame(
+        {
+            "Open": [price] * len(index),
+            "High": [price] * len(index),
+            "Low": [price] * len(index),
+            "Close": [price] * len(index),
+            "Volume": [1_000_000.0] * len(index),
+        },
+        index=index,
+    )
+
+
+def test_quote_marked_hourly_sleeve_fills_from_its_own_bid_ask_streams(
+    tmp_path,
+) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_MIXED_BOOK_TOML)
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=tmp_path / "catalog",
+        registry=StubBundleRegistry(
+            {
+                "fast.whl": _QuoteMarkedHourlyBundle(_HOURLY_ID),
+                "slow.whl": _AlternatingWeightBundle(_DAILY_ID, "1D"),
+            }
+        ),
+        data_source=_MixedMarkingDataSource(),
+    )
+    engine = result.engine
+
+    try:
+        hourly_fills = [
+            order
+            for order in _closed_orders(engine)
+            if order.instrument_id == _HOURLY_ID
+        ]
+        assert hourly_fills, "quote-marked hourly sleeve produced no fills"
+        # A buy against the hourly BID/ASK book fills at the ask, at an
+        # intraday timestamp — the hourly quote streams drove the fill.
+        first = hourly_fills[0]
+        assert float(first.avg_px) == 100.05
+        assert pd.Timestamp(first.ts_last, tz="UTC").hour != 0
+        daily_fills = _fill_timestamps(engine, _DAILY_ID)
+        assert daily_fills != []
+        assert all(ts.hour == 0 for ts in daily_fills)
+    finally:
+        engine.dispose()
