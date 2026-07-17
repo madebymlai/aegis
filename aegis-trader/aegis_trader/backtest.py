@@ -16,13 +16,19 @@ from typing import Any, Protocol
 
 import pandas as pd
 from aegis_data.array_names import OHLCV_ARRAY_NAMES
+from aegis_data.custom_data import (
+    VOCABULARY as CUSTOM_ARRAY_VOCABULARY,
+    arrays as build_custom_arrays,
+    records_for_arrays,
+)
 from aegis_data.distributions import Distribution
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.config import CacheConfig, LoggingConfig
+from nautilus_trader.core.data import Data
 from nautilus_trader.model.data import Bar, CustomData, DataType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model.identifiers import ClientId, InstrumentId, Venue
 from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.config import PortfolioConfig
@@ -33,6 +39,7 @@ from aegis_data.catalog import (
     CatalogBackedDataPort,
     NautilusDataProviderPort,
     CatalogWindowRequest,
+    catalog_root,
     parquet_data_catalog,
 )
 
@@ -62,6 +69,7 @@ _PRICE_COLS = ("Open", "High", "Low", "Close")
 # at least the deepest sleeve's lookback (+1) must fit, so the runner widens it
 # from this floor when a contract needs more.
 DEFAULT_BACKTEST_BAR_CAPACITY = 10_000
+_CUSTOM_DATA_CLIENT_ID = ClientId("AEGIS-CUSTOM")
 
 
 class CatalogInstrumentError(ValueError):
@@ -247,6 +255,14 @@ def run_book_backtest(
             resolver=resolver,
             added_instrument_ids=added_instrument_ids,
         )
+    custom_catalog_path = catalog_path if catalog_path is not None else catalog_root()
+    custom_records = records_for_arrays(
+        _custom_array_requirements(assembled_book),
+        start=pd.Timestamp(start),
+        end=pd.Timestamp(end),
+        catalog_path=custom_catalog_path,
+    )
+    _add_custom_data(engine, custom_records)
     engine.sort_data()
     _add_equity_recorder(
         engine,
@@ -254,7 +270,12 @@ def run_book_backtest(
         streams=tuple(requirement.stream for requirement in assembled_book.required_streams),
         resolver=resolver,
     )
-    _add_strategy(engine, book=assembled_book, resolver=resolver)
+    _add_strategy(
+        engine,
+        book=assembled_book,
+        resolver=resolver,
+        custom_catalog_path=custom_catalog_path,
+    )
 
     # ``end`` keeps the engine advancing the clock past the final data event,
     # so a re-net alert scheduled 1ns after the last bar still fires and the
@@ -326,6 +347,27 @@ def _book_resolver(book: AssembledBook) -> RawBarTypeResolver:
     live gives, never a silent default (forward-first; no pre-recording path).
     """
     return recorded_marking_resolver(book)
+
+
+def _custom_array_requirements(
+    book: AssembledBook,
+) -> dict[InstrumentId, tuple[str, ...]]:
+    names_by_instrument_id: dict[InstrumentId, dict[str, None]] = {}
+    for bundle in book.sleeves.values():
+        custom_names = tuple(
+            name
+            for name in bundle.contract.required_arrays
+            if name in CUSTOM_ARRAY_VOCABULARY
+        )
+        for instrument_id in bundle.contract.instrument_ids:
+            names_by_instrument_id.setdefault(instrument_id, {}).update(
+                dict.fromkeys(custom_names)
+            )
+    return {
+        instrument_id: tuple(names)
+        for instrument_id, names in names_by_instrument_id.items()
+        if names
+    }
 
 
 def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | None:
@@ -425,7 +467,6 @@ def _validate_market_data(book: AssembledBook, market_data: BacktestMarketData) 
                 frame,
                 sleeve=sleeve_name.value,
                 instrument_id=instrument_id,
-                required_arrays=contract.required_arrays,
                 min_rows=contract.lookback_bars + 1,
             )
 
@@ -435,11 +476,10 @@ def _validate_contract_frame(
     *,
     sleeve: str,
     instrument_id: InstrumentId,
-    required_arrays: tuple[str, ...],
     min_rows: int,
 ) -> None:
     columns = {str(column).lower() for column in frame.columns}
-    required = tuple(dict.fromkeys((*OHLCV_ARRAY_NAMES, *required_arrays)))
+    required = OHLCV_ARRAY_NAMES
     missing = [name for name in required if name.lower() not in columns]
     if missing:
         raise ContractDataError(
@@ -603,6 +643,22 @@ def _add_distribution_data(
     )
 
 
+def _add_custom_data(
+    engine: BacktestEngine,
+    records: Sequence[Data],
+) -> None:
+    if not records:
+        return
+    engine.add_data(
+        [
+            CustomData(data_type=DataType(type(record)), data=record)
+            for record in records
+        ],
+        client_id=_CUSTOM_DATA_CLIENT_ID,
+        sort=False,
+    )
+
+
 def _fx_quotes(pair: CurrencyPair, ohlcv: pd.DataFrame) -> list[Any]:
     frame = _normalize_ohlcv(ohlcv)
     closes = frame["close"]
@@ -660,7 +716,20 @@ def _add_strategy(
     *,
     book: AssembledBook,
     resolver: RawBarTypeResolver,
+    custom_catalog_path: Path,
 ) -> None:
+    def custom_arrays(
+        names: Sequence[str],
+        instrument_ids: Sequence[InstrumentId],
+        index: pd.DatetimeIndex,
+    ) -> dict[str, pd.DataFrame]:
+        return build_custom_arrays(
+            names,
+            instrument_ids,
+            index=index,
+            catalog_path=custom_catalog_path,
+        )
+
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
             book=book.config,
@@ -668,6 +737,7 @@ def _add_strategy(
             warmup_cache_on_start=False,
         ),
         bar_type_resolver=resolver,
+        custom_arrays=custom_arrays,
     )
     strategy.register_book(book)
     engine.add_strategy(strategy)

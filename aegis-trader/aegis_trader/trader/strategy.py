@@ -77,6 +77,7 @@ from aegis_trader.domain.types import (
 )
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
+    CustomArrayBuilder,
     DueSleeve,
     GateOutcome,
     RebalancePipeline,
@@ -132,11 +133,13 @@ class RebalanceStrategy(Strategy):
         config: RebalanceStrategyConfig,
         *,
         bar_type_resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
+        custom_arrays: CustomArrayBuilder | None = None,
     ) -> None:
         super().__init__(config)
         # The one raw bar-type resolution seam (aegis-rd-tggo.1): every
         # subscribe/unsubscribe/request and cache read resolves through it.
         self._bar_type_resolver = bar_type_resolver
+        self._custom_arrays = custom_arrays
         self._assembled_book: AssembledBook | None = None
         # ── bar-driven per-Sleeve cadence state (aegis-rd-9qkr.3) ─────────
         # A Sleeve's clock advances only on bars of streams it consumes; its
@@ -287,6 +290,7 @@ class RebalanceStrategy(Strategy):
             roll_desk=roll_desk,
             fx_reference_pairs=self._fx_reference_pairs(),
             warmup_cache_on_start=self.config.warmup_cache_on_start,
+            custom_arrays=self._custom_arrays,
         )
         if isinstance(boot, Halt):
             self._halt_from_roll_intent(boot)

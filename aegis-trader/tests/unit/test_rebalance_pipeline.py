@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import pandas as pd
 import pytest
@@ -32,6 +32,7 @@ from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
+    CustomArrayBuilder,
     DueSleeve,
     GateOutcome,
     RebalancePipeline,
@@ -147,13 +148,20 @@ class _ContinuousWeightBundle(ExecutionBundle):
 
 class _CalendarParityBundle(ExecutionBundle):
     def __init__(
-        self, *, missing_index: MissingIndexPolicy = MissingIndexPolicy.DROP
+        self,
+        *,
+        missing_index: MissingIndexPolicy = MissingIndexPolicy.DROP,
+        custom_arrays: bool = False,
     ) -> None:
         self.close_panel: pd.DataFrame | None = None
+        self.fixture_panel: pd.DataFrame | None = None
         self.weights: pd.DataFrame | None = None
         contract = DataContract(
             instrument_ids=(_LSE_LEG, _BRU_LEG),
-            required_arrays=("Close",),
+            required_arrays=(
+                "Close",
+                *(("FixtureValue", "FixtureAvailable") if custom_arrays else ()),
+            ),
             base_currency="EUR",
             timeframe="1D",
             missing_index=missing_index,
@@ -192,6 +200,8 @@ class _CalendarParityBundle(ExecutionBundle):
     ) -> pd.DataFrame:
         close = native_prices.array("Close")
         self.close_panel = close.copy()
+        if "FixtureValue" in self.contract.required_arrays:
+            self.fixture_panel = native_prices.array("FixtureValue").copy()
         weights = close.div(close.sum(axis=1), axis=0)
         weights.columns.name = "instrument_id"
         self.weights = weights
@@ -425,6 +435,7 @@ def _pipeline(
     market_data: _MarketData | None = None,
     book: BookConfig | None = None,
     bundle: ExecutionBundle | None = None,
+    custom_arrays: CustomArrayBuilder | None = None,
 ) -> RebalancePipeline:
     config = book or _book()
     loaded_bundle = bundle or _FixedWeightBundle(0.5)
@@ -436,6 +447,7 @@ def _pipeline(
             {config.sleeves[0].wheel_filename: loaded_bundle},
         ),
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+        custom_arrays=custom_arrays,
     )
 
 
@@ -445,12 +457,14 @@ def _started_pipeline(
     market_data: _MarketData | None = None,
     book: BookConfig | None = None,
     bundle: ExecutionBundle | None = None,
+    custom_arrays: CustomArrayBuilder | None = None,
 ) -> RebalancePipeline:
     pipeline = _pipeline(
         book_state=book_state,
         market_data=market_data,
         book=book,
         bundle=bundle,
+        custom_arrays=custom_arrays,
     )
     startup_result = pipeline.startup_check()
     assert startup_result.trading_enabled is True
@@ -536,6 +550,40 @@ def test_rebalance_pipeline_intersects_drop_policy_mixed_calendar_panel() -> Non
     pd.testing.assert_frame_equal(bundle.close_panel, expected_close)
     assert not bundle.close_panel.isna().any().any()
     pd.testing.assert_frame_equal(bundle.weights, expected_weights)
+
+
+def test_custom_arrays_use_the_union_index_for_nan_policy() -> None:
+    bundle = _CalendarParityBundle(
+        missing_index=MissingIndexPolicy.NAN,
+        custom_arrays=True,
+    )
+
+    def custom_arrays(
+        names: Sequence[str],
+        instrument_ids: Sequence[InstrumentId],
+        index: pd.DatetimeIndex,
+    ) -> dict[str, pd.DataFrame]:
+        return {
+            name: pd.DataFrame(1.0, index=index, columns=instrument_ids)
+            for name in names
+        }
+
+    pipeline = _started_pipeline(
+        market_data=_MarketData(
+            bars_by_instrument_id=_mixed_calendar_bars(),
+            fresh_instrument_ids=frozenset({_LSE_LEG, _BRU_LEG}),
+        ),
+        bundle=bundle,
+        custom_arrays=custom_arrays,
+    )
+
+    pipeline.rebalance(_all_due())
+
+    expected_index = pd.DatetimeIndex(
+        [_DAY_NS, 2 * _DAY_NS, 3 * _DAY_NS, 4 * _DAY_NS]
+    )
+    assert bundle.fixture_panel is not None
+    assert bundle.fixture_panel.index.equals(expected_index)
 
 
 def test_rebalance_pipeline_holds_when_drop_policy_has_too_few_common_bars() -> None:

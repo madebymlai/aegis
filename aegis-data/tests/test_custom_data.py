@@ -13,12 +13,14 @@ from aegis_data.custom_data import (
     CustomDataProviderPort,
     FixtureRecord,
     ServedCustomData,
+    UnknownCustomArrayError,
     VOCABULARY,
     arrays,
     correct,
     coverage,
     ingest,
     records,
+    records_for_arrays,
 )
 
 _INSTRUMENT = InstrumentId.from_str("SPY.ARCA")
@@ -77,6 +79,39 @@ def test_ingest_is_idempotent_and_records_round_trip_typed(tmp_path: Path) -> No
     assert provider.requests == [(_utc("2024-01-01"), _utc("2024-01-03"))]
     assert stored == (_record("2024-01-02", 7.0),)
     assert isinstance(stored[0], FixtureRecord)
+
+
+def test_records_for_arrays_resolves_kinds_and_returns_covered_records(
+    tmp_path: Path,
+) -> None:
+    provider = _Provider((_record("2024-01-02", 7.0),))
+    ingest(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        providers=(provider,),
+        catalog_path=tmp_path,
+    )
+
+    stored = records_for_arrays(
+        {_INSTRUMENT: ("FixtureValue", "FixtureAvailable")},
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        catalog_path=tmp_path,
+    )
+
+    assert stored == (_record("2024-01-02", 7.0),)
+
+
+def test_records_for_arrays_rejects_an_unknown_array_name(tmp_path: Path) -> None:
+    with pytest.raises(UnknownCustomArrayError, match="UnknownFixtureValue"):
+        records_for_arrays(
+            {_INSTRUMENT: ("UnknownFixtureValue",)},
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-03"),
+            catalog_path=tmp_path,
+        )
 
 
 def test_ingest_translates_provider_failures_at_the_shared_coverage_boundary(
@@ -330,6 +365,33 @@ def test_arrays_projects_fixture_records_causally_on_the_exact_index(
     assert not panels["FixtureValue"].isna().to_numpy().any()
     assert not panels["FixtureAvailable"].isna().to_numpy().any()
     assert not panels["FixtureAgeDays"].isna().to_numpy().any()
+
+
+def test_arrays_carries_the_latest_record_from_before_the_requested_index(
+    tmp_path: Path,
+) -> None:
+    coverage_index = pd.date_range("2024-01-01", "2024-01-05", tz="UTC")
+    provider = _Provider((_record("2024-01-01", 2.0),))
+    ingest(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=coverage_index[0],
+        end=coverage_index[-1],
+        providers=(provider,),
+        catalog_path=tmp_path,
+    )
+    requested_index = coverage_index[2:]
+
+    panels = arrays(
+        ("FixtureValue", "FixtureAvailable", "FixtureAgeDays"),
+        (_INSTRUMENT,),
+        index=requested_index,
+        catalog_path=tmp_path,
+    )
+
+    assert panels["FixtureValue"].to_numpy().tolist() == [[2.0], [2.0], [2.0]]
+    assert panels["FixtureAvailable"].to_numpy().tolist() == [[1.0], [1.0], [1.0]]
+    assert panels["FixtureAgeDays"].to_numpy().tolist() == [[2.0], [3.0], [4.0]]
 
 
 def test_vocabulary_contains_only_provisioned_fixture_arrays() -> None:

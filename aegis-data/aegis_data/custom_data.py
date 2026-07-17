@@ -5,7 +5,7 @@ windows, and a catalog root. Nautilus interval and serialization machinery is
 kept inside this module.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import time_ns
@@ -136,6 +136,14 @@ AVAILABILITY_BY_VALUE = {
 
 class UnknownCustomDataRecordError(ValueError):
     """The requested domain record has no Custom Data implementation."""
+
+
+class UnknownCustomArrayError(ValueError):
+    """One or more requested arrays have no Custom Data implementation."""
+
+    def __init__(self, array_names: Sequence[str]) -> None:
+        self.array_names = tuple(array_names)
+        super().__init__(f"unknown custom arrays: {list(self.array_names)}")
 
 
 class CustomDataCoverageError(ValueError):
@@ -317,15 +325,54 @@ def arrays(
         name: pd.DataFrame(0.0, index=index, columns=instrument_ids)
         for name in array_names
     }
-    stored = records(
+    stored = _query_records(
         kind.record_type,
         instrument_ids,
-        start=pd.Timestamp(index[0]),
+        start=None,
         end=pd.Timestamp(index[-1]),
         catalog_path=catalog_path,
     )
     _project_records(kind, stored, instrument_ids, index, panels)
     return panels
+
+
+def records_for_arrays(
+    required_arrays: Mapping[InstrumentId, Sequence[str]],
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    catalog_path: Path,
+) -> tuple[Data, ...]:
+    """Verify coverage and return records needed for the requested arrays."""
+    array_names = tuple(
+        dict.fromkeys(
+            name for names in required_arrays.values() for name in names
+        )
+    )
+    selected: list[Data] = []
+    for kind in _kinds_for_array_names(array_names):
+        instrument_ids = tuple(
+            instrument_id
+            for instrument_id, names in required_arrays.items()
+            if set(names).intersection(kind.array_names)
+        )
+        coverage(
+            cast(type[Data], kind.record_type),
+            instrument_ids,
+            start=start,
+            end=end,
+            catalog_path=catalog_path,
+        )
+        selected.extend(
+            records(
+                kind.record_type,
+                instrument_ids,
+                start=start,
+                end=end,
+                catalog_path=catalog_path,
+            )
+        )
+    return tuple(selected)
 
 
 def coverage(
@@ -373,13 +420,30 @@ def records(
 ) -> tuple[RecordT, ...]:
     """Read typed domain records for an instrument window."""
     _kind_for(record_type)
+    return _query_records(
+        record_type,
+        instrument_ids,
+        start=start,
+        end=end,
+        catalog_path=catalog_path,
+    )
+
+
+def _query_records(
+    record_type: type[RecordT],
+    instrument_ids: Sequence[InstrumentId],
+    *,
+    start: pd.Timestamp | None,
+    end: pd.Timestamp,
+    catalog_path: Path,
+) -> tuple[RecordT, ...]:
     catalog = ParquetDataCatalog(str(catalog_path))
     stored: list[RecordT] = []
     for instrument_id in instrument_ids:
         queried = catalog.query(
             record_type,
             identifiers=[instrument_id.value],
-            start=_utc(start),
+            start=_utc(start) if start is not None else None,
             end=_utc(end),
         )
         stored.extend(_as_record(item, record_type) for item in queried)
@@ -469,7 +533,17 @@ def _kind_for_array_names(array_names: Sequence[str]) -> _Kind:
     for kind in _KINDS:
         if requested <= set(kind.array_names):
             return kind
-    raise ValueError(f"unknown custom arrays: {sorted(requested)}")
+    raise UnknownCustomArrayError(sorted(requested))
+
+
+def _kinds_for_array_names(array_names: Sequence[str]) -> tuple[_Kind, ...]:
+    requested = set(array_names)
+    kinds = tuple(kind for kind in _KINDS if requested.intersection(kind.array_names))
+    resolved = {name for kind in kinds for name in kind.array_names}
+    unknown = sorted(requested - resolved)
+    if unknown:
+        raise UnknownCustomArrayError(unknown)
+    return kinds
 
 
 def _project_records(
@@ -651,6 +725,7 @@ __all__ = [
     "FixtureRecord",
     "KNOWN_CUSTOM_ARRAY_NAMES",
     "ServedCustomData",
+    "UnknownCustomArrayError",
     "UnknownCustomDataRecordError",
     "VOCABULARY",
     "AVAILABILITY_BY_VALUE",
@@ -659,4 +734,5 @@ __all__ = [
     "coverage",
     "ingest",
     "records",
+    "records_for_arrays",
 ]

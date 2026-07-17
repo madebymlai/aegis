@@ -11,9 +11,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import pandas as pd
+from aegis_data.array_names import is_bar_derived_array
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import (
@@ -45,6 +46,16 @@ from aegis_trader.trader._rebalancer import (
 if TYPE_CHECKING:
     from aegis_trader.data.market_data import MarketDataPort
     from aegis_trader.portfolio import BookStatePort
+
+
+CustomArrayBuilder: TypeAlias = Callable[
+    [Sequence[str], Sequence[InstrumentId], pd.DatetimeIndex],
+    dict[str, pd.DataFrame],
+]
+
+
+class CustomArrayBuilderNotAttachedError(RuntimeError):
+    """A contract requested custom arrays without a runtime data builder."""
 
 
 class GateOutcome(str, Enum):
@@ -152,12 +163,14 @@ class RebalancePipeline:
         market_data: MarketDataPort,
         book: AssembledBook,
         ledger: SleeveLedger,
+        custom_arrays: CustomArrayBuilder | None = None,
     ) -> None:
         self._book_state = book_state
         self._market_data = market_data
         self._book = book.config
         self._sleeves = book.sleeves
         self._ledger = ledger
+        self._custom_arrays = custom_arrays
         self._bundle_bands = book.bands
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         # The latest valid target frame per Sleeve: due computations replace an
@@ -373,10 +386,7 @@ class RebalancePipeline:
         sleeve_bars = self._bars_for_contract(contract, period)
         if sleeve_bars is None:
             return None
-        arrays = {
-            name: _combine_array_series(sleeve_bars, name)
-            for name in contract.required_arrays
-        }
+        arrays = self._build_arrays(contract, sleeve_bars)
         # The pipeline resolves the period's market facts; the bundle owns the
         # native -> base transformation, so the conversion is applied exactly once
         # (and roll probes can perturb native prices before it).
@@ -385,6 +395,36 @@ class RebalancePipeline:
             MarketDataBundle(arrays),
             currency_conversion=conversion,
         )
+
+    def _build_arrays(
+        self,
+        contract: DataContract,
+        sleeve_bars: Mapping[InstrumentId, Sequence[MarketBar]],
+    ) -> dict[str, pd.DataFrame]:
+        bar_names = tuple(
+            name for name in contract.required_arrays if is_bar_derived_array(name)
+        )
+        custom_names = tuple(
+            name for name in contract.required_arrays if not is_bar_derived_array(name)
+        )
+        panels = {
+            name: _combine_array_series(sleeve_bars, name) for name in bar_names
+        }
+        if not custom_names:
+            return panels
+        if self._custom_arrays is None:
+            raise CustomArrayBuilderNotAttachedError(
+                "custom array builder was not attached"
+            )
+        index = (
+            next(iter(panels.values())).index
+            if panels
+            else _combine_array_series(sleeve_bars, "Close").index
+        )
+        panels.update(
+            self._custom_arrays(custom_names, contract.instrument_ids, index)
+        )
+        return panels
 
     def _currency_conversion(
         self, contract: DataContract, period: CompletedRebalancePeriod

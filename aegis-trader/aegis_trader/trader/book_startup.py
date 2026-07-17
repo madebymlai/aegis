@@ -19,7 +19,7 @@ from aegis_trader.domain.roll import Halt, RequestBars, RollIntent, RollIntentBa
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.startup import StartupResult
 from aegis_trader.portfolio import BookStatePort
-from aegis_trader.trader.pipeline import RebalancePipeline
+from aegis_trader.trader.pipeline import CustomArrayBuilder, RebalancePipeline
 
 # Calendar inflation from "bars of lookback" to "wall-clock span requested":
 # a daily bar accrues every calendar day the venue trades (365/252 ≈ 1.45), so
@@ -76,6 +76,7 @@ def bootstrap(
     roll_desk: RollStartupPort,
     fx_reference_pairs: Sequence[InstrumentId],
     warmup_cache_on_start: bool,
+    custom_arrays: CustomArrayBuilder | None = None,
 ) -> BootResult | Halt:
     """Run the startup gates and return either the boot values or a typed halt."""
     pipeline = RebalancePipeline(
@@ -83,6 +84,7 @@ def bootstrap(
         market_data=market_data,
         book=book,
         ledger=ledger,
+        custom_arrays=custom_arrays,
     )
     startup_result = pipeline.startup_check()
     if startup_result.should_halt:
