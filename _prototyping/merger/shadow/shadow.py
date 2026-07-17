@@ -23,7 +23,7 @@ from .ledger import (
     ShadowQualification,
 )
 from .market import MarketMarkBatch, MarketUnavailable
-from .sec_api import SourceRefresh
+from .edgar import SourceRefresh
 
 
 class ShadowEventSource(Protocol):

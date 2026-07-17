@@ -7,6 +7,16 @@ from .decision import (
     ShadowDecision,
     ShadowPosition,
 )
+from .edgar import (
+    EdgarEventSource,
+    EdgarFiling,
+    EdgarGateway,
+    EdgarSourceError,
+    EdgarToolsGateway,
+    IssuerIdentity,
+    SourceRefresh,
+    SourceReview,
+)
 from .ledger import (
     EventObservation,
     EventStatus,
@@ -19,14 +29,6 @@ from .market import (
     MarketMarkBatch,
     MarketUnavailable,
 )
-from .sec_api import (
-    SecApiCredentialsError,
-    SecApiResponseError,
-    SecApiSource,
-    SecApiTransport,
-    SourceRefresh,
-    SourceReview,
-)
 from .shadow import (
     CashMergerShadow,
     ShadowEventSource,
@@ -37,19 +39,21 @@ from .shadow import (
 __all__ = [
     "AegisCatalogMarkSource",
     "CashMergerShadow",
+    "EdgarEventSource",
+    "EdgarFiling",
+    "EdgarGateway",
+    "EdgarSourceError",
+    "EdgarToolsGateway",
     "EventObservation",
     "EventStatus",
     "FredDtb3RateSource",
     "FrozenQ70Policy",
+    "IssuerIdentity",
     "LedgerWrite",
     "MarketMark",
     "MarketMarkBatch",
     "MarketUnavailable",
     "ObservedCashRate",
-    "SecApiCredentialsError",
-    "SecApiResponseError",
-    "SecApiSource",
-    "SecApiTransport",
     "ShadowDecision",
     "ShadowEventSource",
     "ShadowLedger",

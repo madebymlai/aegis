@@ -13,6 +13,7 @@ def _event(number: int) -> EventObservation:
     accession = f"announcement-{number:02d}"
     return EventObservation(
         event_id=f"{number}:{accession}",
+        instrument_id=f"{ticker}.XNYS",
         target_cik=str(number),
         ticker=ticker,
         agreement_accession=accession,
@@ -28,6 +29,7 @@ def _event(number: int) -> EventObservation:
 
 def _mark(number: int, close: float = 10.00) -> MarketMark:
     return MarketMark(
+        instrument_id=f"D{number:02d}.XNYS",
         ticker=f"D{number:02d}",
         observed_at="2026-02-02T21:00:00+00:00",
         close=close,

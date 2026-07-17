@@ -12,6 +12,7 @@ from _prototyping.merger.shadow import (
 
 _EVENT = EventObservation(
     event_id="1:announcement",
+    instrument_id="D01.XNYS",
     target_cik="1",
     ticker="D01",
     agreement_accession="announcement",
@@ -24,6 +25,7 @@ _EVENT = EventObservation(
     evidence="Each share converts into $10.20 in cash.",
 )
 _MARK = MarketMark(
+    instrument_id="D01.XNYS",
     ticker="D01",
     observed_at="2026-02-02T21:00:00+00:00",
     close=10.00,
@@ -58,6 +60,7 @@ class _ResolvingSource:
                     replace(
                         _EVENT,
                         event_id=f"{number}:announcement",
+                        instrument_id=f"D{number:02d}.XNYS",
                         target_cik=str(number),
                         ticker=f"D{number:02d}",
                     )
@@ -82,7 +85,14 @@ class _ResolvingSource:
 class _DiversifiedMarks:
     def load(self, events, *, as_of) -> MarketMarkBatch:
         return MarketMarkBatch(
-            marks=tuple(replace(_MARK, ticker=f"D{number:02d}") for number in range(1, 11)),
+            marks=tuple(
+                replace(
+                    _MARK,
+                    instrument_id=f"D{number:02d}.XNYS",
+                    ticker=f"D{number:02d}",
+                )
+                for number in range(1, 11)
+            ),
             unavailable=(),
         )
 

@@ -15,8 +15,8 @@ import yaml
 from _prototyping.merger.shadow import (
     AegisCatalogMarkSource,
     CashMergerShadow,
+    EdgarEventSource,
     FredDtb3RateSource,
-    SecApiSource,
 )
 
 
@@ -33,10 +33,9 @@ def main() -> None:
     cash_rate = FredDtb3RateSource(root / "sources" / "fred-dtb3").latest(as_of=as_of.date())
     end = as_of.date() - timedelta(days=1)
     evidence = shadow.run(
-        source=SecApiSource(root / "sources" / "sec-api"),
+        source=EdgarEventSource(config["instrument_ids"]),
         marks=AegisCatalogMarkSource(
-            config["instrument_ids"],
-            annual_cash_rate=cash_rate.annual_rate,
+            cash_rate.annual_rate,
             catalog_path=config["catalog_path"],
             market_instrument_id=config["market_instrument_id"],
         ),
@@ -64,7 +63,7 @@ def main() -> None:
                     "positions": len(evidence.decision.positions),
                     "terminal_exit_event_ids": evidence.terminal_exit_event_ids,
                 },
-                "unmapped_or_unpriceable": [
+                "market_unavailable": [
                     asdict(item) for item in evidence.market_unavailable_items
                 ],
                 "evidence_gate": asdict(evidence.qualification),
@@ -118,15 +117,14 @@ def _load_config(path: Path) -> dict[str, Any]:
     if capital <= 0.0:
         raise ShadowConfigError("shadow_capital must be positive")
     raw_ids = payload.get("instrument_ids")
-    if not isinstance(raw_ids, dict) or not all(
-        isinstance(ticker, str) and isinstance(instrument_id, str)
-        for ticker, instrument_id in raw_ids.items()
+    if not isinstance(raw_ids, list) or not raw_ids or not all(
+        isinstance(instrument_id, str) for instrument_id in raw_ids
     ):
-        raise ShadowConfigError("instrument_ids must map SEC tickers to InstrumentId strings")
+        raise ShadowConfigError("instrument_ids must be a non-empty list of InstrumentId strings")
     catalog = payload.get("catalog_path")
     return {
         "shadow_capital": capital,
-        "instrument_ids": {ticker.upper(): value for ticker, value in raw_ids.items()},
+        "instrument_ids": tuple(dict.fromkeys(raw_ids)),
         "market_instrument_id": str(payload.get("market_instrument_id", "SPY.ARCA")),
         "catalog_path": Path(catalog).expanduser() if catalog is not None else None,
     }

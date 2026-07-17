@@ -16,7 +16,7 @@ Copy `shadow.example.yaml` to a local config, add only IBKR-qualified Instrument
 from the repository root:
 
 ```bash
-SEC_API_KEY=... aegis-rd/.venv/bin/python -m _prototyping.merger.run_shadow \
+aegis-rd/.venv/bin/python -m _prototyping.merger.run_shadow \
   --config /path/to/local-shadow.yaml
 ```
 
@@ -24,16 +24,19 @@ Each run:
 
 1. resumes after the latest covered filing date, or starts on the last completed UTC date
    when empty (the current partial filing day is collected by the next run);
-2. fetches SEC-API filing metadata and complete submissions only on a cache miss;
-3. appends content-addressed event observations without rewriting history;
-4. fetches the latest public FRED `DTB3` cash rate with an immutable offline cache;
-5. prices mapped targets through Aegis's catalog-backed IBKR path;
-6. forms the unchanged monthly whole-share `q70` decision and reports terminal exits; and
-7. writes immutable evidence under the runtime state directory.
+2. resolves every configured InstrumentId to its SEC CIK through EdgarTools;
+3. fetches and locally caches company filings and complete submissions through EdgarTools;
+4. rejects filings outside the configured CIK universe before creating an event;
+5. appends content-addressed event observations without rewriting history;
+6. fetches the latest public FRED `DTB3` cash rate with an immutable offline cache;
+7. prices active configured targets through Aegis's catalog-backed IBKR path;
+8. forms the unchanged monthly whole-share `q70` decision and reports terminal exits; and
+9. writes immutable evidence under the runtime state directory.
 
-New SEC tickers without a configured InstrumentId remain unpriced and appear explicitly in
-`unmapped_or_unpriceable`. The prototype does not guess a venue, submit an order, or alter a
-production schema.
+The configured InstrumentIds are authoritative. A filing cannot create a tradeable instrument,
+and the prototype does not guess a venue, submit an order, or alter a production schema. EdgarTools
+owns SEC access, ticker/CIK reference data, fair-access throttling, and its standard `~/.edgar`
+cache; the prototype owns merger extraction, lifecycle state, and evidence.
 
 ## Behavior checks
 

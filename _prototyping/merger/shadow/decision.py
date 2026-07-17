@@ -24,6 +24,7 @@ _FIXED_FEE = 0.35
 class MarketMark:
     """Causally available inputs needed to value one pending cash merger."""
 
+    instrument_id: str
     ticker: str
     observed_at: str
     close: float
@@ -40,6 +41,7 @@ class ShadowPosition:
     """One executable whole-share target produced by the frozen policy."""
 
     event_id: str
+    instrument_id: str
     ticker: str
     shares: int
     price: float
@@ -81,14 +83,21 @@ class FrozenQ70Policy:
     ) -> ShadowDecision:
         if capital <= 0.0:
             raise ValueError("shadow capital must be positive")
-        marks_by_ticker = {
-            mark.ticker: mark for mark in marks if _available(mark.observed_at, as_of)
+        marks_by_instrument = {
+            mark.instrument_id: mark for mark in marks if _available(mark.observed_at, as_of)
         }
         current = _latest_by_event(events, as_of)
         eligible = tuple(
             deal
             for event in current
-            if (deal := _eligible(event, marks_by_ticker.get(event.ticker), as_of, capital))
+            if (
+                deal := _eligible(
+                    event,
+                    marks_by_instrument.get(event.instrument_id),
+                    as_of,
+                    capital,
+                )
+            )
             is not None
         )
         ranked = sorted(eligible, key=lambda item: (-item.q_market, item.event.event_id))
@@ -186,6 +195,7 @@ def _whole_share_position(
         return None
     return ShadowPosition(
         event_id=deal.event.event_id,
+        instrument_id=deal.event.instrument_id,
         ticker=deal.event.ticker,
         shares=shares,
         price=deal.mark.close,

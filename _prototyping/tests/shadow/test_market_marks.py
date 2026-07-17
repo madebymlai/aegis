@@ -33,6 +33,7 @@ def test_catalog_mark_source_prices_only_explicit_instrument_ids() -> None:
     }
     event = EventObservation(
         event_id="1:announcement",
+        instrument_id="D01.XNYS",
         target_cik="1",
         ticker="D01",
         agreement_accession="announcement",
@@ -45,8 +46,7 @@ def test_catalog_mark_source_prices_only_explicit_instrument_ids() -> None:
         evidence="Fixed-cash merger.",
     )
     source = AegisCatalogMarkSource(
-        {"D01": "D01.XNYS"},
-        annual_cash_rate=0.04,
+        0.04,
         port=_Catalog(frames),
     )
 

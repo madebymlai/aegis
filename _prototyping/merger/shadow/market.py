@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -43,14 +43,12 @@ class AegisCatalogMarkSource:
 
     def __init__(
         self,
-        instrument_ids: Mapping[str, str],
-        *,
         annual_cash_rate: float,
+        *,
         catalog_path: Path | None = None,
         market_instrument_id: str = "SPY.ARCA",
         port: CatalogWindowPort | None = None,
     ) -> None:
-        self._instrument_ids = dict(instrument_ids)
         self._annual_cash_rate = annual_cash_rate
         self._catalog_path = catalog_path
         self._market_instrument_id = market_instrument_id
@@ -67,21 +65,14 @@ class AegisCatalogMarkSource:
             for event in events
             if event.status in {EventStatus.ANNOUNCED, EventStatus.AMENDED}
         )
-        unavailable = [
-            MarketUnavailable(event.event_id, event.ticker, "missing InstrumentId mapping")
-            for event in pending
-            if event.ticker not in self._instrument_ids
-        ]
-        mapped = tuple(event for event in pending if event.ticker in self._instrument_ids)
-        if not mapped:
-            return MarketMarkBatch((), tuple(unavailable))
+        if not pending:
+            return MarketMarkBatch((), ())
 
         ids = {
-            event.ticker: InstrumentId.from_str(self._instrument_ids[event.ticker])
-            for event in mapped
+            event.event_id: InstrumentId.from_str(event.instrument_id) for event in pending
         }
         market_id = InstrumentId.from_str(self._market_instrument_id)
-        earliest = min(datetime.fromisoformat(event.observed_at) for event in mapped)
+        earliest = min(datetime.fromisoformat(event.observed_at) for event in pending)
         start = (earliest - timedelta(days=100)).date().isoformat()
         end = as_of.date().isoformat()
         port = self._port or _catalog_port(self._catalog_path)
@@ -93,10 +84,11 @@ class AegisCatalogMarkSource:
         )
         market = frames[market_id]
         marks: list[MarketMark] = []
-        for event in mapped:
+        unavailable: list[MarketUnavailable] = []
+        for event in pending:
             mark, reason = _mark(
                 event,
-                frames[ids[event.ticker]],
+                frames[ids[event.event_id]],
                 market,
                 as_of=as_of,
                 annual_cash_rate=self._annual_cash_rate,
@@ -145,6 +137,7 @@ def _mark(
     observed = target.index[-1].tz_localize("UTC").isoformat()
     return (
         MarketMark(
+            instrument_id=event.instrument_id,
             ticker=event.ticker,
             observed_at=observed,
             close=float(target["Close"].iloc[-1]),

@@ -1,29 +1,19 @@
-"""Dynamic SEC-API ingestion with immutable, idempotent source snapshots."""
+"""Configured-universe cash-merger ingestion through free SEC EDGAR access."""
 
 from __future__ import annotations
 
-import gzip
-import hashlib
-import json
-import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from html import unescape
-from pathlib import Path
-from typing import Any, Protocol
-from urllib.request import Request, urlopen
+from typing import Protocol
 
-from .artifacts import (
-    canonical_bytes,
-    write_gzip_once,
-    write_once,
-)
+from nautilus_trader.model.identifiers import InstrumentId
+
 from .ledger import EventObservation, EventStatus
 
-_QUERY_URL = "https://api.sec-api.io"
-_ARCHIVE_URL = "https://archive.sec-api.io/{cik}/{numeric}/{accession}.txt"
+_EDGAR_IDENTITY = "Aegis research m@laimk.dev"
 _MONTHS = {
     name.lower(): number
     for number, name in enumerate(
@@ -47,18 +37,8 @@ _MONTHS = {
 }
 
 
-class SecApiCredentialsError(RuntimeError):
-    """The prospective source cannot refresh without an SEC-API credential."""
-
-
-class SecApiResponseError(RuntimeError):
-    """SEC-API returned a response that cannot form causal observations."""
-
-
-class SecApiTransport(Protocol):
-    def query(self, request: bytes) -> bytes: ...
-
-    def submission(self, cik: str, accession: str) -> bytes: ...
+class EdgarSourceError(RuntimeError):
+    """SEC EDGAR data cannot form a configured-universe observation."""
 
 
 @dataclass(frozen=True)
@@ -79,40 +59,124 @@ class SourceRefresh:
     reviews: tuple[SourceReview, ...]
 
 
-class SecApiHttpTransport:
-    """Own authenticated SEC-API requests; callers see only immutable bytes."""
+@dataclass(frozen=True)
+class IssuerIdentity:
+    """One configured tradeable instrument resolved to its SEC issuer."""
 
-    def __init__(self, api_key: str | None = None) -> None:
-        self._api_key = api_key or os.environ.get("SEC_API_KEY")
-        if not self._api_key:
-            raise SecApiCredentialsError("SEC_API_KEY is required on a cold source refresh")
-
-    def query(self, request: bytes) -> bytes:
-        return _request(
-            _QUERY_URL,
-            request,
-            api_key=self._api_key,
-            method="POST",
-            content_type="application/json",
-        )
-
-    def submission(self, cik: str, accession: str) -> bytes:
-        numeric = accession.replace("-", "")
-        return _request(
-            _ARCHIVE_URL.format(cik=cik, numeric=numeric, accession=accession),
-            None,
-            api_key=self._api_key,
-            method="GET",
-            content_type=None,
-        )
+    instrument_id: str
+    ticker: str
+    cik: str
 
 
-class SecApiSource:
-    """Discover prospective fixed-cash filings and replay a warm cache offline."""
+@dataclass(frozen=True)
+class EdgarFiling:
+    """The filing facts needed by the merger-domain parser."""
 
-    def __init__(self, cache_dir: Path, *, transport: SecApiTransport | None = None) -> None:
-        self._cache_dir = cache_dir
-        self._transport = transport
+    accession: str
+    cik: str
+    filed_at: datetime
+    form: str
+    source_url: str
+    submission: bytes
+    items: tuple[str, ...] = ()
+    document_types: tuple[str, ...] = ()
+
+
+class EdgarGateway(Protocol):
+    def resolve(self, instrument_ids: tuple[str, ...]) -> tuple[IssuerIdentity, ...]: ...
+
+    def filings(
+        self,
+        *,
+        start: date,
+        end: date,
+        ciks: frozenset[str],
+    ) -> tuple[EdgarFiling, ...]: ...
+
+
+class EdgarToolsGateway:
+    """Present EdgarTools as the narrow source interface required by the strategy."""
+
+    def __init__(self) -> None:
+        from edgar import set_identity, use_local_storage
+
+        set_identity(_EDGAR_IDENTITY)
+        use_local_storage()
+
+    def resolve(self, instrument_ids: tuple[str, ...]) -> tuple[IssuerIdentity, ...]:
+        from edgar import Company
+
+        identities: list[IssuerIdentity] = []
+        for value in instrument_ids:
+            instrument_id = InstrumentId.from_str(value)
+            ticker = instrument_id.symbol.value
+            company = Company(ticker)
+            identities.append(IssuerIdentity(str(instrument_id), ticker, str(company.cik)))
+        return tuple(identities)
+
+    def filings(
+        self,
+        *,
+        start: date,
+        end: date,
+        ciks: frozenset[str],
+    ) -> tuple[EdgarFiling, ...]:
+        from edgar import Company
+
+        filings: list[EdgarFiling] = []
+        window = (start.isoformat(), end.isoformat())
+        for cik in sorted(ciks):
+            company_filings = Company(int(cik)).get_filings(
+                form=["8-K", "8-K/A"],
+                filing_date=window,
+            )
+            for filing in company_filings:
+                accepted = filing.acceptance_datetime
+                if accepted is None:
+                    raise EdgarSourceError(
+                        f"EDGAR filing {filing.accession_no} omitted acceptance_datetime"
+                    )
+                submission = filing.full_text_submission()
+                if not submission:
+                    raise EdgarSourceError(
+                        f"EDGAR filing {filing.accession_no} omitted its complete submission"
+                    )
+                filings.append(
+                    EdgarFiling(
+                        accession=filing.accession_no,
+                        cik=str(filing.cik),
+                        filed_at=_as_utc(accepted),
+                        form=filing.form,
+                        source_url=filing.homepage_url,
+                        submission=submission.encode(),
+                        items=_items(filing.items),
+                        document_types=tuple(
+                            sorted(
+                                {
+                                    attachment.document_type.upper()
+                                    for attachment in filing.attachments
+                                }
+                            )
+                        ),
+                    )
+                )
+        return tuple(sorted(filings, key=lambda item: (item.filed_at, item.accession)))
+
+
+class EdgarEventSource:
+    """Attach public merger filings only to configured tradeable instruments."""
+
+    def __init__(
+        self,
+        instrument_ids: Iterable[str],
+        *,
+        gateway: EdgarGateway | None = None,
+    ) -> None:
+        self._instrument_ids = tuple(dict.fromkeys(instrument_ids))
+        if not self._instrument_ids:
+            raise EdgarSourceError("cash-merger universe must contain at least one InstrumentId")
+        self._gateway = gateway or EdgarToolsGateway()
+        self._resolved: tuple[IssuerIdentity, ...] | None = None
 
     def refresh(
         self,
@@ -122,19 +186,32 @@ class SecApiSource:
         active_events: Iterable[EventObservation],
     ) -> SourceRefresh:
         if end < start:
-            raise ValueError("SEC-API refresh end precedes start")
+            raise ValueError("EDGAR refresh end precedes start")
+        identities = self._identities()
+        by_cik = {identity.cik: identity for identity in identities}
+        configured_ids = {identity.instrument_id for identity in identities}
         active = tuple(
             event
             for event in active_events
             if event.status in {EventStatus.ANNOUNCED, EventStatus.AMENDED}
+            and event.instrument_id in configured_ids
         )
-        announcement_filings = self._query(_announcement_query(start, end))
+        filings = tuple(
+            filing
+            for filing in self._gateway.filings(
+                start=start,
+                end=end,
+                ciks=frozenset(by_cik),
+            )
+            if filing.cik in by_cik
+        )
         original_active_by_cik = _active_by_cik(active)
         observations: list[EventObservation] = []
         reviews: list[SourceReview] = []
-        for filing in _unique_filings(announcement_filings):
-            submission = self._submission(filing)
-            observation, review = _announcement(filing, submission)
+        for filing in _unique_filings(filings):
+            if not _opens_agreement(filing):
+                continue
+            observation, review = _announcement(filing, by_cik[filing.cik])
             if observation is not None:
                 observations.append(
                     _preserve_event_identity(
@@ -148,11 +225,10 @@ class SecApiSource:
         if lifecycle_events:
             lifecycle_by_cik = _active_by_cik(lifecycle_events)
             announcements_by_accession = _announcements_by_accession(observations)
-            lifecycle_filings = self._query(_lifecycle_query(start, end, lifecycle_events))
-            for filing in _unique_filings(lifecycle_filings):
+            for filing in _unique_filings(filings):
                 if not _could_change_lifecycle(filing):
                     continue
-                cik = _required_text(filing, "cik")
+                cik = filing.cik
                 candidates = _lifecycle_candidates(
                     filing,
                     announcements_by_accession,
@@ -161,10 +237,8 @@ class SecApiSource:
                 )
                 if not candidates:
                     continue
-                submission = self._submission(filing)
                 observation, review = _lifecycle(
                     filing,
-                    submission,
                     candidates,
                 )
                 if observation is not None:
@@ -178,97 +252,31 @@ class SecApiSource:
             reviews=tuple(sorted(reviews, key=lambda item: (item.accession, item.reason))),
         )
 
-    def _query(self, request: dict[str, Any]) -> list[dict[str, Any]]:
-        page_size = int(request["size"])
-        filings: list[dict[str, Any]] = []
-        offset = 0
-        while True:
-            page_request = {**request, "from": str(offset)}
-            page, total = self._query_page(page_request)
-            filings.extend(page)
-            offset += len(page)
-            if not page or offset >= total:
-                return filings
-            if len(page) < page_size:
-                raise SecApiResponseError(
-                    "SEC-API Query returned an incomplete page before its reported total"
-                )
-
-    def _query_page(self, request: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
-        request_bytes = canonical_bytes(request)
-        request_identity = hashlib.sha256(request_bytes).hexdigest()
-        cached = _cached_query(self._cache_dir / "queries", request_identity)
-        if cached is None:
-            response = self._network().query(request_bytes)
-            parsed = _query_payload(response)
-            _store_query(
-                self._cache_dir / "queries",
-                request_identity=request_identity,
-                response=response,
-            )
-            return parsed
-        return _query_payload(cached)
-
-    def _submission(self, filing: dict[str, Any]) -> bytes:
-        accession = _required_text(filing, "accessionNo")
-        cached = tuple((self._cache_dir / "submissions").glob(f"{accession}-*.txt.gz"))
-        if len(cached) > 1:
-            raise SecApiResponseError(f"conflicting cached submissions for {accession}")
-        if cached:
-            with gzip.open(cached[0], "rb") as handle:
-                return handle.read()
-        cik = _required_text(filing, "cik")
-        response = self._network().submission(cik, accession)
-        if b"<SEC-DOCUMENT" not in response and b"<SEC-HEADER" not in response:
-            raise SecApiResponseError(f"SEC-API omitted the complete submission for {accession}")
-        identity = hashlib.sha256(response).hexdigest()
-        destination = self._cache_dir / "submissions" / f"{accession}-{identity}.txt.gz"
-        write_gzip_once(destination, response)
-        return response
-
-    def _network(self) -> SecApiTransport:
-        if self._transport is None:
-            self._transport = SecApiHttpTransport()
-        return self._transport
+    def _identities(self) -> tuple[IssuerIdentity, ...]:
+        if self._resolved is None:
+            resolved = self._gateway.resolve(self._instrument_ids)
+            if {identity.instrument_id for identity in resolved} != set(self._instrument_ids):
+                raise EdgarSourceError("EDGAR identity resolution did not cover the configured universe")
+            by_cik: dict[str, IssuerIdentity] = {}
+            for identity in resolved:
+                previous = by_cik.get(identity.cik)
+                if previous is not None and previous.instrument_id != identity.instrument_id:
+                    raise EdgarSourceError(
+                        f"configured instruments {previous.instrument_id} and "
+                        f"{identity.instrument_id} resolve to the same CIK {identity.cik}"
+                    )
+                by_cik[identity.cik] = identity
+            self._resolved = tuple(sorted(resolved, key=lambda item: item.instrument_id))
+        return self._resolved
 
 
-def _announcement_query(start: date, end: date) -> dict[str, Any]:
-    return {
-        "query": (
-            'formType:"8-K" AND documentFormatFiles.type:"EX-2.1" '
-            f"AND filedAt:[{start.isoformat()} TO {end.isoformat()}]"
-        ),
-        "from": "0",
-        "size": "50",
-        "sort": [{"filedAt": {"order": "asc"}}],
-    }
+def _opens_agreement(filing: EdgarFiling) -> bool:
+    return "EX-2.1" in filing.document_types or "EX-2.1" in _documents(filing.submission)
 
 
-def _lifecycle_query(
-    start: date,
-    end: date,
-    active_events: tuple[EventObservation, ...],
-) -> dict[str, Any]:
-    ciks = ", ".join(sorted({event.target_cik for event in active_events}))
-    return {
-        "query": (
-            f'cik:({ciks}) AND formType:"8-K" '
-            f"AND filedAt:[{start.isoformat()} TO {end.isoformat()}]"
-        ),
-        "from": "0",
-        "size": "50",
-        "sort": [{"filedAt": {"order": "asc"}}],
-    }
-
-
-def _could_change_lifecycle(filing: dict[str, Any]) -> bool:
-    items = {str(item) for item in filing.get("items") or ()}
-    document_types = {
-        str(document.get("type") or "").upper()
-        for document in filing.get("documentFormatFiles") or ()
-        if isinstance(document, dict)
-    }
-    return bool(items.intersection({"1.01", "1.02", "2.01"}) or "EX-2.1" in document_types)
+def _could_change_lifecycle(filing: EdgarFiling) -> bool:
+    document_types = set(filing.document_types) or set(_documents(filing.submission))
+    return bool(set(filing.items).intersection({"1.01", "1.02", "2.01"}) or "EX-2.1" in document_types)
 
 
 def _latest_active(events: Iterable[EventObservation]) -> tuple[EventObservation, ...]:
@@ -289,12 +297,12 @@ def _announcements_by_accession(
 
 
 def _lifecycle_candidates(
-    filing: dict[str, Any],
+    filing: EdgarFiling,
     announcements_by_accession: dict[str, tuple[EventObservation, ...]],
     original_active: tuple[EventObservation, ...],
     all_active: tuple[EventObservation, ...],
 ) -> tuple[EventObservation, ...]:
-    accession = _required_text(filing, "accessionNo")
+    accession = filing.accession
     same_filing_announcements = announcements_by_accession.get(accession)
     if same_filing_announcements is None:
         return all_active
@@ -317,7 +325,7 @@ def _preserve_event_identity(
     if not same_agreement:
         return observation
     if len(same_agreement) > 1:
-        raise SecApiResponseError(
+        raise EdgarSourceError(
             f"multiple active events share agreement date {observation.agreement_date}"
         )
     event = same_agreement[0]
@@ -330,12 +338,13 @@ def _preserve_event_identity(
 
 
 def _announcement(
-    filing: dict[str, Any], submission: bytes
+    filing: EdgarFiling,
+    identity: IssuerIdentity,
 ) -> tuple[EventObservation | None, SourceReview | None]:
-    accession = _required_text(filing, "accessionNo")
-    cik = _required_text(filing, "cik")
-    ticker = _ticker(filing)
-    documents = _documents(submission)
+    accession = filing.accession
+    cik = filing.cik
+    ticker = identity.ticker
+    documents = _documents(filing.submission)
     agreement = " ".join(documents.get("EX-2.1", ()))
     disclosure = " ".join(
         text
@@ -343,28 +352,25 @@ def _announcement(
         if document_type == "8-K" or document_type.startswith("EX-99")
         for text in texts
     )
-    if not ticker:
-        return None, SourceReview(accession, cik, "", "missing point-in-time ticker")
     agreement_date = _agreement_date(agreement)
     if agreement_date is None:
         return None, SourceReview(accession, cik, ticker, "agreement date not extracted")
     offer = _cash_offer(agreement, disclosure)
     if offer is None:
         return None, SourceReview(accession, cik, ticker, "unique fixed-cash offer not extracted")
-    filed_at = _utc_iso(_required_text(filing, "filedAt"))
-    source_url = str(filing.get("linkToFilingDetails") or "")
     return (
         EventObservation(
             event_id=f"{cik}:{accession}",
+            instrument_id=identity.instrument_id,
             target_cik=cik,
             ticker=ticker,
             agreement_accession=accession,
             agreement_date=agreement_date.isoformat(),
-            observed_at=filed_at,
+            observed_at=filing.filed_at.isoformat(),
             status=EventStatus.ANNOUNCED,
             offer_price=offer,
             source_accession=accession,
-            source_url=source_url,
+            source_url=filing.source_url,
             evidence=f"Agreement dated {agreement_date.isoformat()}; fixed cash ${offer:.4f}",
         ),
         None,
@@ -372,21 +378,19 @@ def _announcement(
 
 
 def _lifecycle(
-    filing: dict[str, Any],
-    submission: bytes,
+    filing: EdgarFiling,
     active_events: tuple[EventObservation, ...],
 ) -> tuple[EventObservation | None, SourceReview | None]:
-    accession = _required_text(filing, "accessionNo")
-    cik = _required_text(filing, "cik")
-    ticker = _ticker(filing)
-    documents = _documents(submission)
+    accession = filing.accession
+    cik = filing.cik
+    documents = _documents(filing.submission)
     text = " ".join(value for values in documents.values() for value in values)
     matching = tuple(event for event in active_events if _agreement_is_identified(text, event))
     if len(matching) != 1:
         return None, SourceReview(
             accession,
             cik,
-            ticker,
+            active_events[0].ticker if active_events else "",
             "filing does not identify the active agreement",
         )
     event = matching[0]
@@ -418,21 +422,22 @@ def _lifecycle(
         return None, SourceReview(
             accession,
             cik,
-            ticker,
+            event.ticker,
             "identified agreement has no deterministic terminal state",
         )
     return (
         EventObservation(
             event_id=event.event_id,
+            instrument_id=event.instrument_id,
             target_cik=event.target_cik,
             ticker=event.ticker,
             agreement_accession=event.agreement_accession,
             agreement_date=event.agreement_date,
-            observed_at=_utc_iso(_required_text(filing, "filedAt")),
+            observed_at=filing.filed_at.isoformat(),
             status=status,
             offer_price=event.offer_price,
             source_accession=accession,
-            source_url=str(filing.get("linkToFilingDetails") or ""),
+            source_url=filing.source_url,
             evidence=evidence,
         ),
         None,
@@ -514,92 +519,26 @@ def _cash_offer(agreement: str, disclosure: str) -> float | None:
     return next(iter(prices)) if len(prices) == 1 else None
 
 
-def _unique_filings(filings: Iterable[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
-    by_accession = {_required_text(filing, "accessionNo"): filing for filing in filings}
+def _unique_filings(filings: Iterable[EdgarFiling]) -> tuple[EdgarFiling, ...]:
+    by_accession = {filing.accession: filing for filing in filings}
     return tuple(by_accession[accession] for accession in sorted(by_accession))
-
-
-def _query_payload(response: bytes) -> tuple[list[dict[str, Any]], int]:
-    try:
-        payload = json.loads(response)
-    except json.JSONDecodeError as error:
-        raise SecApiResponseError("SEC-API Query returned invalid JSON") from error
-    filings = payload.get("filings")
-    if not isinstance(filings, list):
-        raise SecApiResponseError("SEC-API Query omitted filings")
-    total = payload.get("total")
-    if not isinstance(total, dict) or not isinstance(total.get("value"), int):
-        raise SecApiResponseError("SEC-API Query omitted total.value")
-    if total["value"] < len(filings):
-        raise SecApiResponseError("SEC-API Query total is smaller than its filing page")
-    return filings, total["value"]
-
-
-def _cached_query(directory: Path, request_identity: str) -> bytes | None:
-    matches: list[tuple[str, bytes]] = []
-    for path in directory.glob("*.json"):
-        payload = json.loads(path.read_text())
-        if payload.get("request_sha256") == request_identity:
-            matches.append((str(payload["retrieved_at"]), canonical_bytes(payload["response"])))
-    return max(matches)[1] if matches else None
-
-
-def _store_query(directory: Path, *, request_identity: str, response: bytes) -> None:
-    parsed = json.loads(response)
-    response_identity = hashlib.sha256(canonical_bytes(parsed)).hexdigest()
-    envelope = {
-        "request_sha256": request_identity,
-        "response_sha256": response_identity,
-        "retrieved_at": datetime.now(UTC).isoformat(),
-        "response": parsed,
-    }
-    write_once(
-        directory / f"{request_identity}-{response_identity}.json",
-        canonical_bytes(envelope),
-    )
-
-
-def _request(
-    url: str,
-    body: bytes | None,
-    *,
-    api_key: str,
-    method: str,
-    content_type: str | None,
-) -> bytes:
-    headers = {"Authorization": api_key, "Accept-Encoding": "identity"}
-    if content_type is not None:
-        headers["Content-Type"] = content_type
-    request = Request(url, data=body, headers=headers, method=method)
-    with urlopen(request, timeout=30) as response:
-        payload = response.read()
-        return (
-            gzip.decompress(payload)
-            if response.headers.get("Content-Encoding", "").lower() == "gzip"
-            else payload
-        )
-
-
-def _required_text(payload: dict[str, Any], key: str) -> str:
-    value = payload.get(key)
-    if value is None or not str(value).strip():
-        raise SecApiResponseError(f"SEC-API filing omitted {key}")
-    return str(value).strip()
-
-
-def _ticker(filing: dict[str, Any]) -> str:
-    value = filing.get("ticker")
-    if isinstance(value, list):
-        return str(value[0]).upper() if value else ""
-    return str(value or "").upper()
 
 
 def _plain(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", unescape(value))).strip()
 
 
-def _utc_iso(value: str) -> str:
-    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+def _as_utc(stamp: datetime) -> datetime:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=UTC)
-    return stamp.astimezone(UTC).isoformat()
+    return stamp.astimezone(UTC)
+
+
+def _items(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return tuple(item.strip() for item in value.split(",") if item.strip())
+    if isinstance(value, Iterable):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    return (str(value).strip(),)

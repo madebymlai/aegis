@@ -28,6 +28,7 @@ class EventObservation:
     """One immutable fact available at a known time for one agreement."""
 
     event_id: str
+    instrument_id: str
     target_cik: str
     ticker: str
     agreement_accession: str

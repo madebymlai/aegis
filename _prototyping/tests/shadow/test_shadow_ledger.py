@@ -6,6 +6,7 @@ from _prototyping.merger.shadow import EventObservation, EventStatus, ShadowLedg
 def test_replaying_the_same_source_observation_is_idempotent(tmp_path) -> None:
     observation = EventObservation(
         event_id="1141103:0000950103-24-017244",
+        instrument_id="CCRN.XNAS",
         target_cik="1141103",
         ticker="CCRN",
         agreement_accession="0000950103-24-017244",
@@ -31,6 +32,7 @@ def test_replaying_the_same_source_observation_is_idempotent(tmp_path) -> None:
 def test_reducing_states_never_applies_one_agreements_terminal_to_another(tmp_path) -> None:
     old_announcement = EventObservation(
         event_id="1024725:old-agreement",
+        instrument_id="HEES.XNAS",
         target_cik="1024725",
         ticker="HEES",
         agreement_accession="old-agreement",
@@ -44,6 +46,7 @@ def test_reducing_states_never_applies_one_agreements_terminal_to_another(tmp_pa
     )
     old_replacement = EventObservation(
         event_id="1024725:old-agreement",
+        instrument_id="HEES.XNAS",
         target_cik="1024725",
         ticker="HEES",
         agreement_accession="old-agreement",
@@ -57,6 +60,7 @@ def test_reducing_states_never_applies_one_agreements_terminal_to_another(tmp_pa
     )
     new_announcement = EventObservation(
         event_id="1024725:new-agreement",
+        instrument_id="HEES.XNAS",
         target_cik="1024725",
         ticker="HEES",
         agreement_accession="new-agreement",
@@ -82,6 +86,7 @@ def test_reducing_states_never_applies_one_agreements_terminal_to_another(tmp_pa
 def test_qualification_remains_closed_below_resolution_and_break_thresholds(tmp_path) -> None:
     announcement = EventObservation(
         event_id="1141103:agreement",
+        instrument_id="CCRN.XNAS",
         target_cik="1141103",
         ticker="CCRN",
         agreement_accession="agreement",
@@ -95,6 +100,7 @@ def test_qualification_remains_closed_below_resolution_and_break_thresholds(tmp_
     )
     termination = EventObservation(
         event_id="1141103:agreement",
+        instrument_id="CCRN.XNAS",
         target_cik="1141103",
         ticker="CCRN",
         agreement_accession="agreement",

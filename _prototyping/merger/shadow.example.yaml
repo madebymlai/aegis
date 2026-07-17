@@ -1,9 +1,10 @@
 # Research notional only. This prototype never submits orders.
 shadow_capital: 5000
 
-# SEC filings identify tickers but not authoritative IBKR venues. Add newly discovered
-# targets here after qualifying their InstrumentId; the run reports missing mappings.
-instrument_ids: {}
+# This list is the complete authorized universe. EdgarTools resolves each InstrumentId's
+# symbol to a CIK internally; SEC filings cannot introduce instruments outside this list.
+instrument_ids:
+  - DSGR.XNAS
 
 market_instrument_id: SPY.ARCA
 # catalog_path: ~/.cache/aegis/catalog
