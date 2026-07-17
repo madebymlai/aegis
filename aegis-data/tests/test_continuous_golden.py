@@ -196,11 +196,44 @@ def _es_single_seam(
 
 def test_model_series_is_byte_exact_with_the_literal_ratio_oracle() -> None:
     port = _golden_model_port()
-    model = ContinuousContractModel(port, "ES", start="2024-03-01", timeframe="1D")
+    model = ContinuousContractModel(
+        port,
+        "ES",
+        start="2024-03-01",
+        timeframe="1D",
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+    )
 
     model.materialize(end="2024-03-13")
 
     pd.testing.assert_frame_equal(model.frame, _expected_model_ratio_frame())
+
+
+def test_model_series_is_byte_exact_with_the_literal_spread_oracle() -> None:
+    # Same legs, spread algebra: the pre-roll history is shifted by the integer
+    # seam delta (+18) instead of scaled — the explicit mode drives the series.
+    port = _golden_model_port()
+    model = ContinuousContractModel(
+        port,
+        "ES",
+        start="2024-03-01",
+        timeframe="1D",
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+    )
+
+    model.materialize(end="2024-03-13")
+
+    expected = pd.DataFrame(
+        {
+            "Open": [117.5, 118.5, 119.5, 120.5, 121.5, 122.5],
+            "High": [119.0, 120.0, 121.0, 122.0, 123.0, 124.0],
+            "Low": [117.0, 118.0, 119.0, 120.0, 121.0, 122.0],
+            "Close": [118.0, 119.0, 120.0, 121.0, 122.0, 123.0],
+            "Volume": [1000.0, 1000.0, 1000.0, 100.0, 1000.0, 1000.0],
+        },
+        index=_expected_model_ratio_frame().index,
+    )
+    pd.testing.assert_frame_equal(model.frame, expected)
 
 
 @pytest.mark.parametrize("mode", _MODES)

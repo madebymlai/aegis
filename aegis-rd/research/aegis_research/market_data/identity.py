@@ -3,13 +3,47 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from aegis_data.catalog import catalog_data_port
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import RunConfig
 
-__all__ = ["as_instrument_id", "instrument_ids", "resolved_instruments"]
+if TYPE_CHECKING:
+    from research.aegis_research.configuration import DataConfig
+
+__all__ = [
+    "as_instrument_id",
+    "declared_marking_resolver",
+    "instrument_ids",
+    "resolved_instruments",
+]
+
+
+def declared_marking_resolver(config: DataConfig) -> DeclaredMarkingResolver:
+    """The config's mark declarations as the one marking resolver for a run.
+
+    Two declaration surfaces, no heuristic: the parsed ``:MODE`` tokens
+    (``config.mark_modes``), and ``exchange:`` membership — a conversion leg is
+    bar-marked MID *because the section that names it says what it is* (IBKR
+    serves no TRADES print for cash FX).  Everything undeclared is LAST, so a
+    tradeable FX pair must carry an explicit ``:MID`` or fail loud at the
+    gateway rather than silently guess.
+    """
+    return DeclaredMarkingResolver(
+        declared={
+            **{
+                InstrumentId.from_str(value): MarkMode.MID
+                for value in config.exchange
+            },
+            **{
+                InstrumentId.from_str(value): MarkMode(mode)
+                for value, mode in config.mark_modes.items()
+            },
+        }
+    )
 
 
 def instrument_ids(values: Iterable[str]) -> tuple[InstrumentId, ...]:

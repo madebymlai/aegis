@@ -11,6 +11,7 @@ from aegis_runtime.exposure_validation import (
     InvalidExposureLimits,
     NetExposureBreach,
     validate_exposure,
+    validate_net_exposure,
 )
 
 
@@ -54,8 +55,24 @@ def test_every_failure_mode_remains_a_valueerror() -> None:
 # --- ExposureLimits ------------------------------------------------------------
 
 def test_limits_reject_nonpositive_gross_cap_fail_closed() -> None:
-    with pytest.raises(InvalidExposureLimits, match="gross_cap must be > 0"):
+    with pytest.raises(InvalidExposureLimits, match="gross_cap must be positive"):
         ExposureLimits(gross_cap=0.0)
+
+
+def test_limits_reject_nan_gross_cap_fail_closed() -> None:
+    with pytest.raises(InvalidExposureLimits, match="gross_cap.*not NaN"):
+        ExposureLimits(gross_cap=np.nan)
+
+
+@pytest.mark.parametrize("net_cap", [np.nan, -0.1, -np.inf])
+def test_limits_reject_nan_or_negative_net_cap_fail_closed(net_cap: float) -> None:
+    with pytest.raises(InvalidExposureLimits, match="net_cap.*non-negative"):
+        ExposureLimits(gross_cap=1.0, net_cap=net_cap)
+
+
+def test_limits_allow_positive_infinity_as_an_explicit_unbounded_cap() -> None:
+    assert ExposureLimits(gross_cap=np.inf).net_cap == np.inf
+    assert ExposureLimits(gross_cap=np.inf, net_cap=np.inf).gross_cap == np.inf
 
 
 def test_limits_reject_unknown_direction_fail_closed() -> None:
@@ -86,12 +103,42 @@ def test_gross_exposure_above_cap_is_rejected_fail_closed() -> None:
         validate_exposure(allocations, ExposureLimits(gross_cap=1.0))
 
 
+def test_gross_exposure_within_tolerance_passes() -> None:
+    validate_exposure(
+        _book({"A": [1.0 + 1e-9]}),
+        ExposureLimits(gross_cap=1.0),
+    )
+
+
+def test_gross_exposure_beyond_tolerance_fails() -> None:
+    with pytest.raises(GrossExposureBreach):
+        validate_exposure(
+            _book({"A": [1.0 + 2e-9]}),
+            ExposureLimits(gross_cap=1.0),
+        )
+
+
 def test_net_exposure_above_net_cap_is_rejected_fail_closed() -> None:
     # Σ|wᵢ| = 1.0 ≤ gross_cap, but net Σwᵢ = 1.0 > net_cap 0.2 (drifts net-long).
     allocations = _book({"A": [0.5], "B": [0.5]})
 
     with pytest.raises(NetExposureBreach, match="net_cap"):
         validate_exposure(allocations, ExposureLimits(gross_cap=1.0, net_cap=0.2))
+
+
+def test_net_exposure_within_tolerance_passes() -> None:
+    validate_net_exposure(
+        _book({"A": [1.0 + 1e-9]}),
+        ExposureLimits(gross_cap=2.0, net_cap=1.0),
+    )
+
+
+def test_net_exposure_beyond_tolerance_fails() -> None:
+    with pytest.raises(NetExposureBreach):
+        validate_net_exposure(
+            _book({"A": [1.0 + 2e-9]}),
+            ExposureLimits(gross_cap=2.0, net_cap=1.0),
+        )
 
 
 def test_market_neutral_book_within_net_cap_passes() -> None:
@@ -238,6 +285,17 @@ def test_group_by_length_mismatch_is_rejected_fail_closed() -> None:
 
     with pytest.raises(GroupLabelMismatch, match="group_by has 1 labels"):
         validate_exposure(allocations, ExposureLimits(gross_cap=1.0), group_by=["only-one"])
+
+
+def test_missing_group_label_is_included_in_the_gate() -> None:
+    allocations = _book({"A": [0.5], "B": [1.5]})
+
+    with pytest.raises(GrossExposureBreach):
+        validate_exposure(
+            allocations,
+            ExposureLimits(gross_cap=1.0),
+            group_by=["candidate-a", None],
+        )
 
 
 def test_grouped_sign_guard_covers_the_whole_frame() -> None:

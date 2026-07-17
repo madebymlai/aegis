@@ -12,6 +12,7 @@ importing the adapter never pulls ``ibapi`` (the lazy boundary).
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -60,8 +61,8 @@ class _FakeHistoricClient:
 
 
 def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
-    sentinel_bars = [object(), object()]
-    fake = _FakeHistoricClient(bars=sentinel_bars, instruments=[])
+    served = [_StampedBar("2024-01-02"), _StampedBar("2024-02-01")]
+    fake = _FakeHistoricClient(bars=served, instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
@@ -71,20 +72,100 @@ def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
         end=pd.Timestamp("2024-03-01", tz="UTC"),
     )
 
-    assert list(out) == sentinel_bars
+    assert list(out.bars) == served
+    # The oldest bar is one closure past the requested start, so history covers it:
+    # coverage is served from the requested start (contiguous with any prior file).
+    assert out.served_from == pd.Timestamp("2024-01-01", tz="UTC")
+    assert len(fake.bar_calls) == 1
     call = fake.bar_calls[0]
     assert call["bar_specifications"] == ["1-DAY-LAST"]
     assert call["instrument_ids"] == ["AAPL.XNAS"]
     assert call["tz_name"] == "UTC"
-    # The historic client applies tz_name itself, so it must get NAIVE datetimes.
-    assert call["start_date_time"] == datetime(2024, 1, 1)
-    assert call["start_date_time"].tzinfo is None
+    # One native request: a whole-window `duration` ending at the NAIVE end (the
+    # historic client applies tz_name itself); no start_date_time backward walk.
+    assert call["duration"] == "60 D"
     assert call["end_date_time"] == datetime(2024, 3, 1)
+    assert call["end_date_time"].tzinfo is None
+    assert "start_date_time" not in call
+
+
+def test_request_bars_asks_one_native_duration_for_a_wide_window() -> None:
+    """A window wider than a single IB request's limit is served by ONE native
+    request whose `duration` spans the whole window; Nautilus segments it by
+    duration internally, so the provider does not re-walk it in yearly chunks."""
+    served = [_StampedBar("2016-06-02"), _StampedBar("2017-06-01")]
+    fake = _FakeHistoricClient(bars=served, instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    out = provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2016-06-01", tz="UTC"),
+        end=pd.Timestamp("2018-01-01", tz="UTC"),
+    )
+
+    assert len(fake.bar_calls) == 1
+    assert fake.bar_calls[0]["duration"] == "2 Y"
+    assert fake.bar_calls[0]["end_date_time"] == datetime(2018, 1, 1)
+    assert "start_date_time" not in fake.bar_calls[0]
+    assert list(out.bars) == served
+    assert out.served_from == pd.Timestamp("2016-06-01", tz="UTC")
+    # One session serves the request — connect/close wrap it once.
+    assert fake.events == ["connect", "aclose"]
+
+
+class _StampedBar:
+    def __init__(self, day: str) -> None:
+        self.ts_event = pd.Timestamp(day, tz="UTC").value
+
+
+def test_request_bars_claims_nothing_when_no_bars_are_returned() -> None:
+    """An empty answer claims no coverage: ``served_from`` falls back to the window
+    end, so the coverage gate sees the whole window as unserved (nothing to write)."""
+    fake = _FakeHistoricClient(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    out = provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2024-01-01", tz="UTC"),
+        end=pd.Timestamp("2024-03-01", tz="UTC"),
+    )
+
+    assert list(out.bars) == []
+    assert out.served_from == pd.Timestamp("2024-03-01", tz="UTC")
+
+
+def test_request_bars_serves_from_the_listing_when_history_clamps_short() -> None:
+    """GH #75: IB clamps its answer at the instrument's earliest available data, so a
+    single request reaching before the listing simply returns fewer bars — the
+    provider never steps into empty pre-listing history.  The oldest returned bar IS
+    where history begins: coverage is served from there (far past the requested
+    start), and the pre-listing head stays unclaimed for the coverage gate."""
+    listing_date = pd.Timestamp("2016-06-15", tz="UTC")
+    served = [_StampedBar("2016-06-15"), _StampedBar("2017-03-01")]
+    fake = _FakeHistoricClient(bars=served, instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake)
+    bar_type = raw_bar_type(InstrumentId.from_str("TLT.XNAS"), "1D")
+
+    out = provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2013-01-01", tz="UTC"),
+        end=pd.Timestamp("2018-01-01", tz="UTC"),
+    )
+
+    # One request; IB returned only from the listing.
+    assert len(fake.bar_calls) == 1
+    assert list(out.bars) == served
+    # The gap from 2013 to the first bar is far wider than a market closure, so it
+    # reads as IB clamping at the listing: coverage begins at that first bar, not the
+    # requested 2013 start, leaving the pre-listing head for the coverage gate.
+    assert out.served_from == listing_date
 
 
 def test_request_bars_can_pass_expired_future_contracts() -> None:
-    sentinel_bars = [object()]
-    fake = _FakeHistoricClient(bars=sentinel_bars, instruments=[])
+    served = [_StampedBar("2026-03-02")]
+    fake = _FakeHistoricClient(bars=served, instruments=[])
     provider = IbkrHistoricalProvider(
         include_expired_futures=True,
         client_factory=lambda: fake,
@@ -97,7 +178,7 @@ def test_request_bars_can_pass_expired_future_contracts() -> None:
         end=pd.Timestamp("2026-06-23", tz="UTC"),
     )
 
-    assert list(out) == sentinel_bars
+    assert list(out.bars) == served
     call = fake.bar_calls[0]
     assert "instrument_ids" not in call
     contract = call["contracts"][0]
@@ -163,6 +244,65 @@ def test_request_bars_wraps_a_fault_in_a_named_error_and_still_closes() -> None:
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert str(excinfo.value.__cause__) == "ib down"
     assert fake.events == ["connect", "aclose"]
+
+
+def test_request_bars_converts_a_dead_vendor_call_into_a_named_error() -> None:
+    """The other face of #75: the vendor stack has unbounded awaits (a stuck
+    qualification when an instrument cannot resolve to one asset, shared-request
+    futures).  A session call that makes no progress past the deadline surfaces
+    as an ``IbkrRequestError`` instead of hanging forever."""
+    class _Stuck(_FakeHistoricClient):
+        async def request_bars(self, **kwargs: Any) -> list[Any]:
+            await asyncio.sleep(3600)
+            return []
+
+    fake = _Stuck(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake, call_deadline=0.05)
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    with pytest.raises(IbkrRequestError) as excinfo:
+        provider.request_bars(
+            bar_type,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+        )
+
+    assert str(bar_type) in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, TimeoutError)
+    assert fake.events == ["connect", "aclose"]
+
+
+def test_request_bars_converts_a_dead_connect_into_a_named_error() -> None:
+    class _NeverConnects(_FakeHistoricClient):
+        async def connect(self) -> None:
+            await asyncio.sleep(3600)
+
+    fake = _NeverConnects(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake, call_deadline=0.05)
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    with pytest.raises(IbkrRequestError):
+        provider.request_bars(
+            bar_type,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+        )
+
+
+def test_request_instruments_converts_a_stuck_qualification_into_a_named_error() -> None:
+    class _StuckQualification(_FakeHistoricClient):
+        async def request_instruments(self, **kwargs: Any) -> list[Any]:
+            await asyncio.sleep(3600)
+            return []
+
+    fake = _StuckQualification(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(client_factory=lambda: fake, call_deadline=0.05)
+
+    with pytest.raises(IbkrRequestError) as excinfo:
+        provider.request_instruments((InstrumentId.from_str("VUSA.XLON"),))
+
+    assert "VUSA.XLON" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, TimeoutError)
 
 
 def test_request_instruments_wraps_a_failed_qualification_in_a_named_error() -> None:

@@ -17,8 +17,6 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
-    IndicatorManifest,
-    StrategyManifest,
     discover_component_registry,
 )
 from research.aegis_research.data import MarketDataBundle
@@ -166,7 +164,7 @@ def _find_producer(
     """Return the ComponentDefinition for the indicator that produces *output_name*."""
     for ind_id in registry.ids("indicators"):
         ind_def = registry.definitions["indicators"][ind_id]
-        if output_name in ind_def.manifest.output_names:
+        if output_name in ind_def.produced_output_names():
             return ind_def
     raise ValueError(f"No indicator produces output {output_name!r}")
 
@@ -182,16 +180,13 @@ def _assert_strategy_batch_equals_stitched(
 
     Indicator outputs consumed by the strategy are pre-computed in batch mode.
     """
-    manifest = definition.manifest
-    assert isinstance(manifest, StrategyManifest)
-
     close = data.array("Close")
     S = len(close.columns)
     T = len(close)
 
     # Pre-compute indicator outputs (batched, one call per indicator).
     indicator_outputs: dict[str, np.ndarray] = {}
-    for output_name in manifest.consumes_outputs:
+    for output_name in definition.consumed_output_names():
         producer = _find_producer(output_name, registry)
         producer_run = producer.load_callable()
         producer_params = _param_lists_for(producer)
@@ -242,12 +237,11 @@ def _assert_strategy_batch_equals_stitched(
 @pytest.mark.parametrize("definition", _fixture_component_ids())
 def test_fixture_component_is_batch_self_consistent(definition: Any) -> None:
     """Every fixture Component: batch ``run`` == stitched single-candidate ``run``."""
-    manifest = definition.manifest
     data = _make_data()
     param_lists = _param_lists_for(definition)
     n_candidates = _N_CANDIDATES
 
-    if isinstance(manifest, IndicatorManifest):
+    if definition.family == "indicators":
         _assert_indicator_batch_equals_stitched(
             definition, data, n_candidates, param_lists
         )

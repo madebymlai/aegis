@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 import pandas as pd
 import pytest
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.rebasing import ratio_rebasing, spread_rebasing
@@ -19,18 +20,24 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
+from aegis_runtime.currency import CurrencyConversion
+
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing
-from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.analytics_horizon import derive_horizon
+from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
+    DueSleeve,
     GateOutcome,
     RebalancePipeline,
+    RebalanceRequest,
 )
+from tests.support.factories import assemble_test_book
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
 _ES = InstrumentId.from_str("ES.XCME")  # synthetic continuous-root id (root "ES")
@@ -70,14 +77,17 @@ class _FixedWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_INSTRUMENT_ID: instrument_band},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         target = pd.DataFrame(
             {_INSTRUMENT_ID: [self._weight, self._weight]},
             index=close.index,
@@ -99,6 +109,7 @@ class _ContinuousWeightBundle(ExecutionBundle):
             missing_index=MissingIndexPolicy.DROP,
             lookback_bars=1,
             futures=("ES",),
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
         )
         manifest = BundleManifest(
             run_id="pipeline-test",
@@ -118,14 +129,17 @@ class _ContinuousWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_ES: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         target = pd.DataFrame({_ES: [self._weight, self._weight]}, index=close.index)
         target.columns.name = "instrument_id"
         return target
@@ -166,14 +180,17 @@ class _CalendarParityBundle(ExecutionBundle):
                 _LSE_LEG: DriftBand.symmetric(0.0),
                 _BRU_LEG: DriftBand.symmetric(0.0),
             },
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         self.close_panel = close.copy()
         weights = close.div(close.sum(axis=1), axis=0)
         weights.columns.name = "instrument_id"
@@ -211,20 +228,28 @@ class _PoisonBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_LSE_LEG: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
         raise RuntimeError("component exploded")
 
 
 class _PoisonFixedInstrumentBundle(_FixedWeightBundle):
     """A poison sleeve owning the fixed instrument's band (for the all-fail case)."""
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
         raise RuntimeError("component exploded")
 
 
@@ -271,6 +296,9 @@ class _MarketData:
         self,
         bars_by_instrument_id: dict[InstrumentId, tuple[MarketBar, ...]] | None = None,
         fresh_instrument_ids: frozenset[InstrumentId] | None = None,
+        currencies: dict[InstrumentId, str] | None = None,
+        pairs: dict[InstrumentId, tuple[str, str]] | None = None,
+        fx_rates: dict[str, float] | None = None,
     ) -> None:
         self._bars_by_instrument_id = bars_by_instrument_id or _bars_by_instrument_id()
         self._fresh_instrument_ids = (
@@ -278,9 +306,14 @@ class _MarketData:
             if fresh_instrument_ids is None
             else fresh_instrument_ids
         )
+        self._currencies = currencies or {}
+        self._pairs = pairs or {}
+        self._fx_rates = fx_rates or {}
 
-    def instrument_sizing(self, _instrument_id: InstrumentId) -> InstrumentSizing:
-        return InstrumentSizing(currency="EUR", size_increment=1.0)
+    def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing:
+        return InstrumentSizing(
+            currency=self._currencies.get(instrument_id, "EUR"), size_increment=1.0
+        )
 
     def make_quantity(self, _instrument_id: InstrumentId, raw_shares: float) -> float:
         return raw_shares
@@ -288,10 +321,13 @@ class _MarketData:
     def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
         return instrument_id
 
+    def currency_pair(self, instrument_id: InstrumentId) -> tuple[str, str] | None:
+        return self._pairs.get(instrument_id)
+
     def fx_rate(self, base_currency: str, quote_currency: str) -> float | None:
         if base_currency == quote_currency:
             return 1.0
-        return None
+        return self._fx_rates.get(quote_currency)
 
     def lookback_window(
         self,
@@ -317,13 +353,18 @@ class _MarketData:
         return instrument_id in self._fresh_instrument_ids
 
 
-def _book(*, per_name_cap: float | None = None) -> BookConfig:
+def _book(
+    *,
+    per_name_cap: float | None = None,
+    gross_cap: float = 1.0,
+) -> BookConfig:
     return BookConfig(
         sleeves=(
             SleeveConfig(name=_SLEEVE, wheel_filename="trend.whl", risk_share=1.0),
         ),
         base_currency="EUR",
         per_name_cap=per_name_cap,
+        gross_cap=gross_cap,
     )
 
 
@@ -357,12 +398,24 @@ def _period() -> CompletedRebalancePeriod:
     return CompletedRebalancePeriod(period=1, period_ns=_DAY_NS)
 
 
-def _record_close(ledger: SleeveLedger, close: float) -> None:
+def _all_due(*names: SleeveName) -> RebalanceRequest:
+    period = _period()
+    due_names = names or (_SLEEVE,)
+    return RebalanceRequest(
+        due=tuple(DueSleeve(sleeve=name, period=period) for name in due_names),
+        timestamp_ns=3 * _DAY_NS,
+    )
+
+
+def _record_close(ledger: SleeveLedger, close: float, day: int) -> None:
     ledger.record(
-        nav=100.0,
-        realized_weights={_ES: 1.0},
-        sleeve_targets={_SLEEVE: {_ES: 1.0}},
-        closes={_ES: close},
+        BookObservation(
+            timestamp_ns=day * _DAY_NS,
+            nav=100.0,
+            realized_weights={_ES: 1.0},
+            sleeve_targets={_SLEEVE: {_ES: 1.0}},
+            marks={_ES: close},
+        )
     )
 
 
@@ -373,12 +426,16 @@ def _pipeline(
     book: BookConfig | None = None,
     bundle: ExecutionBundle | None = None,
 ) -> RebalancePipeline:
+    config = book or _book()
+    loaded_bundle = bundle or _FixedWeightBundle(0.5)
     return RebalancePipeline(
         book_state=book_state or _BookState(),
         market_data=market_data or _MarketData(),
-        book=book or _book(),
-        sleeve_to_bundle={_SLEEVE: bundle or _FixedWeightBundle(0.5)},
-        ledger=SleeveLedger(),
+        book=assemble_test_book(
+            config,
+            {config.sleeves[0].wheel_filename: loaded_bundle},
+        ),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
 
 
@@ -401,7 +458,7 @@ def _started_pipeline(
 
 
 def test_rebalance_pipeline_returns_sized_orders_and_summary() -> None:
-    result = _started_pipeline().rebalance_period(_period())
+    result = _started_pipeline().rebalance(_all_due())
 
     assert result.orders[0].instrument_id == _INSTRUMENT_ID
     assert result.orders[0].side == OrderSide.BUY
@@ -427,13 +484,15 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=market_data,
-        book=_book(),
-        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
-        ledger=SleeveLedger(),
+        book=assemble_test_book(
+            _book(),
+            {"trend.whl": _ContinuousWeightBundle(0.5)},
+        ),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
 
     startup_result = pipeline.startup_check()
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert startup_result.trading_enabled is True
     assert result.orders[0].instrument_id == _ES
@@ -450,7 +509,7 @@ def test_rebalance_pipeline_intersects_drop_policy_mixed_calendar_panel() -> Non
         bundle=bundle,
     )
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     expected_index = pd.DatetimeIndex([0, _DAY_NS, 4 * _DAY_NS])
     expected_close = pd.DataFrame(
@@ -495,7 +554,7 @@ def test_rebalance_pipeline_holds_when_drop_policy_has_too_few_common_bars() -> 
         bundle=bundle,
     )
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert result.orders == ()
     assert result.summary.num_sleeves == 0
@@ -513,7 +572,7 @@ def test_rebalance_pipeline_surfaces_raise_policy_misalignment_as_sleeve_failure
         bundle=_CalendarParityBundle(missing_index=MissingIndexPolicy.RAISE),
     )
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert result.orders == ()
     assert [failure.sleeve for failure in result.sleeve_failures] == [_SLEEVE]
@@ -529,20 +588,14 @@ def test_rebalance_pipeline_does_not_expose_mutable_ledger() -> None:
     assert exposes_mutable_ledger is False
 
 
-def test_rebalance_pipeline_constructor_does_not_read_instrument_bands() -> None:
-    pipeline = _pipeline(bundle=_BandAccessFailsBundle(0.5))
-
-    assert pipeline.last_sleeve_weights == {}
-
-
-def test_rebalance_pipeline_uses_bands_built_by_startup_check() -> None:
+def test_rebalance_pipeline_uses_bands_proven_by_book_assembly() -> None:
     pipeline = _pipeline(
         book_state=_BookState({_INSTRUMENT_ID: 0.45}),
         bundle=_FixedWeightBundle(0.5, band=DriftBand.symmetric(0.10)),
     )
 
     startup_result = pipeline.startup_check()
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due())
 
     assert startup_result.trading_enabled is True
     assert result.orders == ()
@@ -550,38 +603,42 @@ def test_rebalance_pipeline_uses_bands_built_by_startup_check() -> None:
 
 
 def test_apply_roll_rebases_ledger_by_spread_event() -> None:
-    ledger = SleeveLedger()
-    _record_close(ledger, 100.0)
-    _record_close(ledger, 110.0)
+    ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
+    _record_close(ledger, 100.0, 0)
+    _record_close(ledger, 110.0, 1)
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
-        book=_book(),
-        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
+        book=assemble_test_book(
+            _book(),
+            {"trend.whl": _ContinuousWeightBundle(0.5)},
+        ),
         ledger=ledger,
     )
 
     pipeline.apply_roll(RollEvent(continuous_id=_ES, rebasing=spread_rebasing(50.0)))
-    _record_close(ledger, 170.0)
+    _record_close(ledger, 170.0, 2)
     attribution = ledger.attribution({_SLEEVE: 1.0})
 
     assert attribution[_SLEEVE] == pytest.approx(12.9166666667)
 
 
 def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
-    ledger = SleeveLedger()
-    _record_close(ledger, 100.0)
-    _record_close(ledger, 110.0)
+    ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
+    _record_close(ledger, 100.0, 0)
+    _record_close(ledger, 110.0, 1)
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
-        book=_book(),
-        sleeve_to_bundle={_SLEEVE: _ContinuousWeightBundle(0.5)},
+        book=assemble_test_book(
+            _book(),
+            {"trend.whl": _ContinuousWeightBundle(0.5)},
+        ),
         ledger=ledger,
     )
 
     pipeline.apply_roll(RollEvent(continuous_id=_ES, rebasing=ratio_rebasing(1.5)))
-    _record_close(ledger, 180.0)
+    _record_close(ledger, 180.0, 2)
     attribution = ledger.attribution({_SLEEVE: 1.0})
 
     assert attribution[_SLEEVE] == pytest.approx(19.0909090909)
@@ -590,11 +647,24 @@ def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
 def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instrument() -> None:
     result = _started_pipeline(
         market_data=_MarketData(fresh_instrument_ids=frozenset())
-    ).rebalance_period(_period())
+    ).rebalance(_all_due())
 
     assert result.orders == ()
     assert result.summary.num_targets == 1
     assert result.summary.num_orders == 0
+
+
+def test_rebalance_pipeline_does_not_gate_held_book_when_every_sleeve_fails() -> None:
+    result = _started_pipeline(
+        book=_book(gross_cap=0.60),
+        book_state=_BookState({_INSTRUMENT_ID: 0.70}),
+        bundle=_PoisonFixedInstrumentBundle(0.50),
+    ).rebalance(_all_due())
+
+    assert result.orders == ()
+    assert result.summary.gate_outcome == GateOutcome.PASS
+    assert result.halt_reason is None
+    assert [failure.sleeve for failure in result.sleeve_failures] == [_SLEEVE]
 
 
 def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
@@ -602,7 +672,7 @@ def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
         book=_book(per_name_cap=0.5),
         book_state=_BookState({_INSTRUMENT_ID: 0.7}),
         bundle=_FixedWeightBundle(0.8),
-    ).rebalance_period(_period())
+    ).rebalance(_all_due())
 
     assert result.orders == ()
     assert result.summary.gate_outcome == GateOutcome.ERROR
@@ -611,7 +681,7 @@ def test_rebalance_pipeline_reports_gate_error_in_summary() -> None:
     assert "unfixable" in result.halt_reason
 
 
-def test_startup_check_passes_when_cap_and_integrity_gates_pass() -> None:
+def test_startup_check_passes_when_band_and_integrity_gates_pass() -> None:
     result = _pipeline().startup_check()
 
     assert result.trading_enabled is True
@@ -620,47 +690,6 @@ def test_startup_check_passes_when_cap_and_integrity_gates_pass() -> None:
     assert result.halt_reason is None
     assert result.nav == 100_000.0
     assert result.cash == 100_000.0
-
-
-def test_startup_check_halts_when_book_cap_exceeds_bundle_cap() -> None:
-    result = _pipeline(book=_book(per_name_cap=1.5)).startup_check()
-
-    assert result.should_halt is True
-    assert result.halt_gate == StartupGate.CAP_PROVENANCE
-    assert result.halt_reason == (
-        "book per_name_cap (1.5) exceeds sleeve 'trend' bundle gross_cap (1.0)"
-    )
-
-
-def test_startup_check_halts_when_bundle_bands_overlap() -> None:
-    trend = SleeveName("trend")
-    carry = SleeveName("carry")
-    book = BookConfig(
-        sleeves=(
-            SleeveConfig(name=trend, wheel_filename="trend.whl", risk_share=0.5),
-            SleeveConfig(name=carry, wheel_filename="carry.whl", risk_share=0.5),
-        ),
-        base_currency="EUR",
-    )
-    pipeline = RebalancePipeline(
-        book_state=_BookState(),
-        market_data=_MarketData(),
-        book=book,
-        sleeve_to_bundle={
-            trend: _FixedWeightBundle(0.5),
-            carry: _FixedWeightBundle(0.5),
-        },
-        ledger=SleeveLedger(),
-    )
-
-    result = pipeline.startup_check()
-
-    assert result.should_halt is True
-    assert result.halt_gate == StartupGate.BAND_OWNERSHIP
-    assert result.halt_reason is not None
-    assert "PIPE.XNYS" in result.halt_reason
-    assert "carry" in result.halt_reason
-    assert "trend" in result.halt_reason
 
 
 def test_startup_check_halts_when_book_state_query_fails() -> None:
@@ -709,9 +738,14 @@ def _two_sleeve_pipeline(
             bars_by_instrument_id=bars,
             fresh_instrument_ids=frozenset({_INSTRUMENT_ID, _LSE_LEG}),
         ),
-        book=book,
-        sleeve_to_bundle={_SLEEVE: healthy_bundle, SleeveName("poison"): poison_bundle},
-        ledger=SleeveLedger(),
+        book=assemble_test_book(
+            book,
+            {
+                "trend.whl": healthy_bundle,
+                "poison.whl": poison_bundle,
+            },
+        ),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
     startup_result = pipeline.startup_check()
     assert startup_result.trading_enabled is True
@@ -723,7 +757,7 @@ def test_rebalance_pipeline_isolates_a_sleeve_whose_compute_raises() -> None:
     # the healthy sleeve still rebalances and the failure is surfaced, not raised.
     pipeline = _two_sleeve_pipeline(_FixedWeightBundle(0.5), _PoisonBundle())
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due(_SLEEVE, SleeveName("poison")))
 
     assert result.summary.gate_outcome == GateOutcome.PASS
     assert [failure.sleeve for failure in result.sleeve_failures] == [SleeveName("poison")]
@@ -739,7 +773,7 @@ def test_rebalance_pipeline_failing_sleeve_holds_without_orders() -> None:
     # no fabricated weights.
     pipeline = _two_sleeve_pipeline(_FixedWeightBundle(0.5), _PoisonBundle())
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due(_SLEEVE, SleeveName("poison")))
 
     assert _LSE_LEG not in {order.instrument_id for order in result.orders}
 
@@ -748,10 +782,452 @@ def test_rebalance_pipeline_surfaces_failures_when_every_sleeve_fails() -> None:
     # All sleeves failing must still return a result (no orders), never raise.
     pipeline = _two_sleeve_pipeline(_PoisonFixedInstrumentBundle(0.5), _PoisonBundle())
 
-    result = pipeline.rebalance_period(_period())
+    result = pipeline.rebalance(_all_due(_SLEEVE, SleeveName("poison")))
 
     assert result.orders == ()
     assert {failure.sleeve for failure in result.sleeve_failures} == {
         SleeveName("poison"),
         SleeveName("trend"),
     }
+
+
+# ---------------------------------------------------------------------------
+# FX conversion legs (aegis-rd-reyj): compute on base-currency panels
+# ---------------------------------------------------------------------------
+
+_EURUSD = InstrumentId.from_str("EUR/USD.IDEALPRO")
+
+
+class _SpyConversionBundle(ExecutionBundle):
+    """Fixed-weight bundle over a USD-quoted instrument that records the native
+    Close panel and the conversion its compute received, so a test can pin the
+    native-price boundary: the trader hands over native arrays plus the resolved
+    conversion and never pre-converts."""
+
+    def __init__(self, weight: float) -> None:
+        self._weight = weight
+        self.seen_close: pd.DataFrame | None = None
+        self.seen_conversion: CurrencyConversion | None = None
+        contract = DataContract(
+            instrument_ids=(_INSTRUMENT_ID,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+            exchange=(_EURUSD,),
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-fx-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(_INSTRUMENT_ID,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
+        self.seen_close = close
+        self.seen_conversion = currency_conversion
+        target = pd.DataFrame(
+            {_INSTRUMENT_ID: [self._weight] * len(close)},
+            index=close.index,
+        )
+        target.columns.name = "instrument_id"
+        return target
+
+
+def _fx_market_data() -> _MarketData:
+    return _MarketData(
+        bars_by_instrument_id={
+            _INSTRUMENT_ID: (
+                MarketBar(0, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+                MarketBar(_DAY_NS, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+            ),
+            # EUR/USD at 1.25: a USD close of 100 is 80 EUR.
+            _EURUSD: (
+                MarketBar(0, 1.25, 1.25, 1.25, 1.25, 0.0),
+                MarketBar(_DAY_NS, 1.25, 1.25, 1.25, 1.25, 0.0),
+            ),
+        },
+        currencies={_INSTRUMENT_ID: "USD"},
+        pairs={_EURUSD: ("EUR", "USD")},
+        fx_rates={"USD": 1.25},
+    )
+
+
+def test_sleeve_compute_receives_native_prices_and_the_resolved_conversion() -> None:
+    """The native-price boundary (aegis-rd-tkj5.4): the pipeline resolves the
+    period's conversion but hands the bundle NATIVE arrays plus that conversion —
+    the bundle owns applying it, so it is applied exactly once. The resolved
+    conversion still produces research's EUR view (aegis-rd-reyj)."""
+    bundle = _SpyConversionBundle(0.5)
+    pipeline = _started_pipeline(market_data=_fx_market_data(), bundle=bundle)
+
+    result = pipeline.rebalance(_all_due())
+
+    assert result.sleeve_failures == ()
+    assert bundle.seen_close is not None
+    # Native USD closes, not a pre-converted panel.
+    assert bundle.seen_close[_INSTRUMENT_ID].tolist() == pytest.approx([100.0, 100.0])
+    # The resolved conversion is the one typed transformation: applying it yields
+    # the EUR view research validated on (USD 100 at EUR/USD 1.25 -> EUR 80).
+    assert bundle.seen_conversion is not None
+    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    assert converted[_INSTRUMENT_ID].tolist() == pytest.approx([80.0, 80.0])
+    assert [order.instrument_id for order in result.orders] == [_INSTRUMENT_ID]
+
+
+class _SpyContinuousConversionBundle(ExecutionBundle):
+    """Records the native panel + conversion for a USD-quoted continuous root in a
+    EUR-base book — the research/trader continuous-root parity double."""
+
+    def __init__(self) -> None:
+        self.seen_close: pd.DataFrame | None = None
+        self.seen_conversion: CurrencyConversion | None = None
+        contract = DataContract(
+            instrument_ids=(_ES,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+            futures=("ES",),
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+            exchange=(_EURUSD,),
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-continuous-fx-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(_ES,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={_ES: DriftBand.symmetric(0.0)},
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
+        self.seen_close = close
+        self.seen_conversion = currency_conversion
+        target = pd.DataFrame({_ES: [0.5] * len(close)}, index=close.index)
+        target.columns.name = "instrument_id"
+        return target
+
+
+def test_continuous_root_conversion_matches_the_research_view_under_moving_fx() -> None:
+    """Research/Trader continuous-root currency parity (aegis-rd-tkj5.4): from the
+    same native ES closes and the same moving EUR/USD series, the trader's resolved
+    conversion produces the identical base-currency panel research's catalog adapter
+    pins (5000/1.25, 5010/1.20). Trader derives the root's USD from its front leg;
+    research derives it from all dated legs — same code, same builder, same view."""
+    market_data = _MarketData(
+        bars_by_instrument_id={
+            _ES: (
+                MarketBar(0, 5000.0, 5000.0, 5000.0, 5000.0, 1_000.0),
+                MarketBar(_DAY_NS, 5010.0, 5010.0, 5010.0, 5010.0, 1_000.0),
+            ),
+            _EURUSD: (
+                MarketBar(0, 1.25, 1.25, 1.25, 1.25, 0.0),
+                MarketBar(_DAY_NS, 1.20, 1.20, 1.20, 1.20, 0.0),
+            ),
+        },
+        fresh_instrument_ids=frozenset({_ES}),
+        currencies={_ES: "USD"},
+        pairs={_EURUSD: ("EUR", "USD")},
+        fx_rates={"USD": 1.25},
+    )
+    bundle = _SpyContinuousConversionBundle()
+    pipeline = _started_pipeline(market_data=market_data, bundle=bundle)
+
+    result = pipeline.rebalance(_all_due())
+
+    assert result.sleeve_failures == ()
+    assert bundle.seen_close is not None
+    assert bundle.seen_close[_ES].tolist() == pytest.approx([5000.0, 5010.0])
+    assert bundle.seen_conversion is not None
+    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    # The exact base-currency panel research's catalog adapter derives for the same
+    # native prices and FX series (see test_catalog_adapter_converts_a_non_base_
+    # continuous_root_through_exchange_fx in aegis-rd).
+    assert converted[_ES].tolist() == pytest.approx([5000.0 / 1.25, 5010.0 / 1.20])
+
+
+def test_missing_fx_bars_fail_the_sleeve_closed_not_the_book() -> None:
+    """A conversion leg with no bars must surface as a sleeve failure (hold),
+    never a silent native-priced compute."""
+    market_data = _MarketData(
+        bars_by_instrument_id={
+            _INSTRUMENT_ID: (
+                MarketBar(0, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+                MarketBar(_DAY_NS, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+            ),
+        },
+        currencies={_INSTRUMENT_ID: "USD"},
+        pairs={_EURUSD: ("EUR", "USD")},
+    )
+    bundle = _SpyConversionBundle(0.5)
+    pipeline = _started_pipeline(market_data=market_data, bundle=bundle)
+
+    result = pipeline.rebalance(_all_due())
+
+    assert bundle.seen_close is None
+    assert [failure.sleeve for failure in result.sleeve_failures] == [_SLEEVE]
+    assert result.orders == ()
+
+
+# ---------------------------------------------------------------------------
+# Independently due Sleeves carry their own period coordinates (aegis-rd-9qkr.2)
+# ---------------------------------------------------------------------------
+
+
+class _PeriodRecordingMarketData(_MarketData):
+    """Records the period coordinates of every lookback read, per instrument."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.read_periods: dict[InstrumentId, int] = {}
+
+    def lookback_window(
+        self,
+        instrument_id: InstrumentId,
+        _timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+        limit: int,
+    ):
+        self.read_periods[instrument_id] = period
+        return super().lookback_window(
+            instrument_id, _timeframe, period=period, period_ns=period_ns, limit=limit
+        )
+
+
+def test_each_due_sleeve_computes_on_its_own_period_coordinates() -> None:
+    bars = _bars_by_instrument_id()
+    bars[_LSE_LEG] = (
+        MarketBar(0, 10.0, 10.0, 10.0, 10.0, 1_000.0),
+        MarketBar(_DAY_NS, 11.0, 11.0, 11.0, 11.0, 1_000.0),
+    )
+    slow = SleeveName("slow")
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=_SLEEVE, wheel_filename="trend.whl", risk_share=0.5),
+            SleeveConfig(name=slow, wheel_filename="slow.whl", risk_share=0.5),
+        ),
+        base_currency="EUR",
+    )
+    market_data = _PeriodRecordingMarketData(
+        bars_by_instrument_id=bars,
+        fresh_instrument_ids=frozenset({_INSTRUMENT_ID, _LSE_LEG}),
+    )
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=market_data,
+        book=assemble_test_book(
+            book,
+            {
+                "trend.whl": _FixedWeightBundle(0.5),
+                "slow.whl": _PoisonBundle(),
+            },
+        ),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+    )
+
+    pipeline.rebalance(
+        RebalanceRequest(
+            due=(
+                DueSleeve(
+                    sleeve=_SLEEVE,
+                    period=CompletedRebalancePeriod(period=24, period_ns=_DAY_NS),
+                ),
+                DueSleeve(
+                    sleeve=slow,
+                    period=CompletedRebalancePeriod(period=1, period_ns=_DAY_NS),
+                ),
+            ),
+            timestamp_ns=25 * _DAY_NS,
+        )
+    )
+
+    assert market_data.read_periods[_INSTRUMENT_ID] == 24
+    assert market_data.read_periods[_LSE_LEG] == 1
+
+
+def test_market_observation_records_the_full_book_without_invoking_sleeves() -> None:
+    # aegis-rd-9qkr.7: a relevant stream advance records a timestamped
+    # full-Book observation even when no Sleeve is due.  The poison bundle
+    # proves no Execution Bundle is invoked on this path.
+    ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(),
+        book=assemble_test_book(_book(), {"trend.whl": _PoisonBundle()}),
+        ledger=ledger,
+    )
+
+    pipeline.record_market_observation(_DAY_NS, {_LSE_LEG: 11.0})
+    pipeline.record_market_observation(2 * _DAY_NS, {_LSE_LEG: 12.0})
+
+    assert ledger.observation_count == 2
+    assert ledger.nav_history == (100_000.0, 100_000.0)
+
+
+class _StreamRecordingMarketData(_MarketData):
+    """Records every (instrument, timeframe) lookback read — stream identity."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.read_streams: set[tuple[InstrumentId, str]] = set()
+
+    def lookback_window(
+        self,
+        instrument_id: InstrumentId,
+        timeframe: str,
+        *,
+        period: int,
+        period_ns: int,
+        limit: int,
+    ):
+        self.read_streams.add((instrument_id, timeframe))
+        return super().lookback_window(
+            instrument_id, timeframe, period=period, period_ns=period_ns, limit=limit
+        )
+
+
+class _ConversionSleeveBundle(ExecutionBundle):
+    """A fixed-weight sleeve over one USD instrument with an FX conversion leg,
+    at a caller-chosen timeframe."""
+
+    def __init__(self, instrument_id: InstrumentId, timeframe: str) -> None:
+        self._instrument_id = instrument_id
+        contract = DataContract(
+            instrument_ids=(instrument_id,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe=timeframe,
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+            exchange=(_EURUSD,),
+        )
+        manifest = BundleManifest(
+            run_id="pipeline-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(instrument_id,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={instrument_id: DriftBand.symmetric(0.0)},
+            direction="both",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
+        target = pd.DataFrame({self._instrument_id: [0.5] * len(close)}, index=close.index)
+        target.columns.name = "instrument_id"
+        return target
+
+
+def test_shared_fx_leg_serves_each_sleeve_at_its_own_timeframe() -> None:
+    # One reference InstrumentId consumed at two timeframes (aegis-rd-9qkr.4):
+    # each sleeve's conversion window reads the concrete (id, timeframe) stream,
+    # never a collapsed per-instrument timeframe.
+    hourly = SleeveName("hourly")
+    fx_bars = (
+        MarketBar(0, 1.25, 1.25, 1.25, 1.25, 0.0),
+        MarketBar(_DAY_NS, 1.25, 1.25, 1.25, 1.25, 0.0),
+    )
+    market_data = _StreamRecordingMarketData(
+        bars_by_instrument_id={
+            _INSTRUMENT_ID: (
+                MarketBar(0, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+                MarketBar(_DAY_NS, 100.0, 100.0, 100.0, 100.0, 1_000.0),
+            ),
+            _LSE_LEG: (
+                MarketBar(0, 10.0, 10.0, 10.0, 10.0, 1_000.0),
+                MarketBar(_DAY_NS, 11.0, 11.0, 11.0, 11.0, 1_000.0),
+            ),
+            _EURUSD: fx_bars,
+        },
+        fresh_instrument_ids=frozenset({_INSTRUMENT_ID, _LSE_LEG}),
+        currencies={_INSTRUMENT_ID: "USD", _LSE_LEG: "USD"},
+        pairs={_EURUSD: ("EUR", "USD")},
+        fx_rates={"USD": 1.25},
+    )
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=_SLEEVE, wheel_filename="trend.whl", risk_share=0.5),
+            SleeveConfig(name=hourly, wheel_filename="hourly.whl", risk_share=0.5),
+        ),
+        base_currency="EUR",
+    )
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=market_data,
+        book=assemble_test_book(
+            book,
+            {
+                "trend.whl": _ConversionSleeveBundle(_INSTRUMENT_ID, "1D"),
+                "hourly.whl": _ConversionSleeveBundle(_LSE_LEG, "1H"),
+            },
+        ),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+    )
+
+    result = pipeline.rebalance(_all_due(_SLEEVE, hourly))
+
+    assert result.sleeve_failures == ()
+    assert (_EURUSD, "1D") in market_data.read_streams
+    assert (_EURUSD, "1H") in market_data.read_streams

@@ -22,7 +22,7 @@ from nautilus_trader.model.instruments import FuturesContract
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    RawBarRequest,
+    CatalogWindowRequest,
     bars_to_ohlcv,
     parquet_data_catalog,
 )
@@ -61,10 +61,11 @@ def _provider() -> IbkrHistoricalProvider:
 
 
 def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
-    bars = _provider().request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
+    served = _provider().request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
 
-    assert bars
-    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in bars)
+    assert served.bars
+    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in served.bars)
+    assert served.served_from == _START
 
 
 def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
@@ -75,10 +76,10 @@ def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
     bar_type = raw_bar_type(_EUR_USD, "1D")
     assert bar_type.spec.price_type == PriceType.MID
 
-    bars = _provider().request_bars(bar_type, start=_START, end=_END)
+    served = _provider().request_bars(bar_type, start=_START, end=_END)
 
-    assert bars
-    assert all(bar.bar_type == bar_type for bar in bars)
+    assert served.bars
+    assert all(bar.bar_type == bar_type for bar in served.bars)
 
 
 def test_request_instruments_round_trips_native_identity() -> None:
@@ -132,18 +133,21 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     port = CatalogBackedDataPort(
         catalog,
         provider=provider,
+        # The window read verifies distribution coverage too (ADR-0012), so the
+        # fill port carries both provider roles — the production composition.
+        distribution_provider=provider,
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
     )
-    request = RawBarRequest(instrument_ids=(_AAPL,), start="2024-01-02", end="2024-02-01")
+    request = CatalogWindowRequest(instrument_ids=(_AAPL,), start="2024-01-02", end="2024-02-01")
 
-    filled = port.load_raw_bars(request)
+    filled = port.load_window(request).ohlcv
     assert not filled[_AAPL].empty
     assert (filled[_AAPL]["Close"] > 0).all()
 
     # Provider-less read: must serve entirely from the catalog (no IBKR contact).
-    warm = CatalogBackedDataPort(parquet_data_catalog(catalog_path)).load_raw_bars(request)
+    warm = CatalogBackedDataPort(parquet_data_catalog(catalog_path)).load_window(request).ohlcv
     assert warm[_AAPL]["Close"].tolist() == filled[_AAPL]["Close"].tolist()
 
     # AC6: the served instrument's definition was persisted as a Step-1 write.
@@ -162,10 +166,10 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
     end = pd.Timestamp("2026-06-01", tz="UTC")
 
     spy_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end)
+        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end).bars
     )["Close"]
     gld_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end)
+        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end).bars
     )["Close"]
     spy = request_distribution_data(
         provider,
@@ -173,7 +177,6 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
         trades=spy_trades,
         start=start,
         end=end,
-        primary_exchange="ARCA",
         currency="USD",
     )
     gld = request_distribution_data(
@@ -182,7 +185,6 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
         trades=gld_trades,
         start=start,
         end=end,
-        primary_exchange="ARCA",
         currency="USD",
     )
 

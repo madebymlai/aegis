@@ -119,7 +119,6 @@ def test_request_adjusted_last_uses_raw_ibapi_seam() -> None:
         _SPY,
         start=pd.Timestamp("2024-01-01", tz="UTC"),
         end=pd.Timestamp("2024-02-01", tz="UTC"),
-        primary_exchange="ARCA",
         currency="USD",
     )
 
@@ -135,6 +134,23 @@ def test_request_adjusted_last_uses_raw_ibapi_seam() -> None:
             "timeout": 120,
         }
     ]
+
+
+def test_request_adjusted_last_translates_mic_venue_to_ib_primary_exchange() -> None:
+    # LVO.XAMS: the corpus venue is the MIC (XAMS), but IB only accepts its own
+    # exchange code (AEB) as primaryExchange — a MIC reaches IB as error 200
+    # "exchange invalid" (observed live: the aerd LVO dividend fatality).
+    fake = _FakeAdjustedLastClient()
+    provider = IbkrHistoricalProvider(adjusted_last_client_factory=lambda: fake)
+
+    provider.request_adjusted_last(
+        InstrumentId.from_str("LVO.XAMS"),
+        start=pd.Timestamp("2024-01-01", tz="UTC"),
+        end=pd.Timestamp("2024-02-01", tz="UTC"),
+        currency="EUR",
+    )
+
+    assert fake.calls[0]["primary_exchange"] == "AEB"
 
 
 def test_adjusted_last_raw_clients_use_fresh_client_ids() -> None:
@@ -154,7 +170,6 @@ def test_request_distribution_data_fetches_adjusted_last_and_decodes_events() ->
     class _Provider:
         def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
             assert kwargs["instrument_id"] == _SPY
-            assert kwargs["primary_exchange"] == "ARCA"
             assert kwargs["currency"] == "USD"
             return adjusted
 
@@ -165,7 +180,6 @@ def test_request_distribution_data_fetches_adjusted_last_and_decodes_events() ->
         start=dates[0],
         end=dates[-1],
         currency="USD",
-        primary_exchange="ARCA",
     )
 
     assert [(event.ex_date, event.amount) for event in events] == [
@@ -185,6 +199,5 @@ def test_request_adjusted_last_wraps_raw_fault() -> None:
             _SPY,
             start=pd.Timestamp("2024-01-01", tz="UTC"),
             end=pd.Timestamp("2024-02-01", tz="UTC"),
-            primary_exchange="ARCA",
             currency="USD",
         )

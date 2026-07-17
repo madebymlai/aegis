@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.cache.cache import Cache
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import continuous_bar_type, raw_bar_type
@@ -17,7 +18,11 @@ from aegis_data.catalog import (
     ContinuousRootVenueMismatchError,
 )
 from aegis_data.chain import fetch_contract_chain
-from aegis_data.continuous_contract_model import ContinuousContractModel
+from aegis_data.continuous_contract_model import (
+    ContinuousContractModel,
+    ContinuousContractModelNotMaterializedError,
+    ContinuousLegCurrencyError,
+)
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE, continuous_future
 from aegis_data.liquidity import liquid_cycle_causal
 from tests.support.continuous_oracle import backward_series
@@ -92,7 +97,9 @@ def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None
     future = continuous_future(chain, InstrumentId.from_str("ES.XCME"))
     oracle = backward_series(native, future.transitions, mode=DEFAULT_ADJUSTMENT_MODE)
 
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
     model.materialize(end=ES_END)
 
     assert model.continuous_id == InstrumentId.from_str("ES.XCME")
@@ -112,7 +119,9 @@ def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None
 
 def _materialized_two_roll_model() -> ContinuousContractModel:
     port, native = es_port_two_rolls()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
     model.materialize(end="2024-06-10")
     model.on_bar(_bar_on(native, _ESU4, date(2024, 6, 14)))
     return model
@@ -126,9 +135,13 @@ def _replayed_across_the_roll(
     decides which leg's bar arrives first on a shared day — either leg's bar can
     be the roll trigger in a live stream."""
     port, native = es_port()
-    oracle = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    oracle = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
     oracle.materialize(end="2024-04-30")
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
     model.materialize(end="2024-02-15")
     lower = pd.Timestamp("2024-02-15")
     bars = sorted(
@@ -156,9 +169,54 @@ def _live_cache_with_raw_bar() -> Cache:
     return live_cache
 
 
+def test_model_requires_an_explicit_adjustment_mode() -> None:
+    # The shared research/live path never silently defaults: research supplies the
+    # Run-recorded mode, live supplies the bundle-declared mode.
+    port, _ = es_port()
+
+    with pytest.raises(TypeError, match="adjustment_mode"):
+        ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")  # type: ignore[call-arg]
+
+
+def test_materialize_derives_the_roots_quote_currency_from_its_legs() -> None:
+    # A synthetic continuous root has no catalog definition of its own; its quote
+    # currency is the one currency every resolved dated leg declares. Research
+    # includes the root in its base-currency conversion using exactly this fact.
+    port, _ = es_port()
+
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
+    model.materialize(end=ES_END)
+
+    assert model.quote_currency == "USD"
+
+
+def test_quote_currency_before_materialization_fails_loud() -> None:
+    port, _ = es_port()
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
+
+    with pytest.raises(ContinuousContractModelNotMaterializedError):
+        model.quote_currency
+
+
+def test_materialize_rejects_legs_disagreeing_on_quote_currency() -> None:
+    port, _ = es_port(leg_currencies={"ESM4.XCME": "EUR"})
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
+
+    with pytest.raises(ContinuousLegCurrencyError, match="EUR"):
+        model.materialize(end=ES_END)
+
+
 def test_materialize_exposes_the_continuous_root_id() -> None:
     port, _native = es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     model.materialize(end="2024-02-15")
 
@@ -167,7 +225,9 @@ def test_materialize_exposes_the_continuous_root_id() -> None:
 
 def test_materialize_exposes_the_schedule_front_before_migration() -> None:
     port, _native = es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     model.materialize(end="2024-02-15")
 
@@ -176,7 +236,9 @@ def test_materialize_exposes_the_schedule_front_before_migration() -> None:
 
 def test_front_leg_as_of_follows_the_schedule_after_migration() -> None:
     port, _native = es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     front = model.front_leg_as_of("2024-05-31")
 
@@ -185,7 +247,9 @@ def test_front_leg_as_of_follows_the_schedule_after_migration() -> None:
 
 def test_materialize_exposes_the_ohlcv_frame_shape() -> None:
     port, _native = es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     model.materialize(end="2024-02-15")
 
@@ -194,7 +258,9 @@ def test_materialize_exposes_the_ohlcv_frame_shape() -> None:
 
 def test_front_picker_agreement_names_the_near_leg_before_regular_migration() -> None:
     port, _native = es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     assert _causal_front(port, "ES", date(2024, 2, 15)) == _ESH4
     assert model.front_leg_as_of(date(2024, 2, 15)) == _ESH4
@@ -202,7 +268,9 @@ def test_front_picker_agreement_names_the_near_leg_before_regular_migration() ->
 
 def test_front_picker_agreement_names_the_next_leg_after_regular_migration() -> None:
     port, _native = es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     assert _causal_front(port, "ES", date(2024, 5, 31)) == _ESM4
     assert model.front_leg_as_of(date(2024, 5, 31)) == _ESM4
@@ -210,7 +278,9 @@ def test_front_picker_agreement_names_the_next_leg_after_regular_migration() -> 
 
 def test_front_picker_agreement_names_the_mid_leg_before_early_crossover() -> None:
     port = early_crossover_es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     assert _causal_front(port, "ES", date(2024, 4, 12)) == _ESM4
     assert model.front_leg_as_of(date(2024, 4, 12)) == _ESM4
@@ -218,7 +288,9 @@ def test_front_picker_agreement_names_the_mid_leg_before_early_crossover() -> No
 
 def test_front_picker_agreement_names_the_back_leg_after_early_crossover() -> None:
     port = early_crossover_es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     assert _causal_front(port, "ES", date(2024, 5, 1)) == _ESU4
     assert model.front_leg_as_of(date(2024, 5, 1)) == _ESU4
@@ -226,7 +298,9 @@ def test_front_picker_agreement_names_the_back_leg_after_early_crossover() -> No
 
 def test_on_bar_appends_a_front_leg_bar_at_offset_zero() -> None:
     port, native = es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
     model.materialize(end="2024-04-29")
     bar = _bar_on(native, _ESM4, date(2024, 4, 30))
 
@@ -242,7 +316,9 @@ def test_on_bar_appends_a_front_leg_bar_at_offset_zero() -> None:
 
 def test_on_bar_keeps_the_front_leg_when_appending_current_front() -> None:
     port, native = es_port()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
     model.materialize(end="2024-04-29")
     bar = _bar_on(native, _ESM4, date(2024, 4, 30))
 
@@ -261,6 +337,35 @@ def test_roll_records_the_rebasing_from_the_seam() -> None:
     model = _materialized_two_roll_model()
 
     assert model.last_rebasing.apply(100.0) == pytest.approx(121.56862745098039)
+
+
+def test_roll_rebasing_is_multiplicative_under_ratio() -> None:
+    # The model's ``ContinuousFuture`` owns the declared mode, so a ratio roll's
+    # carry scales: 0 maps to 0 and doubling the input doubles the output
+    # (121.568… is the seam factor applied to 100, pinned above).
+    model = _materialized_two_roll_model()
+
+    assert model.last_rebasing.apply(0.0) == pytest.approx(0.0)
+    assert model.last_rebasing.apply(100.0) == pytest.approx(121.56862745098039)
+    assert model.last_rebasing.apply(200.0) == pytest.approx(243.13725490196077)
+
+
+def test_roll_rebasing_is_additive_under_spread() -> None:
+    # Under spread the same seam carries a constant +66 offset: 0 maps to the
+    # offset itself and every input shifts by exactly it.
+    port, native = es_port_two_rolls()
+    model = ContinuousContractModel(
+        port,
+        "ES",
+        start=ES_START,
+        timeframe="1D",
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+    )
+    model.materialize(end="2024-06-10")
+    model.on_bar(_bar_on(native, _ESU4, date(2024, 6, 14)))
+
+    assert model.last_rebasing.apply(0.0) == pytest.approx(66.0)
+    assert model.last_rebasing.apply(100.0) == pytest.approx(166.0)
 
 
 def test_roll_rematerializes_prior_closes_in_the_new_basis() -> None:
@@ -295,7 +400,9 @@ def test_replay_where_the_new_front_bar_triggers_the_roll_matches_the_one_shot()
 def test_materialize_does_not_write_continuous_bars_into_a_live_cache() -> None:
     port, _native = es_port()
     live_cache = _live_cache_with_raw_bar()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     model.materialize(end=ES_END)
 
@@ -305,7 +412,9 @@ def test_materialize_does_not_write_continuous_bars_into_a_live_cache() -> None:
 def test_materialize_leaves_existing_live_cache_raw_leg_bars_in_place() -> None:
     port, _native = es_port()
     live_cache = _live_cache_with_raw_bar()
-    model = ContinuousContractModel(port, "ES", start=ES_START, timeframe="1D")
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     model.materialize(end=ES_END)
 
@@ -321,7 +430,9 @@ def test_continuous_contract_model_rejects_legs_across_venues() -> None:
         bars={},
     )
     port = CatalogBackedDataPort(catalog)
-    model = ContinuousContractModel(port, "ES", start=ES_START)
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     with pytest.raises(ContinuousRootVenueMismatchError, match="span multiple venues"):
         model.materialize(end=ES_END)
@@ -333,7 +444,9 @@ def test_continuous_contract_model_rejects_a_root_with_no_legs() -> None:
         bars={},
     )
     port = CatalogBackedDataPort(catalog)
-    model = ContinuousContractModel(port, "ES", start=ES_START)
+    model = ContinuousContractModel(
+        port, "ES", start=ES_START, adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+    )
 
     with pytest.raises(ContinuousRootLegsNotFoundError, match="no dated legs"):
         model.materialize(end=ES_END)

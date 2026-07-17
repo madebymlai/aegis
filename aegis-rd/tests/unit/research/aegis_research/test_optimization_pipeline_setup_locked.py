@@ -15,8 +15,8 @@ import pytest
 
 from research.aegis_research.configuration import resolve_run_config
 from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
-from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
 from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
@@ -29,6 +29,10 @@ from research.aegis_research.optimization.run_data_contract import (
 )
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
+)
+from tests.support.research.aegis_research.factories import (
+    make_run_arrays,
+    make_run_data_facts,
 )
 from tests.support.research.aegis_research.market_data_fixtures import (
     native_data_config_payload,
@@ -45,18 +49,18 @@ _OHLCV_METADATA = default_metadata(
     effective_arrays=["OHLCV"], start=None, end=None
 )
 _DATA_IDENTITY = {
-    "schema_version": "candidate_data_identity.v2",
+    "schema_version": "candidate_data_identity.v3",
     "requested_instrument_ids": ["SYN.XNAS"],
     "instrument_ids": ["SYN.XNAS"],
     "timeframe": "1D",
 }
 
 
-class _FakeData:
-    def array(self, name: str) -> Any:
-        import pandas as pd
+def _arrays() -> Any:
+    import pandas as pd
 
-        return pd.DataFrame({0: [float(i) for i in range(120)]})
+    frame = pd.DataFrame({0: [float(i) for i in range(120)]})
+    return make_run_arrays(close=frame, open_=frame)
 
 
 def _run_evidence() -> RunEvidence:
@@ -76,7 +80,7 @@ def _locked_raw_config(candidate_key: str) -> dict[str, Any]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "locked_run_fixture",
         "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},
@@ -166,10 +170,11 @@ def test_locked_setup_resolves_every_component_from_candidate(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        arrays=_arrays(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=_run_evidence(),
     )
 
@@ -192,10 +197,11 @@ def test_locked_setup_performs_no_optimization(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        arrays=_arrays(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=_run_evidence(),
     )
 
@@ -214,10 +220,11 @@ def test_locked_setup_records_reproduction_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        arrays=_arrays(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 
@@ -240,10 +247,11 @@ def test_unlocked_setup_has_no_lock_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        arrays=_arrays(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 
@@ -348,10 +356,11 @@ def test_locked_setup_records_overridden_params_in_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        arrays=_arrays(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 
@@ -383,10 +392,11 @@ def test_locked_setup_records_empty_overrides_when_no_params(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        data=_FakeData(),
-        data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-        array_contract=array_contract,
-        metric_registry_fingerprint=None,
+        arrays=_arrays(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
+            array_contract=array_contract,
+        ),
         run_evidence=run_evidence,
     )
 

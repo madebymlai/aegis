@@ -8,32 +8,41 @@ from datetime import datetime, timedelta
 from typing import Protocol, TypeAlias
 
 from aegis_data.bar_type import timeframe_to_ns
-from aegis_runtime import ExecutionBundle
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_trader.bundles.book import (
+    AssembledBook,
+    ContinuousRootDeclaration,
+)
 from aegis_trader.data.market_data import MarketDataPort
-from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.book_timeframe import MixedTimeframeError, resolve_book_timeframe
 from aegis_trader.domain.roll import Halt, RequestBars, RollIntent, RollIntentBatch, SubscribeBars
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
-from aegis_trader.domain.startup import StartupGate, StartupResult
-from aegis_trader.domain.types import SleeveName
+from aegis_trader.domain.startup import StartupResult
 from aegis_trader.portfolio import BookStatePort
 from aegis_trader.trader.pipeline import RebalancePipeline
 
-_LIVE_WARMUP_CALENDAR_MULTIPLIER: int = 3
+# Calendar inflation from "bars of lookback" to "wall-clock span requested":
+# a daily bar accrues every calendar day the venue trades (365/252 ≈ 1.45), so
+# 3 is a generous daily cover.  An intraday bar only accrues inside the venue
+# session (~6.5h of 24 for equities), so the same lookback needs a much wider
+# calendar span: ~24/6.5 session coverage × ~7/5 weekend inflation ≈ 5.2 — 6 is
+# the intraday analogue of the daily 3 (aegis-rd-9qkr.1 amendment).
+_DAILY_WARMUP_CALENDAR_MULTIPLIER: int = 3
+_INTRADAY_WARMUP_CALENDAR_MULTIPLIER: int = 6
+
+_NS_PER_DAY: int = timeframe_to_ns("1D")
 
 
 class RollStartupPort(Protocol):
     def start(
         self,
         *,
-        timeframe: str,
-        history_start: datetime,
         end: datetime,
         warmup: bool,
+        declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
     ) -> RollIntentBatch:
-        """Materialize continuous roots and return front-leg startup intents."""
+        """Materialize the declared continuous roots and return front-leg startup intents."""
         ...
 
 
@@ -53,7 +62,6 @@ class BootResult:
     """A successful book boot."""
 
     pipeline: RebalancePipeline
-    timeframe: str
     startup_result: StartupResult
     intents: BootIntentBatch
 
@@ -61,8 +69,7 @@ class BootResult:
 def bootstrap(
     *,
     now: datetime,
-    book: BookConfig,
-    sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle],
+    book: AssembledBook,
     ledger: SleeveLedger,
     book_state: BookStatePort,
     market_data: MarketDataPort,
@@ -71,49 +78,49 @@ def bootstrap(
     warmup_cache_on_start: bool,
 ) -> BootResult | Halt:
     """Run the startup gates and return either the boot values or a typed halt."""
-    try:
-        timeframe = resolve_book_timeframe(
-            bundle.contract.timeframe for bundle in sleeve_to_bundle.values()
-        )
-    except MixedTimeframeError as exc:
-        return Halt(StartupGate.BOOK_TIMEFRAME, str(exc))
-
     pipeline = RebalancePipeline(
         book_state=book_state,
         market_data=market_data,
         book=book,
-        sleeve_to_bundle=sleeve_to_bundle,
         ledger=ledger,
     )
     startup_result = pipeline.startup_check()
     if startup_result.should_halt:
         return _halt_from_startup_result(startup_result)
 
-    history_start = startup_history_start(
-        now,
-        timeframe=timeframe,
-        lookback_bars=max(bundle.contract.lookback_bars for bundle in sleeve_to_bundle.values()),
-    )
     roll_intents = roll_desk.start(
-        timeframe=timeframe,
-        history_start=history_start,
         end=now,
         warmup=warmup_cache_on_start,
+        declarations=book.continuous_declarations,
+        history_starts={
+            root: startup_history_start(
+                now,
+                timeframe=declaration.timeframe,
+                required_bar_window=book.continuous_history_bars[root],
+            )
+            for root, declaration in book.continuous_declarations.items()
+        },
     )
     halt = _halt_from(roll_intents)
     if halt is not None:
         return halt
 
     intents: list[BootIntent] = list(roll_intents)
-    native_ids = _native_instrument_ids(sleeve_to_bundle)
-    for instrument_id in native_ids:
-        intents.append(SubscribeBars(instrument_id=instrument_id, timeframe=timeframe))
+    for requirement in book.required_streams:
+        stream = requirement.stream
+        intents.append(
+            SubscribeBars(instrument_id=stream.instrument_id, timeframe=stream.timeframe)
+        )
         if warmup_cache_on_start:
             intents.append(
                 RequestBars(
-                    instrument_id=instrument_id,
-                    timeframe=timeframe,
-                    start=history_start,
+                    instrument_id=stream.instrument_id,
+                    timeframe=stream.timeframe,
+                    start=startup_history_start(
+                        now,
+                        timeframe=stream.timeframe,
+                        required_bar_window=requirement.history_bars,
+                    ),
                     end=now,
                 )
             )
@@ -122,7 +129,6 @@ def bootstrap(
 
     return BootResult(
         pipeline=pipeline,
-        timeframe=timeframe,
         startup_result=startup_result,
         intents=tuple(intents),
     )
@@ -132,22 +138,17 @@ def startup_history_start(
     end: datetime,
     *,
     timeframe: str,
-    lookback_bars: int,
+    required_bar_window: int,
 ) -> datetime:
-    periods = max(lookback_bars + 1, 1) * _LIVE_WARMUP_CALENDAR_MULTIPLIER
+    periods = max(required_bar_window, 1) * _warmup_calendar_multiplier(timeframe)
     span_ns = timeframe_to_ns(timeframe) * periods
     return end - timedelta(microseconds=span_ns // 1000)
 
 
-def _native_instrument_ids(
-    sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle]
-) -> tuple[InstrumentId, ...]:
-    instrument_ids = {
-        instrument_id
-        for bundle in sleeve_to_bundle.values()
-        for instrument_id in bundle.contract.native_instrument_ids
-    }
-    return tuple(sorted(instrument_ids, key=lambda instrument_id: instrument_id.value))
+def _warmup_calendar_multiplier(timeframe: str) -> int:
+    if timeframe_to_ns(timeframe) < _NS_PER_DAY:
+        return _INTRADAY_WARMUP_CALENDAR_MULTIPLIER
+    return _DAILY_WARMUP_CALENDAR_MULTIPLIER
 
 
 def _halt_from(intents: RollIntentBatch) -> Halt | None:

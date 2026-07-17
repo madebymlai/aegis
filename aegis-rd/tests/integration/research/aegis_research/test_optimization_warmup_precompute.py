@@ -25,12 +25,14 @@ from research.aegis_research.optimization.precompute import (
 from research.aegis_research.optimization.ranking import OptimizationResult
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
     make_ranking_config,
     make_report_config,
+    make_run_arrays,
     make_run_split_config,
 )
 
@@ -122,13 +124,12 @@ def _optimization(
 def _run(windows: list[int], *, optimization: OptimizationConfig | None = None) -> OptimizationResult:
     optimization = optimization or _optimization()
     return execute_optimization(
-        close=_uptrend_close(),
-        open_=_uptrend_close(),
+        arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_source(windows),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
@@ -205,7 +206,9 @@ def test_runner_excludes_candidate_whose_lookback_exceeds_full_history() -> None
     assert result.excluded_invalid <= result.excluded_degenerate
     for candidate in (result.best, result.median, result.worst):
         assert candidate.params == {"window": 2}
-        assert candidate.score > 0.0
+        # the surviving valid candidate buys into the uptrend and profits
+        # (score is now the Friedman mean rank, so assert on the metric itself)
+        assert candidate.metrics["total_return"] > 0.0
 
 
 def test_runner_reports_zero_excluded_invalid_when_all_candidates_are_valid() -> None:
@@ -308,13 +311,12 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
 
     optimization = _optimization()
     result = execute_optimization(
-        close=close,
-        open_=close,
+        arrays=make_run_arrays(close=close, open_=close),
         source=_source(windows),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(close.index, optimization.split),
     )
@@ -325,9 +327,11 @@ def test_invalid_cash_holder_never_outranks_money_losing_valid_candidate() -> No
             f"Invalid cash-holder {invalid_params!r} must not appear among "
             f"representatives; got score={candidate.score}, params={candidate.params}"
         )
-        assert candidate.score < 0.0, (
+        # score is now the Friedman mean rank (>= 1), not the metric; the
+        # money-losing property lives in the aggregated total_return.
+        assert candidate.metrics["total_return"] < 0.0, (
             f"valid candidate {candidate.params} should lose money in a downtrend; "
-            f"got score={candidate.score}"
+            f"got total_return={candidate.metrics['total_return']}"
         )
 
     # The Invalid Candidate is counted in the result.

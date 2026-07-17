@@ -6,29 +6,28 @@ from research.aegis_research.configuration import InstrumentBandConfig, Portfoli
 
 
 def test_base_currency_defaults_to_eur_and_is_overridable() -> None:
-    default = PortfolioConfig(gross_cap=1.0, direction="both")
+    default = PortfolioConfig(direction="both")
     assert default.base_currency == "EUR"
 
-    chosen = PortfolioConfig(gross_cap=1.0, direction="both", base_currency="GBP")
+    chosen = PortfolioConfig(direction="both", base_currency="GBP")
     assert chosen.base_currency == "GBP"
 
 
 def test_fx_conversion_cost_defaults_off() -> None:
-    cfg = PortfolioConfig(gross_cap=1.0, direction="both")
+    cfg = PortfolioConfig(direction="both")
     assert cfg.fx_conversion_cost == 0.0
 
-    priced = PortfolioConfig(gross_cap=1.0, direction="both", fx_conversion_cost=0.0003)
+    priced = PortfolioConfig(direction="both", fx_conversion_cost=0.0003)
     assert priced.fx_conversion_cost == 0.0003
 
 
 def test_resolved_band_for_falls_back_to_sleeve_default_when_no_override() -> None:
-    cfg = PortfolioConfig(gross_cap=1.0, direction="both", band_up=0.10, band_down=0.20)
+    cfg = PortfolioConfig(direction="both", band_up=0.10, band_down=0.20)
     assert cfg.resolved_band_for("AAPL.NASDAQ") == DriftBand(up=0.10, down=0.20)
 
 
 def test_resolved_band_for_prefers_exact_key_over_sleeve_default() -> None:
     cfg = PortfolioConfig(
-        gross_cap=1.0,
         direction="both",
         band_up=0.10,
         band_down=0.20,
@@ -39,7 +38,6 @@ def test_resolved_band_for_prefers_exact_key_over_sleeve_default() -> None:
 
 def test_resolved_band_for_carries_the_sleeve_destination_fraction() -> None:
     cfg = PortfolioConfig(
-        gross_cap=1.0,
         direction="both",
         band_up=0.10,
         band_down=0.20,
@@ -52,7 +50,6 @@ def test_resolved_band_for_carries_the_sleeve_destination_fraction() -> None:
 
 def test_override_without_destination_fraction_inherits_the_sleeve_default() -> None:
     cfg = PortfolioConfig(
-        gross_cap=1.0,
         direction="both",
         band_up=0.10,
         band_down=0.20,
@@ -72,7 +69,6 @@ def test_override_without_destination_fraction_inherits_the_sleeve_default() -> 
 
 def test_resolved_band_for_matches_the_override_key_exactly() -> None:
     cfg = PortfolioConfig(
-        gross_cap=1.0,
         direction="both",
         band_up=0.10,
         band_down=0.20,

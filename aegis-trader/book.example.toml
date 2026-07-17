@@ -45,11 +45,10 @@ start_drawdown = 0.05
 end_drawdown = 0.25
 floor_multiplier = 0.50
 
-# Gross cap after risk-budget scaling; raise it to run levered across sleeves.
-max_book_gross = 1.0
-
-# Risk caps, all as fractions of NAV. Provenance (caps <= what research
-# validated) is checked at load against each sleeve's bundle, not declared here.
+# Commingled Book risk caps after Sleeve allocation and netting. These are the
+# only configurable exposure limits: sleeve weights are unit-gross by contract
+# (aegis_runtime SLEEVE_GROSS_LIMIT, enforced fail-closed by every Execution
+# Bundle), so the book allocator is the only leverager.
 gross_cap = 1.0       # max sum |w_i|
 net_cap = 0.5         # max |sum w_i|
 per_name_cap = 0.1    # max |w_i| per instrument
@@ -72,12 +71,12 @@ aggregate_drift_threshold = 0.5
 # slippage_seed = 42                 # pinned RNG seed for deterministic fills
 #
 # [costs.borrow]
-# rate = 0.015                       # annual general-collateral borrow fee on shorts
+# rate = 0.005                       # annual general-collateral borrow fee on shorts
 #
 # [costs.margin_interest]
-# EUR = 0.04                         # annual rate charged on EUR debit balances
-# GBP = 0.06                         # annual rate charged on GBP debit balances
-# USD = 0.055                        # annual rate charged on USD debit balances
+# EUR = 0.0324                       # annual rate charged on net EUR debit balances
+# USD = 0.0513                       # annual rate charged on net USD debit balances
+# Positive cash balances earn no credit interest; currencies are never netted together.
 
 # Sleeves — each a risk-budgeted sub-portfolio backed by one content-addressed
 # bundle wheel. Instruments carry their own venue (each is a Nautilus

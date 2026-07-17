@@ -18,23 +18,29 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import (
     DataContract,
-    DriftBand,
     ExecutionBundle,
     MarketDataBundle,
     MissingIndexPolicy,
 )
+from aegis_runtime.currency import (
+    CurrencyConversion,
+    build_currency_conversion_from_codes,
+)
+from aegis_runtime.exposure_validation import NetExposureBreach
 
-from aegis_trader.bundles.bands import InstrumentBandError, build_instrument_bands
-from aegis_trader.bundles.provenance import CapProvenanceError, check_cap_provenance
+from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data.market_data import MarketBar
-from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.integrity import check_account_integrity
-from aegis_trader.domain.rebalancer import RebalancePlan, rebalance_plan
 from aegis_trader.domain.roll import RollEvent
 from aegis_trader.domain.sizing import InstrumentSizing, size_deltas
-from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain import startup as _startup
-from aegis_trader.domain.types import OrderIntent, SleeveName, WeightDelta
+from aegis_trader.domain.types import OrderIntent, SleeveName
+from aegis_trader.trader._rebalancer import (
+    PerNameExposureBreach,
+    RebalancePlan,
+    rebalance_plan,
+)
 
 if TYPE_CHECKING:
     from aegis_trader.data.market_data import MarketDataPort
@@ -46,6 +52,20 @@ class GateOutcome(str, Enum):
 
     PASS = "pass"
     ERROR = "error"
+
+
+class HaltCause(str, Enum):
+    """The behaviorally distinct halt families of a failed rebalance plan.
+
+    The closed vocabulary consumers branch on; ``halt_reason`` carries the
+    human-readable detail.  One value per contract, not per raise site: every
+    per-name breach — unfixable target, unremediable position, projected
+    sweep — is the one fail-closed per-name contract (ADR-0002).
+    """
+
+    PER_NAME_CAP_BREACH = "per_name_cap_breach"
+    NET_CAP_BREACH = "net_cap_breach"
+    PLANNING_FAILED = "planning_failed"
 
 
 @dataclass(frozen=True)
@@ -69,6 +89,28 @@ class CompletedRebalancePeriod:
 
 
 @dataclass(frozen=True)
+class DueSleeve:
+    """One Sleeve due for recomputation on its own completed period."""
+
+    sleeve: SleeveName
+    period: CompletedRebalancePeriod
+
+
+@dataclass(frozen=True)
+class RebalanceRequest:
+    """One Book re-net: the Sleeves whose periods completed, with coordinates.
+
+    Only the listed Sleeves recompute; every other Sleeve holds its latest
+    valid target, and the whole retained Book is allocated, gated, and netted.
+    ``timestamp_ns`` is the integer UTC event time driving the re-net (the
+    triggering bar), stamping the Book observation the ledger records.
+    """
+
+    due: tuple[DueSleeve, ...]
+    timestamp_ns: int
+
+
+@dataclass(frozen=True)
 class SleeveComputeFailure:
     """One sleeve's failed weight computation, surfaced instead of raised."""
 
@@ -83,6 +125,7 @@ class RebalanceResult:
     orders: tuple[OrderIntent, ...]
     summary: RebalanceSummary
     halt_reason: str | None = None
+    halt_cause: HaltCause | None = None
     sleeve_failures: tuple[SleeveComputeFailure, ...] = ()
 
 
@@ -107,25 +150,34 @@ class RebalancePipeline:
         *,
         book_state: BookStatePort,
         market_data: MarketDataPort,
-        book: BookConfig,
-        sleeve_to_bundle: Mapping[SleeveName, ExecutionBundle],
+        book: AssembledBook,
         ledger: SleeveLedger,
     ) -> None:
         self._book_state = book_state
         self._market_data = market_data
-        self._book = book
-        self._sleeve_to_bundle = sleeve_to_bundle
+        self._book = book.config
+        self._sleeves = book.sleeves
         self._ledger = ledger
-        self._instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
+        self._bundle_bands = book.bands
         self._last_sleeve_weights: dict[SleeveName, float] = {}
+        # The latest valid target frame per Sleeve: due computations replace an
+        # entry; non-due, warming, stale, or failed Sleeves retain theirs.
+        self._retained_targets: dict[SleeveName, pd.DataFrame] = {}
+        # The most recent completed period seen per Sleeve — a market-time fact
+        # (recorded whether or not the compute succeeded) that scopes freshness
+        # and sizing reads for that Sleeve's instruments between its dues.
+        self._last_period_by_sleeve: dict[SleeveName, CompletedRebalancePeriod] = {}
         timeframe_by_instrument_id: dict[InstrumentId, str] = {}
-        for bundle in self._sleeve_to_bundle.values():
+        consumer_by_instrument_id: dict[InstrumentId, SleeveName] = {}
+        for sleeve_name, bundle in self._sleeves.items():
             for instrument_id in self._contract_target_ids(bundle.contract):
                 timeframe_by_instrument_id.setdefault(
                     instrument_id, bundle.contract.timeframe
                 )
+                consumer_by_instrument_id.setdefault(instrument_id, sleeve_name)
         self._all_instrument_ids = frozenset(timeframe_by_instrument_id)
         self._timeframe_by_instrument_id = timeframe_by_instrument_id
+        self._consumer_by_instrument_id = consumer_by_instrument_id
 
     @property
     def last_sleeve_weights(self) -> dict[SleeveName, float]:
@@ -155,35 +207,7 @@ class RebalancePipeline:
 
     def startup_check(self) -> _startup.StartupResult:
         """Run startup gates and return the decision as a value object."""
-        band_result = self._band_ownership_startup_result()
-        if band_result is not None:
-            return band_result
-        cap_result = self._cap_provenance_startup_result()
-        if cap_result is not None:
-            return cap_result
         return self._account_integrity_startup_result()
-
-    def _band_ownership_startup_result(self) -> _startup.StartupResult | None:
-        try:
-            self._instrument_bands = build_instrument_bands(self._sleeve_to_bundle)
-        except InstrumentBandError as exc:
-            return _startup.StartupResult(
-                trading_enabled=False,
-                halt_gate=_startup.StartupGate.BAND_OWNERSHIP,
-                halt_reason=str(exc),
-            )
-        return None
-
-    def _cap_provenance_startup_result(self) -> _startup.StartupResult | None:
-        try:
-            check_cap_provenance(self._book, self._sleeve_to_bundle)
-        except CapProvenanceError as exc:
-            return _startup.StartupResult(
-                trading_enabled=False,
-                halt_gate=_startup.StartupGate.CAP_PROVENANCE,
-                halt_reason=str(exc),
-            )
-        return None
 
     def _account_integrity_startup_result(self) -> _startup.StartupResult:
         try:
@@ -211,10 +235,21 @@ class RebalancePipeline:
             )
         return _startup.StartupResult(trading_enabled=True, nav=nav, cash=cash)
 
-    def rebalance_period(self, period: CompletedRebalancePeriod) -> RebalanceResult:
-        """Run one completed-period rebalance and return orders plus summary."""
-        pending, sleeve_failures = self._compute_sleeve_targets(period)
+    def rebalance(self, request: RebalanceRequest) -> RebalanceResult:
+        """Recompute the due Sleeves, then allocate, gate, and net the full
+        retained Book into one order set.
+
+        The Book observation is recorded before planning, so the covariance
+        the allocator queries already excludes the day this event opened —
+        risk inputs use only completed UTC days (aegis-rd-9qkr.7).
+        """
+        sleeve_failures = self._compute_due_targets(request)
         nav = self._book_state.nav()
+        realized_weights = self._book_state.realized_weights()
+        instrument_metas, fx_rates, prices = self._collect_sizing_params()
+        self._record_observation(request.timestamp_ns, nav, realized_weights, prices)
+
+        pending = dict(self._retained_targets)
         if not pending:
             return RebalanceResult(
                 orders=(),
@@ -222,7 +257,6 @@ class RebalancePipeline:
                 sleeve_failures=sleeve_failures,
             )
 
-        realized_weights = self._book_state.realized_weights()
         try:
             plan = self._build_rebalance_plan(pending, nav, realized_weights)
         except ValueError as exc:
@@ -230,17 +264,24 @@ class RebalancePipeline:
                 orders=(),
                 summary=_summary(nav, len(pending), 0, 0, GateOutcome.ERROR, 0.0),
                 halt_reason=str(exc),
+                halt_cause=_halt_cause(exc),
+                sleeve_failures=sleeve_failures,
             )
 
-        self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
-        sized_orders, prices = self._size_plan(plan.deltas, nav, period)
+        sized_orders = size_deltas(
+            plan.deltas,
+            nav,
+            instrument_metas=instrument_metas,
+            fx_rates=fx_rates,
+            prices=prices,
+        )
         executable_orders = _orders_for_fresh_instruments(
             sized_orders,
-            self._fresh_instrument_ids(period),
+            self._fresh_instrument_ids(),
         )
-        total_notional = sum(abs(order.quantity) for order in executable_orders)
 
-        self._record_period(nav, realized_weights, pending, prices)
+        self._last_sleeve_weights = dict(plan.applied_sleeve_weights)
+        total_notional = sum(abs(order.quantity) for order in executable_orders)
 
         return RebalanceResult(
             orders=executable_orders,
@@ -255,18 +296,61 @@ class RebalancePipeline:
             sleeve_failures=sleeve_failures,
         )
 
-    def _compute_sleeve_targets(
-        self, period: CompletedRebalancePeriod
-    ) -> tuple[dict[SleeveName, pd.DataFrame], tuple[SleeveComputeFailure, ...]]:
-        """Each sleeve's targets, computed in isolation: a sleeve whose compute raises
-        is excluded (it holds this period) and surfaced as a failure — one bad sleeve
-        must never abort the other sleeves' rebalance (aegis-rd-hd54)."""
-        pending: dict[SleeveName, pd.DataFrame] = {}
+    def record_market_observation(
+        self, timestamp_ns: int, marks: Mapping[InstrumentId, float]
+    ) -> None:
+        """Record a timestamped full-Book observation for an advancing stream.
+
+        Called whenever a relevant subscribed stream advances, whether or not
+        any Sleeve is due — retained Sleeves stay marked independently of
+        recomputation.  The pipeline records facts only; day bucketing,
+        compounding, and annualization belong to the ledger.
+        """
+        self._record_observation(
+            timestamp_ns,
+            self._book_state.nav(),
+            self._book_state.realized_weights(),
+            marks,
+        )
+
+    def _record_observation(
+        self,
+        timestamp_ns: int,
+        nav: float,
+        realized_weights: Mapping[InstrumentId, float],
+        marks: Mapping[InstrumentId, float],
+    ) -> None:
+        self._ledger.record(
+            BookObservation(
+                timestamp_ns=timestamp_ns,
+                nav=nav,
+                realized_weights=dict(realized_weights),
+                sleeve_targets=_sleeve_target_snapshot(self._retained_targets),
+                marks=dict(marks),
+            )
+        )
+
+    def _compute_due_targets(
+        self, request: RebalanceRequest
+    ) -> tuple[SleeveComputeFailure, ...]:
+        """Each due Sleeve's targets, computed in isolation on its own period.
+
+        A successful compute replaces the Sleeve's retained target; a compute
+        that raises is surfaced as a failure and the Sleeve holds its previous
+        valid target — one bad sleeve must never abort the other sleeves'
+        rebalance (aegis-rd-hd54).  A warming/stale Sleeve (no bars) holds
+        silently.  Non-due Sleeves are not invoked at all.
+        """
+        period_by_sleeve = {due.sleeve: due.period for due in request.due}
         failures: list[SleeveComputeFailure] = []
         for sleeve in self._book.sleeves:
-            bundle = self._sleeve_to_bundle.get(sleeve.name)
+            period = period_by_sleeve.get(sleeve.name)
+            if period is None:
+                continue
+            bundle = self._sleeves.get(sleeve.name)
             if bundle is None:
                 continue
+            self._last_period_by_sleeve[sleeve.name] = period
             try:
                 targets = self._sleeve_targets(bundle, period)
             except Exception as exc:  # noqa: BLE001 — fail closed per sleeve, not per book
@@ -279,8 +363,8 @@ class RebalancePipeline:
                 continue
             if targets is None:
                 continue
-            pending[sleeve.name] = targets
-        return pending, tuple(failures)
+            self._retained_targets[sleeve.name] = targets
+        return tuple(failures)
 
     def _sleeve_targets(
         self, bundle: ExecutionBundle, period: CompletedRebalancePeriod
@@ -293,7 +377,65 @@ class RebalancePipeline:
             name: _combine_array_series(sleeve_bars, name)
             for name in contract.required_arrays
         }
-        return bundle.compute_weights(MarketDataBundle(arrays))
+        # The pipeline resolves the period's market facts; the bundle owns the
+        # native -> base transformation, so the conversion is applied exactly once
+        # (and roll probes can perturb native prices before it).
+        conversion = self._currency_conversion(contract, period)
+        return bundle.compute_weights(
+            MarketDataBundle(arrays),
+            currency_conversion=conversion,
+        )
+
+    def _currency_conversion(
+        self, contract: DataContract, period: CompletedRebalancePeriod
+    ) -> CurrencyConversion | None:
+        """The contract's ``exchange:``-leg conversion to its base currency.
+
+        Research validated the sleeve on base-currency-converted panels; the
+        trader computes on the same view (aegis-rd-reyj). Any gap — a leg that
+        is not a cached FX pair, missing FX bars, an unresolvable tradeable
+        currency — raises, so the sleeve fails closed instead of silently
+        computing on native prices.
+        """
+        if not contract.exchange:
+            return None
+        needed = contract.lookback_bars + 1
+        fx_close: dict[InstrumentId, pd.Series] = {}
+        pair_currencies: dict[InstrumentId, tuple[str, str]] = {}
+        for fx_id in contract.exchange:
+            pair = self._market_data.currency_pair(fx_id)
+            if pair is None:
+                raise ValueError(
+                    f"conversion leg {fx_id.value} is not a cash FX pair in the cache"
+                )
+            bars = self._lookback_window(
+                fx_id,
+                contract.timeframe,
+                period,
+                limit=needed + DROP_POLICY_LOOKBACK_SLACK,
+            )
+            if not bars:
+                raise ValueError(f"no FX bars for conversion leg {fx_id.value}")
+            pair_currencies[fx_id] = pair
+            fx_close[fx_id] = pd.Series(
+                [bar.close for bar in bars],
+                index=pd.DatetimeIndex([bar.ts_event for bar in bars]),
+            )
+        currency_by_instrument_id: dict[InstrumentId, str] = {}
+        for instrument_id in self._contract_target_ids(contract):
+            sizing = self._market_data.instrument_sizing(instrument_id)
+            if sizing is None:
+                raise ValueError(
+                    f"no cached instrument for {instrument_id.value}; its quote "
+                    "currency is required for base-currency conversion"
+                )
+            currency_by_instrument_id[instrument_id] = sizing.currency
+        return build_currency_conversion_from_codes(
+            currency_by_instrument_id=currency_by_instrument_id,
+            pair_currencies=pair_currencies,
+            fx_close=fx_close,
+            base_currency=contract.base_currency,
+        )
 
     def _build_rebalance_plan(
         self,
@@ -301,52 +443,17 @@ class RebalancePipeline:
         _nav: float,
         realized_weights: dict[InstrumentId, float],
     ) -> RebalancePlan:
-        instrument_bands = self._require_instrument_bands()
         return rebalance_plan(
             pending,
             self._book,
             realized_weights=realized_weights,
-            instrument_bands=instrument_bands,
+            instrument_bands=self._bundle_bands.bands,
+            band_owners=self._bundle_bands.owner_by_instrument,
             realized_covariance=self._ledger.realized_covariance(
                 self._positive_risk_sleeve_names()
             ),
             previous_sleeve_weights=self._last_sleeve_weights,
             realized_drawdown=self._ledger.current_drawdown(_nav),
-        )
-
-    def _require_instrument_bands(self) -> Mapping[InstrumentId, DriftBand]:
-        if self._instrument_bands is None:
-            raise RuntimeError("instrument bands queried before startup_check built them")
-        return self._instrument_bands
-
-    def _size_plan(
-        self,
-        deltas: tuple[WeightDelta, ...],
-        nav: float,
-        period: CompletedRebalancePeriod,
-    ) -> tuple[tuple[OrderIntent, ...], dict[InstrumentId, float]]:
-        instrument_metas, fx_rates, prices = self._collect_sizing_params(period)
-        orders = size_deltas(
-            deltas,
-            nav,
-            instrument_metas=instrument_metas,
-            fx_rates=fx_rates,
-            prices=prices,
-        )
-        return orders, prices
-
-    def _record_period(
-        self,
-        nav: float,
-        realized_weights: Mapping[InstrumentId, float],
-        pending: Mapping[SleeveName, pd.DataFrame],
-        prices: Mapping[InstrumentId, float],
-    ) -> None:
-        self._ledger.record(
-            nav=nav,
-            realized_weights=dict(realized_weights),
-            sleeve_targets=_sleeve_target_snapshot(pending),
-            closes=dict(prices),
         )
 
     def _contract_target_ids(self, contract: DataContract) -> tuple[InstrumentId, ...]:
@@ -389,12 +496,23 @@ class RebalancePipeline:
             )
         return sleeve_bars
 
-    def _fresh_instrument_ids(self, period: CompletedRebalancePeriod) -> frozenset[InstrumentId]:
+    def _fresh_instrument_ids(self) -> frozenset[InstrumentId]:
         return frozenset(
             instrument_id
             for instrument_id in self._all_instrument_ids
-            if self._has_bar_in_period(instrument_id, period)
+            if self._has_bar_in_instrument_period(instrument_id)
         )
+
+    def _instrument_period(
+        self, instrument_id: InstrumentId
+    ) -> CompletedRebalancePeriod | None:
+        """The completed period that scopes reads for *instrument_id*: the most
+        recent period seen by its consuming Sleeve, or ``None`` before that
+        Sleeve's first due."""
+        consumer = self._consumer_by_instrument_id.get(instrument_id)
+        if consumer is None:
+            return None
+        return self._last_period_by_sleeve.get(consumer)
 
     def _lookback_window(
         self,
@@ -412,9 +530,10 @@ class RebalancePipeline:
             limit=limit,
         )
 
-    def _has_bar_in_period(
-        self, instrument_id: InstrumentId, period: CompletedRebalancePeriod
-    ) -> bool:
+    def _has_bar_in_instrument_period(self, instrument_id: InstrumentId) -> bool:
+        period = self._instrument_period(instrument_id)
+        if period is None:
+            return False
         return self._market_data.has_bar_in_period(
             instrument_id,
             self._timeframe_by_instrument_id[instrument_id],
@@ -424,7 +543,6 @@ class RebalancePipeline:
 
     def _collect_sizing_params(
         self,
-        period: CompletedRebalancePeriod,
     ) -> tuple[dict[InstrumentId, InstrumentSizing], dict[str, float], dict[InstrumentId, float]]:
         instrument_metas: dict[InstrumentId, InstrumentSizing] = {}
         prices: dict[InstrumentId, float] = {}
@@ -435,11 +553,16 @@ class RebalancePipeline:
             if sizing is None:
                 continue
             instrument_metas[instrument_id] = sizing
-            bars = self._lookback_window(
-                instrument_id,
-                self._timeframe_by_instrument_id[instrument_id],
-                period,
-                limit=1,
+            period = self._instrument_period(instrument_id)
+            bars = (
+                ()
+                if period is None
+                else self._lookback_window(
+                    instrument_id,
+                    self._timeframe_by_instrument_id[instrument_id],
+                    period,
+                    limit=1,
+                )
             )
             if bars:
                 prices[instrument_id] = float(bars[-1].close)
@@ -562,6 +685,14 @@ def _column_instrument_id(column: object) -> InstrumentId:
     if isinstance(column, InstrumentId):
         return column
     raise ValueError(f"target weight columns must be InstrumentId values; got {column!r}")
+
+
+def _halt_cause(exc: ValueError) -> HaltCause:
+    if isinstance(exc, PerNameExposureBreach):
+        return HaltCause.PER_NAME_CAP_BREACH
+    if isinstance(exc, NetExposureBreach):
+        return HaltCause.NET_CAP_BREACH
+    return HaltCause.PLANNING_FAILED
 
 
 def _summary(

@@ -22,7 +22,7 @@ from research.aegis_research.optimization.ranking import (
 
 def _data_identity(instrument_id: str = "SYN.XNAS") -> dict[str, object]:
     return {
-        "schema_version": "candidate_data_identity.v2",
+        "schema_version": "candidate_data_identity.v3",
         "requested_instrument_ids": [instrument_id],
         "instrument_ids": [instrument_id],
         "timeframe": "1D",

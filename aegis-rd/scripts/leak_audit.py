@@ -403,19 +403,19 @@ def masking_check(audit, repo):
     try:
         import pandas as pd
 
-        from research.aegis_research.portfolios import (
+        from research.aegis_research.optimization.window_evaluation._simulation import (
             count_non_executable_rows,
-            simulate_single_book,
         )
         from tests.support.research.aegis_research.factories import (
             make_portfolio_config,
+            make_single_book_portfolio,
         )
         market = pd.date_range("2020-01-01", periods=6, freq="D")
         # allocations skip the 3rd market bar -> a gap the mask must catch.
         alloc_idx = market.delete(2)
         close = pd.DataFrame(100.0, index=alloc_idx, columns=["A", "B"])
         alloc = pd.DataFrame(1.0, index=alloc_idx, columns=["A", "B"])
-        pf = simulate_single_book(
+        pf = make_single_book_portfolio(
             close,
             alloc,
             make_portfolio_config(

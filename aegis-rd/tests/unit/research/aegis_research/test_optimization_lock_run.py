@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 
 from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import CandidateStore
@@ -28,7 +29,7 @@ from research.aegis_research.optimization.ranking import (
 from tests.support.research.aegis_research.factories import make_lock
 
 _DATA_IDENTITY = {
-    "schema_version": "candidate_data_identity.v2",
+    "schema_version": "candidate_data_identity.v3",
     "requested_instrument_ids": ["SYN.XNAS"],
     "instrument_ids": ["SYN.XNAS"],
     "timeframe": "1D",
@@ -90,6 +91,49 @@ def test_role_selects_the_matching_ranked_candidate(tmp_path: Path) -> None:
     assert resolved.component_params[indicator_ref] == {"window": 22}
 
 
+def test_exposes_recorded_adjustment_mode_as_a_typed_fact(tmp_path: Path) -> None:
+    # Export reads only this lock-resolved fact — never raw provenance mappings and
+    # never the current code default.
+    with _store_with_candidate(
+        tmp_path, data_identity={**_DATA_IDENTITY, "adjustment_mode": "backward_spread"}
+    ) as store:
+        candidate_key = store.candidate_key_for_role("run-a", "best")
+
+        resolved = resolve_lock_run(
+            make_lock(run_id="run-a", candidate_id=candidate_key),
+            store=store,
+        )
+
+    assert resolved.adjustment_mode is ContinuousFutureAdjustmentType.BACKWARD_SPREAD
+
+
+def test_missing_adjustment_mode_evidence_resolves_to_none(tmp_path: Path) -> None:
+    # A pre-evidence Run recorded no mode; the typed fact is None and the
+    # futures-vs-mode decision belongs to export.
+    with _store_with_candidate(tmp_path) as store:
+        candidate_key = store.candidate_key_for_role("run-a", "best")
+
+        resolved = resolve_lock_run(
+            make_lock(run_id="run-a", candidate_id=candidate_key),
+            store=store,
+        )
+
+    assert resolved.adjustment_mode is None
+
+
+def test_rejects_an_unknown_recorded_adjustment_mode(tmp_path: Path) -> None:
+    with _store_with_candidate(
+        tmp_path, data_identity={**_DATA_IDENTITY, "adjustment_mode": "forward_ratio"}
+    ) as store:
+        candidate_key = store.candidate_key_for_role("run-a", "best")
+
+        with pytest.raises(LockRunResolutionError, match="adjustment mode"):
+            resolve_lock_run(
+                make_lock(run_id="run-a", candidate_id=candidate_key),
+                store=store,
+            )
+
+
 def test_rejects_unknown_run_id(tmp_path: Path) -> None:
     with _store_with_candidate(tmp_path) as store:
         candidate_key = store.candidate_key_for_role("run-a", "best")
@@ -119,15 +163,22 @@ def test_rejects_candidate_missing_referenced_component(tmp_path: Path) -> None:
             )
 
 
-def _store_with_candidate(tmp_path: Path, *, drop_indicator_runtime: bool = False) -> CandidateStore:
+def _store_with_candidate(
+    tmp_path: Path,
+    *,
+    drop_indicator_runtime: bool = False,
+    data_identity: dict[str, object] | None = None,
+) -> CandidateStore:
     store = CandidateStore(tmp_path / "candidates.sqlite3")
-    candidates = _candidate_rows()
+    identity = _DATA_IDENTITY if data_identity is None else data_identity
+    candidates = _candidate_rows(identity)
     store.insert_completed_run(
         run_id="run-a",
         candidate_rows=candidates,
         provenance={
             "run_id": "run-a",
             "source": _source_evidence(drop_indicator_runtime=drop_indicator_runtime),
+            "data": identity,
         },
     )
     return store
@@ -168,7 +219,7 @@ def _candidate(params: dict[str, object], score: float) -> EvaluatedCandidate:
     )
 
 
-def _candidate_rows() -> list[dict[str, object]]:
+def _candidate_rows(data_identity: dict[str, object]) -> list[dict[str, object]]:
     fast_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window")
     slow_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window")
     window_key = encode(ComponentRef("indicators", "demo.mom", "demo.mom"), "window")
@@ -177,7 +228,7 @@ def _candidate_rows() -> list[dict[str, object]]:
     return candidate_rows_from_result(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
-        data_identity=_DATA_IDENTITY,
+        data_identity=data_identity,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

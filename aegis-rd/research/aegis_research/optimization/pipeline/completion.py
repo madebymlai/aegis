@@ -15,12 +15,10 @@ from research.aegis_research.configuration import (
     lock_handle,
     to_builtin,
 )
-from research.aegis_research.data import (
-    MarketDataResult,
-)
 from research.aegis_research.optimization.candidate_evidence import (
     candidate_held_out_headline,
     held_out_warning,
+    separability_warning,
 )
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.candidate_store_identity import (
@@ -36,7 +34,7 @@ from research.aegis_research.optimization.run_artifacts import (
     build_strategy_artifact_payload,
     write_strategy_artifact,
 )
-from research.aegis_research.optimization.run_data_contract import DataArrayContract
+from research.aegis_research.optimization.run_data_contract import RunDataFacts
 from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.run_splits import RunSplitsResult
 
@@ -47,10 +45,8 @@ def run_pipeline_completion(
     publishing: PublishingResult,
     config: RunConfig,
     recorder: RunRecorder,
-    data_result: MarketDataResult,
-    array_contract: DataArrayContract,
+    facts: RunDataFacts,
     run_evidence: RunEvidence,
-    metric_registry_fingerprint: str | None,
 ) -> dict[str, Any]:
     """Write the strategy artifact, complete the run, and activate candidates.
 
@@ -64,11 +60,9 @@ def run_pipeline_completion(
         store_namespace = candidate_store_namespace()
         artifact_payload = build_strategy_artifact_payload(
             strategy_evidence=setup.strategy_evidence,
-            data_result=data_result,
-            array_contract=array_contract,
+            facts=facts,
             ranking={
                 "metric": config.ranking.metric,
-                "min_weight": config.ranking.min_weight,
             },
             portfolio=to_builtin(config.portfolio),
             optimization=to_builtin(config.optimization),
@@ -78,7 +72,6 @@ def run_pipeline_completion(
             candidates=[to_builtin(record) for record in publishing.candidate_rows],
             candidate_store_path=store_namespace["path"],
             candidate_store_provenance=publishing.candidate_store_provenance,
-            metric_registry_fingerprint=metric_registry_fingerprint,
         )
         write_strategy_artifact(recorder, artifact_payload)
         recorder.mark_run_completed()
@@ -115,7 +108,6 @@ def _completion_result(
         "candidate_store_path": str(store_path),
         "optimization": {
             "ranking_metric": ranking_metric,
-            "min_weight": config.ranking.min_weight,
             "split_count": split_result.metadata["n_splits"],
             "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
             "total": execution.get("total", 0),
@@ -124,6 +116,7 @@ def _completion_result(
             "held_out_warning": held_out_warning(
                 candidate_held_out_headline(best_row, metric=ranking_metric)
             ),
+            "separability_warning": separability_warning(execution.get("omnibus")),
             "non_executable_rows": execution.get("non_executable_rows", 0),
             "split_method": config.optimization.split.method if config.optimization else None,
         },

@@ -41,15 +41,13 @@ from nautilus_trader.config import (
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.persistence.config import DataCatalogConfig
+from nautilus_trader.portfolio.config import PortfolioConfig
 
 from aegis_data.catalog import catalog_root
 from aegis_data.ibkr import attach_live_clients
 
-from aegis_trader.bundles.book_sleeves import (
-    SleeveBundles,
-    load_book_sleeves,
-    union_native_instrument_ids,
-)
+from aegis_trader.bundles.book import AssembledBook, assemble_book
+from aegis_trader.bundles.marking import recorded_marking_resolver
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import IBConnectionSettings, load_book_config
@@ -92,7 +90,9 @@ def build_live_risk_engine_config(
     )
 
 
-def build_live_node_config(*, trader_id: str | None = None) -> TradingNodeConfig:
+def build_live_node_config(
+    *, trader_id: str | None = None, use_mark_prices: bool = False
+) -> TradingNodeConfig:
     """Build the live ``TradingNodeConfig`` (broker-neutral).
 
     Runs under ``Environment.LIVE`` with reconciliation, the live RiskEngine, a
@@ -122,6 +122,9 @@ def build_live_node_config(*, trader_id: str | None = None) -> TradingNodeConfig
         cache=CacheConfig(),
         logging=LoggingConfig(),
         catalogs=[DataCatalogConfig(path=str(catalog_root()))],
+        # Quote-marked legs are valued at the strategy-published quote mid
+        # (aegis-rd-tggo.3); bar-marked legs fall back to their bar close.
+        portfolio=PortfolioConfig(use_mark_prices=use_mark_prices),
     )
     if trader_id is None:
         return config
@@ -145,28 +148,40 @@ def build_live_node(
     is decided entirely by ``connection`` (its port).
     """
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    sleeves = load_book_sleeves(book, registry)
-    instrument_ids = union_native_instrument_ids(sleeves)
+    assembled_book = assemble_book(book, registry)
 
-    node = TradingNode(config=build_live_node_config(trader_id=connection.trader_id))
-    attach_live_clients(node, connection, instrument_ids)
+    # The bundle-recorded markings are the live marking truth (aegis-rd-tggo.3):
+    # built once here, they decide both the strategy's subscriptions and whether
+    # the Portfolio values quote-marked legs at the published mid.
+    marking_resolver = recorded_marking_resolver(assembled_book)
+    node = TradingNode(
+        config=build_live_node_config(
+            trader_id=connection.trader_id,
+            use_mark_prices=bool(marking_resolver.quote_marked_ids),
+        )
+    )
+    attach_live_clients(node, connection, assembled_book.loadable_instrument_ids)
     node.build()
-    node.trader.add_strategy(build_live_strategy(book, sleeves))
+    node.trader.add_strategy(build_live_strategy(assembled_book))
     return node
 
 
-def build_live_strategy(book: BookConfig, sleeves: SleeveBundles) -> RebalanceStrategy:
+def build_live_strategy(book: AssembledBook) -> RebalanceStrategy:
     """The live ``RebalanceStrategy`` for *book*: next-close ``AT_THE_CLOSE`` and
-    cache warmup on start, with each sleeve's bundle registered."""
+    cache warmup on start, with the assembled book registered.
+
+    The bar-type resolver is the bundle-recorded marking view — live subscribes
+    exactly the mark research validated and fails closed on an unrecorded leg.
+    """
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
-            book=book,
+            book=book.config,
             fill_time_in_force=LIVE_FILL_TIME_IN_FORCE,
             warmup_cache_on_start=True,
-        )
+        ),
+        bar_type_resolver=recorded_marking_resolver(book),
     )
-    for name, bundle in sleeves:
-        strategy.register_sleeve(name, bundle)
+    strategy.register_book(book)
     return strategy
 
 

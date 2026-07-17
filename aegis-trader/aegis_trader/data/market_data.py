@@ -16,13 +16,14 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 import pandas as pd
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
+from aegis_data.instrument import native_size_increment
+from aegis_trader.domain.sizing import InstrumentSizing
 from nautilus_trader.cache.base import CacheFacade
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.instruments import CurrencyPair
 from nautilus_trader.model.objects import Currency, Quantity
-from aegis_data.bar_type import raw_bar_type
-from aegis_trader.domain.sizing import InstrumentSizing
-
 
 @dataclass(frozen=True)
 class MarketBar:
@@ -46,8 +47,8 @@ class MarketDataPort(Protocol):
         ...
 
     def make_quantity(self, instrument_id: InstrumentId, raw_shares: float) -> Quantity | None:
-        """A venue-valid order quantity from a raw share count, or ``None`` when
-        the instrument is not in the reconciled cache."""
+        """Materialize an already-sized share count as a venue quantity, or
+        ``None`` when the instrument is not in the reconciled cache."""
         ...
 
     def execution_instrument_id(self, instrument_id: InstrumentId) -> InstrumentId:
@@ -59,6 +60,12 @@ class MarketDataPort(Protocol):
         """FX rate as quote units per 1 base (base→quote, e.g. EUR→GBP = 0.85),
         or ``None`` when no rate is available — the overlay fails closed rather
         than fabricating a rate."""
+        ...
+
+    def currency_pair(self, instrument_id: InstrumentId) -> tuple[str, str] | None:
+        """``(base, quote)`` currency codes when the id resolves to a cash FX
+        pair in the cache, or ``None`` for anything else — the panel conversion
+        derives each ``exchange:`` leg's rate orientation from this."""
         ...
 
     def lookback_window(
@@ -112,10 +119,15 @@ class NautilusMarketData:
     """
 
     def __init__(
-        self, *, cache: CacheFacade, continuous: ContinuousReadPort | None = None
+        self,
+        *,
+        cache: CacheFacade,
+        continuous: ContinuousReadPort | None = None,
+        resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
     ) -> None:
         self._cache = cache
         self._continuous = continuous
+        self._resolver = resolver
 
     def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing | None:
         instrument = self._cache.instrument(self.execution_instrument_id(instrument_id))
@@ -123,7 +135,7 @@ class NautilusMarketData:
             return None
         return InstrumentSizing(
             currency=instrument.quote_currency.code,
-            size_increment=float(instrument.size_increment),
+            size_increment=native_size_increment(instrument),
             multiplier=float(instrument.multiplier),
         )
 
@@ -149,6 +161,12 @@ class NautilusMarketData:
         if rate is None or rate <= 0.0:
             return None
         return float(rate)
+
+    def currency_pair(self, instrument_id: InstrumentId) -> tuple[str, str] | None:
+        instrument = self._cache.instrument(instrument_id)
+        if not isinstance(instrument, CurrencyPair):
+            return None
+        return (instrument.base_currency.code, instrument.quote_currency.code)
 
     def lookback_window(
         self,
@@ -186,9 +204,16 @@ class NautilusMarketData:
         series = self._continuous_series(instrument_id)
         if series is not None:
             return _frame_to_market_bars(series)
-        # Cache.bars returns newest-first; bundles need chronological arrays.
-        cache_bars = self._cache.bars(raw_bar_type(instrument_id, timeframe))
-        return [_to_market_bar(bar) for bar in reversed(cache_bars)]
+        # The marking owns the projection: a bar-marked instrument's own bars, a
+        # quote-marked instrument's derived bid/ask mid — the same series
+        # research signals on.  Cache.bars returns newest-first; the projection
+        # needs chronological arrays.
+        marking = self._resolver.resolve(instrument_id, timeframe)
+        bars_by_type = {
+            bar_type: list(reversed(self._cache.bars(bar_type)))
+            for bar_type in marking.mark_bars
+        }
+        return _frame_to_market_bars(marking.ohlcv_frame(bars_by_type))
 
     def _continuous_series(self, instrument_id: InstrumentId) -> pd.DataFrame | None:
         if self._continuous is None:

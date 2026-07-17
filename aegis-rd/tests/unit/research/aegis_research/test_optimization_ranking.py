@@ -43,18 +43,104 @@ def _all_valid_verdict(
 # ---------------------------------------------------------------------------
 
 
-def test_worked_example_min_aware_penalty_ranks_steady_candidate_first() -> None:
-    # Equal means (0.6) but A has a catastrophic split. Min-aware MUST rank B above A.
-    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}}
+def test_blocked_ranking_prefers_steady_over_equal_mean_volatile() -> None:
+    # A and B share the same raw mean (0.6) but A swings wildly across splits while
+    # B is steady; C anchors low. Blocking ranks WITHIN each split, so B's per-split
+    # ranks (2,1) beat A's (1,3): the volatile A drops below the field in its bad
+    # split and the steady B wins on mean rank despite the equal raw mean.
+    candidates = {
+        "A": {"s0": 1.6, "s1": -0.4},  # raw 0.6, volatile -> split ranks 1, 3
+        "B": {"s0": 0.7, "s1": 0.5},   # raw 0.6, steady   -> split ranks 2, 1
+        "C": {"s0": 0.0, "s1": 0.0},   # raw 0.0, anchor   -> split ranks 3, 2
+    }
     grid = _grid(candidates)
     verdict = _all_valid_verdict(candidates)
 
-    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=0.3)
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
 
     assert result.best.params == {"param": "B"}
-    assert result.worst.params == {"param": "A"}
-    assert result.best.score == pytest.approx(0.57)
-    assert result.worst.score == pytest.approx(0.30)
+    assert result.median.params == {"param": "A"}
+    assert result.worst.params == {"param": "C"}
+    # Mean ranks (lower is better): B=1.5 < A=2.0 < C=2.5.
+    assert result.best.score == pytest.approx(1.5)
+    assert result.median.score == pytest.approx(2.0)
+    assert result.worst.score == pytest.approx(2.5)
+    assert result.best.score < result.median.score < result.worst.score
+
+
+def test_blocked_ranking_selects_the_plateau_not_the_lexicographic_corner() -> None:
+    # Regression for aegis-rd-2xl4: the atalanta lookback x vol_window grid on held-out
+    # trend_convexity_payoff per fold. The empirical-Bayes scorer collapsed all 12 to an
+    # identical score (tau2=0) and the blind parameter-order tie-break crowned the
+    # lexicographic corner (126, 21) - the WORST region. Blocked ranking must instead
+    # select a lookback in {189, 252} plateau and sink the lookback=126 row to worst.
+    folds = {
+        (126, 21): [0.515, -0.298, 0.283, 0.743, -0.035, 0.145],
+        (126, 63): [0.493, -0.345, 0.355, 0.630, -0.064, 0.143],
+        (126, 126): [0.493, -0.357, 0.340, 0.610, -0.091, 0.164],
+        (126, 252): [0.521, -0.359, 0.410, 0.691, -0.084, 0.155],
+        (189, 21): [0.533, 0.243, 0.487, 0.510, 0.024, 0.564],
+        (189, 63): [0.536, 0.300, 0.541, 0.545, 0.025, 0.607],
+        (189, 126): [0.525, 0.358, 0.600, 0.550, 0.024, 0.613],
+        (189, 252): [0.575, 0.329, 0.548, 0.583, 0.029, 0.619],
+        (252, 21): [0.507, 0.420, 0.256, 0.486, -0.016, 0.522],
+        (252, 63): [0.545, 0.400, 0.245, 0.461, 0.051, 0.526],
+        (252, 126): [0.565, 0.399, 0.248, 0.461, 0.055, 0.497],
+        (252, 252): [0.550, 0.424, 0.313, 0.467, 0.070, 0.523],
+    }
+    spec = {k: {f"s{i}": {"tcp": v} for i, v in enumerate(vals)} for k, vals in folds.items()}
+    grid = make_candidate_grid(spec, param_names=["lookback", "vol_window"])
+    verdict = classify_candidates(grid, invalid_keys=set(), min_trades=0, metric="tcp")
+
+    result = select_representative_candidates(grid, verdict, metric="tcp")
+
+    assert result.best.params["lookback"] in (189, 252)
+    assert result.best.params != {"lookback": 126, "vol_window": 21}
+    assert result.worst.params["lookback"] == 126
+
+
+def test_blocked_ranking_blocks_a_single_lucky_split() -> None:
+    # 'spike' has the highest raw mean but earns it from ONE lucky split; 'steady' wins
+    # five of six. Blocking makes the lucky split just one rank-1, so steady is selected
+    # and the high-raw-mean spike is demoted - the winner's-curse guard, via ranks.
+    candidates = {
+        "spike": {"s0": 5.0, "s1": 0.10, "s2": 0.05, "s3": 0.08, "s4": 0.02, "s5": 0.11},
+        "steady": {"s0": 0.60, "s1": 0.55, "s2": 0.62, "s3": 0.58, "s4": 0.61, "s5": 0.59},
+        "anchor": {"s0": 0.05, "s1": 0.04, "s2": 0.06, "s3": 0.03, "s4": 0.05, "s5": 0.04},
+    }
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+
+    assert result.best.params == {"param": "steady"}
+    assert result.median.params == {"param": "spike"}
+    assert result.worst.params == {"param": "anchor"}
+
+
+def test_omnibus_summarizes_the_whole_field() -> None:
+    # A clearly separated field: mean ranks 1/2/3 over 2 splits -> chi2 = 4.0.
+    candidates = {"hi": {"s0": 1.0, "s1": 1.0}, "mid": {"s0": 0.5, "s1": 0.5}, "lo": {"s0": 0.1, "s1": 0.1}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+
+    assert result.omnibus is not None
+    assert result.omnibus.n_candidates == 3
+    assert result.omnibus.n_splits == 2
+    assert result.omnibus.chi_square == pytest.approx(4.0)
+
+
+def test_omnibus_is_none_without_a_test() -> None:
+    # A single candidate (or a single split) admits no Friedman omnibus.
+    candidates = {"only": {"s0": 0.3, "s1": 0.9}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+
+    assert result.omnibus is None
 
 
 def test_three_candidates_pick_best_median_worst_by_rank() -> None:
@@ -93,34 +179,10 @@ def test_two_candidates_median_is_one_of_them() -> None:
     assert result.median.params in ({"param": "x"}, {"param": "y"})
 
 
-def test_min_weight_zero_is_pure_mean_ranking() -> None:
-    # A has the higher mean but a catastrophic split; B is steadier.
-    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.5, "s1": 0.5}}
-    grid = _grid(candidates)
-    verdict = _all_valid_verdict(candidates)
-
-    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=0.0)
-
-    # Pure mean: A (0.6) beats B (0.5), reversing the min-aware order.
-    assert result.best.params == {"param": "A"}
-    assert result.best.score == pytest.approx(0.6)
-
-
-def test_min_weight_one_is_pure_min_ranking() -> None:
-    candidates = {"A": {"s0": 1.6, "s1": -0.4}, "B": {"s0": 0.7, "s1": 0.5}}
-    grid = _grid(candidates)
-    verdict = _all_valid_verdict(candidates)
-
-    result = select_representative_candidates(grid, verdict, metric="sharpe", min_weight=1.0)
-
-    # Pure min: B (0.5) beats A (-0.4).
-    assert result.best.params == {"param": "B"}
-    assert result.best.score == pytest.approx(0.5)
-    assert result.worst.score == pytest.approx(-0.4)
-
-
-def test_nan_split_is_skipped_in_score_and_aggregate() -> None:
-    candidates = {"A": {"s0": 1.0, "s1": float("nan")}, "B": {"s0": 0.4, "s1": 0.4}}
+def test_two_steady_candidates_rank_by_value() -> None:
+    # A dominates B in every split, so A takes rank 1 in each (mean rank 1.0) and B
+    # takes rank 2 (mean rank 2.0). Score is the mean rank, not the metric mean.
+    candidates = {"A": {"s0": 0.6, "s1": 0.6}, "B": {"s0": 0.5, "s1": 0.5}}
     grid = _grid(candidates)
     verdict = _all_valid_verdict(candidates)
 
@@ -128,6 +190,22 @@ def test_nan_split_is_skipped_in_score_and_aggregate() -> None:
 
     assert result.best.params == {"param": "A"}
     assert result.best.score == pytest.approx(1.0)
+    assert result.worst.score == pytest.approx(2.0)
+
+
+def test_nan_split_ranks_worst_but_is_skipped_in_the_metric_aggregate() -> None:
+    # A leads split s0 but has no finite metric on s1 (None); B is present on both.
+    # For RANKING, A's missing split is ranked worst there (ranks 1 then 2), so A and B
+    # tie on mean rank 1.5 and the metric-mean tie-break (A 1.0 > B 0.4) makes A best.
+    # For the metric AGGREGATE, the None split is skipped (A.metrics == 1.0).
+    candidates = {"A": {"s0": 1.0, "s1": float("nan")}, "B": {"s0": 0.4, "s1": 0.4}}
+    grid = _grid(candidates)
+    verdict = _all_valid_verdict(candidates)
+
+    result = select_representative_candidates(grid, verdict, metric="sharpe")
+
+    assert result.best.params == {"param": "A"}
+    assert result.best.score == pytest.approx(1.5)
     assert result.best.metrics["sharpe"] == pytest.approx(1.0)
     assert result.best.selection_metrics["s1"]["sharpe"] is None
 
@@ -139,7 +217,8 @@ def test_tied_scores_keep_parameter_sorted_order() -> None:
 
     result = select_representative_candidates(grid, verdict, metric="sharpe")
 
-    # Equal scores: stable order follows parameter-sorted grouping ("a" before "b").
+    # Identical candidates tie on mean rank (1.5) and on metric mean (0.5); the final
+    # parameter-sorted tie-break settles it deterministically ("a" before "b").
     assert result.best.params == {"param": "a"}
     assert result.worst.params == {"param": "b"}
 
@@ -326,14 +405,17 @@ def test_optimization_result_has_best_median_worst_and_excluded_count() -> None:
         "excluded_invalid",
         "total_candidates",
         "non_executable_rows",
+        "omnibus",
     ]
 
 
-def test_signature_has_no_direction_parameter() -> None:
+def test_signature_exposes_only_grid_verdicts_metric() -> None:
     params = inspect.signature(select_representative_candidates).parameters
 
-    assert list(params) == ["grid", "verdicts", "metric", "min_weight"]
-    assert params["min_weight"].default == 0.3
+    assert list(params) == ["grid", "verdicts", "metric"]
+    # No scoring knobs: blocked mean rank is parameter-free.
+    assert "shrink_target" not in params
+    assert "min_weight" not in params
     assert "min_trades" not in params
     assert "trades_metric" not in params
     assert "direction" not in params

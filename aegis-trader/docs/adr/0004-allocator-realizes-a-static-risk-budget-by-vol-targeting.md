@@ -9,16 +9,17 @@ and the live net-convex skew solve is removed; see the amendments below**)
 
 The original decision below framed vol-targeting as a two-sided peg — scale the book up *or*
 down to hold a constant volatility. The `aegis-rd-bu4.7` re-validation on real data showed
-this is incoherent for the **unlevered** book: the Execution Bundles provenance-cap gross at
-1.0 and the operator runs under that cap, while the Floor sleeves are low-vol, so pegging a
-~9% book volatility demands ~1.1–1.8× leverage the cap forbids — and the rebalancer's cap gate
-correctly fails closed, halting the book.
+this is incoherent for the **unlevered** book: the operator runs the Commingled Book under a
+finite gross cap, while the Floor sleeves are low-vol, so pegging a
+~9% book volatility demands ~1.1–1.8× leverage the cap forbids — and the then-current
+rebalancer gross gate failed closed, halting the book.
 
 **Amendment:** vol-targeting is **one-sided (down-only)**. The Allocator's solve may scale the
 netted book *down* (to shed risk when realized volatility / correlations rise) but the
-rebalancer **clamps any up-scale to `max_book_gross`** — a uniform, shape-preserving,
-post-netting de-lever applied immediately before the (unchanged, still authoritative) gross /
-net cap gate. The **book volatility target is therefore a ceiling / de-lever set-point, not a
+rebalancer **clamps any up-scale to `gross_cap`** — a uniform, shape-preserving,
+post-netting de-lever that is reapplied to the post-band projection and is authoritative for
+gross exposure. An explicit net cap remains a separate fail-closed gate. The **book
+volatility target is therefore a ceiling / de-lever set-point, not a
 peg**: in calm regimes realized volatility sits *below* target because the book is not levered
 to chase it (this is by design, not a miss); the target binds only when the unconstrained solve
 would otherwise exceed it. The target should be set to the book's achievable unlevered level.
@@ -120,7 +121,8 @@ Decision points:
 - **Within a multi-name sleeve**, weights default to **Equal Risk Contribution**.
 - **The book de-levers on realized drawdown / vol.** As realized volatilities rise or a
   drawdown deepens, capital weights fall to hold the vol target — a natural de-lever, not a
-  return call. The gross/net caps (ADR-0002) remain the authoritative ceiling.
+  return call. The planned-book gross clamp and explicit net/per-name constraints
+  (ADR-0002) remain authoritative.
 - **Rebalance on sleeve-weight bands with partial reversion.** The Allocator re-scales a
   sleeve only when its weight drifts past a band, and then **partially** (toward, not all the
   way to, target) — damping vol-target churn while letting winners run. The per-instrument

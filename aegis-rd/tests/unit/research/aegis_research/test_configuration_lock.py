@@ -79,7 +79,7 @@ def _raw_config(**overrides: Any) -> dict[str, Any]:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "locked_run",
         "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},

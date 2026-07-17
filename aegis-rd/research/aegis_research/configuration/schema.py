@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
-from aegis_runtime import DriftBand, ExposureLimits
+from aegis_data.marking import split_mark_token
+from aegis_runtime import DriftBand
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -23,7 +24,9 @@ from research.aegis_research.configuration.field_types import (
     UnitInterval,
 )
 
-CONFIG_SCHEMA_VERSION = 10
+# v11 (aegis-rd-ui1m): portfolio.gross_cap / portfolio.net_cap removed — the
+# exposure envelope is the fixed unit-gross sleeve contract, not config.
+CONFIG_SCHEMA_VERSION = 11
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
@@ -39,6 +42,11 @@ SIGNAL_EXECUTION_TIMINGS = set(get_args(SignalExecutionTiming))
 # VBT's Data.align_index / align_columns contract.
 MissingPolicy = Literal["nan", "drop", "raise"]
 MISSING_POLICIES = set(get_args(MissingPolicy))
+# Declared mark modes (aegis-rd-tggo.2): the closed LAST/MID/QUOTE set, spelled
+# as a token on the tradeable id (``UEQC.IBIS:QUOTE``) and parsed once at
+# config load. aegis-data's marking seam owns the grammar and the resolution.
+MarkModeName = Literal["LAST", "MID", "QUOTE"]
+MARK_MODES = set(get_args(MarkModeName))
 Degradation = Literal[
     "duplicate_index",
     "missing_rows",
@@ -111,6 +119,11 @@ class DataConfig:
     arrays: Annotated[list[ArrayToken], Field(min_length=1)] = field(kw_only=True)
     base_currency: str = "EUR"
     instruments: list[str] = field(default_factory=list)
+    # Parsed mark-mode declarations (aegis-rd-tggo.2): filled from the optional
+    # ``:MODE`` token on ``instruments`` entries (``UEQC.IBIS:QUOTE``), keyed by
+    # the bare id. The token IS the authoring surface — this field is its parsed
+    # form (present so a config lock round-trips), not a second place to declare.
+    mark_modes: dict[str, MarkModeName] = field(default_factory=dict)
     exchange: list[str] = field(default_factory=list)
     # Bare continuous-future root symbols (e.g. ``["ES", "KC"]``), not native ids: each
     # is materialised on demand as an adjusted continuous series (Path A), venue and
@@ -122,11 +135,6 @@ class DataConfig:
     timeframe: str = "1D"
     path: str | None = None
     missing_index: MissingPolicy = "raise"
-    missing_columns: MissingPolicy = "raise"
-    tz_localize: str | bool | None = None
-    tz_convert: str | bool | None = None
-    skip_on_error: bool = False
-    silence_warnings: bool = False
     quality: DataQualityConfig = field(default_factory=DataQualityConfig)
 
     @property
@@ -141,13 +149,43 @@ class DataConfig:
     @model_validator(mode="after")
     def _validate_conditional_requireds(self) -> DataConfig:
         """Cross-field requiredness for the native Nautilus catalog contract."""
+        _parse_mark_declarations(self)
         _require_catalog_ids(self)
-        if self.skip_on_error and "skipped_instrument_ids" not in self.quality.allowed_degradations:
-            raise ValueError(
-                "skip_on_error requires data.quality.allowed_degradations "
-                "to include 'skipped_instrument_ids'"
-            )
         return self
+
+
+def _parse_mark_declarations(config: DataConfig) -> None:
+    """Split the optional ``:MODE`` token off each tradeable id (aegis-rd-tggo.2).
+
+    The mark mode is declared at the single point the instrument is named;
+    parsed once here into ``mark_modes`` so every downstream consumer keeps
+    seeing bare native ids.  A token that contradicts an already-recorded mode
+    fails closed; ``exchange`` legs are conversion-only and take no token.
+    """
+    declared: dict[str, str] = dict(config.mark_modes)
+    bare_ids: list[str] = []
+    for value in config.instruments:
+        spelled, mode = split_mark_token(value)
+        bare_ids.append(spelled)
+        if mode is None:
+            continue
+        recorded = declared.get(spelled)
+        if recorded is not None and recorded != mode.value:
+            raise ValueError(
+                f"conflicting mark modes for {spelled!r}: token declares "
+                f"{mode.value}, mark_modes records {recorded}"
+            )
+        declared[spelled] = mode.value
+    for value in config.exchange:
+        _, mode = split_mark_token(value)
+        if mode is not None:
+            raise ValueError(
+                f"exchange legs are conversion-only and take no mark-mode token: {value!r}"
+            )
+    # Frozen pydantic dataclass: the one sanctioned rewrite point, inside its
+    # own validator, before the config is seen anywhere else.
+    object.__setattr__(config, "instruments", bare_ids)
+    object.__setattr__(config, "mark_modes", declared)
 
 
 def _require_catalog_ids(config: DataConfig) -> None:
@@ -262,7 +300,6 @@ class PortfolioConfig:
     # (the EUR->ccy buy and the ccy->EUR sell). Default 0 = off, so a single-currency
     # book is unaffected.
     fx_conversion_cost: NonNegativeRate = 0.0
-    net_cap: NonNegativeRate = 1.0
     # Per-name no-trade band as a fraction of NAV (live-research parity). A
     # position is left to drift and is rebalanced to target only once its weight
     # crosses the directional width: ``band_up`` gates trims and ``band_down``
@@ -290,9 +327,16 @@ class PortfolioConfig:
     # is ON by default; a long-only book has no short legs and is unaffected.
     short_borrow_rate: NonNegativeRate = 0.005
     short_rebate_rate: NonNegativeRate = 0.0
-    # No schema default — required. Keyword-only so a required field can sit among
-    # defaulted ones — every construction site splats **raw anyway.
-    gross_cap: PositiveCash = field(kw_only=True)
+    # Margin interest: flat annual debit rate charged on negative group cash.
+    # Positive cash earns nothing, and explicit 0.0 is the sanctioned mechanics-test
+    # opt-out. Default is the pinned IBKR-IE EUR FIRST-TIER debit rate (BM + 1.5%,
+    # re-pinned 2026-07-06): the live account is ~5k EUR, so every debit sits below
+    # the 90k tier break. Keep in sync with aegis-trader/book.toml
+    # [costs.margin_interest] - same pin, two homes.
+    margin_interest_rate: NonNegativeRate = 0.0367
+    # The exposure envelope is NOT configurable: sleeve weights are unit-gross by
+    # contract (aegis_runtime.bundle.SLEEVE_GROSS_LIMIT; aegis-rd-ui1m) — the book
+    # allocator is the only leverager. Only direction is declared per run.
     # Required (validation rejects a config missing it); no silent long-only default.
     direction: Literal["longonly", "shortonly", "both"] = field(kw_only=True)
 
@@ -322,11 +366,6 @@ class PortfolioConfig:
                 else override.destination_fraction
             ),
         )
-
-    @property
-    def exposure_limits(self) -> ExposureLimits:
-        """This Run's validated Exposure Limits, built from the gross/net/direction triple."""
-        return ExposureLimits(self.gross_cap, self.net_cap, self.direction)
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -368,7 +407,6 @@ class RunIndicatorSourceConfig:
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class RankingConfig:
     metric: str
-    min_weight: UnitInterval = 0.3
     min_trades: NonNegativeInt = 0
 
 

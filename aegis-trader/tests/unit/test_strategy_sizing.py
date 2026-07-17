@@ -14,14 +14,24 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_trader.data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.sizing import InstrumentSizing
+from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.trader.pipeline import CompletedRebalancePeriod, RebalancePipeline
+from aegis_trader.trader.pipeline import (
+    CompletedRebalancePeriod,
+    DueSleeve,
+    RebalancePipeline,
+    RebalanceRequest,
+)
+from tests.support.factories import assemble_test_book
 
 _INSTRUMENT_ID = InstrumentId.from_str("GBUS.XLON")
 
 
 class _MarketData:
+    def currency_pair(self, _instrument_id: InstrumentId) -> None:
+        return None
+
     def instrument_sizing(self, instrument_id: InstrumentId) -> InstrumentSizing | None:
         assert instrument_id == _INSTRUMENT_ID
         return InstrumentSizing(currency="GBp", size_increment=1.0)
@@ -111,8 +121,6 @@ class _PenceBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -133,14 +141,24 @@ def test_pipeline_collects_sizing_params_by_native_instrument_id() -> None:
     pipeline = RebalancePipeline(
         book_state=_BookState(),
         market_data=_MarketData(),
-        book=book,
-        sleeve_to_bundle={book.sleeves[0].name: bundle},
-        ledger=SleeveLedger(),
+        book=assemble_test_book(book, {"uk.whl": bundle}),
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
     )
 
-    instrument_metas, fx_rates, prices = pipeline._collect_sizing_params(
-        CompletedRebalancePeriod(period=1, period_ns=86_400_000_000_000)
+    pipeline.rebalance(
+        RebalanceRequest(
+            due=(
+                DueSleeve(
+                    sleeve=SleeveName("uk"),
+                    period=CompletedRebalancePeriod(
+                        period=1, period_ns=86_400_000_000_000
+                    ),
+                ),
+            ),
+            timestamp_ns=86_400_000_000_000,
+        )
     )
+    instrument_metas, fx_rates, prices = pipeline._collect_sizing_params()
 
     assert instrument_metas == {
         _INSTRUMENT_ID: InstrumentSizing(currency="GBp", size_increment=1.0)

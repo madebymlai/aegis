@@ -20,3 +20,30 @@ def test_data_config_exposes_instrument_ids_without_legacy_aliases() -> None:
 def test_legacy_symbols_field_is_rejected() -> None:
     with pytest.raises(ValidationError):
         make_data_config(symbols=[{"ticker": "SYN", "ccy": "EUR"}])
+
+
+def test_declared_marking_resolver_marks_exchange_legs_mid_by_section_membership() -> None:
+    """No FX heuristic (aegis-rd-t2kc): the ``exchange:`` section IS the MID
+    declaration; a tradeable resolves LAST unless its token declares otherwise."""
+    from aegis_data.marking import MarkMode
+    from nautilus_trader.model.identifiers import InstrumentId
+
+    from research.aegis_research.market_data.identity import declared_marking_resolver
+    from tests.support.research.aegis_research.factories import make_data_config
+
+    config = make_data_config(
+        instruments=["UEQC.XETR:QUOTE", "VUSA.XLON"],
+        exchange=["EUR/USD.IDEALPRO"],
+    )
+
+    resolver = declared_marking_resolver(config)
+
+    assert resolver.resolve(
+        InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D"
+    ).mode is MarkMode.MID
+    assert resolver.resolve(
+        InstrumentId.from_str("UEQC.XETR"), "1D"
+    ).mode is MarkMode.QUOTE
+    assert resolver.resolve(
+        InstrumentId.from_str("VUSA.XLON"), "1D"
+    ).mode is MarkMode.LAST

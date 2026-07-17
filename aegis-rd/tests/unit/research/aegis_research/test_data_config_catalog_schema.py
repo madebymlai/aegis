@@ -32,7 +32,21 @@ def test_data_config_accepts_native_instrument_id_shape() -> None:
     )
 
 
-@pytest.mark.parametrize("field_name", ["source", "symbols", "provider"])
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "source",
+        "symbols",
+        "provider",
+        # The VBT-loader-era knobs retired with the market_data.v4 reshape: a
+        # config still setting one fails loudly, naming the offending field.
+        "missing_columns",
+        "tz_localize",
+        "tz_convert",
+        "skip_on_error",
+        "silence_warnings",
+    ],
+)
 def test_data_config_rejects_removed_legacy_fields(field_name: str) -> None:
     raw = {
         "arrays": ["Close"],
@@ -144,6 +158,90 @@ def test_data_config_rejects_venue_qualified_futures_root() -> None:
                 "arrays": ["Close"],
                 "base_currency": "USD",
                 "futures": ["ES.XCME"],
+                "start": "2024-01-01",
+                "end": "2024-01-03",
+            }
+        )
+
+
+def test_data_config_parses_a_declared_mark_mode_token_off_the_instrument() -> None:
+    config = _DATA_ADAPTER.validate_python(
+        {
+            "arrays": ["Close"],
+            "base_currency": "USD",
+            "instruments": ["UEQC.IBIS:QUOTE", "AAPL.NASDAQ"],
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+        }
+    )
+
+    assert config.instruments == ["UEQC.IBIS", "AAPL.NASDAQ"]
+    assert config.mark_modes == {"UEQC.IBIS": "QUOTE"}
+
+
+def test_data_config_round_trips_parsed_mark_modes() -> None:
+    # A config lock serializes the parsed form (bare ids + mark_modes); loading
+    # it back yields the same declarations without a token.
+    parsed = _DATA_ADAPTER.validate_python(
+        {
+            "arrays": ["Close"],
+            "base_currency": "USD",
+            "instruments": ["UEQC.IBIS:QUOTE"],
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+        }
+    )
+
+    reloaded = _DATA_ADAPTER.validate_python(
+        {
+            "arrays": ["Close"],
+            "base_currency": "USD",
+            "instruments": list(parsed.instruments),
+            "mark_modes": dict(parsed.mark_modes),
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+        }
+    )
+
+    assert reloaded.instruments == ["UEQC.IBIS"]
+    assert reloaded.mark_modes == {"UEQC.IBIS": "QUOTE"}
+
+
+def test_data_config_rejects_an_unknown_mark_mode_token() -> None:
+    with pytest.raises(ValidationError, match="unknown mark-mode token"):
+        _DATA_ADAPTER.validate_python(
+            {
+                "arrays": ["Close"],
+                "base_currency": "USD",
+                "instruments": ["UEQC.IBIS:FOO"],
+                "start": "2024-01-01",
+                "end": "2024-01-03",
+            }
+        )
+
+
+def test_data_config_rejects_conflicting_mark_mode_declarations() -> None:
+    with pytest.raises(ValidationError, match="conflicting mark modes"):
+        _DATA_ADAPTER.validate_python(
+            {
+                "arrays": ["Close"],
+                "base_currency": "USD",
+                "instruments": ["UEQC.IBIS:QUOTE"],
+                "mark_modes": {"UEQC.IBIS": "MID"},
+                "start": "2024-01-01",
+                "end": "2024-01-03",
+            }
+        )
+
+
+def test_data_config_rejects_a_mark_mode_token_on_an_exchange_leg() -> None:
+    with pytest.raises(ValidationError, match="conversion-only"):
+        _DATA_ADAPTER.validate_python(
+            {
+                "arrays": ["Close"],
+                "base_currency": "USD",
+                "instruments": ["AAPL.NASDAQ"],
+                "exchange": ["EUR/USD.IDEALPRO:QUOTE"],
                 "start": "2024-01-01",
                 "end": "2024-01-03",
             }

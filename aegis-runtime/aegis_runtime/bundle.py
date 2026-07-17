@@ -8,14 +8,37 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime.additive_invariance import assert_additive_invariance
+from aegis_runtime.currency import CurrencyConversion
 from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.roll_sensitivity import compute_roll_checked_weights
 from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
 from aegis_runtime.futures_roots import validate_bare_root
 
 INSTRUMENT_ID_LEVEL = "instrument_id"
+
+# The sleeve weight contract: emitted weights are fractions of sleeve NAV, so a
+# bundle's gross exposure (Σ|wᵢ|) never exceeds 1.0 — scale is not the sleeve's
+# decision. The book allocator is the only leverager; the book's own ceiling
+# lives in aegis-trader book.toml and flows through its own ExposureLimits.
+# Sleeve enforcement sites pass this explicitly; it must never become a default
+# parameter of ExposureLimits (a default would leak sleeve policy into the book
+# path). (aegis-rd-ui1m)
+SLEEVE_GROSS_LIMIT = 1.0
+
+# The only continuous-futures re-basing algebras Aegis supports. Forward modes are
+# rejected everywhere (research never materialises them), so a bundle can only
+# declare what a locked Run can actually have used.
+SUPPORTED_ADJUSTMENT_MODES = (
+    ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+    ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+)
+
+# The closed mark-mode wire vocabulary (aegis-rd-tggo.3). The runtime owns only
+# the serialization slot; resolution semantics live in aegis-data's marking seam.
+RECORDED_MARK_MODES = ("LAST", "MID", "QUOTE")
 
 
 class MissingIndexPolicy(str, Enum):
@@ -65,6 +88,24 @@ class DataContract:
     # continuous id in ``instrument_ids`` (e.g. ``ES.XCME``); dated legs still load
     # dynamically via the chain, not as static contract columns.
     futures: tuple[str, ...] = ()
+    # Data-only FX conversion legs (e.g. ``EUR/USD.IDEALPRO``), declared identically to
+    # research's ``DataConfig.exchange``. They load like any native bar stream but are
+    # never compute columns or rebalance targets — their bars convert non-base-quoted
+    # tradeables to the book's base currency (research parity) and mark the FX rate
+    # sizing reads.
+    exchange: tuple[InstrumentId, ...] = ()
+    # The continuous-futures re-basing algebra the locked Run's frames were actually
+    # materialised under — a recorded historical fact, never a current code default.
+    # Present iff ``futures`` declares roots. Independent of ``exchange``: both
+    # backward modes are valid with or without FX conversion legs.
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None
+    # Recorded mark modes (aegis-rd-tggo.3): how each leg's mark was resolved in
+    # research (LAST / MID / QUOTE), pinned at export so live subscribes exactly
+    # the mark the run validated and never re-derives it. Keys are declared
+    # loadable ids; continuous roots and their dated legs are LAST by
+    # construction and are never recorded. Only the mark travels — the research
+    # fill/sim projection is never serialized.
+    mark_modes: Mapping[InstrumentId, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
@@ -75,6 +116,18 @@ class DataContract:
         )
         _validate_bare_roots(self.futures, "DataContract.futures")
         _continuous_instrument_ids(self.instrument_ids, self.futures)
+        _validate_adjustment_mode(self.adjustment_mode, self.futures)
+        _validate_instrument_ids(self.exchange, "DataContract.exchange")
+        overlap = sorted(
+            instrument_id.value
+            for instrument_id in set(self.exchange) & set(self.instrument_ids)
+        )
+        if overlap:
+            raise ValueError(
+                "DataContract.exchange legs must be data-only, not tradeable "
+                f"instrument_ids: {overlap}"
+            )
+        _validate_mark_modes(self.mark_modes, self.loadable_instrument_ids)
 
     @property
     def continuous_instrument_ids(self) -> tuple[InstrumentId, ...]:
@@ -96,6 +149,14 @@ class DataContract:
             for instrument_id in self.instrument_ids
             if instrument_id not in continuous
         )
+
+    @property
+    def loadable_instrument_ids(self) -> tuple[InstrumentId, ...]:
+        """Every id that loads as a static bar stream: the native tradeables plus
+        the data-only FX conversion legs. Callers that warm, subscribe, or union
+        what a backtest/live node must load take this; compute columns stay
+        ``instrument_ids``."""
+        return (*self.native_instrument_ids, *self.exchange)
 
 
 @dataclass(frozen=True)
@@ -125,8 +186,6 @@ class LockedExecutionPlan:
     strategy: ComponentSpec
     indicators: tuple[ComponentSpec, ...]
     instrument_bands: Mapping[InstrumentId, DriftBand]
-    gross_cap: float
-    net_cap: float | None
     direction: str
     _exposure_limits: ExposureLimits = field(init=False, repr=False, compare=False)
 
@@ -140,17 +199,19 @@ class LockedExecutionPlan:
                 raise ValueError(
                     "LockedExecutionPlan.instrument_bands values must be DriftBand values"
                 )
-        # An illegal caps triple fails here — at plan construction (bundle load) —
-        # not on the first weight computation.
+        # An illegal direction fails here — at plan construction (bundle load) —
+        # not on the first weight computation. Gross is the fixed sleeve contract,
+        # never a locked number.
         object.__setattr__(
             self,
             "_exposure_limits",
-            ExposureLimits(self.gross_cap, self.net_cap, self.direction),
+            ExposureLimits(SLEEVE_GROSS_LIMIT, None, self.direction),
         )
 
     @property
     def exposure_limits(self) -> ExposureLimits:
-        """This plan's validated Exposure Limits, built once from the locked triple."""
+        """This plan's Exposure Limits: the unit-gross sleeve contract plus the
+        locked direction."""
         return self._exposure_limits
 
 
@@ -177,18 +238,6 @@ class ExecutionBundle:
         self._plan = plan
 
     @property
-    def gross_cap(self) -> float:
-        """The locked plan's gross-exposure cap (max Σ|wᵢ|) — the
-        manifest-grounded source of what research validated for this bundle."""
-        return self._plan.gross_cap
-
-    @property
-    def net_cap(self) -> float | None:
-        """The locked plan's net-exposure cap (max |Σwᵢ|), or ``None`` when the
-        plan leaves net exposure bounded only by the gross cap."""
-        return self._plan.net_cap
-
-    @property
     def direction(self) -> str:
         """The locked plan's allowed exposure direction
         (``longonly`` / ``shortonly`` / ``both``)."""
@@ -201,30 +250,37 @@ class ExecutionBundle:
 
     def compute_weights(
         self,
-        prices: MarketDataBundle,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None,
     ) -> pd.DataFrame:
-        weights = self._decide_weights(prices)
-        # A continuous-future root is re-based at every roll; reject an allocation that
-        # reads its absolute price level (it would silently desync live-vs-research).
-        assert_additive_invariance(
-            weights=weights,
-            recompute=self._decide_weights,
-            window=prices,
-            continuous_ids=self._continuous_ids(),
-        )
-        return weights
+        """Decide weights from NATIVE price arrays.
 
-    def _continuous_ids(self) -> tuple[InstrumentId, ...]:
-        """The contract's instrument ids that materialise a declared continuous-future root —
-        the columns a roll re-bases.
-
-        Each bare root resolves to the *one* synthetic continuous id whose symbol matches it
-        (``ES`` → ``ES.XCME``). A root that matches more than one instrument id is ambiguous —
-        the contract cannot tell the continuous root from a same-symbol native (a stock ``ES``),
-        and re-basing the native's price column would corrupt the invariance check — so it is
-        rejected loudly rather than silently re-basing the wrong column.
+        The bundle owns the ordered transformation
+        ``native contracts -> continuous re-base -> FX conversion -> Components``:
+        callers hand over native arrays plus the resolved conversion (or an
+        explicit ``None`` for an all-base book) and never pre-convert. The
+        keyword is required so an already converted panel can never be silently
+        reinterpreted as native.
         """
-        return self.contract.continuous_instrument_ids
+
+        def decide(native: MarketDataBundle) -> pd.DataFrame:
+            component_input = (
+                native
+                if currency_conversion is None
+                else MarketDataBundle(currency_conversion.apply(native.arrays))
+            )
+            return self._decide_weights(component_input)
+
+        # A continuous-future root is re-based at every roll under the contract's
+        # declared mode; an allocation that moves under that re-base would silently
+        # desync live-vs-research. The check owns baseline + per-root native probes
+        # and recomputes each through this same composed conversion+decision path.
+        return compute_roll_checked_weights(
+            contract=self.contract,
+            native_window=native_prices,
+            decide=decide,
+        )
 
     def _decide_weights(
         self,
@@ -313,6 +369,62 @@ def _validate_instrument_band_contract(
         )
 
 
+def _validate_adjustment_mode(
+    mode: ContinuousFutureAdjustmentType | None,
+    futures: Sequence[str],
+) -> None:
+    if mode is None:
+        if futures:
+            raise DataContractError(
+                "DataContract.futures declares continuous roots "
+                f"{sorted(futures)} but no adjustment_mode; the mode the locked "
+                "Run materialised under is a required fact"
+            )
+        return
+    if not futures:
+        raise DataContractError(
+            "DataContract.adjustment_mode is set but futures declares no "
+            "continuous roots; a mode without futures is meaningless"
+        )
+    if not isinstance(mode, ContinuousFutureAdjustmentType):
+        raise DataContractError(
+            "DataContract.adjustment_mode must be a Nautilus "
+            f"ContinuousFutureAdjustmentType; got {mode!r}"
+        )
+    if mode not in SUPPORTED_ADJUSTMENT_MODES:
+        supported = sorted(member.value for member in SUPPORTED_ADJUSTMENT_MODES)
+        raise DataContractError(
+            f"DataContract.adjustment_mode {mode.value!r} is unsupported; "
+            f"only backward modes {supported} are materialisable"
+        )
+
+
+def _validate_mark_modes(
+    mark_modes: Mapping[InstrumentId, str],
+    loadable_instrument_ids: Sequence[InstrumentId],
+) -> None:
+    unknown_modes = sorted(
+        f"{instrument_id.value}={mode!r}"
+        for instrument_id, mode in mark_modes.items()
+        if mode not in RECORDED_MARK_MODES
+    )
+    if unknown_modes:
+        raise DataContractError(
+            "DataContract.mark_modes carries modes outside the closed set "
+            f"{RECORDED_MARK_MODES}: {unknown_modes}"
+        )
+    undeclared = sorted(
+        instrument_id.value
+        for instrument_id in mark_modes
+        if instrument_id not in set(loadable_instrument_ids)
+    )
+    if undeclared:
+        raise DataContractError(
+            "DataContract.mark_modes records marks for ids the contract does "
+            f"not load: {undeclared}"
+        )
+
+
 def _validate_bare_roots(roots: Sequence[str], label: str) -> None:
     seen: set[str] = set()
     duplicates: set[str] = set()
@@ -343,7 +455,7 @@ def _continuous_instrument_ids(
             raise ValueError(
                 f"continuous-future root {root!r} is ambiguous: it matches instrument ids "
                 f"{[match.value for match in matches]}; a continuous root must resolve to "
-                f"exactly one column so the additive-invariance re-base targets it alone"
+                f"exactly one column so the roll-sensitivity probe re-bases it alone"
             )
         continuous.append(matches[0])
     return tuple(continuous)

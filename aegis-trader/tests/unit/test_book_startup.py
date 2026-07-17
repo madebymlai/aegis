@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 import pandas as pd
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import (
@@ -17,10 +19,14 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
+from aegis_runtime.currency import CurrencyConversion
+
+from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import Halt, RequestBars, RollIntentBatch, SubscribeBars
 from aegis_trader.domain.sizing import InstrumentSizing
+from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import SleeveName
@@ -29,6 +35,7 @@ from aegis_trader.trader.book_startup import (
     SubscribeQuoteTicks,
     bootstrap,
 )
+from tests.support.factories import assemble_test_book
 
 _NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone.utc)
 _SLEEVE = SleeveName("trend")
@@ -47,7 +54,6 @@ class _FixedWeightBundle(ExecutionBundle):
         timeframe: str = "1D",
         lookback_bars: int = 20,
         band: DriftBand | None = None,
-        gross_cap: float = 1.0,
     ) -> None:
         self._instrument_id = instrument_id
         contract = DataContract(
@@ -76,14 +82,17 @@ class _FixedWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={instrument_id: band or DriftBand.symmetric(0.0)},
-            gross_cap=gross_cap,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
 
-    def compute_weights(self, prices: MarketDataBundle) -> pd.DataFrame:
-        close = prices.array("Close")
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
         target = pd.DataFrame({self._instrument_id: [0.5, 0.5]}, index=close.index)
         target.columns.name = "instrument_id"
         return target
@@ -115,6 +124,9 @@ class _BookState:
 
 
 class _MarketData:
+    def currency_pair(self, _instrument_id: InstrumentId) -> None:
+        return None
+
     def instrument_sizing(self, _instrument_id: InstrumentId) -> InstrumentSizing:
         return InstrumentSizing(currency="EUR", size_increment=1.0)
 
@@ -161,17 +173,17 @@ class _RollDesk:
     def start(
         self,
         *,
-        timeframe: str,
-        history_start: datetime,
         end: datetime,
         warmup: bool,
+        declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
     ) -> RollIntentBatch:
         self.calls.append(
             {
-                "timeframe": timeframe,
-                "history_start": history_start,
                 "end": end,
                 "warmup": warmup,
+                "declarations": dict(declarations),
+                "history_starts": dict(history_starts),
             }
         )
         return self.intents
@@ -190,17 +202,25 @@ def _book(*, per_name_cap: float | None = None) -> BookConfig:
 def _bootstrap(
     *,
     book: BookConfig | None = None,
-    sleeve_to_bundle: dict[SleeveName, ExecutionBundle] | None = None,
+    bundles: dict[SleeveName, ExecutionBundle] | None = None,
     book_state: _BookState | None = None,
     roll_desk: _RollDesk | None = None,
     fx_reference_pairs: tuple[InstrumentId, ...] = (),
     warmup_cache_on_start: bool = True,
 ) -> BootResult | Halt:
+    config = book or _book()
+    loaded = bundles or {_SLEEVE: _FixedWeightBundle()}
+    assembled = assemble_test_book(
+        config,
+        {
+            sleeve.wheel_filename: loaded[sleeve.name]
+            for sleeve in config.sleeves
+        },
+    )
     return bootstrap(
         now=_NOW,
-        book=book or _book(),
-        sleeve_to_bundle=sleeve_to_bundle or {_SLEEVE: _FixedWeightBundle()},
-        ledger=SleeveLedger(),
+        book=assembled,
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
         book_state=book_state or _BookState(),
         market_data=_MarketData(),
         roll_desk=roll_desk or _RollDesk(),
@@ -209,74 +229,80 @@ def _bootstrap(
     )
 
 
-def test_bootstrap_halts_on_mixed_timeframes_before_starting_roll_desk() -> None:
-    roll_desk = _RollDesk()
+class _FuturesBundle(_FixedWeightBundle):
+    """A futures sleeve declaring one continuous root with its recorded mode."""
 
-    result = _bootstrap(
-        sleeve_to_bundle={
-            _SLEEVE: _FixedWeightBundle(timeframe="1D"),
-            SleeveName("carry"): _FixedWeightBundle(
-                _SECOND_INSTRUMENT_ID,
-                timeframe="1H",
-            ),
-        },
-        roll_desk=roll_desk,
-        fx_reference_pairs=(_FX_EURUSD,),
-    )
-
-    assert result == Halt(
-        StartupGate.BOOK_TIMEFRAME,
-        "book sleeves declare mixed timeframes ['1D', '1H']; "
-        "all sleeves must share one timeframe",
-    )
-    assert roll_desk.calls == []
-
-
-def test_bootstrap_halts_on_band_overlap_before_starting_roll_desk() -> None:
-    trend = SleeveName("trend")
-    carry = SleeveName("carry")
-    roll_desk = _RollDesk()
-
-    result = _bootstrap(
-        book=BookConfig(
-            sleeves=(
-                SleeveConfig(name=trend, wheel_filename="trend.whl", risk_share=0.5),
-                SleeveConfig(name=carry, wheel_filename="carry.whl", risk_share=0.5),
-            ),
-            base_currency="EUR",
+    def __init__(
+        self,
+        continuous_id: InstrumentId,
+        *,
+        root: str = "ES",
+        adjustment_mode: ContinuousFutureAdjustmentType = (
+            ContinuousFutureAdjustmentType.BACKWARD_RATIO
         ),
-        sleeve_to_bundle={
-            trend: _FixedWeightBundle(_INSTRUMENT_ID),
-            carry: _FixedWeightBundle(_INSTRUMENT_ID),
-        },
-        roll_desk=roll_desk,
-    )
+    ) -> None:
+        contract = DataContract(
+            instrument_ids=(continuous_id,),
+            required_arrays=("Close",),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=20,
+            futures=(root,),
+            adjustment_mode=adjustment_mode,
+        )
+        manifest = BundleManifest(
+            run_id="book-startup-test",
+            role="best",
+            candidate_key="candidate",
+            component_source_hashes={},
+            instrument_ids=(continuous_id,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixed",
+                module="tests.fixed",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={continuous_id: DriftBand.symmetric(0.0)},
+            direction="both",
+        )
+        ExecutionBundle.__init__(self, contract=contract, manifest=manifest, plan=plan)
 
-    assert isinstance(result, Halt)
-    assert result.gate == StartupGate.BAND_OWNERSHIP
-    assert result.reason is not None
-    assert "PIPE.XNYS" in result.reason
-    assert "carry" in result.reason
-    assert "trend" in result.reason
-    assert roll_desk.calls == []
 
-
-def test_bootstrap_halts_on_cap_before_starting_roll_desk() -> None:
-    roll_desk = _RollDesk(
-        (Halt(StartupGate.CONTINUOUS_IDENTITY, "would materialize later"),)
-    )
+def test_bootstrap_passes_coherent_declarations_to_roll_desk() -> None:
+    roll_desk = _RollDesk()
+    es = InstrumentId.from_str("ES.XCME")
 
     result = _bootstrap(
-        book=_book(per_name_cap=1.5),
+        bundles={_SLEEVE: _FuturesBundle(es)},
         roll_desk=roll_desk,
-        fx_reference_pairs=(_FX_EURUSD,),
     )
 
-    assert result == Halt(
-        StartupGate.CAP_PROVENANCE,
-        "book per_name_cap (1.5) exceeds sleeve 'trend' bundle gross_cap (1.0)",
-    )
-    assert roll_desk.calls == []
+    assert isinstance(result, BootResult)
+    assert roll_desk.calls[0]["declarations"] == {
+        "ES": ContinuousRootDeclaration(
+            continuous_id=es,
+            adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+            timeframe="1D",
+        )
+    }
+    assert roll_desk.calls[0]["history_starts"] == {
+        "ES": datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+    }
+
+
+def test_bootstrap_resolves_an_empty_declaration_mapping_for_etf_books() -> None:
+    roll_desk = _RollDesk()
+
+    result = _bootstrap(roll_desk=roll_desk)
+
+    assert isinstance(result, BootResult)
+    assert roll_desk.calls[0]["declarations"] == {}
 
 
 def test_bootstrap_halts_on_account_integrity_before_starting_roll_desk() -> None:
@@ -306,7 +332,63 @@ def test_bootstrap_returns_roll_halt_without_subscription_intents() -> None:
         StartupGate.CONTINUOUS_IDENTITY,
         "continuous venue drift",
     )
-    assert roll_desk.calls[0]["timeframe"] == "1D"
+    assert roll_desk.calls[0]["history_starts"] == {}
+
+
+def test_bootstrap_warms_each_stream_from_its_own_sleeve_lookback() -> None:
+    deep = SleeveName("deep")
+    shallow = SleeveName("shallow")
+    book = BookConfig(
+        sleeves=(
+            SleeveConfig(name=deep, wheel_filename="deep.whl", risk_share=1.0),
+            SleeveConfig(name=shallow, wheel_filename="shallow.whl", risk_share=1.0),
+        ),
+        base_currency="EUR",
+    )
+
+    result = _bootstrap(
+        book=book,
+        bundles={
+            deep: _FixedWeightBundle(_INSTRUMENT_ID, lookback_bars=40),
+            shallow: _FixedWeightBundle(_SECOND_INSTRUMENT_ID, lookback_bars=20),
+        },
+        warmup_cache_on_start=True,
+    )
+
+    assert isinstance(result, BootResult)
+    requests = [intent for intent in result.intents if isinstance(intent, RequestBars)]
+    assert requests == [
+        RequestBars(
+            _SECOND_INSTRUMENT_ID,
+            "1D",
+            datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc),
+            _NOW,
+        ),
+        RequestBars(
+            _INSTRUMENT_ID,
+            "1D",
+            datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc),
+            _NOW,
+        ),
+    ]
+
+
+def test_bootstrap_warms_an_intraday_stream_with_the_session_aware_multiplier() -> None:
+    result = _bootstrap(
+        bundles={_SLEEVE: _FixedWeightBundle(timeframe="1H", lookback_bars=20)},
+        warmup_cache_on_start=True,
+    )
+
+    assert isinstance(result, BootResult)
+    requests = [intent for intent in result.intents if isinstance(intent, RequestBars)]
+    assert requests == [
+        RequestBars(
+            _INSTRUMENT_ID,
+            "1H",
+            datetime(2026, 6, 17, 6, 0, tzinfo=timezone.utc),
+            _NOW,
+        ),
+    ]
 
 
 def test_bootstrap_pass_returns_pipeline_startup_result_and_intent_batch() -> None:
@@ -319,7 +401,6 @@ def test_bootstrap_pass_returns_pipeline_startup_result_and_intent_batch() -> No
     )
 
     assert isinstance(result, BootResult)
-    assert result.timeframe == "1D"
     assert result.startup_result.trading_enabled is True
     assert result.startup_result.nav == 100_000.0
     assert result.startup_result.cash == 100_000.0

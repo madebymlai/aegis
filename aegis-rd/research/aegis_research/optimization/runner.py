@@ -26,19 +26,15 @@ import dataclasses
 from collections.abc import Mapping
 from typing import Any
 
-import pandas as pd
-from aegis_data.distributions import Distribution
-from aegis_runtime import DriftBand, InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.utils.execution import NoResultsException
 
 from research.aegis_research.configuration import (
     OptimizationConfig,
-    PortfolioConfig,
     RankingConfig,
     ReportConfig,
 )
-from research.aegis_research.market_data.currency import CurrencyConversion
+from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
 from research.aegis_research.optimization.candidate_validity import (
@@ -53,8 +49,10 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
-from research.aegis_research.optimization.window_evaluator import WindowEvaluator
-from research.aegis_research.portfolios import count_non_executable_rows
+from research.aegis_research.optimization.window_evaluation import (
+    ResolvedBook,
+    WindowEvaluator,
+)
 from research.aegis_research.run_splits import (
     HELD_OUT_SET,
     SELECTION_SET,
@@ -66,40 +64,16 @@ class OptimizationRunnerError(ValueError):
     pass
 
 
-def _portfolio_prices(
-    close: pd.DataFrame,
-    open_: pd.DataFrame,
-    pnl_close: pd.DataFrame | None,
-    pnl_open: pd.DataFrame | None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """The (close, open) the portfolio simulates P&L on.
-
-    The P&L series (a future's ``pnl_adjustment`` mode) when supplied, else the signal
-    series the indicators ran on — the single-series default, not a special case.
-    """
-    return (
-        close if pnl_close is None else pnl_close,
-        open_ if pnl_open is None else pnl_open,
-    )
-
-
 def execute_optimization(
     *,
-    close: pd.DataFrame,
-    open_: pd.DataFrame,
+    arrays: RunArrays,
     source: OptimizationSource,
     optimization: OptimizationConfig,
-    portfolio: PortfolioConfig,
+    book: ResolvedBook,
     report: ReportConfig,
     ranking: RankingConfig,
     metric_registry: FrozenMetricRegistry,
     split_result: RunSplitsResult,
-    fees_by_symbol: pd.Series | None = None,
-    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
-    distributions: tuple[Distribution, ...] = (),
-    currency_conversion: CurrencyConversion | None = None,
-    pnl_close: pd.DataFrame | None = None,
-    pnl_open: pd.DataFrame | None = None,
 ) -> OptimizationResult:
     _validate_source_param_names(source.params)
     if ranking.metric not in metric_registry:
@@ -122,16 +96,12 @@ def execute_optimization(
         name: vbt.Param(values, level=0) for name, values in sampled_lists.items()
     }
 
-    # Stage 1: run each indicator's callable once over the full SIGNAL series (close).
-    store = source.precompute(close, n_candidates, **sampled_lists)
+    # Stage 1: run each indicator's callable once over the full SIGNAL series.
+    store = source.precompute(arrays.signal.array("Close"), n_candidates, **sampled_lists)
     # Touch the store's Invalid-Candidate set once here — before the parallel sweep
     # dill-ships the store to workers — so the cached_property scan runs a single
     # time and the warm cache travels to every worker instead of being re-scanned.
     invalid_candidate_keys = store.invalid_keys
-
-    # The portfolio simulates P&L on the P&L series when one is supplied (a future's
-    # ``pnl_adjustment`` mode); otherwise it reuses the signal series — single-series default.
-    portfolio_close, portfolio_open = _portfolio_prices(close, open_, pnl_close, pnl_open)
 
     # One evaluator drives both sweeps — the per-window slicing, the all-Invalid
     # short-circuit, and the metric extraction. Selection and held-out share this
@@ -139,16 +109,11 @@ def execute_optimization(
     # captured input.
     evaluator = WindowEvaluator(
         source=source,
-        portfolio=portfolio,
+        book=book,
         report=report,
-        close=portfolio_close,
-        open_=portfolio_open,
+        arrays=arrays,
         store=store,
         extractors=extractors,
-        fees_by_symbol=fees_by_symbol,
-        instrument_bands=instrument_bands,
-        distributions=distributions,
-        currency_conversion=currency_conversion,
     )
 
     # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
@@ -170,15 +135,15 @@ def execute_optimization(
         selection_grid,
         verdicts,
         metric=ranking.metric,
-        min_weight=ranking.min_weight,
     )
 
     param_names = selection_grid.param_levels
     # The seam cost of the Split structure: a pure function of window geometry
     # and the loaded-data calendar, independent of which candidates ran and of
-    # how the sweep was chunked.
+    # how the sweep was chunked. Which calendar governs is the evaluator's
+    # knowledge; the runner contributes only the run's window structure.
     non_executable_rows = sum(
-        count_non_executable_rows(window_index, close.index)
+        evaluator.non_executable_rows(window_index)
         for split in split_result.splits
         for window_index in (split.selection_index, split.held_out_index)
     )
@@ -272,6 +237,7 @@ def _attach_held_out(
         excluded_invalid=result.excluded_invalid,
         total_candidates=result.total_candidates,
         non_executable_rows=non_executable_rows,
+        omnibus=result.omnibus,
     )
 
 

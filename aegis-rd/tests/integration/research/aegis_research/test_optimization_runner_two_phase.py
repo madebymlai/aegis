@@ -27,12 +27,14 @@ from research.aegis_research.optimization.ranking import (
 )
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.run_splits import build_run_splits_result
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
     make_ranking_config,
     make_report_config,
+    make_run_arrays,
     make_run_split_config,
 )
 
@@ -87,16 +89,15 @@ def _optimization() -> OptimizationConfig:
     )
 
 
-def _run(alphas: list[float], *, min_weight: float = 0.3) -> OptimizationResult:
+def _run(alphas: list[float]) -> OptimizationResult:
     optimization = _optimization()
     return execute_optimization(
-        close=_uptrend_close(),
-        open_=_uptrend_close(),
+        arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_source(alphas),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=min_weight),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
@@ -123,13 +124,12 @@ def test_runner_consumes_the_injected_splitter_and_addresses_sets_by_role() -> N
     recorder = _RecordingSplitter(split_result.splitter)
 
     execute_optimization(
-        close=_uptrend_close(),
-        open_=_uptrend_close(),
+        arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_source([0.2, 0.5, 1.0]),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=dataclasses.replace(split_result, splitter=recorder),
     )
@@ -174,7 +174,8 @@ def test_runner_ranks_highest_exposure_best_and_lowest_worst() -> None:
     assert result.best.params == {"alpha": 1.0}
     assert result.worst.params == {"alpha": 0.2}
     assert result.median.params == {"alpha": 0.5}
-    assert result.best.score > result.median.score > result.worst.score
+    # score is the Friedman mean rank: lower is better, so best < median < worst.
+    assert result.best.score < result.median.score < result.worst.score
 
 
 def test_runner_selection_and_held_out_windows_differ() -> None:
@@ -315,13 +316,12 @@ def _warmup_source(windows: list[int]) -> OptimizationSource:
 def _run_warmup(windows: list[int]) -> OptimizationResult:
     optimization = _optimization()
     return execute_optimization(
-        close=_uptrend_close(),
-        open_=_uptrend_close(),
+        arrays=make_run_arrays(close=_uptrend_close(), open_=_uptrend_close()),
         source=_warmup_source(windows),
         optimization=optimization,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(_uptrend_close().index, optimization.split),
     )
@@ -366,7 +366,7 @@ def test_runner_passes_full_market_index_to_simulate_not_window_index(monkeypatc
     not the window's own index. With a contiguous split method both are
     effectively the same, but with a purged split the difference is that the
     full index has gaps the window index doesn't."""
-    from research.aegis_research.optimization import window_evaluator
+    from research.aegis_research.optimization.window_evaluation import evaluator as window_evaluator
 
     real_sim = window_evaluator.simulate_portfolio_batch
     captured_indices: list[pd.Index] = []
@@ -418,13 +418,12 @@ def test_runner_records_exact_non_executable_rows_for_purged_kfold_split() -> No
         ),
     )
     result = execute_optimization(
-        close=close,
-        open_=close,
+        arrays=make_run_arrays(close=close, open_=close),
         source=_source([0.2, 0.5, 1.0]),
         optimization=purged_opt,
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")),
         report=make_report_config(),
-        ranking=make_ranking_config(metric="total_return", min_weight=0.3),
+        ranking=make_ranking_config(metric="total_return"),
         metric_registry=make_default_metric_registry(),
         split_result=build_run_splits_result(close.index, purged_opt.split),
     )

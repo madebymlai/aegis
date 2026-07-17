@@ -1,4 +1,4 @@
-"""Drift-detection tests for the market_data.v3 metadata model.
+"""Drift-detection tests for the market_data.v4 metadata model.
 
 The typed model must reject unexpected fields at construction
 (``extra="forbid"``) so that a new field added but forgotten in the
@@ -15,7 +15,7 @@ from research.aegis_research.market_data.contracts import (
     ArrayDescriptor,
     CoverageFacet,
     DataDiagnostics,
-    MarketDataMetadataV3,
+    MarketDataMetadataV4,
     MarketDataQuality,
     ProvenanceFacet,
     RequestFacet,
@@ -25,8 +25,8 @@ from research.aegis_research.market_data.contracts import (
 def test_constructing_with_extra_field_is_rejected() -> None:
     """A drift-detection guard: unexpected keys fail at construction."""
     with pytest.raises(ValidationError):
-        MarketDataMetadataV3(
-            schema_version="market_data.v3",
+        MarketDataMetadataV4(
+            schema_version="market_data.v4",
             request=RequestFacet(
                 requested_instrument_ids=[_id("SYN.XNAS")],
                 timeframe="1D",
@@ -39,21 +39,15 @@ def test_constructing_with_extra_field_is_rejected() -> None:
                 )
             ],
             coverage=CoverageFacet(instrument_ids=[], rows=0, start=None, end=None),
-            quality=MarketDataQuality(state="provider_failed"),
+            quality=MarketDataQuality(state="data_unavailable"),
             diagnostics=[],
             provenance=ProvenanceFacet(
-                provider_class=None,
+                source_class=None,
                 source_metadata={},
-                index_evidence={"source": "provider_failed"},
-                provider_metadata={},
-                omitted_metadata_fields=[],
+                index_evidence={"source": "data_unavailable"},
+                port_metadata={},
                 update_supported=False,
                 missing_index="raise",
-                missing_columns="raise",
-                tz_localize=None,
-                tz_convert=None,
-                skip_on_error=False,
-                silence_warnings=False,
             ),
             # This field does not exist on the model:
             unexpected_field="should be rejected",  # type: ignore[call-arg]

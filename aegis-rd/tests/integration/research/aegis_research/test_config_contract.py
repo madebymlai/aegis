@@ -54,7 +54,7 @@ def test_resolve_rejects_non_mapping_input(tmp_path: Path) -> None:
 
 def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["portfolio"] = {"entry_budget": 0.6, "gross_cap": 1.0}
+    raw["portfolio"] = {"entry_budget": 0.6}
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -72,7 +72,7 @@ def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> No
 
 def test_removed_target_exposure_cap_field_is_rejected(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["portfolio"] = {"target_exposure_cap": 0.8, "gross_cap": 1.0}
+    raw["portfolio"] = {"target_exposure_cap": 0.8}
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -88,38 +88,12 @@ def test_removed_target_exposure_cap_field_is_rejected(tmp_path: Path) -> None:
     assert "Unexpected keyword argument" in issue.message
 
 
-def test_portfolio_gross_cap_validates(tmp_path: Path) -> None:
+@pytest.mark.parametrize("removed_key", ["gross_cap", "net_cap"])
+def test_portfolio_rejects_removed_cap_keys(tmp_path: Path, removed_key: str) -> None:
+    # The exposure envelope is the fixed unit-gross sleeve contract
+    # (aegis-rd-ui1m); a config still declaring a cap fails like any unknown key.
     raw = _run_config()
-    raw["portfolio"] = {"gross_cap": 0.8, "direction": "longonly"}
-
-    resolved = resolve_run_config(
-        raw,
-        component_registry=_component_registry(tmp_path),
-    )
-
-    assert resolved.config.portfolio.gross_cap == 0.8
-
-
-def test_portfolio_gross_cap_above_one_is_accepted_as_leverage(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["portfolio"] = {"gross_cap": 2.0, "direction": "both"}
-
-    resolved = resolve_run_config(
-        raw,
-        component_registry=_component_registry(tmp_path),
-    )
-
-    assert resolved.config.portfolio.gross_cap == 2.0
-    assert resolved.config.portfolio.direction == "both"
-
-
-@pytest.mark.parametrize("value", [0.0, -0.1])
-def test_portfolio_gross_cap_non_positive_fails(
-    tmp_path: Path,
-    value: float,
-) -> None:
-    raw = _run_config()
-    raw["portfolio"] = {"gross_cap": value}
+    raw["portfolio"] = {removed_key: 1.0, "direction": "longonly"}
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -127,7 +101,7 @@ def test_portfolio_gross_cap_non_positive_fails(
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "portfolio.gross_cap" in str(error.value)
+    assert f"portfolio.{removed_key}" in str(error.value)
 
 
 def test_run_config_rejects_removed_labeler_field(tmp_path: Path) -> None:
@@ -636,7 +610,7 @@ def _run_config() -> dict[str, object]:
             "timeframe": "1D",
             "arrays": ["OHLCV"],
         },
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},

@@ -88,7 +88,6 @@ def _write_oracle_config(tmp_path: Path) -> Path:
                     path="catalog",
                 ),
                 "portfolio": {
-                    "gross_cap": 1.0,
                     "direction": "longonly",
                     "fees": 0.0005,
                     "slippage": 0.0005,

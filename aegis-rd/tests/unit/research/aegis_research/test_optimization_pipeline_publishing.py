@@ -20,6 +20,7 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from tests.support.research.aegis_research.factories import make_run_data_facts
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -90,13 +91,15 @@ def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) ->
     out = run_pipeline_publishing(
         config=config,
         recorder=recorder,
-        data_result=FakeDataResult(),
-        array_contract=FakeArrayContract(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(),
+            array_contract=FakeArrayContract(),
+            metric_registry_fingerprint="fp-test",
+        ),
         optimization_source=_FakeSource(),
         execution=ExecutionResult(optimization_result=_result()),
         run_evidence=run_evidence,
         store_path=store_path,
-        metric_registry_fingerprint="fp-test",
     )
 
     assert isinstance(out, PublishingResult)
@@ -122,13 +125,14 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
     run_pipeline_publishing(
         config=config,
         recorder=recorder,
-        data_result=FakeDataResult(),
-        array_contract=FakeArrayContract(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(),
+            array_contract=FakeArrayContract(),
+        ),
         optimization_source=_FakeSource(),
         execution=ExecutionResult(optimization_result=_result()),
         run_evidence=run_evidence,
         store_path=store_path,
-        metric_registry_fingerprint=None,
     )
 
     # Publishing writes in the pending state; activate to expose for querying.

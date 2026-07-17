@@ -1,0 +1,33 @@
+schema_version: 11
+name: export_registry_seam
+output_dir: runs/export_registry_seam
+lock: export-fixture-run
+
+data:
+  arrays: [Close]
+  base_currency: USD
+  instruments: [SPY.XNAS]
+  start: '2024-01-01'
+  end: '2024-01-31'
+  timeframe: 1D
+
+portfolio:
+  direction: longonly
+
+strategy:
+  id: tests.export_strategy
+
+indicators:
+  - id: tests.export_indicator
+
+ranking:
+  metric: sharpe_ratio
+
+optimization:
+  search: grid
+  split:
+    method: from_rolling
+    params:
+      length: 20
+      offset: 0
+      split: 0.5

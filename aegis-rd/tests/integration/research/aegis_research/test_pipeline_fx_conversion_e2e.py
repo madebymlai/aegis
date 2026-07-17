@@ -33,7 +33,6 @@ def _config(*, catalog_path: Path, fx_conversion_cost: float) -> dict:
             exchange=[_FX_PAIR],
         ),
         "portfolio": {
-            "gross_cap": 1.0,
             "direction": "longonly",
             "base_currency": "EUR",
             "fx_conversion_cost": fx_conversion_cost,

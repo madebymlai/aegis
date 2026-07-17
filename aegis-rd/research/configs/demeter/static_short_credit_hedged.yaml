@@ -1,0 +1,48 @@
+name: demeter_static_short_credit_eur_hedged
+schema_version: 11
+output_dir: runs/demeter_eu/static_short_credit_hedged
+
+# Parameter-free EUR-base baseline. CBUS5E is quote-marked because its last-trade
+# history is sparse; STEA is accumulating, so income remains in its observed price.
+data:
+  base_currency: EUR
+  instruments: [CBUS5E.XBRU:QUOTE, STEA.LSEETF]
+  arrays: [OHLCV]
+  start: '2020-08-10'
+  end: '2026-07-11'
+  timeframe: 1D
+  missing_index: drop
+
+indicators: []
+
+strategy:
+  id: demeter.static_short_credit
+
+portfolio:
+  direction: longonly
+  init_cash: 5000.0
+  fees: 0.0
+  slippage: 0.0005
+  fx_conversion_cost: 0.0003
+  # Conservative scalar: covers CBUS5E's observed EUR 3.00-3.75 range; the
+  # simulator does not yet support per-instrument fixed commissions.
+  fixed_fee: 3.75
+  band_up: 0.02
+  band_down: 0.04
+
+ranking:
+  metric: convergent_income_utility
+
+report:
+  metrics: [convergent_tail_budget, convergent_downside_lskew]
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    method: from_n_expanding
+    params:
+      n: 4
+      min_length: 756
+      split: -252
+    max_splits: 10

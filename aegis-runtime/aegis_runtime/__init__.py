@@ -1,5 +1,6 @@
-from aegis_runtime.additive_invariance import AbsolutePriceLevelError
 from aegis_runtime.bundle import (
+    SLEEVE_GROSS_LIMIT,
+    SUPPORTED_ADJUSTMENT_MODES,
     BundleManifest,
     ComponentSpec,
     ComponentStrategyInputs,
@@ -24,15 +25,20 @@ from aegis_runtime.exposure_validation import (
     ExposureValidationError,
     validate_exposure,
 )
+from aegis_runtime.financing import debit_interest
 from aegis_runtime.futures_roots import validate_bare_root
+from aegis_runtime.roll_sensitivity import RollSensitivityError
 
 __all__ = [
-    "AbsolutePriceLevelError",
     "BundleManifest",
+    "RollSensitivityError",
+    "SLEEVE_GROSS_LIMIT",
+    "SUPPORTED_ADJUSTMENT_MODES",
     "ComponentSpec",
     "ComponentStrategyInputs",
     "DataContractError",
     "DataContract",
+    "debit_interest",
     "DriftBand",
     "dump_bundle_payload",
     "ExecutionBundle",

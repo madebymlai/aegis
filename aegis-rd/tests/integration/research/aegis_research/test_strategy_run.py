@@ -490,7 +490,7 @@ def _write_run_config(
                     path=tmp_path / "catalog",
                 )
                 | (data or {}),
-                "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+                "portfolio": {"direction": "longonly"},
                 "strategy": {"id": strategy_id},
                 "indicators": indicators or [],
                 "ranking": {"metric": "total_return"},

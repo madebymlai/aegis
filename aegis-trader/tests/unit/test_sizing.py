@@ -11,8 +11,7 @@ _UK = InstrumentId.from_str("UK.TEST")
 
 
 class TestSizeDeltas:
-    """size_deltas: weight deltas → sized OrderIntents (the sizing half of the
-    rebalance pipeline)."""
+    """size_deltas: requested weights -> rounded orders."""
 
     def test_eur_delta_sized_to_shares(self):
         """A +0.25 weight delta on a EUR instrument → BUY of |delta|·NAV/price."""

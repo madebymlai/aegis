@@ -19,7 +19,9 @@ from research.aegis_research.configuration import (
     resolve_run_config,
 )
 from research.aegis_research.market_data.adapters import catalog as catalog_adapter
-from research.aegis_research.portfolios import VBT_STATICIZED_CACHE_ENV
+from research.aegis_research.optimization.window_evaluation._simulation import (
+    VBT_STATICIZED_CACHE_ENV,
+)
 from research.aegis_research.run_pipeline import run_strategy_sweep
 from tests.support.research.aegis_research.market_data_fixtures import (
     equity_definition,
@@ -105,7 +107,7 @@ def _pipeline_total_return(
     monkeypatch.setattr(
         catalog_adapter,
         "catalog_data_port",
-        lambda _path: port,
+        lambda _path, resolver=None: port,
     )
     components = workspace / "research" / "components"
     _write_always_long_strategy(components / "strategies" / "always_long.py")
@@ -143,7 +145,6 @@ def _run_config(
         "portfolio": {
             "fees": 0.0,
             "slippage": 0.0,
-            "gross_cap": 1.0,
             "direction": "longonly",
             "short_borrow_rate": 0.0,
             "short_rebate_rate": 0.0,

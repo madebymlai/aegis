@@ -15,18 +15,48 @@ from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.wranglers import BarDataWrangler
 
-from aegis_data.bar_type import raw_bar_type
+from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 
 _FX_PRICE_PRECISION = 5
 _FX_SIZE = 1_000_000
 
 
-def wrangle_bars(instrument: Instrument, ohlcv: pd.DataFrame, timeframe: str) -> list[Bar]:
-    """Wrangle an OHLCV frame into the instrument's ``Bar`` list at *timeframe*
-    (the contract timeframe; the EXTERNAL bar type — LAST, or MID for cash FX — is
-    derived from it)."""
-    wrangler = BarDataWrangler(raw_bar_type(instrument.id, timeframe), instrument)
+def wrangle_bars(
+    instrument: Instrument,
+    ohlcv: pd.DataFrame,
+    timeframe: str,
+    *,
+    resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
+) -> list[Bar]:
+    """Wrangle an OHLCV frame into the instrument's ``Bar`` list at *timeframe*.
+
+    The bar identity comes from the injected marking *resolver* (the one raw
+    bar-type resolution seam) — a bar-marked instrument wrangles onto its single
+    mark bar (LAST, or MID for cash FX)."""
+    marking = resolver.resolve(instrument.id, timeframe)
+    wrangler = BarDataWrangler(marking.mark_bars[0], instrument)
     return wrangler.process(ohlcv)
+
+
+def wrangle_quote_bars(
+    instrument: Instrument,
+    bid_ohlcv: pd.DataFrame,
+    ask_ohlcv: pd.DataFrame,
+    timeframe: str,
+    *,
+    resolver: RawBarTypeResolver,
+) -> list[Bar]:
+    """Wrangle a quote-marked instrument's sided frames into BID + ASK ``Bar``\\ s.
+
+    The simulated venue pairs same-timestamp BID/ASK EXTERNAL bars into L1
+    quote updates, so these two series alone drive the book: fills execute at
+    the real touch and no MID bar ever reaches the venue (aegis-rd-tggo.5).
+    """
+    bid_type, ask_type = resolver.resolve(instrument.id, timeframe).mark_bars
+    return [
+        *BarDataWrangler(bid_type, instrument).process(bid_ohlcv),
+        *BarDataWrangler(ask_type, instrument).process(ask_ohlcv),
+    ]
 
 
 def build_currency_pair(base_currency: str, quote_currency: str, venue: str) -> CurrencyPair:
@@ -59,7 +89,10 @@ def wrangle_fx_quotes(pair: CurrencyPair, fx_series: pd.Series) -> list[QuoteTic
     backtest tracks historical FX instead of one flat rate across the window.
     """
     precision = pair.price_precision
-    size = Quantity.from_int(_FX_SIZE)
+    # Size must carry the pair's own size precision — the catalog's real FX
+    # instruments are not integer-sized, and the matching engine rejects a
+    # tick whose size precision differs from the instrument's.
+    size = Quantity(_FX_SIZE, pair.size_precision)
     return [
         QuoteTick(
             instrument_id=pair.id,

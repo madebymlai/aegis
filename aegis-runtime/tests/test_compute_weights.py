@@ -11,7 +11,9 @@ from aegis_runtime.bundle import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
+from aegis_runtime.currency import CurrencyConversion
 from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.exposure_validation import GrossExposureBreach
 
 
 def _index(n: int) -> pd.DatetimeIndex:
@@ -46,8 +48,6 @@ def _bundle(
         instrument_bands={
             instrument_id: DriftBand.symmetric(0.0) for instrument_id in contract.instrument_ids
         },
-        gross_cap=1.0,
-        net_cap=1.0,
         direction=direction,
     )
     manifest = BundleManifest(
@@ -74,6 +74,50 @@ def _eur_contract(
     )
 
 
+def test_compute_weights_requires_the_explicit_currency_conversion_keyword() -> None:
+    # There is no default that could silently reinterpret an already converted
+    # panel as native: the caller must name the conversion, even when it is None.
+    idx = _index(3)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [10.0, 11.0, 12.0], instrument_ids[1]: [20.0, 21.0, 22.0]},
+        index=idx,
+    )
+    bundle = _bundle("equal_weight_strategy", contract=_eur_contract())
+
+    with pytest.raises(TypeError, match="currency_conversion"):
+        bundle.compute_weights(MarketDataBundle({"Close": close}))  # type: ignore[call-arg]
+
+
+def test_compute_weights_applies_the_conversion_before_components() -> None:
+    # The bundle owns native -> base: components see the converted panel, and
+    # passing native + conversion equals passing an already converted panel with
+    # None (so a caller can never double-convert).
+    idx = _index(3)
+    aapl, msft = _id("AAPL.NASDAQ"), _id("MSFT.NASDAQ")
+    native_close = pd.DataFrame(
+        {aapl: [10.0, 11.0, 12.0], msft: [20.0, 21.0, 22.0]},
+        index=idx,
+    )
+    rate = pd.Series([0.9, 1.0, 1.1], index=idx)
+    conversion = CurrencyConversion(
+        rate_by_instrument={aapl: rate},
+        currency_by_instrument_id={aapl: "USD", msft: "EUR"},
+    )
+    bundle = _bundle("price_proportional_strategy", contract=_eur_contract())
+
+    weights = bundle.compute_weights(
+        MarketDataBundle({"Close": native_close}),
+        currency_conversion=conversion,
+    )
+
+    # The strategy reflects the panel it was handed: these are the proportions of
+    # the CONVERTED closes (AAPL 9.0/11.0/13.2 against MSFT 20/21/22), proving the
+    # panel the components saw was converted exactly once, inside the bundle.
+    assert weights[aapl].tolist() == pytest.approx([0.3103448275862069, 0.34375, 0.375])
+    assert weights[msft].tolist() == pytest.approx([0.6896551724137931, 0.65625, 0.625])
+
+
 def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:
     idx = _index(3)
     instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
@@ -87,11 +131,46 @@ def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:
         indicators=(_spec("echo_indicator", "indicators", "echo"),),
     )
 
-    weights = bundle.compute_weights(MarketDataBundle({"Close": close}))
+    weights = bundle.compute_weights(
+        MarketDataBundle({"Close": close}), currency_conversion=None
+    )
 
     assert list(weights.columns) == list(instrument_ids)
     assert weights.index.equals(idx)
     assert (weights.to_numpy() == 0.5).all()
+
+
+def test_compute_weights_rejects_gross_above_the_sleeve_contract() -> None:
+    # 0.75 + 0.75 = gross 1.5 > SLEEVE_GROSS_LIMIT: the bundle fails closed on
+    # its own emitted weights — the source-level tripwire for a broken component.
+    idx = _index(3)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [10.0, 11.0, 12.0], instrument_ids[1]: [20.0, 21.0, 22.0]},
+        index=idx,
+    )
+    bundle = _bundle("over_gross_strategy", contract=_eur_contract())
+
+    with pytest.raises(GrossExposureBreach, match="gross_cap 1.0"):
+        bundle.compute_weights(MarketDataBundle({"Close": close}), currency_conversion=None)
+
+
+def test_compute_weights_admits_a_fully_invested_book_at_exactly_unit_gross() -> None:
+    # Equality is inside the contract: a fully-invested sleeve sits AT gross 1.0
+    # and must not trip on the boundary (strict > with the kernel's tolerance).
+    idx = _index(3)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [10.0, 11.0, 12.0], instrument_ids[1]: [20.0, 21.0, 22.0]},
+        index=idx,
+    )
+    bundle = _bundle("equal_weight_strategy", contract=_eur_contract())
+
+    weights = bundle.compute_weights(
+        MarketDataBundle({"Close": close}), currency_conversion=None
+    )
+
+    assert weights.abs().sum(axis=1).tolist() == [1.0, 1.0, 1.0]
 
 
 def test_compute_weights_keys_output_by_native_instrument_id() -> None:
@@ -106,7 +185,9 @@ def test_compute_weights_keys_output_by_native_instrument_id() -> None:
         contract=_eur_contract(instrument_ids=instrument_ids),
     )
 
-    weights = bundle.compute_weights(MarketDataBundle({"Close": close}))
+    weights = bundle.compute_weights(
+        MarketDataBundle({"Close": close}), currency_conversion=None
+    )
 
     assert list(weights.columns) == list(instrument_ids)
     assert weights.columns.name == "instrument_id"
@@ -124,7 +205,9 @@ def test_compute_weights_raises_when_window_shorter_than_lookback_bars() -> None
     bundle = _bundle("equal_weight_strategy", contract=_eur_contract(lookback_bars=5))
 
     with pytest.raises(ValueError, match="at least 5 lookback bars"):
-        bundle.compute_weights(MarketDataBundle({"Close": close}))
+        bundle.compute_weights(
+            MarketDataBundle({"Close": close}), currency_conversion=None
+        )
 
 
 def test_compute_weights_raises_when_latest_weight_row_is_non_finite() -> None:
@@ -137,4 +220,6 @@ def test_compute_weights_raises_when_latest_weight_row_is_non_finite() -> None:
     bundle = _bundle("nan_tail_strategy", contract=_eur_contract())
 
     with pytest.raises(ValueError, match="latest weight row contains NaN"):
-        bundle.compute_weights(MarketDataBundle({"Close": close}))
+        bundle.compute_weights(
+            MarketDataBundle({"Close": close}), currency_conversion=None
+        )

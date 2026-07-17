@@ -3,10 +3,8 @@ the Commingled Book.
 
 Declares one or more sleeves, each bound to a content-addressed wheel filename
 with a static risk share and risk group, plus the book's risk controls (vol
-target, caps, sleeve bands, aggregate-drift threshold).  Cap
-*provenance* — that the caps never exceed what research validated — is grounded
-in the sleeves' bundles and checked at load by
-``bundles.provenance.check_cap_provenance``, not on this config.
+target, caps, sleeve bands, aggregate-drift threshold). Each Execution Bundle
+separately owns the research-validated limits for its standalone Sleeve output.
 """
 
 from __future__ import annotations
@@ -14,6 +12,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+from aegis_runtime import ExposureLimits
 
 from aegis_trader.domain.types import SleeveName
 
@@ -319,10 +319,8 @@ class TailConvexityBudget:
 class SleeveConfig:
     """One sleeve in the book — a notional sub-portfolio backed by one bundle.
 
-    Caps are *not* declared per sleeve here: the research-validated ceiling lives
-    in the sleeve's bundle (``LockedExecutionPlan`` gross/net caps) and is
-    enforced at load by ``bundles.provenance.check_cap_provenance`` (B13) — never
-    an operator-entered field compared against the operator's own caps.
+    Exposure Limits are not declared here. The Sleeve's Execution Bundle owns
+    and enforces the limits locked by research before Trader allocates it.
     """
 
     name: SleeveName
@@ -354,34 +352,26 @@ class BookConfig:
     """The full Commingled Book declaration.
 
     Risk controls: book volatility target, gross/net/per-name caps, sleeve
-    no-churn bands, and a book-level aggregate drift threshold.  Cap
-    *provenance* — that these caps never exceed what research
-    validated — is a bundle-grounded load-time check
-    (``bundles.provenance.check_cap_provenance``), not a self-referential field
-    on this config.
+    no-churn bands, and a book-level aggregate drift threshold. These constraints
+    govern the Commingled Book after Trader allocates and nets Sleeves; they are
+    independent of each Execution Bundle's standalone Sleeve limits.
     """
 
     sleeves: tuple[SleeveConfig, ...]
     base_currency: str = "EUR"
     # Vol-targeting is down-only (ADR-0004 amendment): this is a *ceiling* /
     # de-lever set-point, not a two-sided peg.  The book is scaled down to hold
-    # it in stress but never levered up past max_book_gross to reach it, so in
+    # it in stress but never levered up past gross_cap to reach it, so in
     # calm regimes realized vol sits below target by design.  Set it to the
     # book's achievable unlevered level.
     book_vol_target: float = 0.09
     sleeve_reversion_fraction: float = 1.0
     drawdown_delever: DrawdownDeleverCurve | None = None
 
-    # Gross ceiling for vol-targeting.  The rebalancer clamps any vol-target
-    # up-scale down to this (down-only; ADR-0004 amendment).  It must not exceed
-    # gross_cap (validated in __post_init__): a soft ceiling above the hard cap
-    # could never be made compliant by the down-only clamp.  Given that invariant
-    # the clamp keeps every valid post-band book within gross_cap, so the gross
-    # cap gate below is a defensive backstop rather than a path normally reached.
-    max_book_gross: float = 1.0
-
     # ── caps (all as fractions of NAV) ──
-    gross_cap: float | None = None   # max Σ|w_i|
+    # Authoritative Commingled Book gross ceiling. The rebalancer clamps both
+    # the netted target and the planned post-band book to it.
+    gross_cap: float = 1.0
     net_cap: float | None = None     # max |Σ w_i|
     per_name_cap: float | None = None  # max |w_i| per instrument
 
@@ -401,6 +391,8 @@ class BookConfig:
     # ── aggregate fidelity ──
     aggregate_drift_threshold: float | None = None  # max Σ|w_realized - w_target|
 
+    _exposure_limits: ExposureLimits = field(init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         if not self.sleeves:
             raise ValueError("BookConfig must declare at least one sleeve")
@@ -415,15 +407,19 @@ class BookConfig:
             or self.sleeve_reversion_fraction > 1
         ):
             raise ValueError("sleeve_reversion_fraction must be in (0, 1]")
-        if not math.isfinite(self.max_book_gross) or self.max_book_gross <= 0:
-            raise ValueError("max_book_gross must be finite and positive")
-        if self.gross_cap is not None and self.max_book_gross > self.gross_cap + _EPS:
-            raise ValueError(
-                f"max_book_gross ({self.max_book_gross}) exceeds gross_cap "
-                f"({self.gross_cap}): the down-only clamp scales the book only to "
-                f"max_book_gross, so a soft ceiling above the hard cap could never "
-                f"be made compliant and would always fail closed at the gross gate"
-            )
+        gross_cap = float(self.gross_cap)
+        if not math.isfinite(gross_cap) or gross_cap <= 0:
+            raise ValueError("gross_cap must be finite and positive")
+        object.__setattr__(self, "gross_cap", gross_cap)
+        object.__setattr__(
+            self,
+            "_exposure_limits",
+            ExposureLimits(gross_cap=gross_cap, net_cap=self.net_cap),
+        )
+        if self.per_name_cap is not None and (
+            not math.isfinite(self.per_name_cap) or self.per_name_cap < 0
+        ):
+            raise ValueError("per_name_cap must be finite and non-negative")
         self._validate_starting_balances()
         self._validate_tail_convexity_budget()
         if sum(self.allocator_risk_shares().values()) <= _EPS:
@@ -445,6 +441,11 @@ class BookConfig:
     @property
     def sleeve_count(self) -> int:
         return len(self.sleeves)
+
+    @property
+    def exposure_limits(self) -> ExposureLimits:
+        """Validated Book caps consumed by kernel-owned cap operations."""
+        return self._exposure_limits
 
     def allocator_risk_shares(self) -> dict[SleeveName, float]:
         """Return risk shares consumed by the allocator.

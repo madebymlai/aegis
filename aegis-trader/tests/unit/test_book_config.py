@@ -253,17 +253,12 @@ class TestBookConfig:
 
 
 class TestBookConfigCaps:
-    """Caps declaration.
+    """Commingled Book cap declarations."""
 
-    Cap *provenance* (caps never exceeding the bundles' research-validated
-    ceilings) is bundle-grounded and lives in test_cap_provenance.py — it is no
-    longer a self-referential check on BookConfig.
-    """
-
-    def test_caps_default_none(self):
-        """Caps default to None (unlimited)."""
+    def test_optional_caps_default_none(self):
+        """Optional caps default to None; gross has a finite operating default."""
         book = BookConfig(sleeves=(make_sleeve("trend"),))
-        assert book.gross_cap is None
+        assert book.gross_cap == 1.0
         assert book.net_cap is None
         assert book.per_name_cap is None
         assert book.aggregate_drift_threshold is None
@@ -281,6 +276,36 @@ class TestBookConfigCaps:
         assert book.net_cap == 0.8
         assert book.per_name_cap == 0.15
         assert book.aggregate_drift_threshold == 0.05
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        (
+            ("gross_cap", float("nan")),
+            ("gross_cap", float("inf")),
+            ("gross_cap", 0.0),
+            ("net_cap", float("nan")),
+            ("net_cap", -0.1),
+        ),
+    )
+    def test_invalid_book_caps_fail_at_construction(self, field, value):
+        with pytest.raises(ValueError):
+            BookConfig(sleeves=(make_sleeve("trend"),), **{field: value})
+
+    @pytest.mark.parametrize("per_name_cap", [float("nan"), float("inf"), -0.1])
+    def test_invalid_per_name_cap_fails_at_book_construction(self, per_name_cap):
+        with pytest.raises(ValueError, match="per_name_cap must be finite and non-negative"):
+            BookConfig(
+                sleeves=(make_sleeve("trend"),),
+                per_name_cap=per_name_cap,
+            )
+
+    def test_zero_per_name_cap_is_a_valid_flat_only_limit(self):
+        book = BookConfig(
+            sleeves=(make_sleeve("trend"),),
+            per_name_cap=0.0,
+        )
+
+        assert book.per_name_cap == 0.0
 
 
 def test_starting_balances_normalize_currency_and_sort():

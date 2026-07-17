@@ -7,10 +7,11 @@ from typing import TypeVar
 
 import pandas as pd
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import timeframe_to_ns
-from aegis_data.catalog import CatalogBackedDataPort, RawBarRequest, bars_to_ohlcv
+from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, bars_to_ohlcv
 from aegis_data.chain import fetch_contract_chain
 from aegis_data.continuous_future import ContinuousFuture, continuous_future
 from aegis_data.continuous_materialize import materialize_continuous_bars
@@ -33,6 +34,10 @@ class ContinuousFrontLegUnavailableError(ContinuousContractModelError):
     """The roll schedule has no liquid front leg for the requested as-of."""
 
 
+class ContinuousLegCurrencyError(ContinuousContractModelError):
+    """A root's resolved dated legs declare no, or conflicting, quote currencies."""
+
+
 class ContinuousContractModel:
     """The adjusted continuous series and front-leg lifecycle for one bare root."""
 
@@ -43,11 +48,13 @@ class ContinuousContractModel:
         *,
         start: str,
         timeframe: str = "1D",
+        adjustment_mode: ContinuousFutureAdjustmentType,
     ) -> None:
         self._port = port
         self._root = root
         self._start = start
         self._timeframe = timeframe
+        self._adjustment_mode = adjustment_mode
         self._bar_cadence = pd.Timedelta(
             timeframe_to_ns(timeframe), unit="ns"
         ).to_pytimedelta()
@@ -56,6 +63,7 @@ class ContinuousContractModel:
         self._frame: pd.DataFrame | None = None
         self._front_leg: InstrumentId | None = None
         self._future: ContinuousFuture | None = None
+        self._quote_currency: str | None = None
         self._last_rebasing: Rebasing = IDENTITY
 
     @property
@@ -79,16 +87,26 @@ class ContinuousContractModel:
         return self._materialized(self._front_leg)
 
     @property
+    def quote_currency(self) -> str:
+        """The one quote currency every resolved dated leg declares.
+
+        A synthetic continuous root has no catalog definition of its own, so this
+        derived fact is how the root joins a base-currency conversion.
+        """
+        return self._materialized(self._quote_currency)
+
+    @property
     def last_rebasing(self) -> Rebasing:
         """The re-basing recorded at the most recent roll, or identity before one."""
         return self._last_rebasing
 
     def materialize(self, *, end: str) -> None:
         """(Re)materialize the adjusted frame over ``[start, end]`` off-cache."""
-        future, frame = self._materialize_frame(end)
+        future, frame, quote_currency = self._materialize_frame(end)
         self._future = future
         self._continuous_id = future.instrument_id
         self._frame = frame
+        self._quote_currency = quote_currency
         self._front_leg = self.front_leg_as_of(end)
 
     def front_leg_as_of(self, as_of: str | date | pd.Timestamp) -> InstrumentId:
@@ -151,7 +169,7 @@ class ContinuousContractModel:
             pd.Timestamp(bar.ts_init, tz="UTC").ceil(self._timeframe).tz_localize(None)
         )
 
-    def _materialize_frame(self, end: str) -> tuple[ContinuousFuture, pd.DataFrame]:
+    def _materialize_frame(self, end: str) -> tuple[ContinuousFuture, pd.DataFrame, str]:
         resolved = self._port.resolve_continuous(self._root)
         legs = resolved.legs
         chain = fetch_contract_chain(
@@ -168,13 +186,17 @@ class ContinuousContractModel:
             ),
         )
         future = continuous_future(
-            chain, resolved.instrument_id, timeframe=self._timeframe
+            chain,
+            resolved.instrument_id,
+            timeframe=self._timeframe,
+            adjustment_mode=self._adjustment_mode,
         )
         leg_ids = tuple(InstrumentId.from_str(symbol) for symbol in chain.symbols)
         leg_bars = self._port.read_native_bars(
-            RawBarRequest(leg_ids, self._start, end, self._timeframe)
+            CatalogWindowRequest(leg_ids, self._start, end, self._timeframe)
         )
-        leg_instruments = self._port.instruments(leg_ids)
+        leg_instruments = tuple(self._port.instruments(leg_ids).values())
+        quote_currency = self._leg_quote_currency(leg_instruments)
         bars = materialize_continuous_bars(
             future,
             leg_instruments=leg_instruments,
@@ -182,7 +204,18 @@ class ContinuousContractModel:
             start=pd.Timestamp(self._start, tz="UTC"),
             end=pd.Timestamp(end, tz="UTC"),
         )
-        return future, bars_to_ohlcv(bars)
+        return future, bars_to_ohlcv(bars), quote_currency
+
+    def _leg_quote_currency(self, leg_instruments: tuple[object, ...]) -> str:
+        currencies = sorted(
+            {instrument.quote_currency.code for instrument in leg_instruments}  # type: ignore[attr-defined]
+        )
+        if len(currencies) != 1:
+            raise ContinuousLegCurrencyError(
+                f"continuous-future root {self._root!r} needs exactly one leg quote "
+                f"currency; resolved legs declare {currencies or 'none'}"
+            )
+        return currencies[0]
 
     def _materialized(self, value: _T | None) -> _T:
         if value is None:
@@ -197,4 +230,5 @@ __all__ = [
     "ContinuousContractModelError",
     "ContinuousContractModelNotMaterializedError",
     "ContinuousFrontLegUnavailableError",
+    "ContinuousLegCurrencyError",
 ]

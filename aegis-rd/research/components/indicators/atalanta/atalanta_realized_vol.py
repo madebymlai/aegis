@@ -7,7 +7,6 @@
 
 # %% imports
 import numpy as np
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -30,6 +29,8 @@ def param_space():
     vol window "all but negates positive skew", while a longer (2-year) window restores it — so
     the vol window is a convexity lever, not just a sizing detail ([[what-makes-a-trend-sleeve-convex]]).
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "vol_window": vbt.Param([21, 63, 126, 252]),

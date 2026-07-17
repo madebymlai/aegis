@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import pytest
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.optimization.run_data_contract import (
     DataArrayContract,
-    build_candidate_data_identity,
     build_run_data_array_contract,
-    build_run_data_evidence_payload,
     build_run_required_arrays,
 )
+from tests.support.research.aegis_research.factories import make_run_data_facts
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -57,17 +57,20 @@ def test_build_run_required_arrays_collects_strategy_and_indicator_inputs(
     assert len(set(arrays)) == len(arrays)  # no duplicates
 
 
-def test_build_run_data_evidence_payload_extends_contract_payload(
+def test_evidence_payload_extends_contract_payload(
     tmp_path: pytest.TempPathFactory,
 ) -> None:
     """The run evidence payload includes data array evidence plus runner binding."""
     resolved = build_resolved_run_config(tmp_path)
 
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
-    payload = build_run_data_evidence_payload(
-        FakeDataResult(quality_state="ok", metadata=default_metadata(rows=0, start=None, end=None)),
-        contract,
+    facts = make_run_data_facts(
+        data_result=FakeDataResult(
+            quality_state="ok", metadata=default_metadata(rows=0, start=None, end=None)
+        ),
+        array_contract=contract,
     )
+    payload = facts.evidence_payload()
 
     assert payload["strategy_consumed_runner_data"] is True
     assert payload["strategy_data_binding"] == "runner_data_bundle"
@@ -75,16 +78,16 @@ def test_build_run_data_evidence_payload_extends_contract_payload(
     assert payload["quality_state"] == "ok"
 
 
-def test_build_candidate_data_identity_captures_instrument_ids_and_contract(
+def test_candidate_data_identity_captures_instrument_ids_and_contract(
     tmp_path: pytest.TempPathFactory,
 ) -> None:
     """Candidate data identity records instrument-id/array metadata from the run."""
     resolved = build_resolved_run_config(tmp_path)
 
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
-    identity = build_candidate_data_identity(FakeDataResult(), contract)
+    identity = make_run_data_facts(array_contract=contract).candidate_data_identity()
 
-    assert identity["schema_version"] == "candidate_data_identity.v2"
+    assert identity["schema_version"] == "candidate_data_identity.v3"
     assert identity["requested_instrument_ids"] == [_id("SYN.XNAS")]
     assert identity["instrument_ids"] == [_id("SYN.XNAS")]
     assert to_builtin(identity)["requested_instrument_ids"] == ["SYN.XNAS"]
@@ -95,6 +98,71 @@ def test_build_candidate_data_identity_captures_instrument_ids_and_contract(
     assert identity["index_end"] == "2020-06-01"
     assert "array_contract" in identity
     assert "configured_arrays" in identity["array_contract"]
+
+
+def test_candidate_data_identity_records_the_materialised_adjustment_mode(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    identity = make_run_data_facts(
+        data_result=FakeDataResult(adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO),
+        array_contract=contract,
+    ).candidate_data_identity()
+
+    assert identity["adjustment_mode"] == "backward_ratio"
+
+
+def test_candidate_data_identity_omits_the_mode_key_without_futures(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    identity = make_run_data_facts(array_contract=contract).candidate_data_identity()
+
+    assert "adjustment_mode" not in identity
+
+
+def test_evidence_payload_records_the_materialised_adjustment_mode(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    payload = make_run_data_facts(
+        data_result=FakeDataResult(adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD),
+        array_contract=contract,
+    ).evidence_payload()
+
+    assert payload["adjustment_mode"] == "backward_spread"
+
+
+def test_evidence_payload_omits_the_mode_key_without_futures(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    payload = make_run_data_facts(array_contract=contract).evidence_payload()
+
+    assert "adjustment_mode" not in payload
+
+
+def test_metadata_artifact_payload_merges_metadata_and_contract(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """The data metadata artifact payload is the serialised metadata plus contract facts."""
+    resolved = build_resolved_run_config(tmp_path)
+    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
+
+    payload = make_run_data_facts(array_contract=contract).metadata_artifact_payload()
+
+    assert payload["schema_version"] == "market_data.v4"
+    assert payload["request"]["timeframe"] == "1D"
+    assert payload["configured_arrays"] == ["Open", "High", "Low", "Close", "Volume"]
+    assert payload["contract_required_arrays"] == ["Close", "Open"]
 
 
 def _id(value: str) -> InstrumentId:

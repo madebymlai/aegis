@@ -12,6 +12,7 @@ from research.aegis_research.optimization.candidate_evidence import (
     candidate_rows_from_result,
     held_out_warning,
     result_evidence,
+    separability_warning,
 )
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
@@ -19,7 +20,7 @@ from research.aegis_research.optimization.ranking import (
 )
 
 DATA_IDENTITY = {
-    "schema_version": "candidate_data_identity.v2",
+    "schema_version": "candidate_data_identity.v3",
     "requested_instrument_ids": ["SYN.XNAS"],
     "instrument_ids": ["SYN.XNAS"],
     "timeframe": "1D",
@@ -109,7 +110,8 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         {"rsi_window": 14, "ma_window": 100, "entry": 40.0},
         source_identity={"source": "component", "id": "demo.rsi", "source_hash": "abc123"},
         data_identity={
-            "schema_version": "candidate_data_identity.v2",
+            "schema_version": "candidate_data_identity.v3",
+            "adjustment_mode": "backward_ratio",
             "requested_instrument_ids": ["SYN.XNAS", "ALT.XNAS"],
             "instrument_ids": ["SYN.XNAS", "ALT.XNAS"],
             "timeframe": "1D",
@@ -134,19 +136,37 @@ def test_candidate_identity_golden_bytes_pin() -> None:
 
     assert canonical_json_bytes(row["identity"]) == (
         b'{"book_settings":{"fees":0.001,"target_exposure_cap":1.0},'
-        b'"data_identity":{"array_contract":{"component_required_arrays":[],'
+        b'"data_identity":{"adjustment_mode":"backward_ratio",'
+        b'"array_contract":{"component_required_arrays":[],'
         b'"configured_arrays":["Close"],"contract_required_arrays":["Close","Open"],'
         b'"missing_required_arrays":["Open"],"pipeline_required_arrays":["Close","Open"]},'
         b'"effective_arrays":["Close","Open"],"index_end":"2026-01-31",'
         b'"index_evidence":{},"index_start":"2026-01-01",'
         b'"instrument_ids":["SYN.XNAS","ALT.XNAS"],"loaded_arrays":["Close"],'
         b'"requested_instrument_ids":["SYN.XNAS","ALT.XNAS"],"rows":31,'
-        b'"schema_version":"candidate_data_identity.v2","source_metadata":{},'
+        b'"schema_version":"candidate_data_identity.v3","source_metadata":{},'
         b'"timeframe":"1D"},"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
         b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v4",'
         b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
     )
-    assert row["candidate_key"] == "cand_77b490a16196ee004c1c820d593f6f05"
+    assert row["candidate_key"] == "cand_c6baa6ff4ce9660e482fe7db1add8d58"
+
+
+def test_otherwise_identical_ratio_and_spread_runs_have_different_candidate_keys() -> None:
+    params = {"rsi_window": 14}
+
+    ratio = _single_candidate_row(
+        params,
+        source_identity={"source_hash": "abc"},
+        data_identity={**DATA_IDENTITY, "adjustment_mode": "backward_ratio"},
+    )
+    spread = _single_candidate_row(
+        params,
+        source_identity={"source_hash": "abc"},
+        data_identity={**DATA_IDENTITY, "adjustment_mode": "backward_spread"},
+    )
+
+    assert ratio["candidate_key"] != spread["candidate_key"]
 
 
 def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> None:
@@ -284,8 +304,9 @@ def test_result_evidence_serializes_three_candidates() -> None:
         "excluded_invalid",
         "excluded_degenerate",
         "non_executable_rows",
+        "omnibus",
     }
-    assert evidence["schema_version"] == "optimization_result.v3"
+    assert evidence["schema_version"] == "optimization_result.v4"
     assert evidence["total"] == 12
     assert evidence["excluded_invalid"] == 1
     assert evidence["excluded_degenerate"] == 4
@@ -371,3 +392,24 @@ def test_held_out_warning_silent_without_held_out_data() -> None:
     headline = {"metric": "sharpe_ratio", "held_out": None, "selection": 1.6, "gap": None}
 
     assert held_out_warning(headline) is None
+
+
+def test_separability_warning_fires_when_field_is_indistinguishable() -> None:
+    # Tiny chi-square over 12 candidates x 6 folds -> Iman-Davenport p ~ 1 -> not
+    # separable -> warns, qualitatively and with a hedged (not gated) p.
+    warning = separability_warning({"chi_square": 0.5, "n_candidates": 12, "n_splits": 6})
+
+    assert warning is not None
+    assert "statistically indistinguishable" in warning
+    assert "lower bound" in warning
+
+
+def test_separability_warning_silent_when_field_is_separable() -> None:
+    # Large chi-square -> low p -> the field is separable -> no warning.
+    assert separability_warning({"chi_square": 40.0, "n_candidates": 12, "n_splits": 6}) is None
+
+
+def test_separability_warning_none_without_a_test() -> None:
+    assert separability_warning(None) is None
+    assert separability_warning({"chi_square": 5.0, "n_candidates": 1, "n_splits": 6}) is None
+    assert separability_warning({"chi_square": 5.0, "n_candidates": 5, "n_splits": 1}) is None

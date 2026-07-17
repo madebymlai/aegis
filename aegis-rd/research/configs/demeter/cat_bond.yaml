@@ -1,0 +1,72 @@
+name: demeter_eu_cat_bond_income
+schema_version: 11
+output_dir: runs/demeter_eu/cat_bond_income
+
+# CLEAN CAT-BOND INCOME FAMILY. This is not a satellite inside credit carry: catastrophe
+# insurance has a different payer and tail mechanism, so it receives its own Indicator,
+# Strategy, and Run Config. The incumbent SDHY+LQDH credit family remains unchanged.
+#
+# EXECUTION: KRC Cat Bond UCITS ETF, ISIN IE000UWJUW87, USD LSE line CATB. This
+# supported LSEETF identity keeps IB's underlying and exchange-local symbols identical,
+# so both normal bars and raw ADJUSTED_LAST use the established provider contracts.
+#
+# HISTORY: the ETF launched 2025-12-02 and the LSE USD listing began 2026-01-13. Artemis
+# supplies the broad outstanding-market carry signal; CATB remains only the executable UCITS
+# vehicle. The ETF price is never backfilled. This remains plumbing evidence, not a
+# promotion-grade verdict.
+#
+# MARK/FILL: CATB is quote-marked because this small new ETF cannot be evaluated honestly
+# from sparse trade prints. BID/ASK produces the derived mid mark and touch fill. The
+# Gateway has served its BID/ASK history and accepted a one-share non-transmitting What-If.
+data:
+  base_currency: EUR
+  instruments: [CATB.LSEETF:QUOTE]
+  exchange: [EUR/USD.IDEALPRO]
+  arrays: [OHLCV]
+  start: '2026-01-13'
+  end: '2026-07-11'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: demeter.cat_bond_calendar
+  params:
+    rebalance_interval_months: 1
+- id: demeter.cat_bond_market_carry
+  params:
+    cache_dir: research/data/cache/artemis/cat-bond-market-yield
+    publication_lag_days: 7
+    max_age_days: 21
+    richness_window: 104
+    fund_fee: 1.28
+
+strategy:
+  id: demeter.cat_bond_income
+
+portfolio:
+  direction: longonly
+  init_cash: 5000.0
+  fees: 0.0
+  slippage: 0.0
+  fixed_fee: 3.5
+  band_up: 0.02
+  band_down: 0.04
+
+ranking:
+  metric: convergent_income_utility
+
+report:
+  metrics: [convergent_tail_budget, convergent_downside_lskew]
+
+optimization:
+  search: grid
+  seed: 42
+  split:
+    # Three anchored rolling windows guarantee an explicit split level on this short
+    # forward-only history; ordinary from_rolling produced only one range and squeezed it.
+    method: from_n_rolling
+    params:
+      n: 3
+      length: 84
+      split: 0.5
+    max_splits: 3

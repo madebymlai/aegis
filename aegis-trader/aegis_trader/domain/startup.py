@@ -9,9 +9,6 @@ from enum import Enum
 class StartupGate(str, Enum):
     """Startup gate responsible for a startup halt."""
 
-    BAND_OWNERSHIP = "band_ownership"
-    BOOK_TIMEFRAME = "book_timeframe"
-    CAP_PROVENANCE = "cap_provenance"
     ACCOUNT_INTEGRITY = "account_integrity"
     CONTINUOUS_IDENTITY = "continuous_identity"
 

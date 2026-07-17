@@ -7,6 +7,7 @@ from aegis_trader.data.backtest_data import (
     build_currency_pair,
     wrangle_bars,
     wrangle_fx_quotes,
+    wrangle_quote_bars,
 )
 from aegis_trader.data.market_data import (
     ContinuousReadPort,
@@ -23,4 +24,5 @@ __all__ = [
     "build_currency_pair",
     "wrangle_bars",
     "wrangle_fx_quotes",
+    "wrangle_quote_bars",
 ]

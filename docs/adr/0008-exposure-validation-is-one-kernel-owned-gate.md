@@ -41,3 +41,33 @@ a gate research never validated. We collapse to one kernel module,
 - **Kernel learns the Candidate/`SYMBOL_LEVEL` MultiIndex shape**: rejected — the
   research apparatus must not cross into execution (Context Map; same firewall ADR-0006
   respected).
+
+## Amendment (2026-07-09): Trader reuses the kernel's net policy
+
+Research and an Execution Bundle remain the two full gross/net/Direction validation
+scopes. Trader has a different gross operation: it proportionally clamps both the netted
+target and the planned post-band book to its Commingled Book `gross_cap`. Because that clamp is
+authoritative, a second gross comparison would be unreachable defensive policy.
+
+Trader delegates only its reachable explicit net cap to
+`validate_net_exposure(frame, net_cap)`. That operation lives beside the full gate and
+reuses its comparison, `1e-9` tolerance, and `NetExposureBreach`; Trader owns projection,
+gross clamping, and per-name remediation. `BookConfig` constructs one validated
+`ExposureLimits` value from its real gross cap and optional net cap; a book with no explicit
+net cap invokes no net operation.
+
+The Trader limits govern the Commingled Book after allocation and netting. They are not
+provenance projections of the standalone Sleeve limits carried by Execution Bundles, so no
+Book-to-Sleeve cap comparison is made at startup.
+
+The kernel leaves allocation values unchanged. In research, `NaN` remains the simulator's
+sparse "no new allocation" instruction, and grouped reductions use `dropna=False` so every
+supplied group remains part of the gate.
+
+## Amendment (2026-07-10): the research call site moved behind Window Evaluation
+
+RD ADR-0026 made portfolio simulation internal to Window Evaluation. Research's one
+mandated wiring test through `simulate_portfolio_batch` (label derivation + Candidate
+phrasing) is unchanged in substance but now crosses Window Evaluation's internal
+simulation seam; the research call site is `optimization/window_evaluation/_simulation.py`
+rather than `portfolios.py`. The kernel-side surface and test home are untouched.

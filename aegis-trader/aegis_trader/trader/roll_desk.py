@@ -11,6 +11,7 @@ from aegis_data.continuous_contract_model import ContinuousContractModel
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.domain.roll import (
     Halt,
     RequestBars,
@@ -33,64 +34,77 @@ class RollDesk:
         *,
         catalog_port: CatalogBackedDataPort,
         instrument_present: InstrumentPresence,
-        declared_continuous_ids_by_root: Mapping[str, InstrumentId],
     ) -> None:
         self._catalog_port = catalog_port
         self._instrument_present = instrument_present
-        self._declared_continuous_ids_by_root = dict(declared_continuous_ids_by_root)
-        self._timeframe: str | None = None
         self._models: dict[InstrumentId, ContinuousContractModel] = {}
+        self._timeframe_by_continuous_id: dict[InstrumentId, str] = {}
         self._leg_to_continuous_id: dict[InstrumentId, InstrumentId] = {}
-        self._pending_leg_subscriptions: set[InstrumentId] = set()
+        self._pending_leg_subscriptions: dict[InstrumentId, InstrumentId] = {}
 
     def start(
         self,
         *,
-        timeframe: str,
-        history_start: datetime,
         end: datetime,
         warmup: bool,
+        declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
     ) -> RollIntentBatch:
-        """Materialize declared roots and emit front-leg warmup/subscription intents."""
-        self._timeframe = timeframe
+        """Materialize the declared roots and emit front-leg warmup/subscription intents.
+
+        ``declarations`` is the already coherent cross-Sleeve union built by book
+        startup; each root materialises under its declaration's bundle-recorded
+        adjustment mode and its own declared timeframe (one root, one owning
+        Sleeve, one stream — aegis-rd-9qkr.5), so the emitted roll ``Rebasing``
+        is multiplicative for ratio and additive for spread automatically, and
+        a roll is decided exactly once per root.
+        """
         models: dict[InstrumentId, ContinuousContractModel] = {}
+        timeframe_by_continuous_id: dict[InstrumentId, str] = {}
         leg_to_continuous_id: dict[InstrumentId, InstrumentId] = {}
         intents: list[RequestBars | SubscribeBars] = []
 
-        for root, declared_id in sorted(self._declared_continuous_ids_by_root.items()):
+        for root, declaration in sorted(declarations.items()):
+            history_start = history_starts[root]
             model = ContinuousContractModel(
                 self._catalog_port,
                 root,
                 start=history_start.date().isoformat(),
-                timeframe=timeframe,
+                timeframe=declaration.timeframe,
+                adjustment_mode=declaration.adjustment_mode,
             )
             model.materialize(end=end.date().isoformat())
-            if model.continuous_id != declared_id:
+            if model.continuous_id != declaration.continuous_id:
                 return (
                     Halt(
                         gate=StartupGate.CONTINUOUS_IDENTITY,
                         reason=(
                             f"continuous root {root!r} materialized as "
-                            f"{model.continuous_id.value}, expected {declared_id.value}"
+                            f"{model.continuous_id.value}, expected "
+                            f"{declaration.continuous_id.value}"
                         ),
                     ),
                 )
 
             front_leg = model.front_leg
-            models[declared_id] = model
-            leg_to_continuous_id[front_leg] = declared_id
+            models[declaration.continuous_id] = model
+            timeframe_by_continuous_id[declaration.continuous_id] = declaration.timeframe
+            leg_to_continuous_id[front_leg] = declaration.continuous_id
             if warmup:
                 intents.append(
                     RequestBars(
                         instrument_id=front_leg,
-                        timeframe=timeframe,
+                        timeframe=declaration.timeframe,
                         start=history_start,
                         end=end,
                     )
                 )
-            intents.append(SubscribeBars(instrument_id=front_leg, timeframe=timeframe))
+            intents.append(
+                SubscribeBars(instrument_id=front_leg, timeframe=declaration.timeframe)
+            )
 
         self._models = models
+        self._timeframe_by_continuous_id = timeframe_by_continuous_id
         self._leg_to_continuous_id = leg_to_continuous_id
         return tuple(intents)
 
@@ -109,18 +123,28 @@ class RollDesk:
 
         del self._leg_to_continuous_id[front_before]
         self._leg_to_continuous_id[front_after] = continuous_id
+        timeframe = self._timeframe_by_continuous_id[continuous_id]
         return (
-            UnsubscribeBars(instrument_id=front_before, timeframe=self._require_timeframe()),
-            self._ensure_front_leg(front_after),
+            UnsubscribeBars(instrument_id=front_before, timeframe=timeframe),
+            self._ensure_front_leg(front_after, continuous_id),
             RollEvent(continuous_id=continuous_id, rebasing=model.last_rebasing),
         )
 
     def on_instrument(self, instrument_id: InstrumentId) -> RollIntentBatch:
         """Complete a deferred front-leg subscription."""
-        if instrument_id not in self._pending_leg_subscriptions:
+        continuous_id = self._pending_leg_subscriptions.pop(instrument_id, None)
+        if continuous_id is None:
             return ()
-        self._pending_leg_subscriptions.discard(instrument_id)
-        return (SubscribeBars(instrument_id=instrument_id, timeframe=self._require_timeframe()),)
+        return (
+            SubscribeBars(
+                instrument_id=instrument_id,
+                timeframe=self._timeframe_by_continuous_id[continuous_id],
+            ),
+        )
+
+    def continuous_id(self, leg: InstrumentId) -> InstrumentId | None:
+        """The continuous root a dated front leg currently feeds, if any."""
+        return self._leg_to_continuous_id.get(leg)
 
     def front_leg(self, instrument_id: InstrumentId) -> InstrumentId | None:
         """Return the current execution front for a continuous root."""
@@ -136,16 +160,13 @@ class RollDesk:
             return None
         return model.frame
 
-    def _ensure_front_leg(self, instrument_id: InstrumentId) -> SubscribeBars | RequestInstrument:
+    def _ensure_front_leg(
+        self, instrument_id: InstrumentId, continuous_id: InstrumentId
+    ) -> SubscribeBars | RequestInstrument:
         if self._instrument_present(instrument_id):
             return SubscribeBars(
                 instrument_id=instrument_id,
-                timeframe=self._require_timeframe(),
+                timeframe=self._timeframe_by_continuous_id[continuous_id],
             )
-        self._pending_leg_subscriptions.add(instrument_id)
+        self._pending_leg_subscriptions[instrument_id] = continuous_id
         return RequestInstrument(instrument_id=instrument_id)
-
-    def _require_timeframe(self) -> str:
-        if self._timeframe is None:
-            raise RuntimeError("roll desk queried before start resolved its timeframe")
-        return self._timeframe

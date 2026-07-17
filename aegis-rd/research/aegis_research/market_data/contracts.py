@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 from aegis_data.distributions import Distribution
+from aegis_runtime.currency import CurrencyConversion
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from research.aegis_research.configuration import DataConfig
-from research.aegis_research.market_data.currency import CurrencyConversion
 from research.aegis_research.market_data.native_metadata import supports_update
 
 LOGICAL_ARRAYS = {
@@ -19,16 +20,28 @@ LOGICAL_ARRAYS = {
     "close": "Close",
     "volume": "Volume",
 }
+# The one source-metadata key naming the materialised synthetic continuous roots;
+# written by the catalog adapter, read by the MarketDataResult mode invariant.
+CONTINUOUS_ROOT_IDS_KEY = "continuous_root_ids"
 QUALITY_HEALTHY = "healthy"
 QUALITY_DEGRADED_ALLOWED = "degraded_allowed"
 QUALITY_REJECTED = "rejected"
-QUALITY_PROVIDER_FAILED = "provider_failed"
+QUALITY_DATA_UNAVAILABLE = "data_unavailable"
+# Carried in the failed load's index evidence so the judge — which reads only
+# diagnostics and evidence, never the load itself — can put the gate's exact
+# judgement (which intervals cannot be served) into the verdict's reasons.
+UNAVAILABLE_REASON_KEY = "unavailable_reason"
 
 
-class RemoteDataPullError(ValueError):
-    def __init__(self, source: str, message: str) -> None:
-        self.source = source
-        super().__init__(f"Failed to pull {source} data: {message}")
+class MarketDataUnavailableError(RuntimeError):
+    """The Run's market data cannot be served for environmental reasons.
+
+    Raised by the catalog loader when the port judges the requested window
+    unservable (a coverage gap after backfill) or the gap fill itself faults
+    (gateway drop, dead vendor call), with the port error chained as the cause.
+    The loading orchestrator catches exactly this error and collapses it into
+    failure Evidence — authoring errors are never wrapped and keep crashing.
+    """
 
 
 class MarketDataQualityError(ValueError):
@@ -38,8 +51,8 @@ class MarketDataQualityError(ValueError):
         super().__init__(f"Market data quality check failed: {details}")
 
 
-class MarketDataAdapter(Protocol):
-    def __call__(self, config: DataConfig) -> MarketDataAdapterResult: ...
+class AdjustmentModeEvidenceError(ValueError):
+    """A market-data result pairs futures evidence and adjustment mode incoherently."""
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -57,28 +70,35 @@ class MarketDataQuality:
 
 
 @dataclass(frozen=True)
-class MarketDataAdapterResult:
+class MarketDataLoad:
+    """One load outcome — the internal handoff observe → judge → describe read."""
+
     native_data: Any
     source_metadata: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
-    provider_metadata: dict[str, Any] = field(default_factory=dict)
-    omitted_metadata_fields: list[dict[str, str]] = field(default_factory=list)
+    port_metadata: dict[str, Any] = field(default_factory=dict)
     # Optional second continuous series (the ``pnl_adjustment`` mode) the portfolio
     # simulates P&L on; ``None`` when no instrument declares a P&L series.
     pnl_native_data: Any = None
     # Non-base → base FX conversion derived from the catalog's resolved instruments and
     # ``exchange:`` FX series; ``None`` for a single-currency book (no ``exchange:``).
     currency_conversion: CurrencyConversion | None = None
+    # The continuous-futures re-basing mode this pull materialised its synthetic
+    # roots under — the exact enum supplied to materialisation, recorded as a Run
+    # fact. ``None`` when no futures were materialised.
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None
     # Listed-ETF cash events read from the same Nautilus catalog as bars.
     distributions: tuple[Distribution, ...] = ()
-    # Set only by ``provider_failed_adapter_result``: adapters raise
-    # ``RemoteDataPullError``, they never return a failed result. Carrying the
-    # failure as data lets the one observe → judge → describe sequence handle
-    # both outcomes.
-    failure: RemoteDataPullError | None = None
+    # Nautilus-definition-authoritative order quantity increment for each tradeable.
+    # Exchange-only conversion legs are deliberately absent.
+    size_increment_by_instrument: Mapping[InstrumentId, float] = field(default_factory=dict)
+    # Set only by ``failed_market_data_load``: the loader raises, it never
+    # returns a failed load. Carrying the failure as data lets the one
+    # observe → judge → describe sequence handle both outcomes.
+    failure: MarketDataUnavailableError | None = None
 
     @property
-    def provider_class(self) -> str | None:
+    def source_class(self) -> str | None:
         return None if self.native_data is None else type(self.native_data).__name__
 
     @property
@@ -88,12 +108,16 @@ class MarketDataAdapterResult:
         return supports_update(self.native_data)
 
 
-def provider_failed_adapter_result(error: RemoteDataPullError) -> MarketDataAdapterResult:
-    """The degenerate result a failed pull collapses to: no native data,
-    provider-failed index evidence, the error carried as data."""
-    return MarketDataAdapterResult(
+def failed_market_data_load(error: MarketDataUnavailableError) -> MarketDataLoad:
+    """The degenerate load an unavailable window collapses to: no native data,
+    data-unavailable index evidence carrying the gate's judgement, the error as
+    data."""
+    return MarketDataLoad(
         native_data=None,
-        evidence={"source": "provider_failed"},
+        evidence={
+            "source": QUALITY_DATA_UNAVAILABLE,
+            UNAVAILABLE_REASON_KEY: str(error),
+        },
         failure=error,
     )
 
@@ -127,7 +151,7 @@ class DataDiagnostics:
     instrument_id: InstrumentId
     configured: bool
     arrays: dict[str, DataArrayDiagnostics] = field(default_factory=dict)
-    provider_status: str = "loaded"
+    load_status: str = "loaded"
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -169,32 +193,32 @@ class CoverageFacet:
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class ProvenanceFacet:
-    """Provider/source blobs and loader configuration carried forward."""
+    """Source/port blobs and the one loader policy carried forward.
 
-    provider_class: str | None
+    Reshaped for ``market_data.v4``: catalog-era vocabulary only — the retired
+    remote/VBT-loader knobs are gone and the ``provider_*`` names became
+    ``source_class`` / ``port_metadata``.
+    """
+
+    source_class: str | None
     source_metadata: dict[str, Any]
     index_evidence: dict[str, Any]
-    provider_metadata: dict[str, Any]
-    omitted_metadata_fields: list[dict[str, str]]
+    port_metadata: dict[str, Any]
     update_supported: bool
     missing_index: str
-    missing_columns: str
-    tz_localize: str | bool | None
-    tz_convert: str | bool | None
-    skip_on_error: bool
-    silence_warnings: bool
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class MarketDataMetadataV3:
-    """Typed ``market_data.v3`` metadata Evidence artifact.
+class MarketDataMetadataV4:
+    """Typed ``market_data.v4`` metadata Evidence artifact.
 
-    Facet-shaped model (ADR-0020) replacing the hand-built ``market_data.v2``
-    dict.  One ``arrays`` descriptor list replaces eight parallel Array-name
-    lists; duplicate, derivable, and vestigial keys are dropped.
+    Facet-shaped model (ADR-0020); the v4 reshape retires the remote/VBT-era
+    vocabulary alongside the adapter seam: provenance speaks catalog
+    (``source_class`` / ``port_metadata``), per-instrument records carry a
+    ``load_status``, and failure values say ``data_unavailable``.
     """
 
-    schema_version: Literal["market_data.v3"]
+    schema_version: Literal["market_data.v4"]
     request: RequestFacet
     arrays: list[ArrayDescriptor]
     coverage: CoverageFacet
@@ -206,12 +230,30 @@ class MarketDataMetadataV3:
 @dataclass(frozen=True)
 class MarketDataResult:
     native_data: Any
-    metadata: MarketDataMetadataV3
+    metadata: MarketDataMetadataV4
     diagnostics: tuple[DataDiagnostics, ...]
     quality: MarketDataQuality
     pnl_native_data: Any = None
     currency_conversion: CurrencyConversion | None = None
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None
     distributions: tuple[Distribution, ...] = ()
+    size_increment_by_instrument: Mapping[InstrumentId, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Adjustment mode is a materialisation fact: it exists iff continuous
+        # roots were materialised. A drifted pairing can only mean a wiring bug
+        # upstream, so it fails here rather than becoming false Run evidence.
+        roots = self.metadata.provenance.source_metadata.get(CONTINUOUS_ROOT_IDS_KEY) or ()
+        if roots and self.adjustment_mode is None:
+            raise AdjustmentModeEvidenceError(
+                f"market data materialised continuous roots {list(roots)} but "
+                "carries no adjustment_mode fact"
+            )
+        if self.adjustment_mode is not None and not roots:
+            raise AdjustmentModeEvidenceError(
+                "market data carries an adjustment_mode fact but materialised "
+                "no continuous roots"
+            )
 
     def assert_usable(self) -> None:
         if not self.quality.usable:

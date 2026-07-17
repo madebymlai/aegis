@@ -5,9 +5,10 @@ Daily Raw Bars are ``EXTERNAL`` (ADR-0007): the corpus is vendor-aggregated
 OHLCV (IBKR historical) — finished bars with
 no tick feed to build a multi-year daily series from — and live can only receive
 IBKR's completed daily bar via an ``EXTERNAL`` subscription.  The price type is
-``LAST`` for tradeables but ``MID`` for cash FX, which has no trades print: IBKR
-serves MIDPOINT/BID/ASK for IDEALPRO, not TRADES, so a ``LAST`` request fails (IB
-error 162).
+a *declared* fact carried by the marking seam (``aegis_data.marking``), never
+derived here: :func:`external_bar_type` builds the key for whatever price type
+the resolved marking states (LAST / MID / BID / ASK), and :func:`raw_bar_type`
+is the LAST-only shorthand for the undeclared default.
 
 This is the lower, shared context both Aegis RD and Aegis Trader depend on, so
 the helper lives here and neither side re-derives the bar identity (the r8b
@@ -69,20 +70,41 @@ def _parse(timeframe: str) -> tuple[int, str]:
 
 
 def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
-    """The ``EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*.
+    """The ``LAST-EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*.
 
     Known IBKR exchange venues are canonicalized to their MIC venue before the
     corpus key is built, matching the IBKR provider's MIC-pinned definitions and
-    fetched bars. ``LAST`` is used for tradeables, ``MID`` for cash FX (ADR-0007).
+    fetched bars.  LAST only — the undeclared default (ADR-0007 amendment); any
+    other price type is a declared marking and keys via
+    :func:`external_bar_type` (e.g. a cash-FX conversion leg's ``MID``).
+    """
+    return external_bar_type(instrument_id, timeframe, "LAST")
+
+
+def external_bar_type(
+    instrument_id: InstrumentId, timeframe: str, price_type: str
+) -> BarType:
+    """The corpus ``EXTERNAL`` ``BarType`` at an explicit price type.
+
+    The pure bar-type builder the marking resolver feeds (ADR-0007 amendment):
+    the price type is decided by the resolved mark mode — LAST/MID bar-marked,
+    BID+ASK for a quote-marked instrument — never re-derived by a consumer.
     """
     step, unit = _parse(timeframe)
-    corpus_id = _canonical_instrument_id(instrument_id)
+    corpus_id = mic_canonical_instrument_id(instrument_id)
     return BarType.from_str(
-        f"{corpus_id.value}-{step}-{unit}-{_price_type(corpus_id)}-EXTERNAL"
+        f"{corpus_id.value}-{step}-{unit}-{price_type}-EXTERNAL"
     )
 
 
-def _canonical_instrument_id(instrument_id: InstrumentId) -> InstrumentId:
+def mic_canonical_instrument_id(instrument_id: InstrumentId) -> InstrumentId:
+    """Rewrite a raw IBKR-exchange venue to its ISO MIC (``LSE`` -> ``XLON``).
+
+    The IBKR instrument provider stores definitions and bars under the MIC venue, so a
+    config that names the raw IB exchange must be canonicalized to the MIC before its id
+    is used as a catalog key.  A venue that is already a MIC, or has no IB mapping
+    (``LSEETF``, ``IDEALPRO``, ``ARCA``), is returned unchanged.
+    """
     mic_venue = _mic_venue(instrument_id.venue.value)
     if mic_venue is None:
         return instrument_id
@@ -95,18 +117,6 @@ def _mic_venue(venue: str) -> str | None:
     )
 
     return exchange_to_mic_venue(venue)
-
-
-def _price_type(instrument_id: InstrumentId) -> str:
-    """``MID`` for cash FX, ``LAST`` for everything else.
-
-    A cash-FX pair carries the FX tell in its symbol shape — ``BASE/QUOTE`` — which
-    is known from the id alone, before the instrument definition is resolved (on a
-    cold fill the definition is seeded only *after* the bars are fetched, so the
-    asset class is not yet available at request time).  IBKR has no TRADES print for
-    cash FX, so its raw bars are ``MID``; everything else is ``LAST``.
-    """
-    return "MID" if "/" in instrument_id.symbol.value else "LAST"
 
 
 def continuous_bar_type(root_id: InstrumentId, timeframe: str) -> BarType:
@@ -134,6 +144,8 @@ def timeframe_to_ns(timeframe: str) -> int:
 __all__ = [
     "UnsupportedTimeframeError",
     "continuous_bar_type",
+    "external_bar_type",
+    "mic_canonical_instrument_id",
     "raw_bar_type",
     "timeframe_to_ns",
 ]

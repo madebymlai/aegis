@@ -11,8 +11,8 @@ from research.aegis_research.metrics.accessors import (
     central_metrics_from_grouped_accessors,
 )
 from research.aegis_research.metrics.stats import PORTFOLIO_METRIC_VALUE_KEYS
-from research.aegis_research.portfolios import simulate_portfolio_batch
 from tests.support.research.aegis_research.factories import (
+    make_candidate_portfolio,
     make_portfolio_config,
     make_report_config,
 )
@@ -61,9 +61,8 @@ def test_grouped_sweep_path_parity_with_report_grade_oracle() -> None:
     # candidate-b at 0.5 each is gross 1.0 — distinct from candidate-a yet within the default
     # exposure caps, so the gate admits this metrics-parity fixture at leverage 1.0.
     allocations.loc[index[0], ("candidate-b", slice(None))] = 0.5
-    simulation = simulate_portfolio_batch(
-        close, allocations, make_portfolio_config(fees=0.001, slippage=0, direction="longonly"),
-        periods_per_year=252,
+    simulation = make_candidate_portfolio(
+        close, allocations, make_portfolio_config(fees=0.001, slippage=0, direction="longonly")
     )
     config = make_report_config(freq="1D", year_freq="252D")
 
@@ -109,9 +108,8 @@ def test_non_finite_values_land_as_nan_in_a_float64_grid() -> None:
     # Sharpe are genuinely undefined (NaN) while the other metrics are finite 0.0.
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
     allocations.loc[index[0], ("flat", "A")] = 0.0
-    simulation = simulate_portfolio_batch(
-        close, allocations, make_portfolio_config(fees=0.0, slippage=0, direction="longonly"),
-        periods_per_year=252,
+    simulation = make_candidate_portfolio(
+        close, allocations, make_portfolio_config(fees=0.0, slippage=0, direction="longonly")
     )
     config = make_report_config(freq="1D", year_freq="252D")
 

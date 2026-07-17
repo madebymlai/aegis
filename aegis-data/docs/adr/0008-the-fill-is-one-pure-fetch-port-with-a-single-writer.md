@@ -89,6 +89,8 @@ existing draft conflated several concerns:
 
 ## Consequences
 
+- Reinforced by ADR-0010: distribution verification is internal to the Catalog
+  port, and the port owns the clock that stamps coverage markers.
 - A future reader who wants "the provider to just write" or "a `request_instruments`
   on the port" has a recorded reason not to: one writer, one pure-fetch method.
 - **How "RD's fill must persist definitions" is honoured without widening the port:**

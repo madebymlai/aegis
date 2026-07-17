@@ -5,9 +5,11 @@ from collections.abc import Mapping
 from importlib import resources
 from typing import Any
 
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.bundle import (
+    SUPPORTED_ADJUSTMENT_MODES,
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -16,7 +18,11 @@ from aegis_runtime.bundle import (
 )
 from aegis_runtime.drift_band import DriftBand
 
-BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v2"
+# v5 (aegis-rd-ui1m): the plan no longer carries gross_cap/net_cap — unit gross
+# is the fixed sleeve contract (bundle.SLEEVE_GROSS_LIMIT), not a locked number.
+BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v5"
+
+_ADJUSTMENT_MODE_BY_VALUE = {mode.value: mode for mode in SUPPORTED_ADJUSTMENT_MODES}
 
 
 class BundlePayloadError(ValueError):
@@ -37,17 +43,27 @@ def dump_bundle_payload(
     manifest: BundleManifest,
     plan: LockedExecutionPlan,
 ) -> dict[str, Any]:
+    contract_payload: dict[str, Any] = {
+        "instrument_ids": [_dump_instrument_id(item) for item in contract.instrument_ids],
+        "required_arrays": list(contract.required_arrays),
+        "base_currency": contract.base_currency,
+        "timeframe": contract.timeframe,
+        "missing_index": contract.missing_index.value,
+        "lookback_bars": contract.lookback_bars,
+        "futures": list(contract.futures),
+        "exchange": [_dump_instrument_id(item) for item in contract.exchange],
+        # Only the mark travels (aegis-rd-tggo.3); the research fill/sim
+        # projection is never serialized.
+        "mark_modes": {
+            _dump_instrument_id(instrument_id): mode
+            for instrument_id, mode in contract.mark_modes.items()
+        },
+    }
+    if contract.adjustment_mode is not None:
+        contract_payload["adjustment_mode"] = contract.adjustment_mode.value
     return {
         "schema_version": BUNDLE_PAYLOAD_SCHEMA_VERSION,
-        "contract": {
-            "instrument_ids": [_dump_instrument_id(item) for item in contract.instrument_ids],
-            "required_arrays": list(contract.required_arrays),
-            "base_currency": contract.base_currency,
-            "timeframe": contract.timeframe,
-            "missing_index": contract.missing_index.value,
-            "lookback_bars": contract.lookback_bars,
-            "futures": list(contract.futures),
-        },
+        "contract": contract_payload,
         "manifest": {
             "run_id": manifest.run_id,
             "role": manifest.role,
@@ -59,8 +75,6 @@ def dump_bundle_payload(
             "strategy": _dump_component_spec(plan.strategy),
             "indicators": [_dump_component_spec(spec) for spec in plan.indicators],
             "instrument_bands": _dump_instrument_bands(plan.instrument_bands),
-            "gross_cap": plan.gross_cap,
-            "net_cap": plan.net_cap,
             "direction": plan.direction,
         },
     }
@@ -89,6 +103,22 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         missing_index=_required_value(contract_payload, "missing_index", "DataContract"),
         lookback_bars=_required_value(contract_payload, "lookback_bars", "DataContract"),
         futures=tuple(_required_sequence(contract_payload, "futures", "DataContract")),
+        exchange=tuple(
+            _load_instrument_id(item)
+            for item in _required_sequence(contract_payload, "exchange", "DataContract")
+        ),
+        # Wire decoding only: presence/type/known-value. The present-iff-futures
+        # semantic is DataContract's own construction rule.
+        adjustment_mode=_load_adjustment_mode(contract_payload),
+        # Absent on pre-tggo.3 payloads: nothing recorded. Live's recorded-marking
+        # resolver fails closed per instrument, so an old wheel cannot silently
+        # default a thin leg to a sparse LAST feed.
+        mark_modes={
+            _load_instrument_id(key): value
+            for key, value in _ensure_mapping(
+                contract_payload.get("mark_modes", {}), "DataContract.mark_modes"
+            ).items()
+        },
     )
     manifest = BundleManifest(
         run_id=_required_value(manifest_payload, "run_id", "BundleManifest"),
@@ -111,8 +141,6 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         instrument_bands=_load_instrument_bands(
             _required_mapping(plan_payload, "instrument_bands", "LockedExecutionPlan")
         ),
-        gross_cap=_required_value(plan_payload, "gross_cap", "LockedExecutionPlan"),
-        net_cap=plan_payload.get("net_cap"),
         direction=_required_value(plan_payload, "direction", "LockedExecutionPlan"),
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
@@ -177,6 +205,27 @@ def _load_drift_band(payload: Mapping[str, Any]) -> DriftBand:
         # trade-to-target behaviour (forward-safe default).
         destination_fraction=payload.get("destination_fraction", 1.0),
     )
+
+
+def _load_adjustment_mode(
+    contract_payload: Mapping[str, Any],
+) -> ContinuousFutureAdjustmentType | None:
+    if "adjustment_mode" not in contract_payload:
+        return None
+    value = contract_payload["adjustment_mode"]
+    if not isinstance(value, str):
+        raise BundlePayloadFieldError(
+            "DataContract.adjustment_mode must be a supported mode string when "
+            f"present; got {value!r}"
+        )
+    try:
+        return _ADJUSTMENT_MODE_BY_VALUE[value]
+    except KeyError:
+        supported = sorted(_ADJUSTMENT_MODE_BY_VALUE)
+        raise BundlePayloadFieldError(
+            f"DataContract.adjustment_mode {value!r} is not a supported mode; "
+            f"expected one of {supported}"
+        ) from None
 
 
 def _dump_instrument_id(instrument_id: InstrumentId) -> str:

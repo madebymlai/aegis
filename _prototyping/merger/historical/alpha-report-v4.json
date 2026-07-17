@@ -1,0 +1,534 @@
+{
+  "contract": {
+    "announcement_delay": "filing-day close excluded; decision on next close; fill following close",
+    "cash_benchmark_and_reserve": "FRED DTB3; reserve overlay applied to lagged unallocated target weight",
+    "costs": {
+      "fixed_usd_per_order": 0.35,
+      "slippage": 0.0005
+    },
+    "dividends": "Massive split-adjusted cash distributions on ex-date",
+    "execution": "Aegis production simulator, whole shares, next-close fills and 2% drift bands; resolution exits use the last adjusted market mark, never a parsed synthetic payout",
+    "expected_close_when_empirical_prior_is_sparse_days": 175,
+    "known_limits": [
+      "guidance comes from target 8-K item text; proxy, tender and exhibit-only updates are not yet complete",
+      "outside dates are observed but do not shape the tail until extension mechanics are fully structured",
+      "beta uses the existing 50-calendar-day preannouncement price window",
+      "reserve accrues on target rather than realized post-rounding cash",
+      "hazards use only a small first-period cohort and a pooled adverse rate",
+      "evaluation history was previously viewed for the q70 benchmark"
+    ],
+    "minimum_concurrent": 10,
+    "minimum_preannouncement_beta_returns": 20,
+    "minimum_trailing_median_dollar_volume": 1000000.0,
+    "name_cap": 0.1,
+    "outside_date_role": "reported as a separate contractual boundary; not substituted for expected close because extension rights are not yet fully structured",
+    "per_name_fallback_break_loss_cap": 0.02,
+    "q_market": "clamp((close - beta_adjusted_mean_20_fallback) / (discounted_causal_cash_offer - beta_adjusted_mean_20_fallback), 0, 1)",
+    "selection_controls": {
+      "q70_monthly_capped": {
+        "construction": "monthly_capped",
+        "initial_weight": null,
+        "maximum_lifecycle_slots": 40,
+        "q_minimum": 0.7
+      },
+      "q70_monthly_guided_enp": {
+        "construction": "monthly_guided_enp",
+        "initial_weight": null,
+        "maximum_lifecycle_slots": 40,
+        "q_minimum": 0.7
+      }
+    },
+    "timing_model": "causal management-guidance interval integrated into discounted success value; survival-conditioned median remaining duration when guidance is absent or stale"
+  },
+  "evidence": {
+    "capital_usd": 5000.0,
+    "causally_included_amended_lifecycles": 19,
+    "classification": "prototype_point_in_time_guidance_small_training_reused_evaluation",
+    "end": "2026-07-15",
+    "evaluation_start": "2025-08-01",
+    "exclusions": {
+      "causal_offer_history_unavailable": 3,
+      "insufficient_beta_history": 14,
+      "insufficient_price_history": 9
+    },
+    "fixed_cash_lifecycles": 206,
+    "frozen_contract": "/tmp/aegis-cash-merger-prototype/FROZEN_ALPHA_V4.md",
+    "hazard_training": {
+      "adverse_events": 5,
+      "adverse_rate": 0.022123893805309734,
+      "completed_duration_observations": 48,
+      "completion_rate_by_age": {
+        "early": 0.17307692307692307,
+        "high": 0.23880597014925373,
+        "late": 0.0
+      },
+      "completion_rate_by_age_and_guidance": {
+        "early:before_guidance": 0.125,
+        "early:in_guidance": 0.5,
+        "early:unguided": 0.16666666666666666,
+        "high:before_guidance": 0.2,
+        "high:in_guidance": 0.6,
+        "high:stale_guidance": 0.16666666666666666,
+        "high:unguided": 0.21568627450980393,
+        "late:unguided": 0.0
+      },
+      "completions_by_age": {
+        "early": 27,
+        "high": 16,
+        "late": 0
+      },
+      "completions_by_age_and_guidance": {
+        "early:before_guidance": 1,
+        "early:in_guidance": 2,
+        "early:unguided": 24,
+        "high:before_guidance": 1,
+        "high:in_guidance": 3,
+        "high:stale_guidance": 1,
+        "high:unguided": 11,
+        "late:unguided": 0
+      },
+      "interval": "from each monthly observation to the next calendar-month boundary",
+      "observations_by_age": {
+        "early": 156,
+        "high": 67,
+        "late": 3
+      },
+      "observations_by_age_and_guidance": {
+        "early:before_guidance": 8,
+        "early:in_guidance": 4,
+        "early:unguided": 144,
+        "high:before_guidance": 5,
+        "high:in_guidance": 5,
+        "high:stale_guidance": 6,
+        "high:unguided": 51,
+        "late:unguided": 3
+      },
+      "training_end": "2025-07-31"
+    },
+    "median_preannouncement_beta": 0.863240693852142,
+    "monthly_eligibility_attrition": [
+      {
+        "active_lifecycle": 32,
+        "affordable": 14,
+        "causal_offer": 31,
+        "date": "2025-08-01",
+        "liquid": 6,
+        "q70": 3,
+        "valid_payoff": 14
+      },
+      {
+        "active_lifecycle": 39,
+        "affordable": 17,
+        "causal_offer": 38,
+        "date": "2025-09-02",
+        "liquid": 10,
+        "q70": 8,
+        "valid_payoff": 17
+      },
+      {
+        "active_lifecycle": 44,
+        "affordable": 20,
+        "causal_offer": 44,
+        "date": "2025-10-01",
+        "liquid": 15,
+        "q70": 9,
+        "valid_payoff": 20
+      },
+      {
+        "active_lifecycle": 47,
+        "affordable": 23,
+        "causal_offer": 47,
+        "date": "2025-11-03",
+        "liquid": 18,
+        "q70": 12,
+        "valid_payoff": 23
+      },
+      {
+        "active_lifecycle": 51,
+        "affordable": 21,
+        "causal_offer": 51,
+        "date": "2025-12-01",
+        "liquid": 18,
+        "q70": 12,
+        "valid_payoff": 21
+      },
+      {
+        "active_lifecycle": 52,
+        "affordable": 29,
+        "causal_offer": 52,
+        "date": "2026-01-02",
+        "liquid": 26,
+        "q70": 21,
+        "valid_payoff": 29
+      },
+      {
+        "active_lifecycle": 48,
+        "affordable": 23,
+        "causal_offer": 48,
+        "date": "2026-02-02",
+        "liquid": 19,
+        "q70": 15,
+        "valid_payoff": 23
+      },
+      {
+        "active_lifecycle": 56,
+        "affordable": 30,
+        "causal_offer": 56,
+        "date": "2026-03-02",
+        "liquid": 23,
+        "q70": 17,
+        "valid_payoff": 30
+      },
+      {
+        "active_lifecycle": 55,
+        "affordable": 23,
+        "causal_offer": 55,
+        "date": "2026-04-01",
+        "liquid": 15,
+        "q70": 13,
+        "valid_payoff": 23
+      },
+      {
+        "active_lifecycle": 57,
+        "affordable": 20,
+        "causal_offer": 57,
+        "date": "2026-05-01",
+        "liquid": 15,
+        "q70": 12,
+        "valid_payoff": 20
+      },
+      {
+        "active_lifecycle": 58,
+        "affordable": 22,
+        "causal_offer": 58,
+        "date": "2026-06-01",
+        "liquid": 11,
+        "q70": 7,
+        "valid_payoff": 22
+      },
+      {
+        "active_lifecycle": 58,
+        "affordable": 22,
+        "causal_offer": 58,
+        "date": "2026-07-01",
+        "liquid": 15,
+        "q70": 13,
+        "valid_payoff": 22
+      }
+    ],
+    "monthly_hazard_score_distribution": [
+      {
+        "date": "2025-08-01",
+        "guidance_states": {
+          "before_guidance": 2,
+          "unguided": 5
+        },
+        "maximum_enp": -0.0027983565691530013,
+        "median_enp": -0.006084297142599112,
+        "median_expected_remaining_days": 52.0,
+        "minimum_enp": -0.015562343976730803,
+        "outside_dates_available": 2,
+        "positive_enp": 0,
+        "q70_deals": 7
+      },
+      {
+        "date": "2025-09-02",
+        "guidance_states": {
+          "before_guidance": 1,
+          "unguided": 10
+        },
+        "maximum_enp": 0.00465195312701502,
+        "median_enp": -0.006118530536727769,
+        "median_expected_remaining_days": 62.0,
+        "minimum_enp": -0.011241787937517924,
+        "outside_dates_available": 2,
+        "positive_enp": 1,
+        "q70_deals": 11
+      },
+      {
+        "date": "2025-10-01",
+        "guidance_states": {
+          "before_guidance": 1,
+          "unguided": 14
+        },
+        "maximum_enp": -0.00017026780930459468,
+        "median_enp": -0.005031764933464883,
+        "median_expected_remaining_days": 54.0,
+        "minimum_enp": -0.01368010653650063,
+        "outside_dates_available": 6,
+        "positive_enp": 0,
+        "q70_deals": 15
+      },
+      {
+        "date": "2025-11-03",
+        "guidance_states": {
+          "before_guidance": 2,
+          "in_guidance": 1,
+          "unguided": 14
+        },
+        "maximum_enp": 0.005845817521007951,
+        "median_enp": -0.0037199671475401713,
+        "median_expected_remaining_days": 54.0,
+        "minimum_enp": -0.013692368861958638,
+        "outside_dates_available": 6,
+        "positive_enp": 3,
+        "q70_deals": 17
+      },
+      {
+        "date": "2025-12-01",
+        "guidance_states": {
+          "before_guidance": 2,
+          "in_guidance": 1,
+          "unguided": 18
+        },
+        "maximum_enp": 0.001777790019306791,
+        "median_enp": -0.004509686279840714,
+        "median_expected_remaining_days": 55.0,
+        "minimum_enp": -0.016410379138759732,
+        "outside_dates_available": 7,
+        "positive_enp": 3,
+        "q70_deals": 21
+      },
+      {
+        "date": "2026-01-02",
+        "guidance_states": {
+          "in_guidance": 2,
+          "unguided": 22
+        },
+        "maximum_enp": 0.0055305875942271735,
+        "median_enp": -0.005229923573411202,
+        "median_expected_remaining_days": 57.0,
+        "minimum_enp": -0.01594592934657384,
+        "outside_dates_available": 6,
+        "positive_enp": 3,
+        "q70_deals": 24
+      },
+      {
+        "date": "2026-02-02",
+        "guidance_states": {
+          "before_guidance": 1,
+          "in_guidance": 1,
+          "unguided": 16
+        },
+        "maximum_enp": 0.011820362754302989,
+        "median_enp": -0.006315389565260187,
+        "median_expected_remaining_days": 40.0,
+        "minimum_enp": -0.01192480246472599,
+        "outside_dates_available": 5,
+        "positive_enp": 2,
+        "q70_deals": 18
+      },
+      {
+        "date": "2026-03-02",
+        "guidance_states": {
+          "before_guidance": 2,
+          "in_guidance": 1,
+          "unguided": 21
+        },
+        "maximum_enp": 0.005322528504517879,
+        "median_enp": -0.007168779364227328,
+        "median_expected_remaining_days": 35.5,
+        "minimum_enp": -0.010793791733877116,
+        "outside_dates_available": 7,
+        "positive_enp": 2,
+        "q70_deals": 24
+      },
+      {
+        "date": "2026-04-01",
+        "guidance_states": {
+          "before_guidance": 2,
+          "in_guidance": 4,
+          "unguided": 15
+        },
+        "maximum_enp": 0.001244921479842359,
+        "median_enp": -0.005142145378713428,
+        "median_expected_remaining_days": 46.0,
+        "minimum_enp": -0.012408868146215613,
+        "outside_dates_available": 6,
+        "positive_enp": 3,
+        "q70_deals": 21
+      },
+      {
+        "date": "2026-05-01",
+        "guidance_states": {
+          "before_guidance": 1,
+          "in_guidance": 3,
+          "unguided": 12
+        },
+        "maximum_enp": 0.0032102999450408015,
+        "median_enp": -0.005094196666779528,
+        "median_expected_remaining_days": 30.5,
+        "minimum_enp": -0.012330649677954133,
+        "outside_dates_available": 4,
+        "positive_enp": 1,
+        "q70_deals": 16
+      },
+      {
+        "date": "2026-06-01",
+        "guidance_states": {
+          "before_guidance": 1,
+          "in_guidance": 1,
+          "unguided": 9
+        },
+        "maximum_enp": 0.0004935438624245865,
+        "median_enp": -0.004868341460343234,
+        "median_expected_remaining_days": 55.0,
+        "minimum_enp": -0.009618672564129403,
+        "outside_dates_available": 4,
+        "positive_enp": 1,
+        "q70_deals": 11
+      },
+      {
+        "date": "2026-07-01",
+        "guidance_states": {
+          "before_guidance": 1,
+          "unguided": 16
+        },
+        "maximum_enp": -0.00022505651063429218,
+        "median_enp": -0.004873676051857379,
+        "median_expected_remaining_days": 60.0,
+        "minimum_enp": -0.012635660935358718,
+        "outside_dates_available": 3,
+        "positive_enp": 0,
+        "q70_deals": 17
+      }
+    ],
+    "snapshot": "/tmp/aegis-cash-merger-prototype/cache-v5/census/cash-merger-census-ab1a31d3ec7b9bda.json",
+    "start": "2024-07-17",
+    "symbols": 204,
+    "timing_coverage": {
+      "deals_with_both": 20,
+      "deals_with_guidance": 54,
+      "deals_with_outside_date": 70,
+      "guidance_coverage": 0.2621359223300971,
+      "guidance_observations_by_precision": {
+        "coarse": 3,
+        "day": 30,
+        "half": 11,
+        "quarter": 29,
+        "year": 1
+      },
+      "outside_date_coverage": 0.33980582524271846,
+      "retained_deals": 206
+    }
+  },
+  "guided_enp_survives_frozen_gate": false,
+  "question": "Does point-in-time closing guidance improve ENP selection over the frozen q70 monthly cash-merger benchmark?",
+  "results": {
+    "q70_monthly_capped": {
+      "annualized_volatility": 0.020372919281614128,
+      "cash_excess_sharpe": 1.164601680493562,
+      "cash_total_return": 0.02498889505654245,
+      "cash_utility": 0.02602429644069254,
+      "convergent_downside_lskew": 0.054525861276494524,
+      "convergent_income_utility": 0.049127871818178355,
+      "convergent_tail_budget": 0.011209676417181055,
+      "convergent_utility_delta_vs_cash": 0.023103575377485815,
+      "daily_skew": 0.5206310834230101,
+      "deal_only_net_total_return": 0.036511462999999855,
+      "excess_total_return": 0.023117308843614293,
+      "held_completed_deal_ids": [
+        "20520:0001140361-24-040148",
+        "896429:0001104659-25-059703",
+        "1593222:0001193125-25-163765",
+        "1701051:0001104659-25-077815",
+        "1725057:0001193125-25-184632",
+        "1487712:0001193125-25-193497",
+        "1651311:0001193125-25-221801",
+        "1412665:0001104659-25-101847",
+        "1599901:0001193125-25-250696",
+        "1827821:0001827821-25-000020",
+        "1012100:0001193125-25-283978",
+        "1831840:0000950103-25-014983",
+        "1124140:0001193125-25-288896",
+        "1131554:0001628280-25-055229",
+        "1699838:0001104659-25-119081",
+        "1545654:0001104659-25-119462",
+        "909108:0000950103-25-015986",
+        "1540013:0001104659-25-120873",
+        "1178879:0001140361-25-046134",
+        "1274173:0001104659-25-123536",
+        "1866368:0000950157-25-001016",
+        "937556:0001104659-26-015904",
+        "1868726:0001193125-26-126362",
+        "1169445:0001193125-26-172139"
+      ],
+      "held_completed_deals": 24,
+      "held_terminated_deal_ids": [
+        "55067:0001193125-24-200233",
+        "1846510:0001193125-25-182169",
+        "1475115:0001193125-25-305559",
+        "1110611:0001193125-25-335946"
+      ],
+      "held_terminated_deals": 4,
+      "invested_day_fraction": 0.6401673640167364,
+      "max_drawdown": -0.008345415245375243,
+      "mean_bill_reserve_weight": 0.43673143293355554,
+      "mean_target_gross": 0.566999239163357,
+      "median_names_when_invested": 12.0,
+      "monthly_returns": {
+        "2025-08-31": 0.0024083131180410167,
+        "2025-09-30": 0.0022877663699576445,
+        "2025-10-31": 0.002443127895603192,
+        "2025-11-30": 0.006973175150731814,
+        "2025-12-31": 0.0008810931346787676,
+        "2026-01-31": 0.015979416477137853,
+        "2026-02-28": 0.004189074202645138,
+        "2026-03-31": 0.005595372697583256,
+        "2026-04-30": 0.005999195226131793,
+        "2026-05-31": -0.0022184997409142593,
+        "2026-06-30": 0.002827944885017253,
+        "2026-07-31": -0.00017291639635175216
+      },
+      "net_total_return": 0.04810620390015674,
+      "reserve_return_contribution": 0.011594740900156886,
+      "total_fees_paid": 38.50000000000008,
+      "total_orders": 110,
+      "worst_month": -0.0022184997409142593
+    },
+    "q70_monthly_guided_enp": {
+      "annualized_volatility": 7.441545295482546e-05,
+      "cash_excess_sharpe": 0.0,
+      "cash_total_return": 0.02498889505654245,
+      "cash_utility": 0.02602429644069254,
+      "convergent_downside_lskew": 0.37346389859902834,
+      "convergent_income_utility": 0.02602429644069254,
+      "convergent_tail_budget": 0.00788860280708576,
+      "convergent_utility_delta_vs_cash": 0.0,
+      "daily_skew": 1.2486900411195672,
+      "deal_only_net_total_return": 0.0,
+      "excess_total_return": 0.0,
+      "held_completed_deal_ids": [],
+      "held_completed_deals": 0,
+      "held_terminated_deal_ids": [],
+      "held_terminated_deals": 0,
+      "invested_day_fraction": 0.0,
+      "max_drawdown": 0.0,
+      "mean_bill_reserve_weight": 1.0,
+      "mean_target_gross": 0.0,
+      "median_names_when_invested": 0.0,
+      "monthly_returns": {
+        "2025-08-31": 0.0024083131180410167,
+        "2025-09-30": 0.0022877663699576445,
+        "2025-10-31": 0.002443127895603192,
+        "2025-11-30": 0.001996608089943397,
+        "2025-12-31": 0.002196465942125636,
+        "2026-01-31": 0.0019826981937209887,
+        "2026-02-28": 0.0019025458040742294,
+        "2026-03-31": 0.0022101056956347342,
+        "2026-04-30": 0.0021073896861807384,
+        "2026-05-31": 0.002001622833682104,
+        "2026-06-30": 0.002138563687771322,
+        "2026-07-31": 0.001032701819422055
+      },
+      "net_total_return": 0.02498889505654245,
+      "reserve_return_contribution": 0.02498889505654245,
+      "total_fees_paid": 0.0,
+      "total_orders": 0,
+      "worst_month": 0.001032701819422055
+    }
+  },
+  "verdict": {
+    "guided_enp": "kill_retain_q70_control"
+  }
+}

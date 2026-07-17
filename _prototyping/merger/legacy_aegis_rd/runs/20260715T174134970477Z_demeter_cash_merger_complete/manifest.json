@@ -1,0 +1,203 @@
+{
+  "artifacts": [
+    {
+      "hash": "24aaa7c8660592dada56d143356b51eba6707b2052bc970c94f7ca3a1461cfd1",
+      "hash_algorithm": "sha256",
+      "id": "data.metadata",
+      "metadata": {},
+      "path": "data_metadata.json",
+      "producer_stage": "data",
+      "role": "data_metadata",
+      "schema_version": "data_metadata.v3",
+      "shape": {},
+      "size": 4547,
+      "status": "completed",
+      "type": "json",
+      "updated_at": "2026-07-15T17:43:35.181308Z",
+      "upstream_artifact_ids": []
+    }
+  ],
+  "config": {
+    "data": {
+      "arrays": [
+        "OHLCV"
+      ],
+      "base_currency": "EUR",
+      "end": "2026-07-15",
+      "exchange": [
+        "EUR/USD.IDEALPRO"
+      ],
+      "futures": [],
+      "instruments": [
+        "AES.XNYS",
+        "ALOT.XNAS",
+        "AVNS.XNYS",
+        "CCO.XNYS",
+        "CCRN.XNAS",
+        "DBRG.XNYS",
+        "GBTG.XNYS",
+        "IMXI.XNAS",
+        "KORE.XNYS",
+        "LPRO.XNAS",
+        "OGN.XNYS",
+        "PAYO.XNAS",
+        "RAMP.XNYS",
+        "SLP.XNAS",
+        "SPY.ARCA"
+      ],
+      "mark_modes": {},
+      "missing_index": "nan",
+      "path": null,
+      "quality": {
+        "allowed_degradations": [
+          "missing_rows"
+        ]
+      },
+      "start": "2023-01-01",
+      "timeframe": "1D"
+    },
+    "indicators": [
+      {
+        "id": "demeter.cash_merger_deal",
+        "params": {
+          "benchmark_symbol": "SPY",
+          "break_lookback": 20,
+          "completion_probability": 0.9,
+          "default_close_days": 120,
+          "filing_lag_days": 1,
+          "min_expected_value_bps": 0.0,
+          "news_exclusion_days": 2,
+          "residual_lookback": 5,
+          "roundtrip_cost_bps": 20.0
+        }
+      }
+    ],
+    "lock": null,
+    "name": "demeter_cash_merger_complete",
+    "optimization": {
+      "execute": {},
+      "random_subset": null,
+      "search": "grid",
+      "seed": 42,
+      "split": {
+        "max_estimated_output_cells": 25000000,
+        "max_public_artifact_bytes": 10000000,
+        "max_splits": 10,
+        "method": "from_n_expanding",
+        "params": {
+          "min_length": 756,
+          "n": 4,
+          "split": -252
+        }
+      }
+    },
+    "output_dir": "runs/demeter_eu/cash_merger_complete",
+    "portfolio": {
+      "band_destination_fraction": 1.0,
+      "band_down": 0.02,
+      "band_overrides": {},
+      "band_up": 0.02,
+      "base_currency": "EUR",
+      "direction": "longonly",
+      "fees": 0.0,
+      "fill_timing": "next_close",
+      "fixed_fee": 0.35,
+      "fx_conversion_cost": 0.0003,
+      "gross_cap": 1.0,
+      "init_cash": 5000.0,
+      "margin_interest_rate": 0.0367,
+      "net_cap": 1.0,
+      "short_borrow_rate": 0.005,
+      "short_rebate_rate": 0.0,
+      "slippage": 0.0005
+    },
+    "ranking": {
+      "metric": "convergent_income_utility",
+      "min_trades": 0
+    },
+    "report": {
+      "freq": "1D",
+      "max_oos_drawdown": 0.35,
+      "metrics": [
+        "convergent_tail_budget",
+        "convergent_downside_lskew",
+        "total_fees_paid"
+      ],
+      "min_oos_sharpe": 0.5,
+      "min_oos_trades": 5,
+      "year_freq": "252D"
+    },
+    "schema_version": 10,
+    "strategy": {
+      "id": "demeter.cash_merger_break_risk",
+      "params": {
+        "max_positions": 0,
+        "max_weight_multiple": 1.5,
+        "residual_entry_enabled": false,
+        "residual_entry_threshold": -0.02
+      }
+    }
+  },
+  "evidence": {
+    "component_registry_fingerprint": "7bfc0ecbb60daf892caa56303054ca762afdec7f91ebc62b721b911a64770978",
+    "config": {
+      "authored_config_hash": "2c8def5e1823bccc5dee8aa6b6ae520a3b6d3f75630f9ad26f9ff45bd4799f50",
+      "raw_config_identity": {
+        "hash": "e65d81731625b482792653411570b723fea4d1f0a29647ce2275a5235e114590"
+      },
+      "resolved_config_hash": "0cdd1659d98eab091a7d22bc02ad9e05062fc65e55a19e1b58a775ca9cb81d0d",
+      "schema_version": 10,
+      "selection": {
+        "config_path": "/home/laimk/git/aegis/aegis-rd/research/configs/demeter/cash_merger_current/cash_merger_complete.yaml",
+        "source": "explicit"
+      },
+      "source_path": "research/configs/demeter/cash_merger_current/cash_merger_complete.yaml"
+    },
+    "data_arrays": {
+      "component_required_arrays": [
+        "Close"
+      ],
+      "configured_arrays": [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume"
+      ],
+      "contract_required_arrays": [
+        "Close",
+        "Open"
+      ],
+      "missing_required_arrays": [],
+      "pipeline_required_arrays": [
+        "Close",
+        "Open"
+      ]
+    },
+    "optimization": {
+      "schema_version": "optimization_route.v1"
+    }
+  },
+  "lineage": {},
+  "run": {
+    "finished_at": "2026-07-15T17:43:35.251498Z",
+    "id": "20260715T174134970477Z_demeter_cash_merger_complete",
+    "label": "demeter_cash_merger_complete",
+    "mode": "new",
+    "run_dir": "20260715T174134970477Z_demeter_cash_merger_complete",
+    "started_at": "2026-07-15T17:41:34.970678Z",
+    "status": "failed"
+  },
+  "schema_version": 4,
+  "stages": [
+    {
+      "diagnostic": {
+        "error_type": "MarketDataQualityError",
+        "message": "Market data quality check failed: catalog cannot serve AES.XNYS-1-DAY-LAST-EXTERNAL for requested window; missing=['2023-01-01T00:00:00+00:00..2026-07-15T00:00:00+00:00']"
+      },
+      "id": "run",
+      "status": "failed",
+      "updated_at": "2026-07-15T17:43:35.251473Z"
+    }
+  ]
+}

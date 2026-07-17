@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from aegis_runtime.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
-
-from research.aegis_research.market_data.currency import CurrencyConversion
 
 _USD_LEG = InstrumentId.from_str("AAPL.XNAS")
 _BASE_LEG = InstrumentId.from_str("BMW.XETR")

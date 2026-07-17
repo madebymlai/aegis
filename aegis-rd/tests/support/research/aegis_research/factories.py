@@ -2,24 +2,32 @@
 
 Each factory supplies valid defaults for every field and accepts **overrides.
 Routing construction through factories means porting one helper instead of N call
-sites when section defaults change (e.g. when pydantic v2 adoption drops
-gross_cap and data.arrays schema defaults).
+sites when section defaults change (e.g. when the unit-gross sleeve contract
+dropped gross_cap/net_cap from the schema, aegis-rd-ui1m).
 
 These are test-support only — no production code changes.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_data.distributions import Distribution
+from aegis_runtime import DriftBand, InstrumentId, MarketDataBundle
+from aegis_runtime.currency import CurrencyConversion
+from vectorbtpro import vbt
 
 from research.aegis_research.component_registry.contracts import (
+    SYMBOL_LEVEL,
     ComponentDefinition,
     ComponentFamily,
+    ComponentSourceIdentity,
+    IndicatorManifest,
+    StrategyManifest,
 )
 from research.aegis_research.component_registry.registry import (
     FrozenComponentRegistry,
@@ -40,12 +48,24 @@ from research.aegis_research.configuration import (
     RunSplitConfig,
     SignalConfig,
 )
+from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.optimization.candidate_grid import (
     SPLIT_LEVEL,
     CandidateGrid,
 )
 from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.precompute import CandidateKey
+from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
+    RunDataFacts,
+)
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
+from research.aegis_research.optimization.window_evaluation._simulation import (
+    _build_portfolio,
+    expand_market_frame_to_candidate_columns,
+    simulate_portfolio_batch,
+)
+from tests.support.research.aegis_research.test_doubles import FakeDataResult
 
 
 def make_data_quality_config(**overrides: Any) -> DataQualityConfig:
@@ -74,11 +94,6 @@ def make_data_config(**overrides: Any) -> DataConfig:
         "timeframe": "1D",
         "path": None,
         "missing_index": "raise",
-        "missing_columns": "raise",
-        "tz_localize": None,
-        "tz_convert": None,
-        "skip_on_error": False,
-        "silence_warnings": False,
         "quality": make_data_quality_config(),
     }
     defaults.update(overrides)
@@ -103,11 +118,10 @@ def make_portfolio_config(**overrides: Any) -> PortfolioConfig:
         "init_cash": 10_000.0,
         "fees": 0.001,
         "slippage": 0.0005,
-        "gross_cap": 1.0,
-        "net_cap": 1.0,
         "direction": "longonly",
         "short_borrow_rate": 0.005,
         "short_rebate_rate": 0.0,
+        "margin_interest_rate": 0.0367,
         # Mechanics tests assert exact same-bar order dates/prices; pin same_close so they
         # stay shift-free. Production PortfolioConfig defaults to next_close; tests that
         # exercise realistic fills set fill_timing explicitly.
@@ -154,7 +168,6 @@ def make_ranking_config(**overrides: Any) -> RankingConfig:
     """Return a RankingConfig with valid defaults, overridden by any kwargs."""
     defaults: dict[str, Any] = {
         "metric": "total_return",
-        "min_weight": 0.3,
         "min_trades": 0,
     }
     defaults.update(overrides)
@@ -301,6 +314,110 @@ def make_component_registry(
     return freeze_component_registry(definitions)
 
 
+def make_indicator_component_definition(
+    *,
+    id: str = "demo.indicator",
+    version: str = "1.0.0",
+    input_names: tuple[str, ...] = ("Close",),
+    param_names: tuple[str, ...] = (),
+    output_names: tuple[str, ...] = ("value",),
+    defaults: Mapping[str, Any] | None = None,
+    has_param_space: bool = False,
+    has_lookback: bool = False,
+) -> ComponentDefinition:
+    return ComponentDefinition(
+        _manifest=IndicatorManifest(
+            family="indicators",
+            id=id,
+            version=version,
+            input_names=input_names,
+            param_names=param_names,
+            output_names=output_names,
+            defaults=dict(defaults or {}),
+        ),
+        _file_path=Path(f"/fixtures/{id}.py"),
+        identity=_component_source_identity(id),
+        _has_param_space=has_param_space,
+        has_lookback=has_lookback,
+    )
+
+
+def make_strategy_component_definition(
+    *,
+    id: str = "demo.strategy",
+    version: str = "1.0.0",
+    input_names: tuple[str, ...] = ("Close",),
+    param_names: tuple[str, ...] = (),
+    output_name: str = "active",
+    consumes_outputs: tuple[str, ...] = (),
+    defaults: Mapping[str, Any] | None = None,
+    has_param_space: bool = False,
+    has_lookback: bool = False,
+) -> ComponentDefinition:
+    return ComponentDefinition(
+        _manifest=StrategyManifest(
+            family="strategies",
+            id=id,
+            version=version,
+            input_names=input_names,
+            param_names=param_names,
+            output_name=output_name,
+            consumes_outputs=consumes_outputs,
+            defaults=dict(defaults or {}),
+        ),
+        _file_path=Path(f"/fixtures/{id}.py"),
+        identity=_component_source_identity(id),
+        _has_param_space=has_param_space,
+        has_lookback=has_lookback,
+    )
+
+
+def _component_source_identity(component_id: str) -> ComponentSourceIdentity:
+    return ComponentSourceIdentity(
+        repo_relative_path=f"tests/fixtures/{component_id}.py",
+        source_hash="0" * 64,
+    )
+
+
+def make_run_arrays(**overrides: Any) -> RunArrays:
+    """Return a RunArrays with valid defaults, overridden by any kwargs.
+
+    Defaults are a coherent single-series shape: the P&L frames are the signal
+    Close/Open objects themselves, mirroring what ``prepare_run_arrays``
+    produces when no P&L series is declared.
+    """
+    close = overrides.pop("close", pd.DataFrame({0: [1.0, 2.0]}))
+    open_ = overrides.pop("open_", pd.DataFrame({0: [1.0, 2.0]}))
+    defaults: dict[str, Any] = {
+        "signal": MarketDataBundle({"Close": close, "Open": open_}),
+        "pnl_close": close,
+        "pnl_open": open_,
+        "currency_conversion": None,
+        "distributions": (),
+    }
+    defaults.update(overrides)
+    return RunArrays(**defaults)
+
+
+def make_run_data_facts(**overrides: Any) -> RunDataFacts:
+    """Return a RunDataFacts with valid defaults, overridden by any kwargs.
+
+    Defaults are the simplest healthy fixture: a fake data result, a contract
+    whose configured arrays satisfy the pipeline-required Close/Open pair, and
+    no metric-registry fingerprint.
+    """
+    defaults: dict[str, Any] = {
+        "data_result": FakeDataResult(),
+        "array_contract": DataArrayContract(
+            configured_arrays=("Close", "Open"),
+            pipeline_required_arrays=("Close", "Open"),
+        ),
+        "metric_registry_fingerprint": None,
+    }
+    defaults.update(overrides)
+    return RunDataFacts(**defaults)
+
+
 def make_setup_result(**overrides: Any) -> SetupResult:
     """Return a SetupResult with valid defaults, overridden by any kwargs.
 
@@ -308,15 +425,10 @@ def make_setup_result(**overrides: Any) -> SetupResult:
     single field (or a subset) can construct the wrapper directly without
     reaching into the setup stage internals.
     """
-    close = pd.DataFrame({0: [1.0, 2.0]})
-    open_ = pd.DataFrame({0: [1.0, 2.0]})
     defaults: dict[str, Any] = {
         "store_path": Path("candidates.sqlite3"),
         "optimization_source": _fake_optimization_source(),
-        "close": close,
-        "open_": open_,
-        "pnl_close": close,
-        "pnl_open": open_,
+        "arrays": make_run_arrays(),
         "split_result": _fake_split_result(),
     }
     defaults.update(overrides)
@@ -341,3 +453,109 @@ class _FakeSplitResult:
 
 def _fake_split_result() -> Any:
     return _FakeSplitResult()
+
+
+def make_candidate_portfolio(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: PortfolioConfig | None = None,
+    *,
+    periods_per_year: int = 252,
+    **sim_kwargs: Any,
+) -> vbt.Portfolio:
+    """Simulate a Candidate batch for metrics tests.
+
+    Wraps the Window Evaluation internal simulation seam so tests that only
+    need a Portfolio to extract metrics from never name the sim module
+    (mirrors ``make_run_arrays``). ``config`` defaults to the factory
+    PortfolioConfig.
+    """
+    book = ResolvedBook(config if config is not None else make_portfolio_config())
+    return simulate_portfolio_batch(
+        close, allocations, book, periods_per_year=periods_per_year, **sim_kwargs
+    )
+
+
+SINGLE_CANDIDATE_ID = "single"
+
+
+def _wrap_single_candidate(allocations: pd.DataFrame) -> pd.DataFrame:
+    """Lift a flat symbol frame into the one-candidate MultiIndex the batch path expects."""
+    columns = pd.MultiIndex.from_product(
+        [[SINGLE_CANDIDATE_ID], allocations.columns],
+        names=["candidate_id", SYMBOL_LEVEL],
+    )
+    return pd.DataFrame(allocations.to_numpy(), index=allocations.index, columns=columns)
+
+
+def make_single_book_portfolio(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: PortfolioConfig,
+    *,
+    open_: pd.DataFrame | None = None,
+    market_index: pd.Index | None = None,
+    periods_per_year: int = 252,
+    fees_by_symbol: pd.Series | None = None,
+    instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
+    futures_roots: tuple[str, ...] = (),
+    distributions: Sequence[Distribution] | None = None,
+    currency_conversion: CurrencyConversion | None = None,
+) -> vbt.Portfolio:
+    """Simulate one plain-symbol book through the batched path.
+
+    Test support for carry/mechanics assertions: wraps ``allocations`` into a
+    one-candidate MultiIndex (``SINGLE_CANDIDATE_ID``) and the loose book facts
+    into a :class:`ResolvedBook`, then delegates to the internal simulation
+    seam. Not a production interface — the batch entry is the only production
+    path.
+    """
+    alloc_mi = _wrap_single_candidate(allocations)
+    return simulate_portfolio_batch(
+        close,
+        alloc_mi,
+        ResolvedBook(
+            config=config,
+            fees_by_symbol=fees_by_symbol,
+            instrument_bands=instrument_bands,
+            futures_roots=futures_roots,
+        ),
+        open_=open_,
+        market_index=market_index,
+        periods_per_year=periods_per_year,
+        distributions=distributions,
+        currency_conversion=currency_conversion,
+    )
+
+
+def make_engine_mechanics_portfolio(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: PortfolioConfig,
+    *,
+    periods_per_year: int = 252,
+    futures_roots: tuple[str, ...] = (),
+) -> vbt.Portfolio:
+    """Simulate one book on the engine seam directly below the exposure gate.
+
+    Engine-mechanics pins only. The gate forbids gross above the unit sleeve
+    contract as an END state (aegis-rd-ui1m), but the engine's surplus buying
+    power still finances such states TRANSIENTLY (buys sequenced before sells,
+    drawdown-drifted books mid-rebalance), so the margin-interest and
+    futures-mask cash semantics must stay pinned on books the public batch
+    entry rejects. Every behavioral test drives ``simulate_portfolio_batch``;
+    only exact-cash-math pins may use this seam.
+    """
+    alloc_mi = _wrap_single_candidate(allocations)
+    expanded_close = expand_market_frame_to_candidate_columns(
+        close, alloc_mi.columns, feature_name="Close"
+    )
+    return _build_portfolio(
+        expanded_close,
+        alloc_mi,
+        ResolvedBook(config=config, futures_roots=futures_roots),
+        open_frame=None,
+        market_index=None,
+        group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
+        periods_per_year=periods_per_year,
+    )

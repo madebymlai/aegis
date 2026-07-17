@@ -12,6 +12,7 @@ from aegis_runtime import (
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
+from aegis_runtime.bundle_loader import BUNDLE_PAYLOAD_SCHEMA_VERSION
 
 from research.aegis_research.execution_bundle import BundleArtifact
 from research.aegis_research.execution_bundle_wheel import (
@@ -62,8 +63,6 @@ def _artifact(
             strategy=strategy,
             indicators=(),
             instrument_bands={instrument_id: DriftBand(up=0.10, down=0.20)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="longonly",
         ),
         component_sources={"strategy.py": "def run(*args, **kwargs):\n    raise AssertionError\n"},
@@ -88,7 +87,7 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
     assert "load_installed_bundle(__package__)" in loader
     assert "CONTRACT =" not in loader
     assert "PLAN =" not in loader
-    assert manifest["schema_version"] == "execution_bundle.v2"
+    assert manifest["schema_version"] == BUNDLE_PAYLOAD_SCHEMA_VERSION
     assert manifest["contract"]["instrument_ids"] == ["AAPL.NASDAQ"]
     assert manifest["contract"]["missing_index"] == "drop"
     assert manifest["plan"]["instrument_bands"] == {
@@ -104,6 +103,22 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
         sys.modules.pop(artifact.package_name, None)
 
     assert bundle.manifest.candidate_key == "0123456789abcdef"
+
+
+def test_write_wheel_requires_the_first_v4_capable_runtime(tmp_path) -> None:
+    # Schema rejection is the safety mechanism; the package bound makes
+    # installation resolve a v4-capable aegis-runtime up front.
+    artifact = _artifact()
+
+    wheel_path = write_wheel(artifact, tmp_path)
+
+    with zipfile.ZipFile(wheel_path) as zf:
+        metadata_path = next(
+            name for name in zf.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = zf.read(metadata_path).decode()
+
+    assert "Requires-Dist: aegis-runtime>=0.3.0" in metadata
 
 
 def test_write_wheel_uses_same_name_when_same_candidate_already_exists(tmp_path) -> None:

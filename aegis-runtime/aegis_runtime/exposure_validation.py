@@ -74,13 +74,19 @@ class ExposureLimits:
 
     def __post_init__(self) -> None:
         gross_cap = float(self.gross_cap)
-        if gross_cap <= 0:
-            raise InvalidExposureLimits(f"gross_cap must be > 0; got {self.gross_cap!r}")
+        if np.isnan(gross_cap) or gross_cap <= 0:
+            raise InvalidExposureLimits(
+                f"gross_cap must be positive and not NaN; got {self.gross_cap!r}"
+            )
         if self.direction not in _SIGN_GUARDS:
             raise InvalidExposureLimits(
                 f"direction must be one of {sorted(_SIGN_GUARDS)}; got {self.direction!r}"
             )
         net_cap = gross_cap if self.net_cap is None else float(self.net_cap)
+        if np.isnan(net_cap) or net_cap < 0:
+            raise InvalidExposureLimits(
+                f"net_cap must be non-negative and not NaN; got {self.net_cap!r}"
+            )
         object.__setattr__(self, "gross_cap", gross_cap)
         object.__setattr__(self, "net_cap", net_cap)
 
@@ -105,7 +111,10 @@ def validate_exposure(
     """
     if allocations.empty or len(allocations.columns) == 0:
         return
-    _assert_sign_consistent(allocations.to_numpy(dtype=float, copy=False), limits.direction)
+    _assert_sign_consistent(
+        allocations.to_numpy(dtype=float, copy=False),
+        limits.direction,
+    )
     if group_by is None:
         describe = None
         gross = allocations.abs().sum(axis=1)
@@ -118,16 +127,48 @@ def validate_exposure(
                 f"{len(allocations.columns)} columns"
             )
         describe = describe_group if describe_group is not None else _describe_group
-        gross = allocations.abs().T.groupby(labels, sort=False).sum().T.max(axis=0)
-        net = allocations.T.groupby(labels, sort=False).sum().T.abs().max(axis=0)
+        gross = (
+            allocations.abs().T.groupby(labels, sort=False, dropna=False).sum().T.max(axis=0)
+        )
+        net = (
+            allocations.T.groupby(labels, sort=False, dropna=False).sum().T.abs().max(axis=0)
+        )
     _assert_within_cap(
-        gross, limits.gross_cap, name="gross", expr="Σ|wᵢ|",
-        breach=GrossExposureBreach, describe=describe,
+        gross,
+        limits.gross_cap,
+        name="gross",
+        expr="Σ|wᵢ|",
+        breach=GrossExposureBreach,
+        describe=describe,
     )
     net_cap = cast(float, limits.net_cap)
     _assert_within_cap(
-        net, net_cap, name="net", expr="|Σwᵢ|",
-        breach=NetExposureBreach, describe=describe,
+        net,
+        net_cap,
+        name="net",
+        expr="|Σwᵢ|",
+        breach=NetExposureBreach,
+        describe=describe,
+    )
+
+
+def validate_net_exposure(allocations: pd.DataFrame, limits: ExposureLimits) -> None:
+    """Gate only net exposure for a signed target-weight frame.
+
+    Trader already enforces gross exposure by clamping its planned book. This
+    narrower operation keeps the remaining net inequality, tolerance, and error
+    vocabulary in the kernel without inventing an unbounded gross limit.
+    """
+    if allocations.empty or len(allocations.columns) == 0:
+        return
+    net_cap = cast(float, limits.net_cap)
+    _assert_within_cap(
+        allocations.sum(axis=1).abs(),
+        net_cap,
+        name="net",
+        expr="|Σwᵢ|",
+        breach=NetExposureBreach,
+        describe=None,
     )
 
 

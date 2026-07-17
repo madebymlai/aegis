@@ -4,19 +4,23 @@ import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration import DataConfig
 from research.aegis_research.data import (
     DataArrayDiagnostics,
     DataDiagnostics,
-    MarketDataAdapterResult,
     MarketDataQuality,
-    RemoteDataPullError,
     load_market_data_result,
 )
 from research.aegis_research.market_data import loading as data_loading
 from research.aegis_research.market_data import metadata as data_metadata
-from research.aegis_research.market_data.contracts import provider_failed_adapter_result
+from research.aegis_research.market_data.contracts import (
+    QUALITY_DATA_UNAVAILABLE,
+    MarketDataLoad,
+)
 from tests.support.research.aegis_research.factories import make_data_config
+from tests.support.research.aegis_research.market_data_fixtures import (
+    result_from_load,
+    unservable_port,
+)
 
 
 def _frozen_observation() -> data_loading.MarketDataObservation:
@@ -48,7 +52,7 @@ class _FrozenData:
         return frame.xs(feature, axis=1, level="feature")
 
 
-def test_describe_builds_the_market_data_v3_facet_model() -> None:
+def test_describe_builds_the_market_data_v4_facet_model() -> None:
     config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
     observation = _frozen_observation()
     diagnostics = (
@@ -66,18 +70,18 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
                     last_timestamp="2020-01-03 00:00:00+00:00",
                 )
             },
-            provider_status="loaded",
+            load_status="loaded",
         ),
     )
     quality = MarketDataQuality(state="healthy")
 
     metadata = data_metadata.describe(
         config,
-        source=MarketDataAdapterResult(
+        source=MarketDataLoad(
             native_data=_FrozenData(),
             source_metadata={"frozen": True},
             evidence={"source": "test_evidence", "raw_rows": 3},
-            provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
+            port_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
         ),
         observation=observation,
         diagnostics=diagnostics,
@@ -85,8 +89,8 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
         required_arrays=("Close",),
     )
 
-    # v3 facet-shaped model (ADR-0020): assert facets, not a flat dict
-    assert metadata.schema_version == "market_data.v3"
+    # v4 facet-shaped model (ADR-0020): assert facets, not a flat dict
+    assert metadata.schema_version == "market_data.v4"
     assert metadata.request.requested_instrument_ids == [_id("SYN.XNAS")]
     assert metadata.request.timeframe == "1D"
     assert metadata.request.authored_arrays == ["Close"]
@@ -128,96 +132,56 @@ def test_describe_builds_the_market_data_v3_facet_model() -> None:
                     "last_timestamp": "2020-01-03 00:00:00+00:00",
                 }
             },
-            "provider_status": "loaded",
+            "load_status": "loaded",
         }
     ]
     # provenance facet: deduplicated provider/source blobs
-    assert metadata.provenance.provider_class == "_FrozenData"
+    assert metadata.provenance.source_class == "_FrozenData"
     assert metadata.provenance.source_metadata == {"frozen": True}
     assert metadata.provenance.index_evidence == {"source": "test_evidence", "raw_rows": 3}
-    assert metadata.provenance.provider_metadata == {
+    assert metadata.provenance.port_metadata == {
         "source": "frozen",
         "class": f"{__name__}._FrozenData",
     }
-    assert metadata.provenance.omitted_metadata_fields == []
     assert metadata.provenance.update_supported is False
     assert metadata.provenance.missing_index == "raise"
-    assert metadata.provenance.missing_columns == "raise"
-    assert metadata.provenance.tz_localize is None
-    assert metadata.provenance.tz_convert is None
-    assert metadata.provenance.skip_on_error is False
-    assert metadata.provenance.silence_warnings is False
 
 
-def test_provider_failure_routes_through_the_same_describe_builder() -> None:
+def test_unavailable_failure_wire_shape_is_pinned() -> None:
+    """The failure provenance a Run records when its window cannot be served:
+    the error type and the gate's judgement in source metadata, the
+    data-unavailable evidence marker, and provider internals collapsed to
+    their empty values."""
     config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
-    quality = MarketDataQuality(
-        state="provider_failed",
-        reasons=("provider failed before usable native data was available",),
-    )
-    diagnostics = (
-        DataDiagnostics(
-            instrument_id=_id("SYN.XNAS"),
-            configured=True,
-            provider_status="provider_failed",
-        ),
-    )
 
-    expected = data_metadata.describe(
-        config,
-        source=provider_failed_adapter_result(
-            RemoteDataPullError("future", "network unavailable")
-        ),
-        observation=MarketDataObservation_empty(),
-        diagnostics=diagnostics,
-        quality=quality,
-        required_arrays=("Close", "OpenInterest"),
+    result = load_market_data_result(config, port=unservable_port())
+
+    assert result.metadata.provenance.source_metadata["error_type"] == (
+        "MarketDataUnavailableError"
     )
-
-    def fail(_config: DataConfig) -> MarketDataAdapterResult:
-        raise RemoteDataPullError("future", "network unavailable")
-
-    result = load_market_data_result(
-        config,
-        required_arrays=("OpenInterest",),
-        adapter=fail,
+    assert "missing=" in result.metadata.provenance.source_metadata[
+        "error_summary"
+    ]
+    assert result.metadata.provenance.index_evidence["source"] == (
+        QUALITY_DATA_UNAVAILABLE
     )
-
-    assert result.metadata == expected
-    # Pin the failure wire shape explicitly: expected and result share the
-    # describe derivation, so the equality above alone would not catch a
-    # regression in the derived failure provenance.
-    assert result.metadata.provenance.source_metadata == {
-        "provider_error_type": "RemoteDataPullError",
-        "provider_error_summary": (
-            "provider failed before usable native data was available"
-        ),
-    }
-    assert result.metadata.provenance.index_evidence == {"source": "provider_failed"}
-    assert result.metadata.provenance.provider_metadata == {}
-    assert result.metadata.provenance.omitted_metadata_fields == []
+    assert result.metadata.provenance.port_metadata == {}
     assert result.metadata.provenance.update_supported is False
-    assert result.metadata.provenance.provider_class is None
+    assert result.metadata.provenance.source_class is None
 
 
 def test_failed_shape_equals_success_shape_minus_data() -> None:
     config = make_data_config(instruments=["SYN.XNAS"], arrays=["Close"])
-    success = load_market_data_result(
+    success = result_from_load(
         config,
-        adapter=lambda _config: MarketDataAdapterResult(
-                native_data=_FrozenData(),
-                source_metadata={"frozen": True},
-                evidence={"source": "test_evidence", "raw_rows": 3},
+        MarketDataLoad(
+            native_data=_FrozenData(),
+            source_metadata={"frozen": True},
+            evidence={"source": "test_evidence", "raw_rows": 3},
         ),
     )
 
-    def fail(_config: DataConfig) -> MarketDataAdapterResult:
-        raise RemoteDataPullError("frozen", "network unavailable")
-
-    failure = load_market_data_result(
-        config,
-        adapter=fail,
-    )
+    failure = load_market_data_result(config, port=unservable_port())
 
     assert failure.metadata.schema_version == success.metadata.schema_version
     assert failure.metadata.coverage.instrument_ids == []
@@ -226,8 +190,8 @@ def test_failed_shape_equals_success_shape_minus_data() -> None:
     assert failure.metadata.coverage.rows == 0
     assert failure.metadata.coverage.start is None
     assert failure.metadata.coverage.end is None
-    assert failure.metadata.provenance.provider_class is None
-    assert failure.metadata.quality.state == "provider_failed"
+    assert failure.metadata.provenance.source_class is None
+    assert failure.metadata.quality.state == QUALITY_DATA_UNAVAILABLE
     assert failure.native_data is None
 
 
@@ -236,19 +200,18 @@ def test_describe_tolerates_empty_provider_internals() -> None:
 
     metadata = data_metadata.describe(
         config,
-        source=MarketDataAdapterResult(
+        source=MarketDataLoad(
             native_data=None,
-            evidence={"source": "provider_failed"},
+            evidence={"source": QUALITY_DATA_UNAVAILABLE},
         ),
         observation=MarketDataObservation_empty(),
         diagnostics=(),
-        quality=MarketDataQuality(state="provider_failed"),
+        quality=MarketDataQuality(state=QUALITY_DATA_UNAVAILABLE),
         required_arrays=("Close",),
     )
 
-    assert metadata.provenance.provider_class is None
-    assert metadata.provenance.provider_metadata == {}
-    assert metadata.provenance.omitted_metadata_fields == []
+    assert metadata.provenance.source_class is None
+    assert metadata.provenance.port_metadata == {}
     assert metadata.provenance.update_supported is False
     assert metadata.coverage.rows == 0
     assert metadata.coverage.instrument_ids == []
@@ -265,23 +228,23 @@ def MarketDataObservation_empty() -> data_metadata.MarketDataObservation:
     )
 
 
-def test_loaded_metadata_round_trips_through_the_public_loader() -> None:
+def test_loaded_metadata_round_trips_through_the_leaf_sequence() -> None:
     native_data = _FrozenData()
 
-    result = load_market_data_result(
+    result = result_from_load(
         make_data_config(instruments=["SYN.XNAS"], arrays=["Close"]),
-        adapter=lambda _config: MarketDataAdapterResult(
-                native_data=native_data,
-                source_metadata={"frozen": True},
-                evidence={"source": "test_evidence", "raw_rows": 3},
-                provider_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
+        MarketDataLoad(
+            native_data=native_data,
+            source_metadata={"frozen": True},
+            evidence={"source": "test_evidence", "raw_rows": 3},
+            port_metadata={"source": "frozen", "class": f"{__name__}._FrozenData"},
         ),
     )
 
     loaded = [d.name for d in result.metadata.arrays if d.loaded]
     assert loaded == ["Close"]
     assert result.metadata.provenance.source_metadata == {"frozen": True}
-    assert result.metadata.provenance.provider_metadata["class"] == f"{__name__}._FrozenData"
+    assert result.metadata.provenance.port_metadata["class"] == f"{__name__}._FrozenData"
 
 
 def _id(value: str) -> InstrumentId:

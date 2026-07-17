@@ -15,9 +15,6 @@ from research.aegis_research.configuration import (
     RunConfig,
     to_builtin,
 )
-from research.aegis_research.data import (
-    MarketDataResult,
-)
 from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import (
     PUBLICATION_PENDING,
@@ -33,10 +30,7 @@ from research.aegis_research.optimization.evidence_ledger import (
     RunEvidence,
 )
 from research.aegis_research.optimization.pipeline.execution import ExecutionResult
-from research.aegis_research.optimization.run_data_contract import (
-    DataArrayContract,
-    build_candidate_data_identity,
-)
+from research.aegis_research.optimization.run_data_contract import RunDataFacts
 from research.aegis_research.optimization.source import OptimizationSource
 from research.aegis_research.provenance.recorder import RunRecorder
 
@@ -53,13 +47,11 @@ def run_pipeline_publishing(
     *,
     config: RunConfig,
     recorder: RunRecorder,
-    data_result: MarketDataResult,
-    array_contract: DataArrayContract,
+    facts: RunDataFacts,
     optimization_source: OptimizationSource,
     execution: ExecutionResult,
     run_evidence: RunEvidence,
     store_path: Path,
-    metric_registry_fingerprint: str | None,
 ) -> PublishingResult:
     """Build the three candidate rows and publish them to the candidate store."""
     try:
@@ -67,7 +59,7 @@ def run_pipeline_publishing(
         candidate_rows = candidate_rows_from_result(
             execution.optimization_result,
             source_identity=optimization_source.evidence,
-            data_identity=build_candidate_data_identity(data_result, array_contract),
+            data_identity=facts.candidate_data_identity(),
             book_settings=to_builtin(config.portfolio),
             store_namespace=store_namespace,
         )
@@ -75,10 +67,8 @@ def run_pipeline_publishing(
         candidate_store_provenance = build_candidate_store_provenance(
             recorder,
             optimization_source=optimization_source.evidence,
-            data_result=data_result,
-            array_contract=array_contract,
+            facts=facts,
             config=config,
-            metric_registry_fingerprint=metric_registry_fingerprint,
         )
         with CandidateStore(store_path) as candidate_store:
             candidate_store.insert_completed_run(

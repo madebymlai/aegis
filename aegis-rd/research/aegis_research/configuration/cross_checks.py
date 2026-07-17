@@ -185,9 +185,7 @@ def _check_output_contract(
                 continue
             produced[output_name] = f"{path}.id"
 
-    missing = sorted(
-        strategy_definition.consumed_output_names() - frozenset(produced)
-    )
+    missing = sorted(set(strategy_definition.consumed_output_names()) - set(produced))
     if missing:
         issues.append(
             ConfigValidationIssue(

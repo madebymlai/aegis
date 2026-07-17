@@ -28,6 +28,7 @@ import pandas as pd
 from nautilus_trader.common.config import msgspec_encoding_hook
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.catalog import ServedBars
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
 if TYPE_CHECKING:
@@ -40,6 +41,10 @@ IB_PORT = 4002
 IB_CLIENT_ID = 1
 IB_MARKET_DATA_TYPE = "REALTIME"
 IB_REQUEST_TIMEOUT = 120
+# The dead-call line: any single await on the vendor session that makes no
+# progress for this long is stuck, not slow (the vendor stack has unbounded
+# awaits — connect, shared-request futures — that otherwise hang forever, #75).
+IB_CALL_DEADLINE = 600
 
 # IB ``MarketDataTypeEnum`` member names — validated up front so a bad value fails
 # at construction, not at connect time, without importing ``ibapi`` to do it.
@@ -63,9 +68,10 @@ class IbkrRequestError(RuntimeError):
     ``int``-vs-``None`` ``TypeError`` from the adapter's reconnect path).  The
     provider translates them into this one error so a caller learns *which* fetch
     failed and *why*, rather than an opaque stack trace; the original is chained as
-    the cause.  Per-request *latency* on a no-data fetch (IB error 162) is bounded by
-    the underlying client's request timeout — internal to the vendor adapter — so
-    this clarifies the failure, it does not pre-empt that wait.
+    the cause.  The vendor stack also has genuinely unbounded awaits (connect,
+    shared-request futures, stuck qualification of an instrument that cannot
+    resolve to one asset) — every session await is therefore deadline-bounded
+    (``call_deadline``), so a dead call surfaces here instead of hanging (#75).
     """
 
 
@@ -91,6 +97,7 @@ class IbkrHistoricalProvider:
     market_data_type: str = IB_MARKET_DATA_TYPE
     use_rth: bool = True
     timeout: int = IB_REQUEST_TIMEOUT
+    call_deadline: float = IB_CALL_DEADLINE
     include_expired_futures: bool = False
     client_factory: Callable[[], Any] | None = None
     adjusted_last_client_factory: Callable[[], Any] | None = None
@@ -108,8 +115,21 @@ class IbkrHistoricalProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> Sequence[Bar]:
-        """The vendor-aggregated bars for *bar_type* over ``[start, end]``."""
+    ) -> ServedBars:
+        """The vendor bars for *bar_type* over ``[start, end]`` in one native request.
+
+        The whole window is asked for as a single IB ``duration`` ending at *end*.
+        Nautilus segments an IB request by its duration internally, so the provider
+        does not re-implement that walk; and IB clamps the answer at the instrument's
+        earliest available data, so no request ever steps past the listing into empty
+        pre-history — the job the old backward walk did with a no-data wall (#75),
+        now done by IB itself in one request.  ``served_from`` reports how far back
+        the answer reached: the requested *start* when history covers it (so a
+        follow-on write abuts the prior file), or the oldest bar returned when IB
+        clamped at a later listing (so the pre-history head stays unclaimed for the
+        coverage gate).  A whole-unit duration overshoots below *start*; those extra
+        bars are trimmed back to the requested window.
+        """
         contract = self._expired_future_contract(bar_type.instrument_id)
         instrument_kwargs = (
             {"contracts": [contract]}
@@ -118,16 +138,42 @@ class IbkrHistoricalProvider:
         )
         return self._request(
             f"historical bars {bar_type}",
-            lambda session: session.request_bars(
+            lambda session: self._request_bars_once(
+                session,
+                bar_type=bar_type,
+                start=start,
+                end=end,
+                instrument_kwargs=instrument_kwargs,
+            ),
+        )
+
+    async def _request_bars_once(
+        self,
+        session: Any,
+        *,
+        bar_type: BarType,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        instrument_kwargs: Mapping[str, Any],
+    ) -> ServedBars:
+        pulled = await asyncio.wait_for(
+            session.request_bars(
                 bar_specifications=[str(bar_type.spec)],
-                start_date_time=_naive_utc(start),
                 end_date_time=_naive_utc(end),
+                duration=_ib_duration(start, end),
                 tz_name="UTC",
                 use_rth=self.use_rth,
                 timeout=self.timeout,
                 **instrument_kwargs,
             ),
+            timeout=self.call_deadline,
         )
+        # The whole-unit duration can reach before `start`; keep only the window.
+        bars = [bar for bar in (pulled or []) if bar.ts_event >= start.value]
+        # Coverage is served from `start` when history reaches it (contiguous with any
+        # prior file), else from the oldest bar IB clamped at (#75, the unclaimed head).
+        served_from = start if _history_reached(bars, start) else _first_bar_instant(bars, end)
+        return ServedBars(tuple(bars), served_from)
 
     def request_instruments(
         self, instrument_ids: Sequence[InstrumentId]
@@ -137,7 +183,9 @@ class IbkrHistoricalProvider:
         return self._request(
             "instrument definitions "
             f"[{', '.join(instrument_id.value for instrument_id in instrument_ids)}]",
-            lambda session: _request_instrument_parts(session, plain_ids, contracts),
+            lambda session: _request_instrument_parts(
+                session, plain_ids, contracts, deadline=self.call_deadline
+            ),
         )
 
     def request_adjusted_last(
@@ -146,7 +194,6 @@ class IbkrHistoricalProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        primary_exchange: str | None = None,
         currency: str = "USD",
     ) -> pd.Series:
         """The raw-``ibapi`` daily ``ADJUSTED_LAST`` close series.
@@ -154,7 +201,10 @@ class IbkrHistoricalProvider:
         Nautilus' historic bar path cannot express IBKR's ``ADJUSTED_LAST``
         ``whatToShow`` value, so this one derivation source uses a deliberately
         narrow raw-IB seam.  Normal production ``TRADES`` bars still ride
-        :meth:`request_bars` through the generic data-provider port.
+        :meth:`request_bars` through the generic data-provider port.  The IB
+        ``primaryExchange`` is derived here from the instrument's corpus venue
+        (vendor symbology is the provider's secret, ADR-0005): callers name the
+        instrument, never an exchange.
         """
         subject = f"ADJUSTED_LAST closes {instrument_id.value}"
         try:
@@ -163,7 +213,7 @@ class IbkrHistoricalProvider:
                 what_to_show="ADJUSTED_LAST",
                 start=start,
                 end=end,
-                primary_exchange=primary_exchange,
+                primary_exchange=_ib_primary_exchange(instrument_id),
                 currency=currency,
                 timeout=self.timeout,
             )
@@ -205,7 +255,7 @@ class IbkrHistoricalProvider:
         # Test path only: the fake session has no process-global constraint, so it
         # connects, runs, and closes per call in its own loop.
         session = make()
-        await session.connect()
+        await asyncio.wait_for(session.connect(), timeout=self.call_deadline)
         try:
             return await call(session)
         finally:
@@ -216,7 +266,9 @@ class IbkrHistoricalProvider:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             session = self._build_real_session()
-            loop.run_until_complete(session.connect())
+            loop.run_until_complete(
+                asyncio.wait_for(session.connect(), timeout=self.call_deadline)
+            )
             _IB_CONNECTION["loop"] = loop
             _IB_CONNECTION["session"] = session
         return _IB_CONNECTION["loop"], _IB_CONNECTION["session"]
@@ -266,15 +318,72 @@ class IbkrHistoricalProvider:
         return _expired_future_contract(instrument_id)
 
 
+# The oldest returned bar within this of the requested start reads as history
+# reaching the start across a market closure; a wider gap reads as IB clamping at a
+# later listing date (#75).  Wider than any weekend/holiday and far narrower than a
+# real listing gap — the only blur is a start authored within this margin of an
+# unknown listing, a bounded (<= margin) over-claim the coverage gate tolerates.
+_WALL_PROBE_MARGIN = pd.Timedelta(days=14)
+
+
+def _history_reached(bars: Sequence[Bar], start: pd.Timestamp) -> bool:
+    """Whether the answer's oldest bar is close enough to *start* that history covers
+    it — only a market closure lies between.  A wider gap is IB clamping at a later
+    listing date (#75): the oldest bar is where history begins, not *start*."""
+    if not bars:
+        return False
+    return bars[0].ts_event - start.value <= _WALL_PROBE_MARGIN.value
+
+
+def _first_bar_instant(bars: Sequence[Bar], fallback: pd.Timestamp) -> pd.Timestamp:
+    """Where served history begins: the oldest pulled bar's event time, or
+    *fallback* when nothing was pulled at all (nothing is claimed either way)."""
+    if not bars:
+        return fallback
+    return pd.Timestamp(bars[0].ts_event, tz="UTC")
+
+
 async def _request_instrument_parts(
-    session: Any, plain_ids: Sequence[str], contracts: Sequence[Any]
+    session: Any,
+    plain_ids: Sequence[str],
+    contracts: Sequence[Any],
+    *,
+    deadline: float,
 ) -> list[Instrument]:
+    # Each vendor await is deadline-bounded: an instrument that cannot resolve to
+    # one asset can leave the qualification machinery stuck instead of erroring,
+    # and a dead await must surface as an IbkrRequestError, not a hang (#75).
     instruments: list[Instrument] = []
     if plain_ids:
-        instruments.extend(await session.request_instruments(instrument_ids=list(plain_ids)))
+        instruments.extend(
+            await asyncio.wait_for(
+                session.request_instruments(instrument_ids=list(plain_ids)),
+                timeout=deadline,
+            )
+        )
     if contracts:
-        instruments.extend(await session.request_instruments(contracts=list(contracts)))
+        instruments.extend(
+            await asyncio.wait_for(
+                session.request_instruments(contracts=list(contracts)),
+                timeout=deadline,
+            )
+        )
     return instruments
+
+
+def _ib_primary_exchange(instrument_id: InstrumentId) -> str:
+    """The IB exchange code for an instrument's corpus (MIC) venue.
+
+    The corpus pins MIC venues (``XAMS``), but IB contracts only accept IB's own
+    exchange codes (``AEB``) — a MIC as ``primaryExchange`` is rejected with IB
+    error 200 "exchange invalid".  A venue with no MIC mapping (``ARCA``) is
+    already an IB code and passes through unchanged.
+    """
+    from nautilus_trader.adapters.interactive_brokers.parsing.instruments import (
+        possible_exchanges_for_venue,
+    )
+
+    return possible_exchanges_for_venue(instrument_id.venue.value)[0]
 
 
 def _expired_future_contract(instrument_id: InstrumentId) -> Any | None:
@@ -338,7 +447,7 @@ class _IbapiDailyCloseClient:
         what_to_show: str,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        primary_exchange: str | None,
+        primary_exchange: str,
         currency: str,
         timeout: int,
     ) -> list[tuple[pd.Timestamp, float]]:
@@ -412,7 +521,7 @@ def _build_raw_historical_app() -> Any:
 def _stock_contract(
     instrument_id: InstrumentId,
     *,
-    primary_exchange: str | None,
+    primary_exchange: str,
     currency: str,
 ) -> Any:
     from ibapi.contract import Contract
@@ -421,7 +530,7 @@ def _stock_contract(
     contract.symbol = instrument_id.symbol.value
     contract.secType = "STK"
     contract.exchange = "SMART"
-    contract.primaryExchange = primary_exchange or instrument_id.venue.value
+    contract.primaryExchange = primary_exchange
     contract.currency = currency.upper()
     return contract
 

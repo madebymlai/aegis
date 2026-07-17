@@ -1,8 +1,9 @@
-"""Orchestrator: wire observe -> judge -> describe behind the adapter seam.
+"""Orchestrator: wire observe -> judge -> describe over the catalog loader.
 
-`loading` owns no concern logic. It dispatches to a source adapter — a failed
-pull collapses to the degenerate adapter result, so failure rides the same
-sequence as success — then threads the outcome through the leaf modules:
+`loading` owns no concern logic. It loads through the catalog loader — the
+one implementation, behind the ``CatalogBackedDataPort`` seam — and an
+unavailable window collapses to the degenerate load, so failure rides the
+same sequence as success. The outcome threads through the leaf modules:
 observe (:mod:`diagnostics`), judge (:mod:`quality`), describe
 (:mod:`metadata`). Public feature accessors are re-exported from
 :mod:`features` so the facade surface stays stable.
@@ -10,7 +11,7 @@ observe (:mod:`diagnostics`), judge (:mod:`quality`), describe
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from research.aegis_research.configuration import DataConfig, merge_data_arrays
 from research.aegis_research.market_data import diagnostics as _observe
@@ -19,11 +20,14 @@ from research.aegis_research.market_data import metadata as _metadata
 from research.aegis_research.market_data import quality as _judge
 from research.aegis_research.market_data.adapters.catalog import load_catalog_source
 from research.aegis_research.market_data.contracts import (
-    MarketDataAdapter,
+    MarketDataLoad,
     MarketDataResult,
-    RemoteDataPullError,
-    provider_failed_adapter_result,
+    MarketDataUnavailableError,
+    failed_market_data_load,
 )
+
+if TYPE_CHECKING:
+    from aegis_data.catalog import CatalogBackedDataPort
 
 close_from_ohlcv = _features.close_from_ohlcv
 array_from_ohlcv = _features.array_from_ohlcv
@@ -46,8 +50,10 @@ __all__ = [
 ]
 
 
-def load_market_data(config: DataConfig) -> Any:
-    result = load_market_data_result(config)
+def load_market_data(
+    config: DataConfig, *, port: CatalogBackedDataPort | None = None
+) -> Any:
+    result = load_market_data_result(config, port=port)
     result.assert_usable()
     return result.native_data
 
@@ -56,18 +62,38 @@ def load_market_data_result(
     config: DataConfig,
     *,
     required_arrays: tuple[str, ...] | None = None,
-    adapter: MarketDataAdapter | None = None,
+    port: CatalogBackedDataPort | None = None,
 ) -> MarketDataResult:
-    """Load catalog data, then apply Aegis evidence/quality contracts."""
+    """Load catalog data, then apply Aegis evidence/quality contracts.
+
+    ``port`` is the one injection seam — the same ``CatalogBackedDataPort``
+    production wires — threaded to the catalog loader; omitted, the standard
+    port is composed inside aegis-data.
+    """
+    try:
+        source = load_catalog_source(config, port=port)
+    except MarketDataUnavailableError as error:
+        # The failure rides the same observe -> judge -> describe sequence as
+        # success, so an unavailable window becomes judged Run Evidence.
+        source = failed_market_data_load(error)
+    return result_from_load(config, source, required_arrays=required_arrays)
+
+
+def result_from_load(
+    config: DataConfig,
+    source: MarketDataLoad,
+    *,
+    required_arrays: tuple[str, ...] | None = None,
+) -> MarketDataResult:
+    """Assemble a :class:`MarketDataResult` from one load outcome — the fixed
+    observe → judge → describe sequence (ADR-0005), owned here once.
+
+    Internal seam, not part of the facade: leaf-altitude tests cross it with
+    hand-built loads (shapes the catalog loader cannot emit) so the sequence
+    can never drift between production and test support.
+    """
     requested = config.effective_arrays
     required = merge_data_arrays(requested, required_arrays or ())
-    load_data = load_catalog_source if adapter is None else adapter
-
-    try:
-        source = load_data(config)
-    except RemoteDataPullError as error:
-        source = provider_failed_adapter_result(error)
-
     observation, diagnostics = _observe.observe_source(
         config, source, requested_arrays=requested
     )
@@ -92,5 +118,7 @@ def load_market_data_result(
         quality=quality,
         pnl_native_data=source.pnl_native_data,
         currency_conversion=source.currency_conversion,
+        adjustment_mode=source.adjustment_mode,
         distributions=source.distributions,
+        size_increment_by_instrument=source.size_increment_by_instrument,
     )

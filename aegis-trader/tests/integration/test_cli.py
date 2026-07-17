@@ -14,6 +14,8 @@ import types
 
 import pytest
 
+from aegis_trader.backtest import BookBacktestResult
+from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.cli import main
 from aegis_trader.config import ConnectionConfigError
 
@@ -64,6 +66,17 @@ class _FakeEngine:
         self.disposed = True
 
 
+def _fake_backtest_result(
+    *,
+    financing_totals: dict[str, float] | None = None,
+) -> BookBacktestResult:
+    return BookBacktestResult(
+        engine=_FakeEngine(),
+        financing_totals=financing_totals or {},
+        analytics_horizon=derive_horizon(("1D",)),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # backtest subcommand (offline, catalog-only) — unchanged behaviour
 # --------------------------------------------------------------------------- #
@@ -77,7 +90,7 @@ def test_backtest_subcommand_runs_the_runner(tmp_path, monkeypatch):
 
     def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
         calls.update(path=path, start=start, end=end, catalog_path=catalog_path)
-        return _FakeEngine()
+        return _fake_backtest_result()
 
     monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
@@ -101,7 +114,7 @@ def test_backtest_subcommand_passes_catalog_path_override(tmp_path, monkeypatch)
 
     def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
         captured["catalog_path"] = catalog_path
-        return _FakeEngine()
+        return _fake_backtest_result()
 
     monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
@@ -124,7 +137,7 @@ def test_backtest_subcommand_discovers_book_when_omitted(tmp_path, monkeypatch):
 
     def fake_runner(path, *, start, end, catalog_path=None, **kwargs):
         seen["path"] = path
-        return _FakeEngine()
+        return _fake_backtest_result()
 
     monkeypatch.setattr("aegis_trader.backtest.run_book_backtest", fake_runner)
 
@@ -141,11 +154,12 @@ def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, ca
     account (aegis-rd-syp)."""
     book_path = _write_book(tmp_path)
     monkeypatch.setattr(
-        "aegis_trader.backtest.run_book_backtest", lambda path, **kw: _FakeEngine()
+        "aegis_trader.backtest.run_book_backtest",
+        lambda path, **kw: _fake_backtest_result(),
     )
     monkeypatch.setattr(
         "aegis_trader.backtest.book_return_stats",
-        lambda engine: {"Sharpe Ratio (252 days)": 0.87},
+        lambda engine, horizon: {"Sharpe Ratio (252 days)": 0.87},
     )
 
     with caplog.at_level(logging.INFO, logger="aegis_trader"):
@@ -160,6 +174,27 @@ def test_backtest_subcommand_reports_performance_stats(tmp_path, monkeypatch, ca
     assert "Sharpe Ratio (252 days)" in caplog.text  # return stats surfaced
     assert "0.87" in caplog.text  # the base-currency Sharpe (book_return_stats)
     assert "99.99" not in caplog.text  # native stats_returns is NOT used
+
+
+def test_backtest_subcommand_reports_nonzero_financing_totals(tmp_path, monkeypatch, caplog):
+    book_path = _write_book(tmp_path)
+    monkeypatch.setattr(
+        "aegis_trader.backtest.run_book_backtest",
+        lambda path, **kw: _fake_backtest_result(
+            financing_totals={"EUR": 12.34, "USD": 0.0}
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="aegis_trader"):
+        rc = main(
+            ["backtest", "--start", "2019-01-01", "--end", "2020-01-01",
+             "--book", str(book_path)]
+        )
+
+    assert rc == 0
+    assert "Financing costs (totals, by currency)" in caplog.text
+    assert "12.34" in caplog.text
+    assert "USD: 0.0" not in caplog.text
 
 
 # --------------------------------------------------------------------------- #

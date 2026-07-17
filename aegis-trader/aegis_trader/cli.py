@@ -29,23 +29,30 @@ def _run_backtest(args: argparse.Namespace) -> int:
     from aegis_trader.backtest import book_return_stats, run_book_backtest
 
     book_path = args.book if args.book is not None else find_book_config()
-    engine = run_book_backtest(
+    backtest = run_book_backtest(
         book_path,
         start=args.start,
         end=args.end,
         catalog_path=args.catalog_path,
     )
+    engine = backtest.engine
     result = engine.get_result()
     fills = [order for order in engine.cache.orders() if order.is_closed]
     _log.info(
         "Backtest complete: %d fill(s) over %s..%s", len(fills), args.start, args.end
     )
-    _log_performance(result, book_return_stats(engine))
+    horizon = backtest.analytics_horizon
+    _log.info("Analytics horizon: %s", horizon.describe())
+    _log_performance(result, book_return_stats(engine, horizon), backtest.financing_totals)
     engine.dispose()
     return 0
 
 
-def _log_performance(result, return_stats: dict[str, float]) -> None:
+def _log_performance(
+    result,
+    return_stats: dict[str, float],
+    financing_totals: dict[str, float],
+) -> None:
     """Report the performance summary — ``stats_pnls`` (per-currency PnL) plus the
     base-currency return stats (Sharpe, volatility, …) computed from the NAV curve.
 
@@ -61,6 +68,15 @@ def _log_performance(result, return_stats: dict[str, float]) -> None:
         _log.info("Return stats (base currency):")
         for name, value in return_stats.items():
             _log.info("  %s: %s", name, value)
+    nonzero_financing = {
+        currency: amount
+        for currency, amount in financing_totals.items()
+        if amount != 0.0
+    }
+    if nonzero_financing:
+        _log.info("Financing costs (totals, by currency):")
+        for currency, amount in sorted(nonzero_financing.items()):
+            _log.info("  %s: %s", currency, amount)
 
 
 def _trader_start(args: argparse.Namespace) -> int:

@@ -84,7 +84,7 @@ def size_deltas(
     fx_rates: Mapping[str, float],
     prices: Mapping[InstrumentId, float],
 ) -> tuple[OrderIntent, ...]:
-    """Convert signed weight deltas into sized, provider-agnostic orders.
+    """Convert signed weight deltas into rounded provider-agnostic orders.
 
     The sizing half of the rebalance pipeline: the pure (weight-space)
     rebalancer decides *what* to trade; this decides *how much* in native

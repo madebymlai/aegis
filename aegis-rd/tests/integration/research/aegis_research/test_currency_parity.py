@@ -10,9 +10,9 @@ base-currency value of a held position must match a real Nautilus backtest's
 from __future__ import annotations
 
 import pandas as pd
+from aegis_runtime.currency import build_currency_conversion
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 
-from research.aegis_research.market_data.currency import build_currency_conversion
 from tests.support.research.aegis_research.market_data_fixtures import (
     currency_pair_definition,
     equity_definition,

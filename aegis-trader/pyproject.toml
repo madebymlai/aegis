@@ -16,6 +16,10 @@ dependencies = [
   "aegis-data",
   "nautilus_trader",
   "pydantic>=2.0",
+  "aegis-exec-aegis-heldhedge-cand-b60",
+  "aegis-exec-atalanta-keystone-shortmute-cand-06c",
+  "aegis-exec-demeter-carry-mix-cand-ff2",
+  "requests>=2.34.2",
 ]
 
 # IBKR adapter (ibapi) — required only for paper/live runs and the IBKR
@@ -37,6 +41,9 @@ include = ["aegis_trader*"]
 python_version = "3.12"
 files = ["aegis_trader", "tests"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 # nautilus_trader ships no type stubs, pandas' stubs aren't installed, and
 # aegis-runtime is resolved as an editable local wheel — none expose types to
 # mypy.  Suppress the missing-import noise without weakening checks on our own code.
@@ -55,6 +62,9 @@ ignore_missing_imports = true
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }
 aegis-data = { path = "../aegis-data", editable = true }
+aegis-exec-aegis-heldhedge-cand-b60 = { path = "../bundles/aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl" }
+aegis-exec-atalanta-keystone-shortmute-cand-06c = { path = "../bundles/aegis_exec_atalanta_keystone_shortmute_cand_06c-1.0.0-py3-none-any.whl" }
+aegis-exec-demeter-carry-mix-cand-ff2 = { path = "../bundles/aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl" }
 
 [dependency-groups]
 dev = [

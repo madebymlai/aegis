@@ -195,10 +195,16 @@ def _render_data_section() -> str:
             "",
             "**`instruments`** — tradeable native Nautilus `InstrumentId` values in execution "
             "column order. These are parsed to `InstrumentId` at the catalog adapter edge and "
-            "remain typed through the runtime bundle.",
+            "remain typed through the runtime bundle. An entry may carry an optional declared "
+            "mark-mode token — `UEQC.IBIS:QUOTE` (quote-marked: BID/ASK bars, derived mid) or "
+            "`:MID` (bar-marked midpoint). Absent means LAST — no heuristic, so a *tradeable* "
+            "cash FX pair must declare `:MID` explicitly. Parsed once at config load into "
+            "`mark_modes`.",
             "",
             "**`exchange`** — optional data-only native `InstrumentId` values requested from "
-            "the same catalog/port but never exposed as tradeable bundle columns.",
+            "the same catalog/port but never exposed as tradeable bundle columns. Section "
+            "membership is itself a mark declaration: a conversion leg is bar-marked MID "
+            "(IBKR serves no TRADES print for cash FX), so it takes no token.",
             "",
             "**`futures`** — optional bare continuous-future root symbols (e.g. `[ES, KC]`), "
             "not native ids. Each is materialised on demand as a back-adjusted continuous "
@@ -214,7 +220,8 @@ def _render_portfolio_section() -> str:
     return _render_nested_section(
         "portfolio",
         title="### `portfolio` (required)",
-        tag="keyword-only (no silent default); requires explicit `gross_cap` and `direction`",
+        tag="keyword-only (no silent default); requires explicit `direction` — the "
+        "exposure envelope is the fixed unit-gross sleeve contract, not config",
         extra_lines=[
             "**`band_up` / `band_down`** — sleeve-wide no-trade band widths. "
             "`band_up` gates trims and `band_down` gates adds. Defaults are zero, "
@@ -386,9 +393,9 @@ def _render_literal_catalogs() -> str:
             "Valid values for `signal.execution_timing`.",
         ),
         (
-            "Missing-Index / Missing-Columns Policies",
+            "Missing-Index Policy",
             MISSING_POLICIES,
-            "Valid values for `data.missing_index` and `data.missing_columns`.",
+            "Valid values for `data.missing_index`.",
         ),
         (
             "Reserved `optimization.execute` Keys",
@@ -459,7 +466,6 @@ def _render_example() -> str:
       timeframe: "1D"
 
     portfolio:
-      gross_cap: 1.0
       direction: longonly
       base_currency: EUR
       band_up: 0.0
@@ -518,7 +524,6 @@ def _render_futures_example() -> str:
       timeframe: "1D"
 
     portfolio:
-      gross_cap: 1.0
       direction: longonly
       base_currency: EUR
       band_up: 0.0

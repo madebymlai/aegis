@@ -1,0 +1,168 @@
+{
+  "contract": {
+    "announcement_delay": "filing-day close excluded; decision on next close; fill following close",
+    "cash_benchmark": "FRED DTB3",
+    "costs": {
+      "fixed_usd_per_order": 0.35,
+      "slippage": 0.0005
+    },
+    "dividends": "Massive split-adjusted cash distributions on ex-date",
+    "execution": "Aegis production simulator, whole shares, 2% drift bands; entry risk budget held constant until lifecycle resolution",
+    "known_limit": "offer-amended lifecycles excluded because the snapshot lacks causal amendment timestamps",
+    "minimum_concurrent": 10,
+    "minimum_trailing_median_dollar_volume": 1000000.0,
+    "name_cap": 0.1,
+    "per_name_fallback_break_loss_cap": 0.02,
+    "q_market": "(close - median_20_preannouncement_closes) / (initial_cash_offer - fallback)",
+    "selection_controls": {
+      "all_slots40": {
+        "maximum_lifecycle_slots": 40,
+        "q_minimum": 0.0
+      },
+      "q70_slots20": {
+        "maximum_lifecycle_slots": 20,
+        "q_minimum": 0.7
+      },
+      "q70_slots30": {
+        "maximum_lifecycle_slots": 30,
+        "q_minimum": 0.7
+      },
+      "q70_slots40": {
+        "maximum_lifecycle_slots": 40,
+        "q_minimum": 0.7
+      },
+      "q80_slots40": {
+        "maximum_lifecycle_slots": 40,
+        "q_minimum": 0.8
+      }
+    }
+  },
+  "evidence": {
+    "capital_usd": 5000.0,
+    "classification": "prototype_reused_one_year_history_not_out_of_sample",
+    "end": "2026-07-15",
+    "exclusions": {
+      "insufficient_price_history": 1,
+      "offer_amendment_timing_unavailable": 9
+    },
+    "fixed_cash_lifecycles": 117,
+    "snapshot": "/tmp/aegis-cash-merger-prototype/offline-v9/cash-merger-census-c54377d961e20acb.json",
+    "start": "2025-07-16",
+    "symbols": 116
+  },
+  "question": "Does diversified fixed-cash merger convergence clear cash after executable small-book costs?",
+  "results": {
+    "all_slots40": {
+      "annualized_volatility": 0.024209238139298657,
+      "cash_excess_sharpe": -0.7524879694470237,
+      "cash_total_return": 0.02631903267186697,
+      "cash_utility": 0.026186468078916388,
+      "convergent_downside_lskew": 0.08761645262250999,
+      "convergent_income_utility": 0.007094571656277538,
+      "convergent_tail_budget": -0.002457771440746989,
+      "convergent_utility_delta_vs_cash": -0.01909189642263885,
+      "daily_skew": -0.20242066903734365,
+      "excess_total_return": -0.018672251671865148,
+      "held_completed_deals": 47,
+      "held_terminated_deals": 4,
+      "invested_day_fraction": 0.8406374501992032,
+      "max_drawdown": -0.012916155129529483,
+      "mean_target_gross": 0.48984063745019923,
+      "median_names_when_invested": 25.0,
+      "net_total_return": 0.007646781000001823,
+      "total_fees_paid": 40.95000000000009,
+      "total_orders": 117,
+      "worst_month": -0.003559850326911196
+    },
+    "q70_slots20": {
+      "annualized_volatility": 0.026479000016577114,
+      "cash_excess_sharpe": 0.3250006540840794,
+      "cash_total_return": 0.02631903267186697,
+      "cash_utility": 0.026186468078916388,
+      "convergent_downside_lskew": -0.042572426687869105,
+      "convergent_income_utility": 0.033745455589981405,
+      "convergent_tail_budget": 0.0035360314800185364,
+      "convergent_utility_delta_vs_cash": 0.007558987511065016,
+      "daily_skew": 0.6943070014052523,
+      "excess_total_return": 0.00844040132813384,
+      "held_completed_deals": 44,
+      "held_terminated_deals": 4,
+      "invested_day_fraction": 0.8406374501992032,
+      "max_drawdown": -0.011100721580633799,
+      "mean_target_gross": 0.7983700630804662,
+      "median_names_when_invested": 20.0,
+      "net_total_return": 0.03475943400000081,
+      "total_fees_paid": 39.900000000000084,
+      "total_orders": 114,
+      "worst_month": -0.004406085999999698
+    },
+    "q70_slots30": {
+      "annualized_volatility": 0.020553907650765698,
+      "cash_excess_sharpe": 0.01290565624924408,
+      "cash_total_return": 0.02631903267186697,
+      "cash_utility": 0.026186468078916388,
+      "convergent_downside_lskew": 0.0023743457869860214,
+      "convergent_income_utility": 0.025822294611969096,
+      "convergent_tail_budget": 0.0023930698422686596,
+      "convergent_utility_delta_vs_cash": -0.0003641734669472922,
+      "daily_skew": 1.5169164079986917,
+      "excess_total_return": 5.616932813290454e-05,
+      "held_completed_deals": 46,
+      "held_terminated_deals": 4,
+      "invested_day_fraction": 0.8406374501992032,
+      "max_drawdown": -0.007163891866786787,
+      "mean_target_gross": 0.6127490039840638,
+      "median_names_when_invested": 23.0,
+      "net_total_return": 0.026375201999999875,
+      "total_fees_paid": 42.350000000000094,
+      "total_orders": 121,
+      "worst_month": -0.0032032810000001133
+    },
+    "q70_slots40": {
+      "annualized_volatility": 0.01539312847666966,
+      "cash_excess_sharpe": -0.5612620982557717,
+      "cash_total_return": 0.02631903267186697,
+      "cash_utility": 0.026186468078916388,
+      "convergent_downside_lskew": 0.0049715554784816735,
+      "convergent_income_utility": 0.017194357484650383,
+      "convergent_tail_budget": 0.001338829227274488,
+      "convergent_utility_delta_vs_cash": -0.008992110594266006,
+      "daily_skew": 1.4747863890573794,
+      "excess_total_return": -0.008877225671866107,
+      "held_completed_deals": 46,
+      "held_terminated_deals": 4,
+      "invested_day_fraction": 0.8406374501992032,
+      "max_drawdown": -0.005638786432769383,
+      "mean_target_gross": 0.45637450199203194,
+      "median_names_when_invested": 23.0,
+      "net_total_return": 0.017441807000000864,
+      "total_fees_paid": 39.20000000000008,
+      "total_orders": 112,
+      "worst_month": -0.0026216220000001567
+    },
+    "q80_slots40": {
+      "annualized_volatility": 0.01319702054090722,
+      "cash_excess_sharpe": -0.9275248532170753,
+      "cash_total_return": 0.02631903267186697,
+      "cash_utility": 0.026186468078916388,
+      "convergent_downside_lskew": 0.008545692288461748,
+      "convergent_income_utility": 0.013686935678242314,
+      "convergent_tail_budget": 0.0016336555666988607,
+      "convergent_utility_delta_vs_cash": -0.012499532400674074,
+      "daily_skew": 0.7677123451138456,
+      "excess_total_return": -0.012473862671867675,
+      "held_completed_deals": 45,
+      "held_terminated_deals": 4,
+      "invested_day_fraction": 0.8007968127490039,
+      "max_drawdown": -0.005652825640808379,
+      "mean_target_gross": 0.4284860557768924,
+      "median_names_when_invested": 23.0,
+      "net_total_return": 0.013845169999999296,
+      "total_fees_paid": 38.50000000000008,
+      "total_orders": 110,
+      "worst_month": -0.0014362790248946267
+    }
+  },
+  "strongest_control": "q70_slots20",
+  "verdict": "inconclusive_too_few_held_breaks"
+}

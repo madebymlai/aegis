@@ -14,12 +14,10 @@ from research.aegis_research.configuration import (
     RunConfig,
 )
 from research.aegis_research.data import (
-    MarketDataBundle,
-    MarketDataResult,
+    RunArrays,
     load_market_data_result,
-    market_data_bundle,
+    prepare_run_arrays,
 )
-from research.aegis_research.market_data.panels import canonical_array_panel
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
@@ -32,9 +30,10 @@ from research.aegis_research.optimization.pipeline.execution import run_pipeline
 from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
 from research.aegis_research.optimization.run_data_contract import (
-    DataArrayContract,
+    RunDataFacts,
     build_run_data_array_contract,
 )
+from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.provenance.capture import capture_config_evidence
 from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
@@ -104,23 +103,29 @@ def run_strategy_sweep(
             config.data,
             required_arrays=array_contract.required_arrays,
         )
-        write_data_metadata_artifact(recorder, data_result, array_contract)
-        data_result.assert_usable()
-        # Continuous-future adjustment happens in the load path now (the catalog adapter
-        # materialises each declared root, Path A), so the bundle already carries adjusted
-        # continuous columns; only currency conversion remains before the sweep.
-        data_bundle = _to_base_currency(data_result, data_bundle=market_data_bundle(data_result))
-        pnl_bundle = _pnl_bundle(data_result)
         metric_registry = resolved_config.metric_registry
+        facts = RunDataFacts(
+            data_result=data_result,
+            array_contract=array_contract,
+            metric_registry_fingerprint=metric_registry.fingerprint,
+        )
+        write_data_metadata_artifact(recorder, facts)
+        # One constructor prepares everything the sweep consumes: both views,
+        # FX-converted, alignment proven, usability gated (unusable data keeps
+        # its recorded metadata artifact above).
+        arrays = prepare_run_arrays(data_result)
+        book = ResolvedBook.resolve(
+            config,
+            data_result.currency_conversion,
+            data_result.size_increment_by_instrument,
+        )
         return _run_optimization_strategy_sweep(
             config,
             component_registry=component_registry,
             recorder=recorder,
-            data_result=data_result,
-            data=data_bundle,
-            pnl_data=pnl_bundle,
-            array_contract=array_contract,
-            metric_registry_fingerprint=metric_registry.fingerprint,
+            facts=facts,
+            arrays=arrays,
+            book=book,
             metric_registry=metric_registry,
             run_evidence=run_evidence,
         )
@@ -138,39 +143,6 @@ def run_strategy_sweep(
         raise
 
 
-def _pnl_bundle(
-    data_result: MarketDataResult,
-) -> MarketDataBundle | None:
-    """The P&L continuous series (a future's ``pnl_adjustment`` mode), in base currency.
-
-    ``None`` when no symbol declares a P&L series — the portfolio then simulates on the
-    signal series (the single-series default).  The store already back-adjusted this
-    series; here it only needs the same FX conversion the signal bundle gets.
-    """
-    if data_result.pnl_native_data is None:
-        return None
-    loaded = [descriptor.name for descriptor in data_result.metadata.arrays if descriptor.loaded]
-    bundle = MarketDataBundle(
-        {name: canonical_array_panel(data_result.pnl_native_data, name) for name in loaded}
-    )
-    return _to_base_currency(data_result, data_bundle=bundle)
-
-
-def _to_base_currency(
-    data_result: MarketDataResult, *, data_bundle: MarketDataBundle
-) -> MarketDataBundle:
-    """Convert native-priced arrays to the book's base currency (a per-consumer view).
-
-    A single-currency book carries no conversion and passes through untouched; a
-    multi-currency book applies the FX series the catalog derived from its
-    ``exchange:`` pairs. The catalog itself keeps native, account-agnostic prices.
-    """
-    conversion = data_result.currency_conversion
-    if conversion is None:
-        return data_bundle
-    return MarketDataBundle(conversion.apply(data_bundle.arrays))
-
-
 def _failure_diagnostic(error: Exception) -> dict[str, str]:
     return {
         "error_type": type(error).__name__,
@@ -183,11 +155,9 @@ def _run_optimization_strategy_sweep(
     *,
     component_registry: FrozenComponentRegistry,
     recorder: RunRecorder,
-    data_result: MarketDataResult,
-    data: MarketDataBundle,
-    pnl_data: MarketDataBundle | None,
-    array_contract: DataArrayContract,
-    metric_registry_fingerprint: str | None,
+    facts: RunDataFacts,
+    arrays: RunArrays,
+    book: ResolvedBook,
     metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
@@ -196,11 +166,8 @@ def _run_optimization_strategy_sweep(
         setup = run_pipeline_setup(
             config=config,
             component_registry=component_registry,
-            data=data,
-            pnl_data=pnl_data,
-            data_result=data_result,
-            array_contract=array_contract,
-            metric_registry_fingerprint=metric_registry_fingerprint,
+            arrays=arrays,
+            facts=facts,
             run_evidence=run_evidence,
         )
     except Exception as error:
@@ -211,23 +178,20 @@ def _run_optimization_strategy_sweep(
     execution = run_pipeline_execution(
         config=config,
         setup=setup,
+        book=book,
         metric_registry=metric_registry,
         run_evidence=run_evidence,
-        currency_conversion=data_result.currency_conversion,
-        distributions=data_result.distributions,
     )
 
     # Stage 3: Publishing — three representative candidates, candidate store
     publishing = run_pipeline_publishing(
         config=config,
         recorder=recorder,
-        data_result=data_result,
-        array_contract=array_contract,
+        facts=facts,
         optimization_source=setup.optimization_source,
         execution=execution,
         run_evidence=run_evidence,
         store_path=setup.store_path,
-        metric_registry_fingerprint=metric_registry_fingerprint,
     )
 
     # Stage 4: Completion — artifact, completion, activation, result
@@ -236,8 +200,6 @@ def _run_optimization_strategy_sweep(
         publishing=publishing,
         config=config,
         recorder=recorder,
-        data_result=data_result,
-        array_contract=array_contract,
+        facts=facts,
         run_evidence=run_evidence,
-        metric_registry_fingerprint=metric_registry_fingerprint,
     )

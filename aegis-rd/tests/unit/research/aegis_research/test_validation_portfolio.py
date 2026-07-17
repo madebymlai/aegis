@@ -87,8 +87,8 @@ def _get_issues(path: str, error: ValidationError) -> list[dict[str, Any]]:
 # ── smoke tests (constants, defaults, calculator) ────────────────────────────
 
 
-def test_schema_version_is_ten() -> None:
-    assert CONFIG_SCHEMA_VERSION == 10
+def test_schema_version_is_eleven() -> None:
+    assert CONFIG_SCHEMA_VERSION == 11
 
 
 def test_portfolio_directions_admit_signed_book() -> None:
@@ -104,51 +104,42 @@ def test_report_periods_per_year_shares_metric_annualization_calendar() -> None:
 
 def test_short_financing_rate_defaults_carry_on() -> None:
     # Non-zero borrow default = carry ON by default; rebate defaults to 0.0.
-    config = make_portfolio_config(gross_cap=1.0, direction="longonly")
+    config = make_portfolio_config(direction="longonly")
     assert config.short_borrow_rate == 0.005
     assert config.short_rebate_rate == 0.0
+
+
+def test_margin_interest_rate_defaults_priced_leverage_on() -> None:
+    # Construct directly: the factory pins margin_interest_rate explicitly, so it
+    # cannot witness the SCHEMA default this test exists to pin.
+    config = PortfolioConfig(direction="longonly")
+
+    assert config.margin_interest_rate == 0.0367
 
 
 # ── construction validates (pydantic dataclass) ──────────────────────────────
 
 
-def test_portfolio_construction_requires_gross_cap() -> None:
-    with pytest.raises(ValidationError) as e:
-        _PORTFOLIO_ADAPTER.validate_python({"direction": "longonly"})
-    assert any(err["loc"] == ("gross_cap",) for err in e.value.errors())
-    gross_errors = _get_issues("gross_cap", e.value)
-    assert gross_errors[0]["msg"] == "Field required"
-
-
 def test_portfolio_construction_requires_direction() -> None:
     with pytest.raises(ValidationError) as e:
-        _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 1.0})
+        _PORTFOLIO_ADAPTER.validate_python({})
     assert any(err["loc"] == ("direction",) for err in e.value.errors())
     dir_errors = _get_issues("direction", e.value)
     assert dir_errors[0]["msg"] == "Field required"
 
 
-def test_portfolio_construction_accepts_gross_cap_above_one_no_ceiling() -> None:
-    config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 2.0, "direction": "longonly"})
-    assert config.gross_cap == 2.0
-
-
-def test_portfolio_construction_rejects_non_positive_gross_cap() -> None:
+@pytest.mark.parametrize("removed_key", ["gross_cap", "net_cap"])
+def test_portfolio_construction_rejects_removed_cap_keys(removed_key: str) -> None:
+    # The exposure envelope is the fixed unit-gross sleeve contract
+    # (aegis-rd-ui1m); a config still declaring a cap fails like any unknown key.
     with pytest.raises(ValidationError) as e:
-        _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 0.0, "direction": "longonly"})
-    gross_errors = _get_issues("gross_cap", e.value)
-    assert gross_errors[0]["msg"] == "Input should be greater than 0"
-
-
-def test_portfolio_construction_accepts_net_cap_zero() -> None:
-    config = _PORTFOLIO_ADAPTER.validate_python(
-        {"gross_cap": 2.0, "net_cap": 0.0, "direction": "longonly"}
-    )
-    assert config.net_cap == 0.0
+        _PORTFOLIO_ADAPTER.validate_python({removed_key: 1.0, "direction": "longonly"})
+    removed_errors = _get_issues(removed_key, e.value)
+    assert removed_errors[0]["msg"] == "Unexpected keyword argument"
 
 
 def test_portfolio_construction_defaults_directional_bands_to_zero() -> None:
-    config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 1.0, "direction": "longonly"})
+    config = _PORTFOLIO_ADAPTER.validate_python({"direction": "longonly"})
     assert config.band_up == 0.0
     assert config.band_down == 0.0
     assert config.band_overrides == {}
@@ -157,7 +148,6 @@ def test_portfolio_construction_defaults_directional_bands_to_zero() -> None:
 def test_portfolio_construction_accepts_asymmetric_directional_band_pair() -> None:
     config = _PORTFOLIO_ADAPTER.validate_python(
         {
-            "gross_cap": 1.0,
             "direction": "longonly",
             "band_up": 0.01,
             "band_down": 0.05,
@@ -170,7 +160,6 @@ def test_portfolio_construction_accepts_asymmetric_directional_band_pair() -> No
 def test_portfolio_construction_accepts_per_instrument_band_overrides() -> None:
     config = _PORTFOLIO_ADAPTER.validate_python(
         {
-            "gross_cap": 1.0,
             "direction": "longonly",
             "band_up": 0.01,
             "band_down": 0.02,
@@ -186,7 +175,6 @@ def test_portfolio_construction_rejects_negative_band_override_width() -> None:
     with pytest.raises(ValidationError) as e:
         _PORTFOLIO_ADAPTER.validate_python(
             {
-                "gross_cap": 1.0,
                 "direction": "longonly",
                 "band_overrides": {"SYN.XNAS": {"up": -0.01, "down": 0.07}},
             }
@@ -198,7 +186,7 @@ def test_portfolio_construction_rejects_negative_band_override_width() -> None:
 def test_portfolio_construction_rejects_removed_rebalance_band() -> None:
     with pytest.raises(ValidationError) as e:
         _PORTFOLIO_ADAPTER.validate_python(
-            {"gross_cap": 1.0, "direction": "longonly", "rebalance_band": 0.02}
+            {"direction": "longonly", "rebalance_band": 0.02}
         )
     assert any(
         err["loc"] == ("rebalance_band",) and err["type"] == "unexpected_keyword_argument"
@@ -208,41 +196,48 @@ def test_portfolio_construction_rejects_removed_rebalance_band() -> None:
 
 def test_portfolio_construction_accepts_one_directional_width_with_other_defaulted() -> None:
     config = _PORTFOLIO_ADAPTER.validate_python(
-        {"gross_cap": 1.0, "direction": "longonly", "band_up": 0.01}
+        {"direction": "longonly", "band_up": 0.01}
     )
     assert config.band_up == 0.01
     assert config.band_down == 0.0
 
 
 def test_portfolio_construction_admits_direction_both() -> None:
-    config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 2.0, "direction": "both"})
+    config = _PORTFOLIO_ADAPTER.validate_python({"direction": "both"})
     assert config.direction == "both"
 
 
 def test_portfolio_construction_admits_direction_shortonly() -> None:
-    config = _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 2.0, "direction": "shortonly"})
+    config = _PORTFOLIO_ADAPTER.validate_python({"direction": "shortonly"})
     assert config.direction == "shortonly"
 
 
 def test_portfolio_construction_rejects_unknown_direction() -> None:
     with pytest.raises(ValidationError) as e:
-        _PORTFOLIO_ADAPTER.validate_python({"gross_cap": 1.0, "direction": "sideways"})
+        _PORTFOLIO_ADAPTER.validate_python({"direction": "sideways"})
     dir_errors = _get_issues("direction", e.value)
     assert "longonly" in dir_errors[0]["msg"] or dir_errors[0]["type"] == "literal_error"
 
 
 def test_portfolio_construction_accepts_short_financing_rates() -> None:
     config = _PORTFOLIO_ADAPTER.validate_python(
-        {"gross_cap": 2.0, "direction": "longonly", "short_borrow_rate": 0.01, "short_rebate_rate": 0.002}
+        {"direction": "longonly", "short_borrow_rate": 0.01, "short_rebate_rate": 0.002}
     )
     assert config.short_borrow_rate == 0.01
     assert config.short_rebate_rate == 0.002
 
 
+def test_portfolio_construction_accepts_explicit_zero_margin_interest_rate() -> None:
+    config = _PORTFOLIO_ADAPTER.validate_python(
+        {"direction": "longonly", "margin_interest_rate": 0.0}
+    )
+    assert config.margin_interest_rate == 0.0
+
+
 def test_portfolio_construction_rejects_negative_short_borrow_rate() -> None:
     with pytest.raises(ValidationError) as e:
         _PORTFOLIO_ADAPTER.validate_python(
-            {"gross_cap": 1.0, "direction": "longonly", "short_borrow_rate": -0.001}
+            {"direction": "longonly", "short_borrow_rate": -0.001}
         )
     assert any(err["loc"] == ("short_borrow_rate",) for err in e.value.errors())
 
@@ -250,15 +245,23 @@ def test_portfolio_construction_rejects_negative_short_borrow_rate() -> None:
 def test_portfolio_construction_rejects_negative_short_rebate_rate() -> None:
     with pytest.raises(ValidationError) as e:
         _PORTFOLIO_ADAPTER.validate_python(
-            {"gross_cap": 1.0, "direction": "longonly", "short_rebate_rate": -0.001}
+            {"direction": "longonly", "short_rebate_rate": -0.001}
         )
     assert any(err["loc"] == ("short_rebate_rate",) for err in e.value.errors())
+
+
+def test_portfolio_construction_rejects_negative_margin_interest_rate() -> None:
+    with pytest.raises(ValidationError) as e:
+        _PORTFOLIO_ADAPTER.validate_python(
+            {"direction": "longonly", "margin_interest_rate": -0.001}
+        )
+    assert any(err["loc"] == ("margin_interest_rate",) for err in e.value.errors())
 
 
 def test_portfolio_construction_rejects_unknown_key() -> None:
     with pytest.raises(ValidationError) as e:
         _PORTFOLIO_ADAPTER.validate_python(
-            {"gross_cap": 1.0, "direction": "longonly", "bogus": 42}
+            {"direction": "longonly", "bogus": 42}
         )
     assert any(err["type"] == "unexpected_keyword_argument" for err in e.value.errors())
 
@@ -267,7 +270,6 @@ def test_portfolio_band_override_key_must_be_in_tradeable_universe(tmp_path: Pat
     with pytest.raises(ConfigValidationError) as e:
         _resolve(
             {
-                "gross_cap": 1.0,
                 "direction": "longonly",
                 "band_overrides": {"OTHER.XNAS": {"up": 0.03, "down": 0.07}},
             },
@@ -282,6 +284,12 @@ def test_portfolio_band_override_key_must_be_in_tradeable_universe(tmp_path: Pat
     )
 
 
+def test_resolved_config_carries_margin_interest_default(tmp_path: Path) -> None:
+    config = _resolve({"direction": "longonly"}, tmp_path=tmp_path)
+
+    assert config.config.portfolio.margin_interest_rate == 0.0367
+
+
 def test_portfolio_band_override_key_accepts_configured_future_root(tmp_path: Path) -> None:
     raw = {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -293,7 +301,6 @@ def test_portfolio_band_override_key_accepts_configured_future_root(tmp_path: Pa
             end="2024-04-30",
         ),
         "portfolio": {
-            "gross_cap": 1.0,
             "direction": "longonly",
             "band_overrides": {"ES": {"up": 0.03, "down": 0.07}},
         },
@@ -339,7 +346,7 @@ def test_report_construction_accepts_defaults() -> None:
 def test_portfolio_rejects_removed_field_as_unknown_key(tmp_path: Path, removed: str) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(
-            {"gross_cap": 1.0, "direction": "longonly", removed: 1.0},
+            {"direction": "longonly", removed: 1.0},
             tmp_path=tmp_path,
         )
     messages = [i.message for i in e.value.issues if i.path == f"portfolio.{removed}"]
@@ -350,12 +357,12 @@ def test_portfolio_rejects_removed_field_as_unknown_key(tmp_path: Path, removed:
 
 
 def test_portfolio_co_reports_unknown_key_and_structural_error(tmp_path: Path) -> None:
-    """A removed field *and* a missing gross_cap are both reported."""
+    """A removed field *and* a missing direction are both reported."""
     with pytest.raises(ConfigValidationError) as e:
-        _resolve({"entry_budget": 0.6, "direction": "longonly"}, tmp_path=tmp_path)
+        _resolve({"entry_budget": 0.6}, tmp_path=tmp_path)
     paths = {i.path for i in e.value.issues}
     assert "portfolio.entry_budget" in paths
-    assert "portfolio.gross_cap" in paths
+    assert "portfolio.direction" in paths
 
 
 # ── report annualization calendar (Timedelta-string frequencies) ─────────────

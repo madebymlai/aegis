@@ -454,7 +454,7 @@ def _extend_ownership_boundaries(lines: list[str]) -> None:
     lines.append(
         "|----------|-------|------------|")
     lines.append(
-        "| Portfolio sizing | Run Config | `portfolio.gross_cap` |"
+        "| Portfolio sizing | Sleeve contract | unit gross (`SLEEVE_GROSS_LIMIT`) |"
     )
     lines.append(
         "| Direction (long/short) | Run Config | `portfolio.direction` |"

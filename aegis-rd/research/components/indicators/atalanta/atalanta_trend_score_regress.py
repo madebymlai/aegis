@@ -15,7 +15,6 @@
 # %% imports
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
-from vectorbtpro import vbt
 
 # %% define component metadata
 COMPONENT_MANIFEST = {
@@ -37,6 +36,8 @@ def param_space():
     horizons that are neither measured nor wanted here, and long trends have not decayed the way
     short trends have. The slow band is where the smoothed slope's steadiness pays.
     """
+
+    from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
 
     return {
         "lookback": vbt.Param([126, 189, 252]),

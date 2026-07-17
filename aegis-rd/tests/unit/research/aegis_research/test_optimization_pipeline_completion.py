@@ -22,6 +22,7 @@ from research.aegis_research.optimization.pipeline.publishing import PublishingR
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_run_config,
+    make_run_data_facts,
     make_setup_result,
 )
 from tests.support.research.aegis_research.test_doubles import (
@@ -112,6 +113,8 @@ def test_completion_returns_result_and_marks_completed(
                 "total": 30,
                 "excluded_invalid": 2,
                 "excluded_degenerate": 3,
+                # tiny chi-square over a wide grid -> field not separable -> warns
+                "omnibus": {"chi_square": 0.5, "n_candidates": 30, "n_splits": 2},
             },
         },
         persist=lambda: None,
@@ -134,10 +137,12 @@ def test_completion_returns_result_and_marks_completed(
         publishing=publishing,
         config=config,
         recorder=recorder,
-        data_result=FakeDataResult(),
-        array_contract=FakeArrayContract(),
+        facts=make_run_data_facts(
+            data_result=FakeDataResult(),
+            array_contract=FakeArrayContract(),
+            metric_registry_fingerprint="test-fp",
+        ),
         run_evidence=run_evidence,
-        metric_registry_fingerprint="test-fp",
     )
 
     # Assert returned result dict
@@ -153,7 +158,6 @@ def test_completion_returns_result_and_marks_completed(
 
     opt = result["optimization"]
     assert opt["ranking_metric"] == "total_return"
-    assert opt["min_weight"] == 0.3
     assert opt["split_count"] == 2
     assert opt["candidate_count"] == 3
     assert opt["total"] == 30
@@ -161,6 +165,9 @@ def test_completion_returns_result_and_marks_completed(
     assert opt["excluded_degenerate"] == 3
     # held-out gap 0.01 < threshold 0.10, so no warning
     assert opt["held_out_warning"] is None
+    # the omnibus field is indistinguishable, so the separability warning fires
+    assert opt["separability_warning"] is not None
+    assert "statistically indistinguishable" in opt["separability_warning"]
     # non_executable_rows defaults to 0 when absent from execution evidence
     assert opt["non_executable_rows"] == 0
     # split method flows from config into the report's optimization summary

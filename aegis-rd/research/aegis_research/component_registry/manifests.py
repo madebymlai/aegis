@@ -51,14 +51,14 @@ def parse_component_file(
     manifest_payload, has_param_space, has_lookback = _read_static_declaration(path, source_bytes.decode())
     manifest = build_manifest(manifest_payload, expected_family=family, path=path)
     return ComponentDefinition(
-        manifest=manifest,
-        file_path=path,
+        _manifest=manifest,
+        _file_path=path,
         identity=_source_identity(
             path,
             repo_root=repo_root,
             source_hash=hashlib.sha256(source_bytes).hexdigest(),
         ),
-        has_param_space=has_param_space,
+        _has_param_space=has_param_space,
         has_lookback=has_lookback,
     )
 

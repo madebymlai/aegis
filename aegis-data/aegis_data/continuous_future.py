@@ -25,9 +25,10 @@ from aegis_data.rebasing import IDENTITY, Rebasing, ratio_rebasing, spread_rebas
 # adjusted series preserves percentage returns exactly — what the returns-based research metrics
 # (Sharpe/vol from value.pct_change) consume, and what keeps research↔live in the percentage frame.
 # Byte-exact at every trading precision (float drift only beyond 8dp, prototype NOTES.md V4); the live
-# SleeveLedger re-bases multiplicatively in lock-step via aegis_data.rebasing.  This is the default mode
-# Aegis ships (aegis-rd-iwx); BACKWARD_SPREAD stays reachable via the explicit adjustment_mode for any
-# caller needing integer-exact additive offsets.
+# SleeveLedger re-bases multiplicatively in lock-step via aegis_data.rebasing.  This is the mode research
+# SELECTS for a new Run (aegis-rd-iwx) and records as Run evidence (root ADR-0009); it is not a silent
+# fallback anywhere on the shared research/live path — live materialises under the locked bundle
+# contract's recorded mode, and BACKWARD_SPREAD is a first-class choice for integer-exact additive offsets.
 DEFAULT_ADJUSTMENT_MODE = ContinuousFutureAdjustmentType.BACKWARD_RATIO
 
 
@@ -108,9 +109,10 @@ def continuous_future(
     Identity is resolved once, upstream, by
     :meth:`~aegis_data.catalog.CatalogBackedDataPort.resolve_continuous` (the sole venue-resolution
     site); this assembler receives the synthetic ``{root}.{venue}`` id (e.g. ``ES.XCME``) and
-    never re-derives it from the chain.  ``adjustment_mode`` defaults to the one switch
-    (:data:`DEFAULT_ADJUSTMENT_MODE`) that also drives the live re-basing, so a caller never
-    names spread or ratio.
+    never re-derives it from the chain.  ``adjustment_mode`` is an explicit fact on the
+    shared research/live path (root ADR-0009): research passes the mode it records as Run
+    evidence, live passes the locked bundle contract's mode, and the resulting
+    :class:`ContinuousFuture` derives the matching roll carry from it.
     """
     return ContinuousFuture(
         target_bar_type=continuous_bar_type(root_id, timeframe),

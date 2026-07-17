@@ -16,7 +16,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from research.aegis_research.market_data.contracts import (
     ArrayDescriptor,
     CoverageFacet,
-    MarketDataMetadataV3,
+    MarketDataMetadataV4,
     MarketDataQuality,
     ProvenanceFacet,
     RequestFacet,
@@ -34,16 +34,16 @@ def default_metadata(
     rows: int = 120,
     start: str | None = "2020-01-01",
     end: str | None = "2020-06-01",
-) -> MarketDataMetadataV3:
-    """Build a minimal ``MarketDataMetadataV3`` for test doubles.
+) -> MarketDataMetadataV4:
+    """Build a minimal ``MarketDataMetadataV4`` for test doubles.
 
     Callers that need a specific facet shape can pass keyword overrides;
     the defaults represent the simplest healthy synthetic-data fixture.
     """
     ids = instrument_ids or [_id("SYN.XNAS")]
     arrays = effective_arrays or ["Close", "Open"]
-    return MarketDataMetadataV3(
-        schema_version="market_data.v3",
+    return MarketDataMetadataV4(
+        schema_version="market_data.v4",
         request=RequestFacet(
             requested_instrument_ids=ids,
             timeframe="1D",
@@ -58,18 +58,12 @@ def default_metadata(
         quality=MarketDataQuality(state="healthy"),
         diagnostics=[],
         provenance=ProvenanceFacet(
-            provider_class=None,
+            source_class=None,
             source_metadata={},
             index_evidence={},
-            provider_metadata={},
-            omitted_metadata_fields=[],
+            port_metadata={},
             update_supported=False,
             missing_index="raise",
-            missing_columns="raise",
-            tz_localize=None,
-            tz_convert=None,
-            skip_on_error=False,
-            silence_warnings=False,
         ),
     )
 
@@ -87,15 +81,20 @@ class FakeDataResult:
 
     metadata = default_metadata()
 
+    adjustment_mode = None
+
     def __init__(
         self,
         *,
         quality_state: str = "healthy",
-        metadata: MarketDataMetadataV3 | None = None,
+        metadata: MarketDataMetadataV4 | None = None,
+        adjustment_mode: Any = None,
     ) -> None:
         self.quality = type("_Quality", (), {"state": quality_state})()
         if metadata is not None:
             self.metadata = metadata
+        if adjustment_mode is not None:
+            self.adjustment_mode = adjustment_mode
 
 
 class FakeArrayContract:

@@ -98,7 +98,6 @@ def request_distribution_data(
     start: pd.Timestamp,
     end: pd.Timestamp,
     currency: str,
-    primary_exchange: str | None = None,
 ) -> tuple[Distribution, ...]:
     """Fetch ``ADJUSTED_LAST`` and decode listed-ETF distributions.
 
@@ -109,7 +108,6 @@ def request_distribution_data(
         instrument_id=instrument_id,
         start=start,
         end=end,
-        primary_exchange=primary_exchange,
         currency=currency,
     )
     return tuple(

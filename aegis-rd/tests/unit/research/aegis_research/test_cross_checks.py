@@ -8,37 +8,26 @@ no discovery.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from research.aegis_research.component_registry.contracts import (
-    ComponentDefinition,
-    ComponentSourceIdentity,
-    IndicatorManifest,
-    StrategyManifest,
-)
+from research.aegis_research.component_registry.contracts import ComponentDefinition
 from research.aegis_research.component_registry.registry import FrozenComponentRegistry
 from research.aegis_research.configuration import ConfigValidationIssue
 from research.aegis_research.configuration.cross_checks import cross_check_registries
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from tests.support.research.aegis_research.factories import (
     make_component_registry,
+    make_indicator_component_definition,
     make_ranking_config,
     make_run_config,
     make_run_indicator_source_config,
     make_run_source_ref_config,
+    make_strategy_component_definition,
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # helpers
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-def _identity() -> ComponentSourceIdentity:
-    return ComponentSourceIdentity(
-        repo_relative_path="fixtures/component.py",
-        source_hash="abc123",
-    )
 
 
 def _indicator(
@@ -50,19 +39,12 @@ def _indicator(
     defaults: dict[str, object] | None = None,
     has_param_space: bool = False,
 ) -> ComponentDefinition:
-    manifest = IndicatorManifest(
-        family="indicators",
+    return make_indicator_component_definition(
         id=id,
-        version="1.0.0",
         input_names=input_names,
         param_names=param_names,
         output_names=output_names,
         defaults=defaults or {},
-    )
-    return ComponentDefinition(
-        manifest=manifest,
-        file_path=Path(f"/fixtures/{id}.py"),
-        identity=_identity(),
         has_param_space=has_param_space,
     )
 
@@ -77,20 +59,13 @@ def _strategy(
     defaults: dict[str, object] | None = None,
     has_param_space: bool = False,
 ) -> ComponentDefinition:
-    manifest = StrategyManifest(
-        family="strategies",
+    return make_strategy_component_definition(
         id=id,
-        version="1.0.0",
         input_names=input_names,
         param_names=param_names,
         output_name=output_name,
         consumes_outputs=consumes_outputs,
         defaults=defaults or {},
-    )
-    return ComponentDefinition(
-        manifest=manifest,
-        file_path=Path(f"/fixtures/{id}.py"),
-        identity=_identity(),
         has_param_space=has_param_space,
     )
 

@@ -5,26 +5,42 @@
 # runtime.  Base currency is EUR; each instrument carries its own venue (the
 # book is venue-agnostic).
 #
-#   Run:   aegis-trader --mode {backtest,paper,live} --book book.toml
-#          (paper/live also read IB_ACCOUNT_ID / IB_HOST / IB_PORT /
-#           IB_CLIENT_ID / TRADER_ID from the environment)
+#   Run:   aegis-trader backtest --start YYYY-MM-DD --end YYYY-MM-DD [--book book.toml]
+#          aegis-trader trader   (live daemon; paper vs live selected by IB_PORT,
+#          reads IB_ACCOUNT_ID / IB_HOST / IB_PORT / IB_CLIENT_ID / TRADER_ID)
 
 base_currency = "EUR"
 book_vol_target = 0.09
 sleeve_reversion_fraction = 0.5
 
-# Gross cap after risk-budget scaling; raise max_book_gross to run levered.
-max_book_gross = 1.0
+# Gross cap after risk-budget scaling.  B1 DECISION 2026-07-05 (GH #79):
+# run levered at 1.75 so vol-targeting can recycle the diversification
+# dividend instead of discarding it.  Engine-financed close-out 2026-07-06
+# (2018-01-01..2024-12-31) measured the levered book at 8.3% vol, Sharpe
+# 1.35, total return +119.7% / +11.9% CAGR after financing, versus the
+# zero-rate control at 8.4% vol, Sharpe 1.74, total return +179.4% /
+# +15.8% CAGR.  Measured drag is therefore -3.91pp/yr and -0.39 Sharpe.
+# This is above the original EUR-rate band, but reconciles to USD funding:
+# reported financing is USD 352,177.95, implying ~USD 967.7k average debit
+# at the pinned 5.13% rate on the 360-day convention.  Positive EUR cash
+# does not offset USD debit under IBKR per-currency netting.
+#
+# Gross-1.0 zero-rate vs financed also moved more than bps (+6.35% -> +4.65%
+# CAGR, Sharpe 1.21 -> 0.92) for the same reason: USD 154,444.01 financing,
+# or ~USD 424.4k average debit.  Treat the old "+13% net" analytic overlay as
+# superseded by these measured per-currency engine numbers.
+# Commingled Book caps as fractions of NAV, applied after Sleeve allocation and
+# netting. This is the ONLY configurable exposure ceiling: sleeve weights are
+# unit-gross by contract (aegis_runtime SLEEVE_GROSS_LIMIT, enforced fail-closed
+# by every Execution Bundle; aegis-rd-ui1m), so the allocator below is the only
+# leverager.
+gross_cap = 1.75
 
-# Book caps as fractions of NAV.  Provenance is checked at load against each
-# sleeve's bundle (all three carry gross_cap = net_cap = 1.0), so these must not
-# exceed those ceilings.
-gross_cap = 1.0
-net_cap = 1.0
-
-# Backtest funding: 1,000,000 EUR only (foreign legs reached via per-currency margin loans).
+# Backtest funding: 5,000 EUR only (foreign legs reached via per-currency margin loans).
+# RE-SCALED to the LIVE account size 2026-07-06 (was 1,000,000): per-order minimums and
+# tier-I financing only price honestly at true scale - the 1M runs flattered fixed fees.
 [starting_balances]
-EUR = 1_000_000.0
+EUR = 5_000.0
 
 # Backtest transaction costs (paper/live use broker-reported costs instead).
 # IBKR Europe pricing for this UCITS / LSE / Xetra book: 0.05% of trade value with a
@@ -36,37 +52,73 @@ EUR = 1_000_000.0
 commission_pct = 0.0005
 min_commission_per_order = 1.25
 
+# Financing rates pinned 2026-07-06 from IBKR-IE published schedules.
+# Margin interest is charged on net negative cash per currency; positive cash
+# earns no credit interest. RE-PINNED to first-tier rates same day: the LIVE
+# account is ~5k EUR, so every debit sits below the 90k tier break - EUR
+# 0.0367 (BM + 1.5%) and USD 0.0513 (BM + 1.5%) apply in full. (The earlier
+# EUR 0.0324 was the 90k/900k blend for this file's 1M SIMULATION balance; at
+# live scale the blend understates the tier-I rate by ~0.4pp.) Keep in sync
+# with the research schema default (aegis-rd configuration/schema.py,
+# margin_interest_rate) - same pin, two homes. IBKR floors negative benchmark
+# rates at zero, so these pinned rates deliberately overstate 2018-mid-2022
+# historical EUR funding, when the loan was spread-only.
+[costs.margin_interest]
+EUR = 0.0367
+USD = 0.0513
+
+# Flat general-collateral borrow fee for short market value. This is the IDTL
+# short-borrow carry validated in research; proceeds credit is intentionally
+# omitted because IBKR-IE pays zero rebate below the small-balance threshold.
+[costs.borrow]
+rate = 0.005
+
 # Floor risk keeps a fixed 60/40 trend/carry conviction tilt.
-# atalanta — trend floor pole (IDTL/IGLN/ICOM non-equity crisis substrate).
+# atalanta — trend floor pole (non-equity crisis substrate).
 # Hysteretic buy-hold-spread sleeve: long gold/commodities, borrow-gated IDTL short,
 # with research-validated asymmetric drift bands carried by the bundle.
+# Re-exported 2026-07-17 from the WCOA-promotion lock (20260709T232701314885Z,
+# research(atalanta) f58633e0; supersedes cand_30c from the 20260629 lock, which
+# carried the pre-v5 payload and no longer loads).
 [[sleeves]]
 name = "atalanta_trend"
-wheel_filename = "aegis_exec_atalanta_keystone_cand_726-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_atalanta_keystone_shortmute_cand_06c-1.0.0-py3-none-any.whl"
 risk_share = 0.42
 group = "Floor"
 weight_band_down = 0.02
 weight_band_up = 0.02
 
-# demeter — EU credit-carry pole (IHYU + LQDH, USD legs converted to EUR).
+# demeter — EU credit-carry pole (SDHY + LQDH, USD legs converted to EUR).
+# Re-exported 2026-07-04 from the P2 re-lock (20260704T170256351625Z, cell def1/fx0/cg0
+# - strictly dominates the old fx0.15/cg2 champion the stale c94 wheel carried).
 [[sleeves]]
 name = "demeter_carry"
-wheel_filename = "aegis_exec_demeter_carry_cand_c94-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl"
 risk_share = 0.28
 group = "Floor"
 weight_band_down = 0.02
 weight_band_up = 0.02
 
-# aegis — UCITS tail hedge (VOOL, native EUR, held 100% within the sleeve).
+# aegis — UCITS tail hedge (LVO.XAMS, native EUR, held 100% within the sleeve).
 # The declared risk_share is intentionally zero: Target risk is set by the
 # convexity-premium budget below, not by an ad-hoc sleeve weight or live timer.
+# Re-pinned 2026-07-04: bundle re-exported from the corrected-identity lock
+# (20260704T143038842848Z, LVO.XAMS - the old cand_fa6 wheel carried the stale
+# VOOL.XETR sleeve). The H1 MONETIZATION band (trim the spike fast, re-fund
+# slowly; the band IS the monetization rule - profit-multiple and carry-throttle
+# overlays both killed pre-registered, runs/aegis/2026-07-04) rides the BUNDLE as
+# a ratio of target (0.2/0.3, tail_band lock 20260704T174903854810Z) and the
+# rebalancer scales it by this sleeve's allocator multiplier (aegis-rd-reyj), so
+# it stays openable at any budget-derived notional - the old "keep tail notional
+# above the band" constraint is gone. weight_band_* below is the SLEEVE
+# allocation no-churn band (a different knob), verified in the reyj book run.
 [[sleeves]]
 name = "aegis_tail"
-wheel_filename = "aegis_exec_aegis_heldhedge_cand_fa6-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl"
 risk_share = 0.0
 group = "Target"
-weight_band_down = 0.02
-weight_band_up = 0.02
+weight_band_down = 0.015
+weight_band_up = 0.01
 
 [tail_convexity_budget]
 # Tail protection is a fixed convexity premium, not a timed bet.  Coverage is
@@ -74,16 +126,46 @@ weight_band_up = 0.02
 # are filled highest-efficiency-first to coverage_target, capped per-candidate
 # by capacity and collectively by the annual carry (premium) budget — so either
 # the coverage target or the premium budget can bind first.
+#
+# CALIBRATED 2026-07-05 from aegis-trader backtests of THIS book, 2018-2024,
+# at four budget sizes (risk share 0.0065/0.0125/0.025/0.05) plus tail-off
+# (runs/aegis/2026-07-05 in the research vault).  Two structural findings:
+#   1. The hierarchical-ERC allocator holds a negatively-correlated Target
+#      sleeve at its minimum-hedge weight, so realized LVO notional is FLAT in
+#      risk share: ~2.2% of NAV calm (2.5% at rs=0.05), ~6% in 2022, and only
+#      ~0.6% entering the COVID crash (vol-targeting shrinks it as LVO vol
+#      rises).  The dial is effectively on/off; these knobs pick the honest
+#      declared point, they do not fine-tune the size.
+#   2. The measured menu while ON: ~+1.9% NAV delivered over the 2020 crash
+#      window (Feb 19 - Mar 31), ~1.0-1.6% NAV/yr sleeve-own cost in the
+#      vol-crush years (2019/2021/2023/2024; LVO bled ~29-53%/yr there, harsher
+#      than its -23%/yr 13-year average).  A former mandate of "1% coverage for
+#      <= 0.75%/yr" is not buyable: the instrument has no smaller package.
+# Values below are that measured menu, anchored at risk share 0.025 so the
+# declared arithmetic reproduces the measurement exactly (fill lands at 0.025;
+# the realized book there is measured, not extrapolated).
 attachment = -0.20            # protect against a -20% book move
-coverage_target = 0.01        # deliver >= 1% of book NAV at the attachment
-annual_carry_budget = 0.0075  # spend <= 0.75% of NAV/yr in premium
+coverage_target = 0.019       # measured 2020-crash delivery at the landing point
+annual_carry_budget = 0.012   # measured vol-crush-year cost at the landing point
 
 [[tail_convexity_budget.candidates]]
 # Per unit of the sleeve's risk share: NAV delivered at the attachment, and
 # NAV/yr of carry.  Operator-supplied (calibrated at re-validation); never
 # measured live in Trader.
+# Measured 2026-07-05 at rs=0.025 on this book (see budget comment above):
+# crash delivery +1.9% NAV -> payoff 0.76/unit rs; vol-crush-year cost
+# ~1.19% NAV/yr -> carry 0.48/unit rs.  Valid for rs in [0.0065, 0.05] only —
+# per-rs values are ~1/rs outside the landing point because the realized
+# notional is flat (finding 1 above), so do NOT scale these linearly.
+# Per unit of LVO NOTIONAL (size-invariant form): crash delivery +2.9 to +3.7,
+# calm-year bleed -0.45 to -0.63/yr.  Not counted in payoff: the hedged book
+# also avoided the drawdown-governor delever in 2020 (+4.1 to +4.8pp book-level
+# displacement vs tail-off) — real but path-specific, kept out of the budget.
+# crisis_reliability stays operator-judged at 0.75 (n=1 crash; the 2020
+# delivery rode a ~3x LVO spike from a 0.6% entry weight — a milder crash
+# pays proportionally less).
 sleeve = "aegis_tail"
-payoff_at_attachment = 0.20
-annual_carry = 0.08
+payoff_at_attachment = 0.76
+annual_carry = 0.48
 crisis_reliability = 0.75
 capacity_risk_share = 0.05

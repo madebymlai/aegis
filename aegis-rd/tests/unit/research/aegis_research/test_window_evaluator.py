@@ -15,15 +15,17 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.metrics import make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.source import OptimizationSource
-from research.aegis_research.optimization.window_evaluator import WindowEvaluator
+from research.aegis_research.optimization.window_evaluation import ResolvedBook, WindowEvaluator
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,
+    make_run_arrays,
 )
 
 
@@ -70,10 +72,11 @@ def _evaluator(
 ) -> WindowEvaluator:
     return WindowEvaluator(
         source=_source(simulate),
-        portfolio=make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly"),
+        book=ResolvedBook(
+            make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")
+        ),
         report=make_report_config(),
-        close=close,
-        open_=close,
+        arrays=make_run_arrays(close=close, open_=close),
         store=store if store is not None else empty_precompute(close, 2, alpha=[0.5, 1.0]),
         extractors=dict(make_default_metric_registry().extractors),
     )
@@ -167,6 +170,72 @@ def test_evaluate_slices_windows_and_delegates_for_a_partly_invalid_chunk() -> N
     assert store.calls == [(range_, [(0.5,), (1.0,)])]
     # A NoResult from simulate propagates out unchanged.
     assert result is vbt.NoResult
+
+
+# The regression net for the mixed-view bug (aegis-rd-cyms.3). On a dual-series
+# Run the strategy's ``simulate`` must receive the SIGNAL view (the frames its
+# indicators were precomputed on), while the portfolio prices P&L exclusively
+# from the P&L view. Before the fix the P&L-adjusted Close leaked into
+# ``simulate`` alongside signal-precomputed indicators. The two views carry
+# deliberately different drifts (1% vs 3%) so routing to the wrong view shows
+# up in total_return, not just in frame identity.
+_DUAL_N = 12
+
+
+def _dual_series_evaluator(
+    captured: dict[str, pd.DataFrame],
+) -> tuple[WindowEvaluator, pd.DataFrame]:
+    signal_close = _uptrend_close(_DUAL_N)  # 1% drift
+    pnl_close = pd.DataFrame(
+        {"SYN": 50.0 * (1.03 ** np.arange(_DUAL_N))}, index=signal_close.index
+    )
+
+    def _capturing_simulate(
+        close_window: pd.DataFrame, indicator_window: Any, n_combos: int, **param_lists: Any
+    ) -> pd.DataFrame:
+        captured["close_window"] = close_window
+        return _exposure_simulate(close_window, indicator_window, n_combos, **param_lists)
+
+    evaluator = WindowEvaluator(
+        source=_source(_capturing_simulate),
+        book=ResolvedBook(
+            make_portfolio_config(fees=0.0, slippage=0.0, direction="longonly")
+        ),
+        report=make_report_config(),
+        arrays=make_run_arrays(
+            close=signal_close,
+            open_=signal_close,
+            pnl_close=pnl_close,
+            pnl_open=pnl_close,
+        ),
+        store=empty_precompute(signal_close, 2, alpha=[0.5, 1.0]),
+        extractors=dict(make_default_metric_registry().extractors),
+    )
+    return evaluator, signal_close
+
+
+def test_dual_series_simulate_receives_the_signal_view() -> None:
+    captured: dict[str, pd.DataFrame] = {}
+    evaluator, signal_close = _dual_series_evaluator(captured)
+
+    evaluator.evaluate(slice(0, _DUAL_N), alpha=[0.5, 1.0])
+
+    # The strategy allocated from the signal view — the same frames its
+    # indicators were precomputed on — not the P&L view.
+    pd.testing.assert_frame_equal(captured["close_window"], signal_close)
+
+
+def test_dual_series_portfolio_prices_from_the_pnl_view() -> None:
+    captured: dict[str, pd.DataFrame] = {}
+    evaluator, _ = _dual_series_evaluator(captured)
+
+    frame = evaluator.evaluate(slice(0, _DUAL_N), alpha=[0.5, 1.0])
+
+    # Full exposure over 11 bars of the P&L series' 3% drift: 1.03**11 - 1,
+    # in percent — not the signal series' 1% drift (1.01**11 - 1 = 11.5668...%).
+    total_return = frame.loc[(1.0,), "total_return"]
+    assert total_return == pytest.approx(38.423387072444605)
+    assert total_return != pytest.approx(11.566834674911724, rel=1e-3)
 
 
 def test_evaluate_returns_no_result_for_empty_allocations() -> None:
