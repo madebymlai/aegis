@@ -4,10 +4,13 @@ date: "2026-07-06"
 topic: convexity
 distilled-into:
 tags:
-  - article
+  - note
 ---
 
 # Budgeting the Divergent Seat
+
+> [!note] Status
+> Demoted from `research/` to `notes/` on 2026-07-17: this is the divergent-seat design record for our UCITS/IBKR-IE book (fee floor, wrapper pick, broker settings), not general research. The generic universe argument lives in [[the-orthogonal-non-equity-trend-universe]].
 
 > [!abstract] One-line takeaway
 > "What is the best divergent payoff a UCITS/IBKR-IE book can own" is the wrong question. The newest work says why: hedge quality is not one number but several near-independent axes (conditional convexity, tail-event reliability, non-stress carry, drawdown persistence), and a divergent sleeve's worth is its *overlay capacity* - how much a risk budget can hold of it through the cycle, set by its left-tail conditional correlation rather than its standalone Sharpe. On both measures no single mechanism wins, which is why the seat's earlier selection sweep could not crown a challenger. But the answer is not to pile several convex instruments into one seat either: each sleeve must own a *distinct* instrument set, so the divergent seat cannot double-book a gold sliver or a long-VIX overlay it would be *buying while carry sells it*. The axes are instead covered *across* the roster's tiers - slow trend (reliability, persistence, positive carry), the tail sleeve (the single-day gap), carry (the concave side) - each sized by left-tail correlation. The one genuinely new, instrument-orthogonal line the divergent seat itself can budget in is a winter-cover complement (cross-asset value or economic trend) on its own signals, to pay down the trendless-winter bleed price trend cannot design away. And once the seat is budgeted, running it on a small account inverts twice under a fixed per-order fee: the rebalancing problem becomes impulse control (trade rarely, move part-way to an interior target, drift in between), and below a capital threshold the same fixed-fee arithmetic makes *buying* a managed-futures wrapper that rebalances futures internally beat self-replicating the book at all.

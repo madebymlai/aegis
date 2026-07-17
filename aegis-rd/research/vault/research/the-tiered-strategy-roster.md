@@ -10,7 +10,7 @@ tags:
 # The Tiered Strategy Roster: Floor, Target, Expansion
 
 > [!abstract] One-line takeaway
-> The strategies an allocator needs are not a count but an order of operations: pair a convergent ordinary-market engine ⊕ a persistent-crisis responder, add immediate defense for the responder's speed gap, then add off-axis alpha. Carry and mean reversion are candidates for the convergent role, not requirements; negative skew is an implementation property, not the role's definition. Each tier fixes a failure the previous one cannot.
+> The [[what-is-a-strategy|strategies]] an allocator needs are not a count but an order of operations: pair a convergent ordinary-market engine ⊕ a persistent-crisis responder, add immediate defense for the responder's speed gap, then add off-axis alpha. Carry and mean reversion are candidates for the convergent role, not requirements; negative skew is an implementation property, not the role's definition. Each tier fixes a failure the previous one cannot.
 
 ## The question is order, not count
 

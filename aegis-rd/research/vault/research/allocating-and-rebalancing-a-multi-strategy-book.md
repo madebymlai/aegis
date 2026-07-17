@@ -12,7 +12,7 @@ tags:
 > [!abstract] One-line takeaway
 > Estimation error, not optimization, is the binding constraint on a multi-strategy book: allocate by risk budgets refined only with risk estimates (never expected returns), scale with vol targeting for its tail effect rather than a Sharpe boost, and trade through no-trade bands to the boundary - each refinement must beat the naive baseline it replaces, because most don't.
 
-A book of heterogeneous strategy sleeves faces two separable decisions. The *allocation* decision assigns each sleeve a share of the book's risk. The *rebalancing* decision chooses when the realized book has drifted far enough from that intent to be worth paying transaction costs to correct. The literatures behind the two are old, deep, and unusually consistent on one point: the sophisticated version of each decision loses to the simple version whenever it needs an input that must be estimated from short histories. What follows organizes the evidence around which refinements survive that test.
+A book of heterogeneous [[what-is-a-strategy|strategy]] sleeves faces two separable decisions. The *allocation* decision assigns each sleeve a share of the book's risk. The *rebalancing* decision chooses when the realized book has drifted far enough from that intent to be worth paying transaction costs to correct. The literatures behind the two are old, deep, and unusually consistent on one point: the sophisticated version of each decision loses to the simple version whenever it needs an input that must be estimated from short histories. What follows organizes the evidence around which refinements survive that test.
 
 ## Estimation error is the binding constraint
 

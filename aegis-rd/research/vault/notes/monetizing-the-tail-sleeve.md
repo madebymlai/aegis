@@ -4,10 +4,13 @@ date: "2026-07-04"
 topic: crisis-alpha
 distilled-into:
 tags:
-  - article
+  - note
 ---
 
 # Monetizing the Tail Sleeve: A State-Conditioned Drift Band, Not a Timing Call
+
+> [!note] Status
+> Demoted from `research/` to `notes/` on 2026-07-17: this is the monetization design record for our tail sleeve (LVO, drift bands, the fixed-fee execution floor), not general research.
 
 > [!abstract] One-line takeaway
 > A fixed-weight tail sleeve is already a monetization rule - constant-mix rebalancing mechanically sells the spike - but that rule only works when the rebalancing premium is positive, and it is not for a structurally bleeding long-vol ETP; the fix is not to time entries and exits, it is to make the *target weight itself* state-conditioned (near-zero in cheap, calm regimes; sized up when carry is cheap and stress signals rise) inside the same drift-band, fixed-fee execution the book already uses, with the sleeve's own profit-multiple triggering a partial harvest rather than a full exit.

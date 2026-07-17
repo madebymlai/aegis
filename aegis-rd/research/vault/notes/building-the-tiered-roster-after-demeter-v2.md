@@ -19,7 +19,7 @@ tags:
 # Building the Tiered Roster After Demeter V2
 
 > [!abstract] Decision
-> Demeter V2 falsified one **active ETF-ranking rule**; it did not falsify credit income, carry as a family, or the tiered roster. Build the deployable roster with locked Atalanta, the simple locked defensive credit-income book as a **provisional** concave pole, and the locked tail target. Run CATB as the shadow challenger for the concave role. Leave the expansion tier empty until an off-axis strategy earns promotion.
+> Demeter V2 falsified one **active ETF-ranking rule**; it did not falsify credit income, carry as a family, or the tiered roster. Build the deployable roster with locked Atalanta, the simple locked defensive credit-income book as a **provisional** concave pole, and the locked tail target. Run CATB as the shadow challenger for the concave role. Leave the expansion tier empty until an off-axis [[what-is-a-strategy|strategy]] earns promotion.
 
 ## What failed and what survived
 

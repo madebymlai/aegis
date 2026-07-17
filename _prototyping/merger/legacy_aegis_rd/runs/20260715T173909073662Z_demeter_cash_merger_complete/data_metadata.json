@@ -1,0 +1,211 @@
+{
+  "arrays": [
+    {
+      "loaded": false,
+      "name": "Close",
+      "observed": false,
+      "ohlc": true,
+      "required": true
+    },
+    {
+      "loaded": false,
+      "name": "High",
+      "observed": false,
+      "ohlc": true,
+      "required": true
+    },
+    {
+      "loaded": false,
+      "name": "Low",
+      "observed": false,
+      "ohlc": true,
+      "required": true
+    },
+    {
+      "loaded": false,
+      "name": "Open",
+      "observed": false,
+      "ohlc": true,
+      "required": true
+    },
+    {
+      "loaded": false,
+      "name": "Volume",
+      "observed": false,
+      "ohlc": true,
+      "required": true
+    }
+  ],
+  "component_required_arrays": [
+    "Close"
+  ],
+  "configured_arrays": [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume"
+  ],
+  "contract_required_arrays": [
+    "Close",
+    "Open"
+  ],
+  "coverage": {
+    "end": null,
+    "instrument_ids": [],
+    "rows": 0,
+    "start": null
+  },
+  "diagnostics": [
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "AES.XNYS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "ALOT.XNAS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "AVNS.XNYS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "CCO.XNYS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "CCRN.XNAS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "DBRG.XNYS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "GBTG.XNYS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "IMXI.XNAS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "KORE.XNYS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "LPRO.XNAS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "OGN.XNYS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "PAYO.XNAS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "RAMP.XNYS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "SLP.XNAS",
+      "load_status": "data_unavailable"
+    },
+    {
+      "arrays": {},
+      "configured": true,
+      "instrument_id": "SPY.ARCA",
+      "load_status": "data_unavailable"
+    }
+  ],
+  "missing_required_arrays": [],
+  "pipeline_required_arrays": [
+    "Close",
+    "Open"
+  ],
+  "provenance": {
+    "index_evidence": {
+      "source": "data_unavailable",
+      "unavailable_reason": "catalog cannot serve AES.XNYS-1-DAY-LAST-EXTERNAL for requested window; missing=['2023-01-01T00:00:00+00:00..2026-07-15T00:00:00+00:00']"
+    },
+    "missing_index": "nan",
+    "port_metadata": {},
+    "source_class": null,
+    "source_metadata": {
+      "error_summary": "catalog cannot serve AES.XNYS-1-DAY-LAST-EXTERNAL for requested window; missing=['2023-01-01T00:00:00+00:00..2026-07-15T00:00:00+00:00']",
+      "error_type": "MarketDataUnavailableError"
+    },
+    "update_supported": false
+  },
+  "quality": {
+    "allowed_degradations": [
+      "missing_rows"
+    ],
+    "reasons": [
+      "catalog cannot serve AES.XNYS-1-DAY-LAST-EXTERNAL for requested window; missing=['2023-01-01T00:00:00+00:00..2026-07-15T00:00:00+00:00']"
+    ],
+    "state": "data_unavailable",
+    "warnings": []
+  },
+  "request": {
+    "authored_arrays": [
+      "OHLCV"
+    ],
+    "effective_arrays": [
+      "Open",
+      "High",
+      "Low",
+      "Close",
+      "Volume"
+    ],
+    "requested_instrument_ids": [
+      "AES.XNYS",
+      "ALOT.XNAS",
+      "AVNS.XNYS",
+      "CCO.XNYS",
+      "CCRN.XNAS",
+      "DBRG.XNYS",
+      "GBTG.XNYS",
+      "IMXI.XNAS",
+      "KORE.XNYS",
+      "LPRO.XNAS",
+      "OGN.XNYS",
+      "PAYO.XNAS",
+      "RAMP.XNYS",
+      "SLP.XNAS",
+      "SPY.ARCA"
+    ],
+    "timeframe": "1D"
+  },
+  "schema_version": "market_data.v4"
+}
