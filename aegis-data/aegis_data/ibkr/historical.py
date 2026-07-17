@@ -32,6 +32,7 @@ from aegis_data.catalog import ServedBars
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
 if TYPE_CHECKING:
+    from nautilus_trader.adapters.interactive_brokers.common import IBContract
     from nautilus_trader.model.data import Bar, BarType
     from nautilus_trader.model.instruments import Instrument
 
@@ -73,6 +74,26 @@ class IbkrRequestError(RuntimeError):
     resolve to one asset) — every session await is therefore deadline-bounded
     (``call_deadline``), so a dead call surfaces here instead of hanging (#75).
     """
+
+
+class _QualificationCardinalityError(ValueError):
+    """Qualification did not return exactly one instrument."""
+
+
+class _QualificationIdentityError(ValueError):
+    """Qualification returned an instrument other than the requested identity."""
+
+
+class _QualificationMetadataError(ValueError):
+    """A qualified instrument did not carry a valid IB contract."""
+
+
+class _QualificationConIdError(ValueError):
+    """A qualified IB contract did not carry a positive contract ID."""
+
+
+class _QualificationCurrencyError(ValueError):
+    """A qualified IB contract used a currency other than the requested one."""
 
 
 @dataclass(frozen=True)
@@ -172,7 +193,9 @@ class IbkrHistoricalProvider:
         bars = [bar for bar in (pulled or []) if bar.ts_event >= start.value]
         # Coverage is served from `start` when history reaches it (contiguous with any
         # prior file), else from the oldest bar IB clamped at (#75, the unclaimed head).
-        served_from = start if _history_reached(bars, start) else _first_bar_instant(bars, end)
+        served_from = (
+            start if _history_reached(bars, start) else _first_bar_instant(bars, end)
+        )
         return ServedBars(tuple(bars), served_from)
 
     def request_instruments(
@@ -201,20 +224,25 @@ class IbkrHistoricalProvider:
         Nautilus' historic bar path cannot express IBKR's ``ADJUSTED_LAST``
         ``whatToShow`` value, so this one derivation source uses a deliberately
         narrow raw-IB seam.  Normal production ``TRADES`` bars still ride
-        :meth:`request_bars` through the generic data-provider port.  The IB
-        ``primaryExchange`` is derived here from the instrument's corpus venue
-        (vendor symbology is the provider's secret, ADR-0005): callers name the
-        instrument, never an exchange.
+        :meth:`request_bars` through the generic data-provider port.  The existing
+        Nautilus instrument path qualifies the requested identity first; the raw
+        seam receives that complete IB contract rather than reconstructing one.
         """
         subject = f"ADJUSTED_LAST closes {instrument_id.value}"
+        contract = self._request(
+            subject,
+            lambda session: _request_qualified_contract(
+                session,
+                instrument_id,
+                expected_currency=currency,
+                deadline=self.call_deadline,
+            ),
+        )
         try:
             rows = self._adjusted_last_client().request_daily_closes(
-                instrument_id=instrument_id,
-                what_to_show="ADJUSTED_LAST",
+                contract=contract,
                 start=start,
                 end=end,
-                primary_exchange=_ib_primary_exchange(instrument_id),
-                currency=currency,
                 timeout=self.timeout,
             )
         except Exception as exc:  # noqa: BLE001 - any IB/raw socket fault -> one named error
@@ -224,7 +252,9 @@ class IbkrHistoricalProvider:
         if not rows:
             return pd.Series(dtype=float)
         index = pd.DatetimeIndex([timestamp for timestamp, _close in rows])
-        return pd.Series([close for _timestamp, close in rows], index=index).sort_index()
+        return pd.Series(
+            [close for _timestamp, close in rows], index=index
+        ).sort_index()
 
     def _request(self, subject: str, call: Callable[[Any], Awaitable[Any]]) -> Any:
         """Run an IBKR fetch, surfacing any fault as a named :class:`IbkrRequestError`.
@@ -371,19 +401,66 @@ async def _request_instrument_parts(
     return instruments
 
 
-def _ib_primary_exchange(instrument_id: InstrumentId) -> str:
-    """The IB exchange code for an instrument's corpus (MIC) venue.
-
-    The corpus pins MIC venues (``XAMS``), but IB contracts only accept IB's own
-    exchange codes (``AEB``) — a MIC as ``primaryExchange`` is rejected with IB
-    error 200 "exchange invalid".  A venue with no MIC mapping (``ARCA``) is
-    already an IB code and passes through unchanged.
-    """
-    from nautilus_trader.adapters.interactive_brokers.parsing.instruments import (
-        possible_exchanges_for_venue,
+async def _request_qualified_contract(
+    session: Any,
+    instrument_id: InstrumentId,
+    *,
+    expected_currency: str,
+    deadline: float,
+) -> IBContract:
+    instruments = await _request_instrument_parts(
+        session,
+        [instrument_id.value],
+        [],
+        deadline=deadline,
+    )
+    return _qualified_contract_from_instruments(
+        instruments,
+        instrument_id,
+        expected_currency=expected_currency,
     )
 
-    return possible_exchanges_for_venue(instrument_id.venue.value)[0]
+
+def _qualified_contract_from_instruments(
+    instruments: Sequence[Instrument],
+    instrument_id: InstrumentId,
+    *,
+    expected_currency: str,
+) -> IBContract:
+    from nautilus_trader.adapters.interactive_brokers.common import IBContract
+
+    if len(instruments) != 1:
+        raise _QualificationCardinalityError(
+            f"expected one qualified instrument for {instrument_id.value}, "
+            f"received {len(instruments)}"
+        )
+    instrument = instruments[0]
+    if instrument.id != instrument_id:
+        raise _QualificationIdentityError(
+            f"qualified instrument identity {instrument.id} does not match "
+            f"{instrument_id.value}"
+        )
+    info = instrument.info
+    if not isinstance(info, Mapping) or not isinstance(info.get("contract"), Mapping):
+        raise _QualificationMetadataError(
+            f"qualified instrument {instrument_id.value} has no IB contract"
+        )
+    try:
+        contract = IBContract(**dict(info["contract"]))
+    except (TypeError, ValueError) as exc:
+        raise _QualificationMetadataError(
+            f"qualified instrument {instrument_id.value} has malformed IB contract: {exc}"
+        ) from exc
+    if contract.conId <= 0:
+        raise _QualificationConIdError(
+            f"qualified instrument {instrument_id.value} has no positive IB conId"
+        )
+    if contract.currency.upper() != expected_currency.upper():
+        raise _QualificationCurrencyError(
+            f"qualified instrument {instrument_id.value} currency {contract.currency!r} "
+            f"does not match requested {expected_currency!r}"
+        )
+    return contract
 
 
 def _expired_future_contract(instrument_id: InstrumentId) -> Any | None:
@@ -433,7 +510,7 @@ class _HistoricSession:
 
 @dataclass(frozen=True)
 class _IbapiDailyCloseClient:
-    """Small raw-``ibapi`` client for daily ``whatToShow`` close series."""
+    """Small raw-``ibapi`` client for daily ``ADJUSTED_LAST`` close series."""
 
     host: str
     port: int
@@ -443,14 +520,12 @@ class _IbapiDailyCloseClient:
     def request_daily_closes(
         self,
         *,
-        instrument_id: InstrumentId,
-        what_to_show: str,
+        contract: IBContract,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        primary_exchange: str,
-        currency: str,
         timeout: int,
     ) -> list[tuple[pd.Timestamp, float]]:
+        what_to_show = "ADJUSTED_LAST"
         app = _build_raw_historical_app()
         app.connect(self.host, self.port, clientId=self.client_id)
         threading.Thread(target=app.run, daemon=True).start()
@@ -460,11 +535,7 @@ class _IbapiDailyCloseClient:
         req_id = 1
         app.reqHistoricalData(
             reqId=req_id,
-            contract=_stock_contract(
-                instrument_id,
-                primary_exchange=primary_exchange,
-                currency=currency,
-            ),
+            contract=contract,
             endDateTime=_ib_request_end_datetime(what_to_show, end),
             durationStr=_ib_request_duration(what_to_show, start, end),
             barSizeSetting="1 day",
@@ -512,27 +583,12 @@ def _build_raw_historical_app() -> Any:
             msg = " ".join(str(arg) for arg in args)
             if reqId is not None and reqId >= 0:
                 self.errors[reqId].append(msg)
-                if any(code in msg for code in ("354", "10167", "162", "200", "165", "321")):
+                if any(
+                    code in msg for code in ("354", "10167", "162", "200", "165", "321")
+                ):
                     self.done.add(reqId)
 
     return _RawHistoricalApp()
-
-
-def _stock_contract(
-    instrument_id: InstrumentId,
-    *,
-    primary_exchange: str,
-    currency: str,
-) -> Any:
-    from ibapi.contract import Contract
-
-    contract = Contract()
-    contract.symbol = instrument_id.symbol.value
-    contract.secType = "STK"
-    contract.exchange = "SMART"
-    contract.primaryExchange = primary_exchange
-    contract.currency = currency.upper()
-    return contract
 
 
 def _ib_duration(start: pd.Timestamp, end: pd.Timestamp) -> str:
@@ -647,7 +703,11 @@ def _missing_definitions(
             instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
         )
     }
-    return [instrument_id for instrument_id in instrument_ids if instrument_id not in present]
+    return [
+        instrument_id
+        for instrument_id in instrument_ids
+        if instrument_id not in present
+    ]
 
 
 _DROP_INFO_VALUE = object()

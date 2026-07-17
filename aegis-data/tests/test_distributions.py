@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
 import pytest
+from nautilus_trader.adapters.interactive_brokers.common import IBContract
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
@@ -104,16 +106,80 @@ def test_distribution_catalog_write_is_append_only_new(tmp_path) -> None:
 class _FakeAdjustedLastClient:
     def __init__(self, closes: list[tuple[pd.Timestamp, float]] | None = None) -> None:
         self.closes = closes or [(pd.Timestamp("2024-01-02", tz="UTC"), 470.12)]
-        self.calls: list[dict[str, Any]] = []
 
     def request_daily_closes(self, **kwargs: Any) -> list[tuple[pd.Timestamp, float]]:
-        self.calls.append(kwargs)
         return self.closes
 
 
-def test_request_adjusted_last_uses_raw_ibapi_seam() -> None:
-    fake = _FakeAdjustedLastClient()
-    provider = IbkrHistoricalProvider(adjusted_last_client_factory=lambda: fake)
+class _QualifiedIdentityAdjustedLastClient:
+    def request_daily_closes(
+        self, *, contract: IBContract, **_kwargs: Any
+    ) -> list[tuple[pd.Timestamp, float]]:
+        expected = IBContract(
+            secType="STK",
+            conId=756733,
+            exchange="SMART",
+            primaryExchange="ARCA",
+            symbol="SPY",
+            localSymbol="SPY",
+            currency="USD",
+            tradingClass="SPY",
+        )
+        close = 470.12 if contract == expected else -1.0
+        return [(pd.Timestamp("2024-01-02", tz="UTC"), close)]
+
+
+class _FakeQualificationSession:
+    def __init__(self, instruments: list[Any]) -> None:
+        self.instruments = instruments
+
+    async def connect(self) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        pass
+
+    async def request_instruments(self, **kwargs: Any) -> list[Any]:
+        return self.instruments
+
+
+def _qualified_spy() -> Any:
+    return SimpleNamespace(
+        id=_SPY,
+        info={
+            "contract": {
+                "secType": "STK",
+                "conId": 756733,
+                "exchange": "SMART",
+                "primaryExchange": "ARCA",
+                "symbol": "SPY",
+                "localSymbol": "SPY",
+                "currency": "USD",
+                "tradingClass": "SPY",
+            }
+        },
+    )
+
+
+def _provider_with_qualification(
+    instruments: list[Any], adjusted_last_client_factory: Any
+) -> IbkrHistoricalProvider:
+    session = _FakeQualificationSession(instruments)
+    return IbkrHistoricalProvider(
+        client_factory=lambda: session,
+        adjusted_last_client_factory=adjusted_last_client_factory,
+    )
+
+
+def _unexpected_adjusted_last_client() -> Any:
+    raise AssertionError("raw client created before qualification succeeded")
+
+
+def test_request_adjusted_last_preserves_the_qualified_ibkr_identity() -> None:
+    provider = _provider_with_qualification(
+        [_qualified_spy()],
+        _QualifiedIdentityAdjustedLastClient,
+    )
 
     series = provider.request_adjusted_last(
         _SPY,
@@ -123,34 +189,154 @@ def test_request_adjusted_last_uses_raw_ibapi_seam() -> None:
     )
 
     assert series.to_dict() == {pd.Timestamp("2024-01-02", tz="UTC"): 470.12}
-    assert fake.calls == [
-        {
-            "instrument_id": _SPY,
-            "what_to_show": "ADJUSTED_LAST",
-            "start": pd.Timestamp("2024-01-01", tz="UTC"),
-            "end": pd.Timestamp("2024-02-01", tz="UTC"),
-            "primary_exchange": "ARCA",
-            "currency": "USD",
-            "timeout": 120,
-        }
+
+
+def test_request_adjusted_last_returns_sorted_daily_closes() -> None:
+    raw = _FakeAdjustedLastClient(
+        [
+            (pd.Timestamp("2024-01-03", tz="UTC"), 472.25),
+            (pd.Timestamp("2024-01-02", tz="UTC"), 470.12),
+        ]
+    )
+    provider = _provider_with_qualification([_qualified_spy()], lambda: raw)
+
+    series = provider.request_adjusted_last(
+        _SPY,
+        start=pd.Timestamp("2024-01-01", tz="UTC"),
+        end=pd.Timestamp("2024-02-01", tz="UTC"),
+        currency="USD",
+    )
+
+    assert list(series.items()) == [
+        (pd.Timestamp("2024-01-02", tz="UTC"), 470.12),
+        (pd.Timestamp("2024-01-03", tz="UTC"), 472.25),
     ]
 
 
-def test_request_adjusted_last_translates_mic_venue_to_ib_primary_exchange() -> None:
-    # LVO.XAMS: the corpus venue is the MIC (XAMS), but IB only accepts its own
-    # exchange code (AEB) as primaryExchange — a MIC reaches IB as error 200
-    # "exchange invalid" (observed live: the aerd LVO dividend fatality).
-    fake = _FakeAdjustedLastClient()
-    provider = IbkrHistoricalProvider(adjusted_last_client_factory=lambda: fake)
-
-    provider.request_adjusted_last(
-        InstrumentId.from_str("LVO.XAMS"),
-        start=pd.Timestamp("2024-01-01", tz="UTC"),
-        end=pd.Timestamp("2024-02-01", tz="UTC"),
-        currency="EUR",
+def test_request_adjusted_last_rejects_missing_qualification_before_raw_request() -> (
+    None
+):
+    provider = _provider_with_qualification(
+        [],
+        _unexpected_adjusted_last_client,
     )
 
-    assert fake.calls[0]["primary_exchange"] == "AEB"
+    with pytest.raises(IbkrRequestError, match="SPY.ARCA.*received 0"):
+        provider.request_adjusted_last(
+            _SPY,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+            currency="USD",
+        )
+
+
+def test_request_adjusted_last_rejects_ambiguous_qualification() -> None:
+    first = SimpleNamespace(id=_SPY, info={"contract": {}})
+    second = SimpleNamespace(id=_SPY, info={"contract": {}})
+    provider = _provider_with_qualification(
+        [first, second],
+        _unexpected_adjusted_last_client,
+    )
+
+    with pytest.raises(IbkrRequestError, match="SPY.ARCA.*received 2"):
+        provider.request_adjusted_last(
+            _SPY,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+            currency="USD",
+        )
+
+
+def test_request_adjusted_last_rejects_a_different_qualified_identity() -> None:
+    qualified = SimpleNamespace(
+        id=InstrumentId.from_str("QQQ.XNAS"),
+        info={"contract": {}},
+    )
+    provider = _provider_with_qualification(
+        [qualified],
+        _unexpected_adjusted_last_client,
+    )
+
+    with pytest.raises(IbkrRequestError, match="QQQ.XNAS.*SPY.ARCA"):
+        provider.request_adjusted_last(
+            _SPY,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+            currency="USD",
+        )
+
+
+def test_request_adjusted_last_rejects_missing_contract_metadata() -> None:
+    qualified = SimpleNamespace(id=_SPY, info={})
+    provider = _provider_with_qualification(
+        [qualified],
+        _unexpected_adjusted_last_client,
+    )
+
+    with pytest.raises(IbkrRequestError, match="SPY.ARCA.*no IB contract"):
+        provider.request_adjusted_last(
+            _SPY,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+            currency="USD",
+        )
+
+
+def test_request_adjusted_last_rejects_malformed_contract_metadata() -> None:
+    qualified = SimpleNamespace(
+        id=_SPY,
+        info={"contract": {"notAnIbContractField": "invalid"}},
+    )
+    provider = _provider_with_qualification(
+        [qualified],
+        _unexpected_adjusted_last_client,
+    )
+
+    with pytest.raises(IbkrRequestError, match="SPY.ARCA.*Unexpected keyword argument"):
+        provider.request_adjusted_last(
+            _SPY,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+            currency="USD",
+        )
+
+
+def test_request_adjusted_last_rejects_an_unqualified_contract() -> None:
+    qualified = SimpleNamespace(
+        id=_SPY,
+        info={"contract": {"secType": "STK", "conId": 0, "currency": "USD"}},
+    )
+    provider = _provider_with_qualification(
+        [qualified],
+        _unexpected_adjusted_last_client,
+    )
+
+    with pytest.raises(IbkrRequestError, match="SPY.ARCA.*no positive IB conId"):
+        provider.request_adjusted_last(
+            _SPY,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+            currency="USD",
+        )
+
+
+def test_request_adjusted_last_rejects_a_qualified_currency_mismatch() -> None:
+    qualified = SimpleNamespace(
+        id=_SPY,
+        info={"contract": {"secType": "STK", "conId": 756733, "currency": "EUR"}},
+    )
+    provider = _provider_with_qualification(
+        [qualified],
+        _unexpected_adjusted_last_client,
+    )
+
+    with pytest.raises(IbkrRequestError, match="SPY.ARCA.*EUR.*USD"):
+        provider.request_adjusted_last(
+            _SPY,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+            currency="USD",
+        )
 
 
 def test_adjusted_last_raw_clients_use_fresh_client_ids() -> None:
@@ -189,10 +375,12 @@ def test_request_distribution_data_fetches_adjusted_last_and_decodes_events() ->
 
 def test_request_adjusted_last_wraps_raw_fault() -> None:
     class _Boom(_FakeAdjustedLastClient):
-        def request_daily_closes(self, **kwargs: Any) -> list[tuple[pd.Timestamp, float]]:
+        def request_daily_closes(
+            self, **kwargs: Any
+        ) -> list[tuple[pd.Timestamp, float]]:
             raise RuntimeError("ib down")
 
-    provider = IbkrHistoricalProvider(adjusted_last_client_factory=_Boom)
+    provider = _provider_with_qualification([_qualified_spy()], _Boom)
 
     with pytest.raises(IbkrRequestError, match="ADJUSTED_LAST"):
         provider.request_adjusted_last(
