@@ -36,22 +36,12 @@ class FixtureRecord(Data):
     value: float = 0.0
     provider: str = "fixture"
 
-    @classmethod
-    def schema(cls) -> Any:
-        return cls._schema
-
-
 @customdataclass
 class _DormantFixtureRecord(Data):
     """Known fixture shape with deliberately absent provider wiring."""
 
     instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
     value: float = 0.0
-
-    @classmethod
-    def schema(cls) -> Any:
-        return cls._schema
-
 
 @customdataclass
 class _CoverageMarker(Data):
@@ -63,11 +53,6 @@ class _CoverageMarker(Data):
     end_ns: int = 0
     checked_at_ns: int = 0
     applicable: bool = True
-
-    @classmethod
-    def schema(cls) -> Any:
-        return cls._schema
-
 
 RecordT = TypeVar("RecordT", bound=Data)
 

@@ -47,11 +47,6 @@ class Distribution(Data):
     def ex_date(self) -> pd.Timestamp:
         return pd.Timestamp(self.ts_event, tz="UTC").normalize()
 
-    @classmethod
-    def schema(cls) -> Any:
-        return cls._schema
-
-
 def distribution_records(records: Sequence[Data]) -> tuple[Distribution, ...]:
     """Select the Distribution consumer view from generic typed records."""
     return tuple(record for record in records if isinstance(record, Distribution))
