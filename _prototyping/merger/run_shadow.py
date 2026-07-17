@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,7 @@ def main() -> None:
     root = args.state_dir.expanduser().resolve()
     shadow = CashMergerShadow(root)
     cash_rate = FredDtb3RateSource(root / "sources" / "fred-dtb3").latest(as_of=as_of.date())
-    end = as_of.date()
+    end = as_of.date() - timedelta(days=1)
     evidence = shadow.run(
         source=SecApiSource(root / "sources" / "sec-api"),
         marks=AegisCatalogMarkSource(

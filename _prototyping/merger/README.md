@@ -22,7 +22,8 @@ SEC_API_KEY=... aegis-rd/.venv/bin/python -m _prototyping.merger.run_shadow \
 
 Each run:
 
-1. resumes after the latest covered filing date, or starts on the current date when empty;
+1. resumes after the latest covered filing date, or starts on the last completed UTC date
+   when empty (the current partial filing day is collected by the next run);
 2. fetches SEC-API filing metadata and complete submissions only on a cache miss;
 3. appends content-addressed event observations without rewriting history;
 4. fetches the latest public FRED `DTB3` cash rate with an immutable offline cache;

@@ -108,6 +108,22 @@ def test_shadow_run_records_causal_evidence_without_promoting_the_strategy(tmp_p
     assert evidence.evidence_path.exists()
 
 
+def test_refresh_window_resumes_after_the_latest_completed_source_day(tmp_path) -> None:
+    shadow = CashMergerShadow(tmp_path)
+    shadow.run(
+        source=_Source(),
+        marks=_Marks(),
+        start=date(2026, 2, 2),
+        end=date(2026, 2, 2),
+        as_of=datetime(2026, 2, 2, 22, tzinfo=UTC),
+        capital=5_000.00,
+    )
+
+    next_start = shadow.next_refresh_start(end=date(2026, 2, 4))
+
+    assert next_start == date(2026, 2, 3)
+
+
 def test_second_refresh_in_the_same_month_reuses_the_frozen_decision(tmp_path) -> None:
     shadow = CashMergerShadow(tmp_path)
     shadow.run(

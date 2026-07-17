@@ -127,8 +127,11 @@ class _PaginatedTransport:
         self.requests = 0
 
     def query(self, request: bytes) -> bytes:
+        payload = json.loads(request)
+        if "documentFormatFiles.type" not in payload["query"]:
+            return json.dumps({"filings": [], "total": {"value": 0}}).encode()
         self.requests += 1
-        offset = int(json.loads(request)["from"])
+        offset = int(payload["from"])
         filings = []
         if offset == 0:
             filings = [
@@ -151,6 +154,34 @@ class _PaginatedTransport:
 
     def submission(self, cik: str, accession: str) -> bytes:
         return _SUBMISSION
+
+
+class _AnnouncedAndCompletedTransport:
+    def query(self, request: bytes) -> bytes:
+        query = json.loads(request)["query"]
+        if "documentFormatFiles.type" in query:
+            filings = [_FILING]
+        else:
+            filings = [
+                _FILING,
+                {
+                    **_FILING,
+                    "accessionNo": "0000000001-26-000005",
+                    "filedAt": "2026-01-09T12:00:00+00:00",
+                    "linkToFilingDetails": "https://example.test/completion",
+                    "items": ["2.01"],
+                    "documentFormatFiles": [],
+                },
+            ]
+        return json.dumps({"filings": filings, "total": {"value": len(filings)}}).encode()
+
+    def submission(self, cik: str, accession: str) -> bytes:
+        if accession == _FILING["accessionNo"]:
+            return _SUBMISSION
+        return b"""<SEC-DOCUMENT><DOCUMENT><TYPE>8-K<TEXT>
+        On January 9, 2026, the company completed the merger contemplated by the
+        Agreement and Plan of Merger dated as of January 2, 2026.
+        </TEXT></DOCUMENT></SEC-DOCUMENT>"""
 
 
 def test_warm_source_replay_does_not_require_the_network(tmp_path) -> None:
@@ -257,3 +288,20 @@ def test_source_fetches_every_reported_query_page(tmp_path) -> None:
 
     assert len(refresh.observations) == 51
     assert transport.requests == 2
+
+
+def test_cold_catchup_observes_a_completion_after_an_announcement_in_the_same_window(
+    tmp_path,
+) -> None:
+    source = SecApiSource(tmp_path, transport=_AnnouncedAndCompletedTransport())
+
+    refresh = source.refresh(
+        start=date(2026, 1, 3),
+        end=date(2026, 1, 9),
+        active_events=(),
+    )
+
+    assert tuple(observation.status.value for observation in refresh.observations) == (
+        "announced",
+        "completed",
+    )

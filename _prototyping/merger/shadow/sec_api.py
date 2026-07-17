@@ -129,7 +129,7 @@ class SecApiSource:
             if event.status in {EventStatus.ANNOUNCED, EventStatus.AMENDED}
         )
         announcement_filings = self._query(_announcement_query(start, end))
-        active_by_cik = _active_by_cik(active)
+        original_active_by_cik = _active_by_cik(active)
         observations: list[EventObservation] = []
         reviews: list[SourceReview] = []
         for filing in _unique_filings(announcement_filings):
@@ -139,21 +139,33 @@ class SecApiSource:
                 observations.append(
                     _preserve_event_identity(
                         observation,
-                        active_by_cik.get(observation.target_cik, ()),
+                        original_active_by_cik.get(observation.target_cik, ()),
                     )
                 )
             if review is not None:
                 reviews.append(review)
-        if active:
-            lifecycle_filings = self._query(_lifecycle_query(start, end, active))
+        lifecycle_events = _latest_active((*active, *observations))
+        if lifecycle_events:
+            lifecycle_by_cik = _active_by_cik(lifecycle_events)
+            announcements_by_accession = _announcements_by_accession(observations)
+            lifecycle_filings = self._query(_lifecycle_query(start, end, lifecycle_events))
             for filing in _unique_filings(lifecycle_filings):
                 if not _could_change_lifecycle(filing):
+                    continue
+                cik = _required_text(filing, "cik")
+                candidates = _lifecycle_candidates(
+                    filing,
+                    announcements_by_accession,
+                    original_active_by_cik.get(cik, ()),
+                    lifecycle_by_cik.get(cik, ()),
+                )
+                if not candidates:
                     continue
                 submission = self._submission(filing)
                 observation, review = _lifecycle(
                     filing,
                     submission,
-                    active_by_cik.get(_required_text(filing, "cik"), ()),
+                    candidates,
                 )
                 if observation is not None:
                     observations.append(observation)
@@ -257,6 +269,42 @@ def _could_change_lifecycle(filing: dict[str, Any]) -> bool:
         if isinstance(document, dict)
     }
     return bool(items.intersection({"1.01", "1.02", "2.01"}) or "EX-2.1" in document_types)
+
+
+def _latest_active(events: Iterable[EventObservation]) -> tuple[EventObservation, ...]:
+    latest: dict[str, EventObservation] = {}
+    for event in sorted(events, key=lambda item: (item.observed_at, item.source_accession)):
+        if event.status in {EventStatus.ANNOUNCED, EventStatus.AMENDED}:
+            latest[event.event_id] = event
+    return tuple(latest[event_id] for event_id in sorted(latest))
+
+
+def _announcements_by_accession(
+    observations: Iterable[EventObservation],
+) -> dict[str, tuple[EventObservation, ...]]:
+    grouped: dict[str, list[EventObservation]] = {}
+    for observation in observations:
+        grouped.setdefault(observation.source_accession, []).append(observation)
+    return {accession: tuple(events) for accession, events in grouped.items()}
+
+
+def _lifecycle_candidates(
+    filing: dict[str, Any],
+    announcements_by_accession: dict[str, tuple[EventObservation, ...]],
+    original_active: tuple[EventObservation, ...],
+    all_active: tuple[EventObservation, ...],
+) -> tuple[EventObservation, ...]:
+    accession = _required_text(filing, "accessionNo")
+    same_filing_announcements = announcements_by_accession.get(accession)
+    if same_filing_announcements is None:
+        return all_active
+    if not original_active:
+        return ()
+    old_dates = {event.agreement_date for event in original_active}
+    opens_different_agreement = any(
+        event.agreement_date not in old_dates for event in same_filing_announcements
+    )
+    return original_active if opens_different_agreement else ()
 
 
 def _preserve_event_identity(
@@ -505,7 +553,10 @@ def _store_query(directory: Path, *, request_identity: str, response: bytes) -> 
         "retrieved_at": datetime.now(UTC).isoformat(),
         "response": parsed,
     }
-    write_once(directory / f"{response_identity}.json", canonical_bytes(envelope))
+    write_once(
+        directory / f"{request_identity}-{response_identity}.json",
+        canonical_bytes(envelope),
+    )
 
 
 def _request(
