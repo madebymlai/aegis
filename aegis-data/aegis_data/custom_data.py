@@ -72,14 +72,33 @@ class CustomDataProviderPort(Protocol[RecordT]):
 @dataclass(frozen=True)
 class _Kind:
     record_type: type[Data]
-    array_names: tuple[str, ...]
+    value_array: str
+    availability_array: str
+    age_array: str
+    value_attribute: str
+    provisioned: bool
+
+    @property
+    def array_names(self) -> tuple[str, ...]:
+        return (self.value_array, self.availability_array, self.age_array)
 
 
 _KINDS = (
     _Kind(
         record_type=FixtureRecord,
-        array_names=("FixtureValue", "FixtureAvailable", "FixtureAgeDays"),
+        value_array="FixtureValue",
+        availability_array="FixtureAvailable",
+        age_array="FixtureAgeDays",
+        value_attribute="value",
+        provisioned=True,
     ),
+)
+
+VOCABULARY = frozenset(
+    array_name
+    for kind in _KINDS
+    if kind.provisioned
+    for array_name in kind.array_names
 )
 
 
@@ -203,25 +222,33 @@ def arrays(
     index: pd.DatetimeIndex,
     catalog_path: Path,
 ) -> dict[str, pd.DataFrame]:
-    """Return neutral panels for a covered window with no domain observations."""
+    """Project the latest causally known record onto the caller's exact index."""
     kind = _kind_for_array_names(array_names)
     if len(index) == 0:
         return {
             name: pd.DataFrame(index=index, columns=instrument_ids, dtype=float)
             for name in array_names
         }
-    report = coverage(
+    coverage(
         cast(type[Data], kind.record_type),
         instrument_ids,
         start=pd.Timestamp(index[0]),
         end=pd.Timestamp(index[-1]),
         catalog_path=catalog_path,
     )
-    del report
-    return {
+    panels = {
         name: pd.DataFrame(0.0, index=index, columns=instrument_ids)
         for name in array_names
     }
+    stored = records(
+        kind.record_type,
+        instrument_ids,
+        start=pd.Timestamp(index[0]),
+        end=pd.Timestamp(index[-1]),
+        catalog_path=catalog_path,
+    )
+    _project_records(kind, stored, instrument_ids, index, panels)
+    return panels
 
 
 def coverage(
@@ -398,6 +425,46 @@ def _kind_for_array_names(array_names: Sequence[str]) -> _Kind:
     raise ValueError(f"unknown custom arrays: {sorted(requested)}")
 
 
+def _project_records(
+    kind: _Kind,
+    stored: Sequence[Data],
+    instrument_ids: Sequence[InstrumentId],
+    index: pd.DatetimeIndex,
+    panels: dict[str, pd.DataFrame],
+) -> None:
+    for instrument_id in instrument_ids:
+        instrument_records = sorted(
+            (
+                record
+                for record in stored
+                if cast(InstrumentId, record.instrument_id) == instrument_id
+            ),
+            key=lambda record: (record.ts_event, record.ts_init),
+        )
+        cursor = 0
+        current: Data | None = None
+        for row in index:
+            row_ns = _utc(pd.Timestamp(row)).value
+            while (
+                cursor < len(instrument_records)
+                and instrument_records[cursor].ts_event <= row_ns
+            ):
+                current = instrument_records[cursor]
+                cursor += 1
+            if current is None:
+                continue
+            if kind.value_array in panels:
+                panels[kind.value_array].at[row, instrument_id] = float(
+                    getattr(current, kind.value_attribute)
+                )
+            if kind.availability_array in panels:
+                panels[kind.availability_array].at[row, instrument_id] = 1.0
+            if kind.age_array in panels:
+                panels[kind.age_array].at[row, instrument_id] = (
+                    row_ns - current.ts_event
+                ) / 86_400_000_000_000
+
+
 def _missing_intervals(
     catalog: ParquetDataCatalog,
     record_type: type[Data],
@@ -520,6 +587,7 @@ __all__ = [
     "FixtureRecord",
     "ServedCustomData",
     "UnknownCustomDataRecordError",
+    "VOCABULARY",
     "arrays",
     "correct",
     "coverage",

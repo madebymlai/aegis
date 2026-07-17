@@ -12,6 +12,7 @@ from aegis_data.custom_data import (
     CustomDataProviderPort,
     FixtureRecord,
     ServedCustomData,
+    VOCABULARY,
     arrays,
     correct,
     coverage,
@@ -226,6 +227,65 @@ def test_correction_replaces_a_bounded_window_while_ingest_cannot_overwrite(
 
     assert attempted_overwrite.requests == []
     assert stored == (_record("2024-01-02", 9.0),)
+
+
+def test_arrays_projects_fixture_records_causally_on_the_exact_index(
+    tmp_path: Path,
+) -> None:
+    index = pd.date_range("2024-01-01", "2024-01-05", tz="UTC")
+    provider = _Provider(
+        (_record("2024-01-02", 2.0), _record("2024-01-04", 4.0))
+    )
+    ingest(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=index[0],
+        end=index[-1],
+        providers=(provider,),
+        catalog_path=tmp_path,
+    )
+
+    panels = arrays(
+        ("FixtureValue", "FixtureAvailable", "FixtureAgeDays"),
+        (_INSTRUMENT,),
+        index=index,
+        catalog_path=tmp_path,
+    )
+
+    assert panels["FixtureValue"].index.equals(index)
+    assert panels["FixtureValue"].columns.tolist() == [_INSTRUMENT]
+    assert panels["FixtureValue"].to_numpy().tolist() == [
+        [0.0],
+        [2.0],
+        [2.0],
+        [4.0],
+        [4.0],
+    ]
+    assert panels["FixtureAvailable"].to_numpy().tolist() == [
+        [0.0],
+        [1.0],
+        [1.0],
+        [1.0],
+        [1.0],
+    ]
+    assert panels["FixtureAgeDays"].to_numpy().tolist() == [
+        [0.0],
+        [0.0],
+        [1.0],
+        [0.0],
+        [1.0],
+    ]
+    assert not panels["FixtureValue"].isna().to_numpy().any()
+    assert not panels["FixtureAvailable"].isna().to_numpy().any()
+    assert not panels["FixtureAgeDays"].isna().to_numpy().any()
+
+
+def test_vocabulary_contains_only_provisioned_fixture_arrays() -> None:
+    vocabulary = VOCABULARY
+
+    assert vocabulary == frozenset(
+        {"FixtureValue", "FixtureAvailable", "FixtureAgeDays"}
+    )
 
 
 def _record(day: str, value: float) -> FixtureRecord:
