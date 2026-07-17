@@ -17,7 +17,7 @@ dependencies = [
   "nautilus_trader",
   "pydantic>=2.0",
   "aegis-exec-aegis-heldhedge-cand-b60",
-  "aegis-exec-atalanta-keystone-shortmute-cand-30c",
+  "aegis-exec-atalanta-keystone-shortmute-cand-06c",
   "aegis-exec-demeter-carry-mix-cand-ff2",
   "requests>=2.34.2",
 ]
@@ -63,7 +63,7 @@ ignore_missing_imports = true
 aegis-runtime = { path = "../aegis-runtime", editable = true }
 aegis-data = { path = "../aegis-data", editable = true }
 aegis-exec-aegis-heldhedge-cand-b60 = { path = "../bundles/aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl" }
-aegis-exec-atalanta-keystone-shortmute-cand-30c = { path = "../bundles/aegis_exec_atalanta_keystone_shortmute_cand_30c-1.0.0-py3-none-any.whl" }
+aegis-exec-atalanta-keystone-shortmute-cand-06c = { path = "../bundles/aegis_exec_atalanta_keystone_shortmute_cand_06c-1.0.0-py3-none-any.whl" }
 aegis-exec-demeter-carry-mix-cand-ff2 = { path = "../bundles/aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl" }
 
 [dependency-groups]

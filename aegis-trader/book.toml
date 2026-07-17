@@ -74,14 +74,15 @@ USD = 0.0513
 rate = 0.005
 
 # Floor risk keeps a fixed 60/40 trend/carry conviction tilt.
-# atalanta — trend floor pole (IDTL/IGLN/ICOM non-equity crisis substrate).
+# atalanta — trend floor pole (non-equity crisis substrate).
 # Hysteretic buy-hold-spread sleeve: long gold/commodities, borrow-gated IDTL short,
 # with research-validated asymmetric drift bands carried by the bundle.
-# Re-exported 2026-07-04 (same lock; old cand_726 wheel predates the bundle-payload
-# schema_version requirement and no longer loads).
+# Re-exported 2026-07-17 from the WCOA-promotion lock (20260709T232701314885Z,
+# research(atalanta) f58633e0; supersedes cand_30c from the 20260629 lock, which
+# carried the pre-v5 payload and no longer loads).
 [[sleeves]]
 name = "atalanta_trend"
-wheel_filename = "aegis_exec_atalanta_keystone_shortmute_cand_30c-1.0.0-py3-none-any.whl"
+wheel_filename = "aegis_exec_atalanta_keystone_shortmute_cand_06c-1.0.0-py3-none-any.whl"
 risk_share = 0.42
 group = "Floor"
 weight_band_down = 0.02
