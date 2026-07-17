@@ -13,21 +13,18 @@ from nautilus_trader.common.actor import Actor
 from nautilus_trader.core.data import Data
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model import DataType
-from nautilus_trader.model.identifiers import ClientId, InstrumentId
+from nautilus_trader.model.identifiers import ClientId
 
 from aegis_data.custom_data import (
     CustomDataProviderPort,
     InvalidLiveCustomDataCapabilityError,
     LiveCustomDataCapability,
-    arrays,
     capture,
-    ensure_arrays,
 )
-from aegis_data.array_names import is_bar_derived_array
 
 from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.trader.book_startup import startup_history_start
-from aegis_trader.trader.pipeline import CustomArrayBuilder, CustomArrayCoverage
+from aegis_trader.trader.sleeve_arrays import ArrayNeed, SleeveArrays
 
 
 class LiveDataClientConflictError(ValueError):
@@ -70,78 +67,37 @@ class _CustomDataCaptureActor(Actor):
             )
 
 
-def build_live_custom_arrays(
-    *,
-    catalog_path: Path,
-) -> CustomArrayBuilder:
-    """Build the pure live Custom Data projection query."""
-
-    def custom_arrays(
-        array_names: Sequence[str],
-        instrument_ids: Sequence[InstrumentId],
-        index: pd.DatetimeIndex,
-    ) -> dict[str, pd.DataFrame]:
-        return arrays(
-            array_names,
-            instrument_ids,
-            index=index,
-            catalog_path=catalog_path,
-        )
-
-    return custom_arrays
-
-
-def build_live_custom_array_coverage(
+def build_live_sleeve_arrays(
     providers: Sequence[object],
     *,
     catalog_path: Path,
-) -> CustomArrayCoverage:
-    """Build the live coverage command shared by startup and later reads."""
-    providers_by_record_type = _historical_providers_by_record_type(providers)
-
-    def ensure_custom_arrays(
-        array_names: Sequence[str],
-        instrument_ids: Sequence[InstrumentId],
-        index: pd.DatetimeIndex,
-    ) -> None:
-        if len(index) == 0:
-            return
-        ensure_arrays(
-            array_names,
-            instrument_ids,
-            start=pd.Timestamp(index[0]),
-            end=pd.Timestamp(index[-1]),
-            providers=providers_by_record_type,
-            catalog_path=catalog_path,
-        )
-
-    return ensure_custom_arrays
+) -> SleeveArrays:
+    """Build the complete live Sleeve array module."""
+    return SleeveArrays.live(
+        catalog_path=catalog_path,
+        providers=_historical_providers_by_record_type(providers),
+    )
 
 
 def warm_live_custom_data(
     book: AssembledBook,
-    ensure_custom_arrays: CustomArrayCoverage,
+    arrays: SleeveArrays,
     *,
     now: datetime,
 ) -> None:
     """Fill each live sleeve's declared Custom Data startup window."""
     for bundle in book.sleeves.values():
-        array_names = tuple(
-            name
-            for name in bundle.contract.required_arrays
-            if not is_bar_derived_array(name)
-        )
-        if not array_names:
-            continue
         start = startup_history_start(
             now,
             timeframe=bundle.contract.timeframe,
             required_bar_window=bundle.contract.lookback_bars + 1,
         )
-        ensure_custom_arrays(
-            array_names,
-            bundle.contract.instrument_ids,
-            pd.DatetimeIndex([pd.Timestamp(start), pd.Timestamp(now)]),
+        arrays.ensure(
+            ArrayNeed.from_contract(
+                bundle.contract,
+                start=pd.Timestamp(start),
+                end=pd.Timestamp(now),
+            )
         )
 
 
@@ -225,7 +181,6 @@ def _historical_providers_by_record_type(
 __all__ = [
     "LiveDataClientConflictError",
     "add_live_custom_data",
-    "build_live_custom_array_coverage",
-    "build_live_custom_arrays",
+    "build_live_sleeve_arrays",
     "warm_live_custom_data",
 ]

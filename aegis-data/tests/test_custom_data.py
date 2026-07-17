@@ -505,6 +505,23 @@ def test_arrays_carries_the_latest_record_from_before_the_requested_index(
     assert panels["FixtureAgeDays"].to_numpy().tolist() == [[2.0], [3.0], [4.0]]
 
 
+def test_arrays_accepts_names_spanning_multiple_custom_kinds(
+    tmp_path: Path,
+) -> None:
+    index = pd.DatetimeIndex([], tz="UTC")
+
+    panels = arrays(
+        ("FixtureValue", "DormantFixtureValue"),
+        (_INSTRUMENT,),
+        index=index,
+        catalog_path=tmp_path,
+    )
+
+    assert tuple(panels) == ("FixtureValue", "DormantFixtureValue")
+    assert panels["FixtureValue"].index.equals(index)
+    assert panels["DormantFixtureValue"].columns.tolist() == [_INSTRUMENT]
+
+
 def test_vocabulary_contains_only_provisioned_fixture_arrays() -> None:
     vocabulary = VOCABULARY
 

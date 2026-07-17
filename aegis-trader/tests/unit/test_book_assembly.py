@@ -30,6 +30,7 @@ from aegis_trader.trader.strategy import (
     RebalanceStrategy,
     RebalanceStrategyConfig,
 )
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import make_bundle
 
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")
@@ -504,7 +505,8 @@ def test_register_book_rejects_a_different_strategy_book_config() -> None:
         StubBundleRegistry({"trend.whl": make_bundle()}),
     )
     strategy = RebalanceStrategy(
-        RebalanceStrategyConfig(book=_book(("trend", "other.whl")))
+        RebalanceStrategyConfig(book=_book(("trend", "other.whl"))),
+        arrays=SleeveArrays.bar_only(),
     )
 
     with pytest.raises(BookConfigMismatchError, match="configured Book Config"):

@@ -57,11 +57,10 @@ from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.trader.live_custom_data import (
     add_live_custom_data,
-    build_live_custom_array_coverage,
-    build_live_custom_arrays,
+    build_live_sleeve_arrays,
     warm_live_custom_data,
 )
-from aegis_trader.trader.pipeline import CustomArrayBuilder, CustomArrayCoverage
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _log = logging.getLogger("aegis_trader")
@@ -176,24 +175,20 @@ def build_live_node(
         custom_data_providers,
         catalog_path=catalog_root(),
     )
-    custom_array_coverage = build_live_custom_array_coverage(
+    arrays = build_live_sleeve_arrays(
         custom_data_providers,
         catalog_path=catalog_root(),
     )
     warm_live_custom_data(
         assembled_book,
-        custom_array_coverage,
+        arrays,
         now=datetime.now(timezone.utc),
-    )
-    custom_arrays = build_live_custom_arrays(
-        catalog_path=catalog_root(),
     )
     node.build()
     node.trader.add_strategy(
         build_live_strategy(
             assembled_book,
-            custom_arrays=custom_arrays,
-            custom_array_coverage=custom_array_coverage,
+            arrays=arrays,
         )
     )
     return node
@@ -202,8 +197,7 @@ def build_live_node(
 def build_live_strategy(
     book: AssembledBook,
     *,
-    custom_arrays: CustomArrayBuilder | None = None,
-    custom_array_coverage: CustomArrayCoverage | None = None,
+    arrays: SleeveArrays,
 ) -> RebalanceStrategy:
     """The live ``RebalanceStrategy`` for *book*: next-close ``AT_THE_CLOSE`` and
     cache warmup on start, with the assembled book registered.
@@ -217,9 +211,8 @@ def build_live_strategy(
             fill_time_in_force=LIVE_FILL_TIME_IN_FORCE,
             warmup_cache_on_start=True,
         ),
+        arrays=arrays,
         bar_type_resolver=recorded_marking_resolver(book),
-        custom_arrays=custom_arrays,
-        custom_array_coverage=custom_array_coverage,
     )
     strategy.register_book(book)
     return strategy

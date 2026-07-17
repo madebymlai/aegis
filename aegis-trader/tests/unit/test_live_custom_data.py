@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -32,13 +33,14 @@ from aegis_data.custom_data import (
     LiveDataClientName,
     ServedCustomData,
 )
+from aegis_trader.data.market_data import MarketBar
 from aegis_trader.trader.live_custom_data import (
     LiveDataClientConflictError,
     add_live_custom_data,
-    build_live_custom_array_coverage,
-    build_live_custom_arrays,
+    build_live_sleeve_arrays,
     warm_live_custom_data,
 )
+from aegis_trader.trader.sleeve_arrays import ArrayNeed, SleeveArrayGrid
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
 from tests.support.factories import assemble_test_book, make_bundle
@@ -159,7 +161,7 @@ def _native_capture(
         loop=loop,
     )
     add_live_custom_data(
-        node,
+        cast(TradingNode, node),
         (provider or _StreamingProvider(LiveDataClientConfig()),),
         catalog_path=catalog_path,
     )
@@ -198,7 +200,7 @@ def test_live_custom_data_merges_client_config_and_registers_its_factory(
     node = _Node(broker_config)
 
     add_live_custom_data(
-        node,
+        cast(TradingNode, node),
         (_FetchOnlyProvider(), _StreamingProvider(fixture_config)),
         catalog_path=tmp_path,
     )
@@ -218,7 +220,7 @@ def test_live_custom_data_rejects_a_client_id_already_owned_by_the_node(
 
     with pytest.raises(LiveDataClientConflictError, match="FIXTURE"):
         add_live_custom_data(
-            node,
+            cast(TradingNode, node),
             (_StreamingProvider(LiveDataClientConfig()),),
             catalog_path=tmp_path,
         )
@@ -234,7 +236,7 @@ def test_live_custom_data_rejects_an_invalid_provider_capability(
 
     with pytest.raises(InvalidLiveCustomDataCapabilityError):
         add_live_custom_data(
-            node,
+            cast(TradingNode, node),
             (_InvalidStreamingProvider(),),
             catalog_path=tmp_path,
         )
@@ -264,22 +266,16 @@ def test_native_capture_gap_is_healed_by_live_array_coverage(tmp_path: Path) -> 
     with _native_capture(tmp_path, provider) as deliver:
         deliver(first)
         deliver(last)
-    ensure_custom_arrays = build_live_custom_array_coverage(
+    arrays = build_live_sleeve_arrays(
         (provider,),
         catalog_path=tmp_path,
     )
     index = pd.date_range(first_timestamp, last_timestamp, tz="UTC")
 
-    ensure_custom_arrays(
-        ("FixtureValue", "FixtureAvailable"),
-        (instrument_id,),
-        index,
-    )
-    panels = build_live_custom_arrays(catalog_path=tmp_path)(
-        ("FixtureValue", "FixtureAvailable"),
-        (instrument_id,),
-        index,
-    )
+    grid = _custom_array_grid(instrument_id, index)
+
+    arrays.ensure(grid.need)
+    panels = arrays.project(grid)
 
     assert provider.requests == [
         (
@@ -296,18 +292,16 @@ def test_live_array_coverage_makes_no_request_for_a_covered_window(
     instrument_id = InstrumentId.from_str("SPY.ARCA")
     index = pd.date_range("2024-01-01", "2024-01-03", tz="UTC")
     seed = _StreamingProvider(LiveDataClientConfig())
-    build_live_custom_array_coverage((seed,), catalog_path=tmp_path)(
-        ("FixtureValue", "FixtureAvailable"),
-        (instrument_id,),
-        index,
+    need = ArrayNeed(
+        names=("FixtureValue", "FixtureAvailable"),
+        instrument_ids=(instrument_id,),
+        start=index[0],
+        end=index[-1],
     )
+    build_live_sleeve_arrays((seed,), catalog_path=tmp_path).ensure(need)
     unused = _StreamingProvider(LiveDataClientConfig())
 
-    build_live_custom_array_coverage((unused,), catalog_path=tmp_path)(
-        ("FixtureValue", "FixtureAvailable"),
-        (instrument_id,),
-        index,
-    )
+    build_live_sleeve_arrays((unused,), catalog_path=tmp_path).ensure(need)
 
     assert unused.requests == []
 
@@ -354,13 +348,13 @@ def test_live_startup_warms_the_declared_custom_array_window(
     )
     now = datetime(2024, 1, 3, tzinfo=timezone.utc)
 
-    ensure_custom_arrays = build_live_custom_array_coverage(
+    arrays = build_live_sleeve_arrays(
         (provider,),
         catalog_path=tmp_path,
     )
     warm_live_custom_data(
         book,
-        ensure_custom_arrays,
+        arrays,
         now=now,
     )
 
@@ -387,16 +381,27 @@ def test_live_custom_array_projection_reads_the_warmed_catalog(
         ),
     )
     index = pd.date_range("2024-01-01", "2024-01-03", tz="UTC")
-    build_live_custom_array_coverage((provider,), catalog_path=tmp_path)(
-        ("FixtureValue", "FixtureAvailable"),
-        (instrument_id,),
-        index,
-    )
+    arrays = build_live_sleeve_arrays((provider,), catalog_path=tmp_path)
+    grid = _custom_array_grid(instrument_id, index)
 
-    panels = build_live_custom_arrays(catalog_path=tmp_path)(
-        ("FixtureValue", "FixtureAvailable"),
-        (instrument_id,),
-        index,
-    )
+    arrays.ensure(grid.need)
+    panels = arrays.project(grid)
 
     assert panels["FixtureValue"].to_numpy().tolist() == [[0.0], [7.0], [7.0]]
+
+
+def _custom_array_grid(
+    instrument_id: InstrumentId,
+    index: pd.DatetimeIndex,
+) -> SleeveArrayGrid:
+    contract = make_bundle(
+        required_arrays=("Close", "FixtureValue", "FixtureAvailable"),
+        native_instrument_ids=(instrument_id,),
+    ).contract
+    bars = {
+        instrument_id: tuple(
+            MarketBar(timestamp.value, 1.0, 1.0, 1.0, 1.0, 1.0)
+            for timestamp in index
+        )
+    }
+    return SleeveArrayGrid.from_bars(contract, bars)

@@ -46,6 +46,7 @@ from aegis_trader.trader.node import (
     run_node,
     stop_trader,
 )
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import assemble_test_book, make_bundle
 
 
@@ -186,7 +187,7 @@ def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves(
         },
     )
 
-    strategy = build_live_strategy(assembled)
+    strategy = build_live_strategy(assembled, arrays=SleeveArrays.bar_only())
     max_notionals = strategy.risk_engine_config_dict(100_000.0)[
         "max_notional_per_order"
     ]
@@ -237,10 +238,8 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
 ) -> None:
     events: list[str] = []
 
-    attached_custom_arrays: list[object] = []
-    attached_custom_array_coverage: list[object] = []
-    custom_arrays = object()
-    custom_array_coverage = object()
+    attached_arrays: list[object] = []
+    arrays = object()
 
     class _Trader:
         def add_strategy(self, strategy: object) -> None:
@@ -257,12 +256,14 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
     def build_strategy(
         _book: object,
         *,
-        custom_arrays: object,
-        custom_array_coverage: object,
+        arrays: object,
     ) -> object:
-        attached_custom_arrays.append(custom_arrays)
-        attached_custom_array_coverage.append(custom_array_coverage)
+        attached_arrays.append(arrays)
         return object()
+
+    def build_arrays(*args, **kwargs) -> object:
+        events.append("arrays")
+        return arrays
 
     monkeypatch.setattr("aegis_trader.trader.node.TradingNode", _BuiltNode)
     monkeypatch.setattr(
@@ -274,16 +275,12 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
         lambda *args, **kwargs: events.append("custom"),
     )
     monkeypatch.setattr(
-        "aegis_trader.trader.node.build_live_custom_array_coverage",
-        lambda *args, **kwargs: events.append("coverage") or custom_array_coverage,
+        "aegis_trader.trader.node.build_live_sleeve_arrays",
+        build_arrays,
     )
     monkeypatch.setattr(
         "aegis_trader.trader.node.warm_live_custom_data",
         lambda *args, **kwargs: events.append("warm"),
-    )
-    monkeypatch.setattr(
-        "aegis_trader.trader.node.build_live_custom_arrays",
-        lambda *args, **kwargs: events.append("arrays") or custom_arrays,
     )
     monkeypatch.setattr(
         "aegis_trader.trader.node.build_live_strategy",
@@ -310,14 +307,12 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
     assert events == [
         "broker",
         "custom",
-        "coverage",
-        "warm",
         "arrays",
+        "warm",
         "build",
         "strategy",
     ]
-    assert attached_custom_arrays == [custom_arrays]
-    assert attached_custom_array_coverage == [custom_array_coverage]
+    assert attached_arrays == [arrays]
 
 
 # --------------------------------------------------------------------------- #

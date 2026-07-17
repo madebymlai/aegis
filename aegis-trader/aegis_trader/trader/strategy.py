@@ -77,14 +77,13 @@ from aegis_trader.domain.types import (
 )
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
-    CustomArrayBuilder,
-    CustomArrayCoverage,
     DueSleeve,
     GateOutcome,
     RebalancePipeline,
     RebalanceRequest,
     RebalanceSummary,
 )
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
 from aegis_trader.trader.book_startup import (
     BootIntent,
@@ -132,16 +131,14 @@ class RebalanceStrategy(Strategy):
         self,
         config: RebalanceStrategyConfig,
         *,
+        arrays: SleeveArrays,
         bar_type_resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
-        custom_arrays: CustomArrayBuilder | None = None,
-        custom_array_coverage: CustomArrayCoverage | None = None,
     ) -> None:
         super().__init__(config)
         # The one raw bar-type resolution seam (aegis-rd-tggo.1): every
         # subscribe/unsubscribe/request and cache read resolves through it.
         self._bar_type_resolver = bar_type_resolver
-        self._custom_arrays = custom_arrays
-        self._custom_array_coverage = custom_array_coverage
+        self._arrays = arrays
         self._assembled_book: AssembledBook | None = None
         # ── bar-driven per-Sleeve cadence state (aegis-rd-9qkr.3) ─────────
         # A Sleeve's clock advances only on bars of streams it consumes; its
@@ -284,17 +281,20 @@ class RebalanceStrategy(Strategy):
             resolver=self._bar_type_resolver,
         )
 
+        pipeline = RebalancePipeline(
+            book_state=self._require_book_state(),
+            market_data=self._require_market_data(),
+            book=assembled_book,
+            ledger=self._require_sleeve_ledger(),
+            arrays=self._arrays,
+        )
         boot = bootstrap(
             now=self.clock.utc_now(),
             book=assembled_book,
-            ledger=self._require_sleeve_ledger(),
-            book_state=self._require_book_state(),
-            market_data=self._require_market_data(),
+            pipeline=pipeline,
             roll_desk=roll_desk,
             fx_reference_pairs=self._fx_reference_pairs(),
             warmup_cache_on_start=self.config.warmup_cache_on_start,
-            custom_arrays=self._custom_arrays,
-            custom_array_coverage=self._custom_array_coverage,
         )
         if isinstance(boot, Halt):
             self._halt_from_roll_intent(boot)

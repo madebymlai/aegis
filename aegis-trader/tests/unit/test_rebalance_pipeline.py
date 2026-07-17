@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
+from pathlib import Path
 
 import pandas as pd
 import pytest
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.custom_data import (
+    CustomDataProviderPort,
+    FixtureRecord,
+    ServedCustomData,
+)
 from aegis_data.rebasing import ratio_rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
@@ -32,13 +38,12 @@ from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
-    CustomArrayBuilder,
-    CustomArrayCoverage,
     DueSleeve,
     GateOutcome,
     RebalancePipeline,
     RebalanceRequest,
 )
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import assemble_test_book
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
@@ -96,6 +101,17 @@ class _FixedWeightBundle(ExecutionBundle):
         )
         target.columns.name = "instrument_id"
         return target
+
+
+class _EmptyCustomProvider(CustomDataProviderPort[FixtureRecord]):
+    def request_records(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> ServedCustomData[FixtureRecord]:
+        return ServedCustomData((), start)
 
 
 class _ContinuousWeightBundle(ExecutionBundle):
@@ -436,8 +452,7 @@ def _pipeline(
     market_data: _MarketData | None = None,
     book: BookConfig | None = None,
     bundle: ExecutionBundle | None = None,
-    custom_arrays: CustomArrayBuilder | None = None,
-    custom_array_coverage: CustomArrayCoverage | None = None,
+    arrays: SleeveArrays | None = None,
 ) -> RebalancePipeline:
     config = book or _book()
     loaded_bundle = bundle or _FixedWeightBundle(0.5)
@@ -449,8 +464,7 @@ def _pipeline(
             {config.sleeves[0].wheel_filename: loaded_bundle},
         ),
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
-        custom_arrays=custom_arrays,
-        custom_array_coverage=custom_array_coverage,
+        arrays=arrays or SleeveArrays.bar_only(),
     )
 
 
@@ -460,16 +474,14 @@ def _started_pipeline(
     market_data: _MarketData | None = None,
     book: BookConfig | None = None,
     bundle: ExecutionBundle | None = None,
-    custom_arrays: CustomArrayBuilder | None = None,
-    custom_array_coverage: CustomArrayCoverage | None = None,
+    arrays: SleeveArrays | None = None,
 ) -> RebalancePipeline:
     pipeline = _pipeline(
         book_state=book_state,
         market_data=market_data,
         book=book,
         bundle=bundle,
-        custom_arrays=custom_arrays,
-        custom_array_coverage=custom_array_coverage,
+        arrays=arrays,
     )
     startup_result = pipeline.startup_check()
     assert startup_result.trading_enabled is True
@@ -508,6 +520,7 @@ def test_rebalance_pipeline_targets_a_continuous_root_keyed_by_its_id() -> None:
             {"trend.whl": _ContinuousWeightBundle(0.5)},
         ),
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+        arrays=SleeveArrays.bar_only(),
     )
 
     startup_result = pipeline.startup_check()
@@ -557,21 +570,11 @@ def test_rebalance_pipeline_intersects_drop_policy_mixed_calendar_panel() -> Non
     pd.testing.assert_frame_equal(bundle.weights, expected_weights)
 
 
-def test_custom_arrays_use_the_union_index_for_nan_policy() -> None:
+def test_custom_arrays_use_the_union_index_for_nan_policy(tmp_path: Path) -> None:
     bundle = _CalendarParityBundle(
         missing_index=MissingIndexPolicy.NAN,
         custom_arrays=True,
     )
-
-    def custom_arrays(
-        names: Sequence[str],
-        instrument_ids: Sequence[InstrumentId],
-        index: pd.DatetimeIndex,
-    ) -> dict[str, pd.DataFrame]:
-        return {
-            name: pd.DataFrame(1.0, index=index, columns=instrument_ids)
-            for name in names
-        }
 
     pipeline = _started_pipeline(
         market_data=_MarketData(
@@ -579,7 +582,10 @@ def test_custom_arrays_use_the_union_index_for_nan_policy() -> None:
             fresh_instrument_ids=frozenset({_LSE_LEG, _BRU_LEG}),
         ),
         bundle=bundle,
-        custom_arrays=custom_arrays,
+        arrays=SleeveArrays.live(
+            catalog_path=tmp_path,
+            providers={FixtureRecord: (_EmptyCustomProvider(),)},
+        ),
     )
 
     pipeline.rebalance(_all_due())
@@ -587,46 +593,6 @@ def test_custom_arrays_use_the_union_index_for_nan_policy() -> None:
     expected_index = pd.DatetimeIndex([_DAY_NS, 2 * _DAY_NS, 3 * _DAY_NS, 4 * _DAY_NS])
     assert bundle.fixture_panel is not None
     assert bundle.fixture_panel.index.equals(expected_index)
-
-
-def test_custom_array_coverage_runs_before_projection() -> None:
-    bundle = _CalendarParityBundle(
-        missing_index=MissingIndexPolicy.NAN,
-        custom_arrays=True,
-    )
-    events: list[str] = []
-
-    def ensure_custom_arrays(
-        names: Sequence[str],
-        instrument_ids: Sequence[InstrumentId],
-        index: pd.DatetimeIndex,
-    ) -> None:
-        events.append("ensure")
-
-    def custom_arrays(
-        names: Sequence[str],
-        instrument_ids: Sequence[InstrumentId],
-        index: pd.DatetimeIndex,
-    ) -> dict[str, pd.DataFrame]:
-        events.append("project")
-        return {
-            name: pd.DataFrame(1.0, index=index, columns=instrument_ids)
-            for name in names
-        }
-
-    pipeline = _started_pipeline(
-        market_data=_MarketData(
-            bars_by_instrument_id=_mixed_calendar_bars(),
-            fresh_instrument_ids=frozenset({_LSE_LEG, _BRU_LEG}),
-        ),
-        bundle=bundle,
-        custom_arrays=custom_arrays,
-        custom_array_coverage=ensure_custom_arrays,
-    )
-
-    pipeline.rebalance(_all_due())
-
-    assert events == ["ensure", "project"]
 
 
 def test_rebalance_pipeline_holds_when_drop_policy_has_too_few_common_bars() -> None:
@@ -707,6 +673,7 @@ def test_apply_roll_rebases_ledger_by_spread_event() -> None:
             {"trend.whl": _ContinuousWeightBundle(0.5)},
         ),
         ledger=ledger,
+        arrays=SleeveArrays.bar_only(),
     )
 
     pipeline.apply_roll(RollEvent(continuous_id=_ES, rebasing=spread_rebasing(50.0)))
@@ -728,6 +695,7 @@ def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
             {"trend.whl": _ContinuousWeightBundle(0.5)},
         ),
         ledger=ledger,
+        arrays=SleeveArrays.bar_only(),
     )
 
     pipeline.apply_roll(RollEvent(continuous_id=_ES, rebasing=ratio_rebasing(1.5)))
@@ -841,6 +809,7 @@ def _two_sleeve_pipeline(
             },
         ),
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+        arrays=SleeveArrays.bar_only(),
     )
     startup_result = pipeline.startup_check()
     assert startup_result.trading_enabled is True
@@ -1165,6 +1134,7 @@ def test_each_due_sleeve_computes_on_its_own_period_coordinates() -> None:
             },
         ),
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+        arrays=SleeveArrays.bar_only(),
     )
 
     pipeline.rebalance(
@@ -1197,6 +1167,7 @@ def test_market_observation_records_the_full_book_without_invoking_sleeves() -> 
         market_data=_MarketData(),
         book=assemble_test_book(_book(), {"trend.whl": _PoisonBundle()}),
         ledger=ledger,
+        arrays=SleeveArrays.bar_only(),
     )
 
     pipeline.record_market_observation(_DAY_NS, {_LSE_LEG: 11.0})
@@ -1323,6 +1294,7 @@ def test_shared_fx_leg_serves_each_sleeve_at_its_own_timeframe() -> None:
             },
         ),
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+        arrays=SleeveArrays.bar_only(),
     )
 
     result = pipeline.rebalance(_all_due(_SLEEVE, hourly))

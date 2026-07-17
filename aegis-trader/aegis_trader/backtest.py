@@ -18,7 +18,6 @@ import pandas as pd
 from aegis_data.array_names import OHLCV_ARRAY_NAMES
 from aegis_data.custom_data import (
     VOCABULARY as CUSTOM_ARRAY_VOCABULARY,
-    arrays as build_custom_arrays,
     records_for_arrays,
 )
 from aegis_data.distributions import Distribution, distribution_records
@@ -61,6 +60,7 @@ from aegis_trader.portfolio.performance import (
 from aegis_trader.trader.costs import build_simulated_cost_models
 from aegis_trader.trader.dividends import build_dividend_modules
 from aegis_trader.trader.financing import FinancingModule, build_financing_module
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _PRICE_COLS = ("Open", "High", "Low", "Close")
@@ -709,26 +709,14 @@ def _add_strategy(
     resolver: RawBarTypeResolver,
     custom_catalog_path: Path,
 ) -> None:
-    def custom_arrays(
-        names: Sequence[str],
-        instrument_ids: Sequence[InstrumentId],
-        index: pd.DatetimeIndex,
-    ) -> dict[str, pd.DataFrame]:
-        return build_custom_arrays(
-            names,
-            instrument_ids,
-            index=index,
-            catalog_path=custom_catalog_path,
-        )
-
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
             book=book.config,
             fill_time_in_force=None,
             warmup_cache_on_start=False,
         ),
+        arrays=SleeveArrays.prepared(catalog_path=custom_catalog_path),
         bar_type_resolver=resolver,
-        custom_arrays=custom_arrays,
     )
     strategy.register_book(book)
     engine.add_strategy(strategy)

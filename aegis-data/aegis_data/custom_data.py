@@ -515,31 +515,32 @@ def arrays(
     catalog_path: Path,
 ) -> dict[str, pd.DataFrame]:
     """Project the latest causally known record onto the caller's exact index."""
-    kind = _kind_for_array_names(array_names)
+    kinds = _kinds_for_array_names(array_names)
     if len(index) == 0:
         return {
             name: pd.DataFrame(index=index, columns=instrument_ids, dtype=float)
             for name in array_names
         }
-    coverage(
-        cast(type[Data], kind.record_type),
-        instrument_ids,
-        start=pd.Timestamp(index[0]),
-        end=pd.Timestamp(index[-1]),
-        catalog_path=catalog_path,
-    )
     panels = {
         name: pd.DataFrame(0.0, index=index, columns=instrument_ids)
         for name in array_names
     }
-    stored = _query_records(
-        kind.record_type,
-        instrument_ids,
-        start=None,
-        end=pd.Timestamp(index[-1]),
-        catalog_path=catalog_path,
-    )
-    _project_records(kind, stored, instrument_ids, index, panels)
+    for kind in kinds:
+        coverage(
+            cast(type[Data], kind.record_type),
+            instrument_ids,
+            start=pd.Timestamp(index[0]),
+            end=pd.Timestamp(index[-1]),
+            catalog_path=catalog_path,
+        )
+        stored = _query_records(
+            kind.record_type,
+            instrument_ids,
+            start=None,
+            end=pd.Timestamp(index[-1]),
+            catalog_path=catalog_path,
+        )
+        _project_records(kind, stored, instrument_ids, index, panels)
     return panels
 
 
@@ -874,14 +875,6 @@ def _kind_for(record_type: type[Data]) -> _Kind:
         if kind.record_type is record_type:
             return kind
     raise UnknownCustomDataRecordError(record_type.__name__)
-
-
-def _kind_for_array_names(array_names: Sequence[str]) -> _ArrayKind:
-    requested = set(array_names)
-    for kind in _KINDS:
-        if isinstance(kind, _ArrayKind) and requested <= set(kind.array_names):
-            return kind
-    raise UnknownCustomArrayError(sorted(requested))
 
 
 def _kinds_for_array_names(array_names: Sequence[str]) -> tuple[_ArrayKind, ...]:
