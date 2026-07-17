@@ -10,6 +10,7 @@ from types import MappingProxyType as _MappingProxyType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.array_names import OHLCV_ARRAY_NAMES
 from aegis_runtime import DriftBand, ExecutionBundle
 
 from aegis_trader.bundles.bands import BundleBands, InstrumentBandError
@@ -20,10 +21,6 @@ from aegis_trader.domain.streams import MarketStream, StreamRequirement, stream_
 from aegis_trader.domain.types import SleeveName
 
 _log = _logging.getLogger(__name__)
-
-# The five bar-derived arrays are the only ones any data path can materialize;
-# the Custom Data module's vocabulary will widen this set (aegis-rd-iecr).
-_DELIVERABLE_ARRAY_NAMES = frozenset({"Open", "High", "Low", "Close", "Volume"})
 
 @_dataclass(frozen=True)
 class ContinuousRootDeclaration:
@@ -75,7 +72,7 @@ class UndeliverableArrayError(ValueError):
         super().__init__(
             f"sleeve {sleeve.value!r} requires array(s) {list(arrays)} that no "
             f"data path can materialize; deliverable arrays are "
-            f"{sorted(_DELIVERABLE_ARRAY_NAMES)}"
+            f"{sorted(OHLCV_ARRAY_NAMES)}"
         )
 
 
@@ -132,7 +129,7 @@ def _validate_required_arrays(
 ) -> None:
     for sleeve_name, bundle in sleeves.items():
         undeliverable = tuple(
-            sorted(set(bundle.contract.required_arrays) - _DELIVERABLE_ARRAY_NAMES)
+            sorted(set(bundle.contract.required_arrays) - set(OHLCV_ARRAY_NAMES))
         )
         if undeliverable:
             raise UndeliverableArrayError(sleeve=sleeve_name, arrays=undeliverable)

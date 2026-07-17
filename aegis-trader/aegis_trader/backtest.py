@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
+from aegis_data.array_names import OHLCV_ARRAY_NAMES
 from aegis_data.distributions import Distribution
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -56,7 +57,6 @@ from aegis_trader.trader.financing import FinancingModule, build_financing_modul
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _PRICE_COLS = ("Open", "High", "Low", "Close")
-_OHLCV_ARRAYS = (*_PRICE_COLS, "Volume")
 
 # The backtest cache holds the rolling bar window the strategy reads each period;
 # at least the deepest sleeve's lookback (+1) must fit, so the runner widens it
@@ -439,7 +439,7 @@ def _validate_contract_frame(
     min_rows: int,
 ) -> None:
     columns = {str(column).lower() for column in frame.columns}
-    required = tuple(dict.fromkeys((*_OHLCV_ARRAYS, *required_arrays)))
+    required = tuple(dict.fromkeys((*OHLCV_ARRAY_NAMES, *required_arrays)))
     missing = [name for name in required if name.lower() not in columns]
     if missing:
         raise ContractDataError(
@@ -624,7 +624,7 @@ def _wrangle_external_bars(
 def _normalize_ohlcv(ohlcv: pd.DataFrame) -> pd.DataFrame:
     columns = {str(column).lower(): column for column in ohlcv.columns}
     normalized = pd.DataFrame(index=ohlcv.index)
-    for name in _OHLCV_ARRAYS:
+    for name in OHLCV_ARRAY_NAMES:
         normalized[name.lower()] = ohlcv[columns[name.lower()]]
     normalized = normalized.dropna().copy()
     normalized["high"] = normalized[[col.lower() for col in _PRICE_COLS]].max(axis=1)
