@@ -14,7 +14,11 @@ from nautilus_trader.model.instruments import FuturesContract
 from platformdirs import user_data_dir
 
 from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
-from aegis_data._ensure_coverage import FetchedRecords, ensure_coverage
+from aegis_data._ensure_coverage import (
+    CoverageInterval,
+    ServedRecords,
+    ensure_coverage,
+)
 from aegis_data.distributions import Distribution, query_distribution_data
 from aegis_data.instrument import native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
@@ -470,7 +474,7 @@ class CatalogBackedDataPort:
 
     def _ensure_covered(self, bar_type: BarType, request: CatalogWindowRequest) -> None:
         fetchers: tuple[
-            Callable[[pd.Timestamp, pd.Timestamp], FetchedRecords[Any]], ...
+            Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[Any]], ...
         ] = ()
         if self.provider is not None:
             fetchers = (_bar_fetcher(self.provider, bar_type),)
@@ -496,13 +500,16 @@ class CatalogBackedDataPort:
 
     def _missing_intervals(
         self, bar_type: BarType, request: CatalogWindowRequest
-    ) -> list[tuple[int, int]]:
-        return self.catalog.get_missing_intervals_for_request(
-            _timestamp_ns(request.start),
-            _timestamp_ns(request.end),
-            _bar_cls(),
-            identifier=str(bar_type),
-        )
+    ) -> list[CoverageInterval]:
+        return [
+            CoverageInterval(start_ns, end_ns)
+            for start_ns, end_ns in self.catalog.get_missing_intervals_for_request(
+                _timestamp_ns(request.start),
+                _timestamp_ns(request.end),
+                _bar_cls(),
+                identifier=str(bar_type),
+            )
+        ]
 
 
 def catalog_root(env: Mapping[str, str] | None = None) -> Path:
@@ -575,10 +582,10 @@ def gap_fill_boundary(subject: str) -> Iterator[None]:
 def _bar_fetcher(
     provider: NautilusDataProviderPort,
     bar_type: BarType,
-) -> Callable[[pd.Timestamp, pd.Timestamp], FetchedRecords[Any]]:
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> FetchedRecords[Any]:
+) -> Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[Any]]:
+    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ServedRecords[Any]:
         served = provider.request_bars(bar_type, start=start, end=end)
-        return FetchedRecords(served.bars, served.served_from)
+        return ServedRecords(served.bars, served.served_from)
 
     return fetch
 
@@ -598,11 +605,11 @@ def _cause_summary(exc: Exception) -> str:
 
 
 def _coverage_gap(
-    bar_type: BarType, intervals: Sequence[tuple[int, int]]
+    bar_type: BarType, intervals: Sequence[CoverageInterval]
 ) -> CatalogCoverageGapError:
     ranges = [
-        f"{pd.Timestamp(start, tz='UTC').isoformat()}..{pd.Timestamp(end, tz='UTC').isoformat()}"
-        for start, end in intervals
+        f"{interval.start.isoformat()}..{interval.end.isoformat()}"
+        for interval in intervals
     ]
     return CatalogCoverageGapError(
         f"catalog cannot serve {bar_type} for requested window; missing={ranges}"

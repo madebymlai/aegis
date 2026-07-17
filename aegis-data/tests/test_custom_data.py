@@ -103,6 +103,33 @@ def test_ingest_translates_provider_failures_at_the_shared_coverage_boundary(
         )
 
 
+def test_ingest_never_persists_records_before_provider_served_from(
+    tmp_path: Path,
+) -> None:
+    provider = _Provider(
+        (_record("2024-01-02", 2.0),),
+        served_from=_utc("2024-01-05"),
+    )
+
+    with pytest.raises(CustomDataCoverageError):
+        ingest(
+            FixtureRecord,
+            (_INSTRUMENT,),
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-06"),
+            providers=(provider,),
+            catalog_path=tmp_path,
+        )
+
+    assert records(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-06"),
+        catalog_path=tmp_path,
+    ) == ()
+
+
 def test_ingest_fills_providers_in_declared_order(tmp_path: Path) -> None:
     first = _Provider(
         (_record("2024-01-08", 8.0),),

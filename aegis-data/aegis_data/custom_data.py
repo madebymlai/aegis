@@ -17,7 +17,11 @@ from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 
-from aegis_data._ensure_coverage import FetchedRecords, ensure_coverage
+from aegis_data._ensure_coverage import (
+    CoverageInterval,
+    ServedRecords,
+    ensure_coverage,
+)
 from aegis_data.catalog import gap_fill_boundary
 
 @customdataclass
@@ -140,12 +144,13 @@ class CustomDataCoverageError(ValueError):
     def __init__(
         self,
         instrument_id: InstrumentId,
-        missing: tuple[tuple[int, int], ...],
+        missing: tuple[CoverageInterval, ...],
     ) -> None:
         self.instrument_id = instrument_id
         self.missing = missing
         super().__init__(
-            f"custom data coverage is missing for {instrument_id.value}: {list(missing)}"
+            f"custom data coverage is missing for {instrument_id.value}: "
+            f"{[(item.start_ns, item.end_ns) for item in missing]}"
         )
 
 
@@ -175,37 +180,59 @@ def ingest(
         raise ValueError("custom data ingest start must not be after end")
     catalog = ParquetDataCatalog(str(catalog_path))
     for instrument_id in instrument_ids:
-        ensure_coverage(
-            catalog,
-            data_cls=record_type,
-            identifier=instrument_id.value,
-            subject=f"custom data for {instrument_id.value}",
-            fetchers=tuple(
-                _record_fetcher(provider, instrument_id, record_type)
-                for provider in providers
-            ),
-            missing_intervals=lambda: _missing_intervals(
-                catalog,
-                record_type,
-                instrument_id,
-                start_ns=start.value,
-                end_ns=end.value,
-            ),
-            coverage_error=lambda missing: CustomDataCoverageError(
-                instrument_id, tuple(missing)
-            ),
-            provider_boundary=gap_fill_boundary,
-            empty_interval_writer=lambda empty_start, empty_end: _write_empty_marker(
-                catalog,
-                record_type,
-                instrument_id,
-                start=pd.Timestamp(empty_start, tz="UTC"),
-                end=pd.Timestamp(empty_end, tz="UTC"),
-                checked_at_ns=clock_ns(),
-            ),
-            consolidate_start_ns=start.value,
-            consolidate_end_ns=end.value,
+        _ensure_instrument_coverage(
+            catalog=catalog,
+            record_type=record_type,
+            instrument_id=instrument_id,
+            start=start,
+            end=end,
+            providers=providers,
+            clock_ns=clock_ns,
         )
+
+
+def _ensure_instrument_coverage(
+    *,
+    catalog: ParquetDataCatalog,
+    record_type: type[RecordT],
+    instrument_id: InstrumentId,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    providers: Sequence[CustomDataProviderPort[RecordT]],
+    clock_ns: Callable[[], int],
+) -> None:
+    requested = CoverageInterval(start.value, end.value)
+    ensure_coverage(
+        catalog,
+        data_cls=record_type,
+        identifier=instrument_id.value,
+        subject=f"custom data for {instrument_id.value}",
+        fetchers=tuple(
+            _record_fetcher(provider, instrument_id, record_type)
+            for provider in providers
+        ),
+        missing_intervals=lambda: _missing_intervals(
+            catalog,
+            record_type,
+            instrument_id,
+            start_ns=requested.start_ns,
+            end_ns=requested.end_ns,
+        ),
+        coverage_error=lambda missing: CustomDataCoverageError(
+            instrument_id, tuple(missing)
+        ),
+        provider_boundary=gap_fill_boundary,
+        empty_interval_writer=lambda empty: _write_empty_marker(
+            catalog,
+            record_type,
+            instrument_id,
+            start=empty.start,
+            end=empty.end,
+            checked_at_ns=clock_ns(),
+        ),
+        consolidation_interval=requested,
+        select_records=_records_within_event_window,
+    )
 
 
 def correct(
@@ -368,28 +395,50 @@ def _record_fetcher(
     provider: CustomDataProviderPort[RecordT],
     instrument_id: InstrumentId,
     record_type: type[RecordT],
-) -> Callable[[pd.Timestamp, pd.Timestamp], FetchedRecords[RecordT]]:
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> FetchedRecords[RecordT]:
+) -> Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[RecordT]]:
+    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ServedRecords[RecordT]:
         served = provider.request_records(instrument_id, start=start, end=end)
         selected = tuple(
             sorted(
                 (
-                    record
-                    for record in served.records
-                    if _record_belongs_to_interval(
+                    _validate_record(
                         record,
                         record_type=record_type,
                         instrument_id=instrument_id,
-                        start=start,
-                        end=end,
                     )
+                    for record in served.records
                 ),
                 key=lambda record: record.ts_event,
             )
         )
-        return FetchedRecords(selected, _utc(served.served_from))
+        return ServedRecords(selected, _utc(served.served_from))
 
     return fetch
+
+
+def _validate_record(
+    record: RecordT,
+    *,
+    record_type: type[RecordT],
+    instrument_id: InstrumentId,
+) -> RecordT:
+    if not isinstance(record, record_type):
+        raise TypeError(
+            f"provider returned {type(record).__name__}, expected {record_type.__name__}"
+        )
+    if cast(InstrumentId, record.instrument_id) != instrument_id:
+        raise ValueError("provider returned a custom-data record for another instrument")
+    return record
+
+
+def _records_within_event_window(
+    stored: Sequence[RecordT], interval: CoverageInterval
+) -> tuple[RecordT, ...]:
+    return tuple(
+        record
+        for record in stored
+        if interval.start_ns <= record.ts_event <= interval.end_ns
+    )
 
 
 def _record_belongs_to_interval(
@@ -400,12 +449,11 @@ def _record_belongs_to_interval(
     start: pd.Timestamp,
     end: pd.Timestamp,
 ) -> bool:
-    if not isinstance(record, record_type):
-        raise TypeError(
-            f"provider returned {type(record).__name__}, expected {record_type.__name__}"
-        )
-    if cast(InstrumentId, record.instrument_id) != instrument_id:
-        raise ValueError("provider returned a custom-data record for another instrument")
+    _validate_record(
+        record,
+        record_type=record_type,
+        instrument_id=instrument_id,
+    )
     return start.value <= record.ts_event <= end.value
 
 
@@ -471,13 +519,16 @@ def _missing_intervals(
     *,
     start_ns: int,
     end_ns: int,
-) -> list[tuple[int, int]]:
-    native_missing = catalog.get_missing_intervals_for_request(
-        start_ns,
-        end_ns,
-        record_type,
-        identifier=instrument_id.value,
-    )
+) -> list[CoverageInterval]:
+    native_missing = [
+        CoverageInterval(missing_start, missing_end)
+        for missing_start, missing_end in catalog.get_missing_intervals_for_request(
+            start_ns,
+            end_ns,
+            record_type,
+            identifier=instrument_id.value,
+        )
+    ]
     empty_intervals = catalog.get_intervals(
         _CoverageMarker,
         identifier=_coverage_identifier(record_type, instrument_id),
@@ -486,20 +537,24 @@ def _missing_intervals(
 
 
 def _subtract_covered(
-    missing: Sequence[tuple[int, int]],
+    missing: Sequence[CoverageInterval],
     covered: Sequence[tuple[int, int]],
-) -> list[tuple[int, int]]:
+) -> list[CoverageInterval]:
     remaining = list(missing)
     for covered_start, covered_end in covered:
-        next_remaining: list[tuple[int, int]] = []
-        for start, end in remaining:
-            if covered_end < start or covered_start > end:
-                next_remaining.append((start, end))
+        next_remaining: list[CoverageInterval] = []
+        for interval in remaining:
+            if covered_end < interval.start_ns or covered_start > interval.end_ns:
+                next_remaining.append(interval)
                 continue
-            if start < covered_start:
-                next_remaining.append((start, covered_start - 1))
-            if covered_end < end:
-                next_remaining.append((covered_end + 1, end))
+            if interval.start_ns < covered_start:
+                next_remaining.append(
+                    CoverageInterval(interval.start_ns, covered_start - 1)
+                )
+            if covered_end < interval.end_ns:
+                next_remaining.append(
+                    CoverageInterval(covered_end + 1, interval.end_ns)
+                )
         remaining = next_remaining
     return remaining
 
