@@ -8,7 +8,8 @@ kept inside this module.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, Protocol, TypeVar, cast
+from time import time_ns
+from typing import Any, Callable, Generic, Protocol, TypeVar, cast
 
 import pandas as pd
 from nautilus_trader.core.data import Data
@@ -24,6 +25,21 @@ class FixtureRecord(Data):
     instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
     value: float = 0.0
     provider: str = "fixture"
+
+    @classmethod
+    def schema(cls) -> Any:
+        return cls._schema
+
+
+@customdataclass
+class _CoverageMarker(Data):
+    """A checked interval that contained no records for one typed kind."""
+
+    instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
+    record_type: str = ""
+    start_ns: int = 0
+    end_ns: int = 0
+    checked_at_ns: int = 0
 
     @classmethod
     def schema(cls) -> Any:
@@ -71,6 +87,29 @@ class UnknownCustomDataRecordError(ValueError):
     """The requested domain record has no Custom Data implementation."""
 
 
+class CustomDataCoverageError(ValueError):
+    """A requested custom-data window has never been completely ingested."""
+
+    def __init__(
+        self,
+        instrument_id: InstrumentId,
+        missing: tuple[tuple[int, int], ...],
+    ) -> None:
+        self.instrument_id = instrument_id
+        self.missing = missing
+        super().__init__(
+            f"custom data coverage is missing for {instrument_id.value}: {list(missing)}"
+        )
+
+
+@dataclass(frozen=True)
+class CustomDataCoverage:
+    """Coverage provenance for one requested instrument window."""
+
+    instrument_id: InstrumentId
+    checked_at_ns: int | None
+
+
 def ingest(
     record_type: type[RecordT],
     instrument_ids: Sequence[InstrumentId],
@@ -79,6 +118,7 @@ def ingest(
     end: pd.Timestamp,
     providers: Sequence[CustomDataProviderPort[RecordT]],
     catalog_path: Path,
+    clock_ns: Callable[[], int] = time_ns,
 ) -> None:
     """Fill only catalog-native missing intervals, in provider tuple order."""
     _kind_for(record_type)
@@ -95,7 +135,128 @@ def ingest(
             start=start,
             end=end,
             providers=providers,
+            clock_ns=clock_ns,
         )
+
+
+def correct(
+    record_type: type[RecordT],
+    instrument_id: InstrumentId,
+    replacement: Sequence[RecordT],
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    catalog_path: Path,
+    clock_ns: Callable[[], int] = time_ns,
+) -> None:
+    """Deliberately replace one bounded window, including verified emptiness."""
+    _kind_for(record_type)
+    start = _utc(start)
+    end = _utc(end)
+    catalog = ParquetDataCatalog(str(catalog_path))
+    catalog.delete_data_range(
+        record_type,
+        identifier=instrument_id.value,
+        start=start,
+        end=end,
+    )
+    catalog.delete_data_range(
+        _CoverageMarker,
+        identifier=_coverage_identifier(record_type, instrument_id),
+        start=start,
+        end=end,
+    )
+    selected = tuple(
+        record
+        for record in replacement
+        if _record_belongs_to_interval(
+            record,
+            record_type=record_type,
+            instrument_id=instrument_id,
+            start=start,
+            end=end,
+        )
+    )
+    if selected:
+        catalog.write_data(
+            list(selected),
+            data_cls=record_type,
+            identifier=instrument_id.value,
+            start=start.value,
+            end=end.value,
+        )
+        return
+    _write_empty_marker(
+        catalog,
+        record_type,
+        instrument_id,
+        start=start,
+        end=end,
+        checked_at_ns=clock_ns(),
+    )
+
+
+def arrays(
+    array_names: Sequence[str],
+    instrument_ids: Sequence[InstrumentId],
+    *,
+    index: pd.DatetimeIndex,
+    catalog_path: Path,
+) -> dict[str, pd.DataFrame]:
+    """Return neutral panels for a covered window with no domain observations."""
+    kind = _kind_for_array_names(array_names)
+    if len(index) == 0:
+        return {
+            name: pd.DataFrame(index=index, columns=instrument_ids, dtype=float)
+            for name in array_names
+        }
+    report = coverage(
+        cast(type[Data], kind.record_type),
+        instrument_ids,
+        start=pd.Timestamp(index[0]),
+        end=pd.Timestamp(index[-1]),
+        catalog_path=catalog_path,
+    )
+    del report
+    return {
+        name: pd.DataFrame(0.0, index=index, columns=instrument_ids)
+        for name in array_names
+    }
+
+
+def coverage(
+    record_type: type[RecordT],
+    instrument_ids: Sequence[InstrumentId],
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    catalog_path: Path,
+) -> tuple[CustomDataCoverage, ...]:
+    """Prove requested coverage and report checked-at marker provenance."""
+    _kind_for(record_type)
+    catalog = ParquetDataCatalog(str(catalog_path))
+    start = _utc(start)
+    end = _utc(end)
+    reports: list[CustomDataCoverage] = []
+    for instrument_id in instrument_ids:
+        missing = tuple(
+            _missing_intervals(
+                catalog,
+                record_type,
+                instrument_id,
+                start_ns=start.value,
+                end_ns=end.value,
+            )
+        )
+        if missing:
+            raise CustomDataCoverageError(instrument_id, missing)
+        reports.append(
+            CustomDataCoverage(
+                instrument_id=instrument_id,
+                checked_at_ns=_checked_at(catalog, record_type, instrument_id, start, end),
+            )
+        )
+    return tuple(reports)
 
 
 def records(
@@ -134,13 +295,15 @@ def _fill_in_provider_order(
     start: pd.Timestamp,
     end: pd.Timestamp,
     providers: Sequence[CustomDataProviderPort[RecordT]],
+    clock_ns: Callable[[], int],
 ) -> None:
     for provider in providers:
-        missing = catalog.get_missing_intervals_for_request(
-            start.value,
-            end.value,
+        missing = _missing_intervals(
+            catalog,
             record_type,
-            identifier=instrument_id.value,
+            instrument_id,
+            start_ns=start.value,
+            end_ns=end.value,
         )
         for missing_start_ns, missing_end_ns in missing:
             _fill_interval(
@@ -150,6 +313,7 @@ def _fill_in_provider_order(
                 provider,
                 start=pd.Timestamp(missing_start_ns, tz="UTC"),
                 end=pd.Timestamp(missing_end_ns, tz="UTC"),
+                clock_ns=clock_ns,
             )
 
 
@@ -161,6 +325,7 @@ def _fill_interval(
     *,
     start: pd.Timestamp,
     end: pd.Timestamp,
+    clock_ns: Callable[[], int],
 ) -> None:
     served = provider.request_records(instrument_id, start=start, end=end)
     served_from = max(_utc(served.served_from), start)
@@ -183,6 +348,14 @@ def _fill_interval(
         )
     )
     if not selected:
+        _write_empty_marker(
+            catalog,
+            record_type,
+            instrument_id,
+            start=served_from,
+            end=end,
+            checked_at_ns=clock_ns(),
+        )
         return
     catalog.write_data(
         list(selected),
@@ -217,6 +390,115 @@ def _kind_for(record_type: type[Data]) -> _Kind:
     raise UnknownCustomDataRecordError(record_type.__name__)
 
 
+def _kind_for_array_names(array_names: Sequence[str]) -> _Kind:
+    requested = set(array_names)
+    for kind in _KINDS:
+        if requested <= set(kind.array_names):
+            return kind
+    raise ValueError(f"unknown custom arrays: {sorted(requested)}")
+
+
+def _missing_intervals(
+    catalog: ParquetDataCatalog,
+    record_type: type[Data],
+    instrument_id: InstrumentId,
+    *,
+    start_ns: int,
+    end_ns: int,
+) -> list[tuple[int, int]]:
+    native_missing = catalog.get_missing_intervals_for_request(
+        start_ns,
+        end_ns,
+        record_type,
+        identifier=instrument_id.value,
+    )
+    empty_intervals = catalog.get_intervals(
+        _CoverageMarker,
+        identifier=_coverage_identifier(record_type, instrument_id),
+    )
+    return _subtract_covered(native_missing, empty_intervals)
+
+
+def _subtract_covered(
+    missing: Sequence[tuple[int, int]],
+    covered: Sequence[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    remaining = list(missing)
+    for covered_start, covered_end in covered:
+        next_remaining: list[tuple[int, int]] = []
+        for start, end in remaining:
+            if covered_end < start or covered_start > end:
+                next_remaining.append((start, end))
+                continue
+            if start < covered_start:
+                next_remaining.append((start, covered_start - 1))
+            if covered_end < end:
+                next_remaining.append((covered_end + 1, end))
+        remaining = next_remaining
+    return remaining
+
+
+def _write_empty_marker(
+    catalog: ParquetDataCatalog,
+    record_type: type[Data],
+    instrument_id: InstrumentId,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    checked_at_ns: int,
+) -> None:
+    marker = _CoverageMarker(
+        checked_at_ns,
+        checked_at_ns,
+        instrument_id=_coverage_instrument_id(record_type, instrument_id),
+        record_type=record_type.__name__,
+        start_ns=start.value,
+        end_ns=end.value,
+        checked_at_ns=checked_at_ns,
+    )
+    catalog.write_data(
+        [marker],
+        data_cls=_CoverageMarker,
+        identifier=_coverage_identifier(record_type, instrument_id),
+        start=start.value,
+        end=end.value,
+    )
+
+
+def _checked_at(
+    catalog: ParquetDataCatalog,
+    record_type: type[Data],
+    instrument_id: InstrumentId,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> int | None:
+    markers = catalog.query(
+        _CoverageMarker,
+        identifiers=[_coverage_identifier(record_type, instrument_id)],
+    )
+    checked = [
+        marker.checked_at_ns
+        for item in markers
+        for marker in [_as_record(item, _CoverageMarker)]
+        if marker.end_ns >= start.value and marker.start_ns <= end.value
+    ]
+    return max(checked, default=None)
+
+
+def _coverage_identifier(
+    record_type: type[Data], instrument_id: InstrumentId
+) -> str:
+    return _coverage_instrument_id(record_type, instrument_id).value
+
+
+def _coverage_instrument_id(
+    record_type: type[Data], instrument_id: InstrumentId
+) -> InstrumentId:
+    return InstrumentId.from_str(
+        f"{record_type.__name__}-{instrument_id.symbol.value}.{instrument_id.venue.value}"
+    )
+
+
 def _as_record(item: object, record_type: type[RecordT]) -> RecordT:
     value = item.data if hasattr(item, "data") else item
     if not isinstance(value, record_type):
@@ -232,10 +514,15 @@ def _utc(value: pd.Timestamp) -> pd.Timestamp:
 
 
 __all__ = [
+    "CustomDataCoverage",
+    "CustomDataCoverageError",
     "CustomDataProviderPort",
     "FixtureRecord",
     "ServedCustomData",
     "UnknownCustomDataRecordError",
+    "arrays",
+    "correct",
+    "coverage",
     "ingest",
     "records",
 ]
