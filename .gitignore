@@ -23,3 +23,6 @@ vbt.toml
 .venv/
 .venv-sandcastle/
 .agents/
+
+# Scratch/prototype temp dirs — re-fetchable data, never versioned
+tmp/
