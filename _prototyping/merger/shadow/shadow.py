@@ -30,7 +30,7 @@ from .selection import (
     ShadowPosition,
 )
 
-_EVIDENCE_SCHEMA_VERSION = 4
+_EVIDENCE_SCHEMA_VERSION = 7
 
 
 class ShadowEvidenceError(ValueError):
@@ -80,15 +80,18 @@ class CashMergerShadow:
         self._ledger = ShadowLedger(root / "ledger")
         self._selector = selector or CashMergerSelector()
 
-    def next_refresh_start(self, *, end: date) -> date:
-        """Resume after the newest evidence window, or begin prospectively today."""
+    def next_refresh_start(self, *, end: date, bootstrap_start: date) -> date:
+        """Resume after persisted evidence, or replay from an explicit first date."""
+
+        if bootstrap_start > end:
+            raise ValueError("shadow bootstrap start exceeds refresh end")
 
         covered_ends = tuple(
             date.fromisoformat(str(json.loads(path.read_text())["source_window"]["end"]))
             for path in (self._root / "evidence").glob("*.json")
         )
         if not covered_ends:
-            return end
+            return bootstrap_start
         return min(max(covered_ends) + timedelta(days=1), end)
 
     def run(
@@ -225,8 +228,13 @@ def _decode_selection(payload: dict[str, object], *, path: Path) -> SelectionRes
             as_of=str(decision_payload["as_of"]),
             capital=float(decision_payload["capital"]),
             positions=tuple(ShadowPosition(**position) for position in positions),
-            estimated_commissions=float(decision_payload["estimated_commissions"]),
+            estimated_base_commission=float(
+                decision_payload["estimated_base_commission"]
+            ),
             estimated_slippage=float(decision_payload["estimated_slippage"]),
+            estimated_fx_conversion=float(
+                decision_payload["estimated_fx_conversion"]
+            ),
             cash_reserve=float(decision_payload["cash_reserve"]),
         )
         return SelectionResult(

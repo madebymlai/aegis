@@ -5,13 +5,19 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from html import unescape
 from typing import Protocol
 
 from nautilus_trader.model.identifiers import InstrumentId
 
 from .ledger import EventObservation, EventStatus
+from .timeline import (
+    CloseGuidance,
+    DealTimelineEvidence,
+    TimelineMilestone,
+    TimelineMilestoneKind,
+)
 
 _EDGAR_IDENTITY = "Aegis research m@laimk.dev"
 _MONTHS = {
@@ -35,6 +41,21 @@ _MONTHS = {
     )
     if name
 }
+_MERGER_FORMS = (
+    "8-K",
+    "8-K/A",
+    "6-K",
+    "6-K/A",
+    "PREM14A",
+    "DEFM14A",
+    "DEFA14A",
+    "SC 14D9",
+    "SC 14D9/A",
+    "SC TO-T",
+    "SC TO-T/A",
+)
+_TIMELINE_FORMS = frozenset(_MERGER_FORMS) - {"8-K", "8-K/A"}
+_TERMINAL_FORMS = frozenset({"8-K", "8-K/A", "6-K", "6-K/A"})
 
 
 class EdgarSourceError(RuntimeError):
@@ -127,7 +148,7 @@ class EdgarToolsGateway:
         window = (start.isoformat(), end.isoformat())
         for cik in sorted(ciks):
             company_filings = Company(int(cik)).get_filings(
-                form=["8-K", "8-K/A"],
+                form=list(_MERGER_FORMS),
                 filing_date=window,
             )
             for filing in company_filings:
@@ -213,10 +234,19 @@ class EdgarEventSource:
                 continue
             observation, review = _announcement(filing, by_cik[filing.cik])
             if observation is not None:
+                known_active = (
+                    *original_active_by_cik.get(observation.target_cik, ()),
+                    *(
+                        item
+                        for item in observations
+                        if item.target_cik == observation.target_cik
+                        and item.status in {EventStatus.ANNOUNCED, EventStatus.AMENDED}
+                    ),
+                )
                 observations.append(
                     _preserve_event_identity(
                         observation,
-                        original_active_by_cik.get(observation.target_cik, ()),
+                        known_active,
                     )
                 )
             if review is not None:
@@ -276,7 +306,11 @@ def _opens_agreement(filing: EdgarFiling) -> bool:
 
 def _could_change_lifecycle(filing: EdgarFiling) -> bool:
     document_types = set(filing.document_types) or set(_documents(filing.submission))
-    return bool(set(filing.items).intersection({"1.02", "2.01"}) or "EX-2.1" in document_types)
+    return bool(
+        filing.form.upper() in _TIMELINE_FORMS
+        or set(filing.items).intersection({"1.02", "2.01", "8.01"})
+        or "EX-2.1" in document_types
+    )
 
 
 def _latest_active(events: Iterable[EventObservation]) -> tuple[EventObservation, ...]:
@@ -319,16 +353,18 @@ def _preserve_event_identity(
     observation: EventObservation,
     active_events: tuple[EventObservation, ...],
 ) -> EventObservation:
-    same_agreement = tuple(
-        event for event in active_events if event.agreement_date == observation.agreement_date
-    )
+    same_agreement = {
+        event.event_id: event
+        for event in active_events
+        if event.agreement_date == observation.agreement_date
+    }
     if not same_agreement:
         return observation
     if len(same_agreement) > 1:
         raise EdgarSourceError(
             f"multiple active events share agreement date {observation.agreement_date}"
         )
-    event = same_agreement[0]
+    event = next(iter(same_agreement.values()))
     return replace(
         observation,
         event_id=event.event_id,
@@ -372,6 +408,7 @@ def _announcement(
             source_accession=accession,
             source_url=filing.source_url,
             evidence=f"Agreement dated {agreement_date.isoformat()}; fixed cash ${offer:.4f}",
+            timeline=_timeline_evidence(f"{disclosure} {agreement}"),
         ),
         None,
     )
@@ -387,6 +424,8 @@ def _lifecycle(
     text = " ".join(value for values in documents.values() for value in values)
     matching = tuple(event for event in active_events if _agreement_is_identified(text, event))
     if len(matching) != 1:
+        if filing.form.upper() in _TIMELINE_FORMS:
+            return None, None
         return None, SourceReview(
             accession,
             cik,
@@ -394,22 +433,8 @@ def _lifecycle(
             "filing does not identify the active agreement",
         )
     event = matching[0]
-    completed = re.search(
-        r"(?:completed|consummated|closed)\s+(?:the\s+)?(?:merger|transaction)|"
-        r"(?:merger|transaction)\s+(?:was\s+)?(?:completed|consummated|closed)",
-        text,
-        re.I,
-    )
-    terminated = re.search(
-        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)"
-        r".{0,160}?\b(?:has\s+been|was|were)\s+(?:validly\s+)?terminated\b|"
-        r"\b(?:company|parent|parties|board)\b.{0,160}?\bterminated\b.{0,160}?"
-        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)|"
-        r"\bentered\s+into\b.{0,120}?\btermination\s+agreement\b.{0,160}?"
-        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)",
-        text,
-        re.I,
-    )
+    completed = _completion_disclosure(filing, text)
+    terminated = _termination_disclosure(filing, text)
     if completed is not None:
         status = EventStatus.COMPLETED
         evidence = completed.group(0)
@@ -423,6 +448,28 @@ def _lifecycle(
         )
         evidence = terminated.group(0)
     else:
+        timeline = _timeline_evidence(text)
+        if timeline is not None:
+            return (
+                EventObservation(
+                    event_id=event.event_id,
+                    instrument_id=event.instrument_id,
+                    target_cik=event.target_cik,
+                    ticker=event.ticker,
+                    agreement_accession=event.agreement_accession,
+                    agreement_date=event.agreement_date,
+                    observed_at=filing.filed_at.isoformat(),
+                    status=EventStatus.AMENDED,
+                    offer_price=event.offer_price,
+                    source_accession=accession,
+                    source_url=filing.source_url,
+                    evidence="Causal deal-timeline terms updated.",
+                    timeline=timeline,
+                ),
+                None,
+            )
+        if filing.form.upper() in _TIMELINE_FORMS:
+            return None, None
         return None, SourceReview(
             accession,
             cik,
@@ -446,6 +493,251 @@ def _lifecycle(
         ),
         None,
     )
+
+
+def _completion_disclosure(
+    filing: EdgarFiling,
+    text: str,
+) -> re.Match[str] | None:
+    if not _terminal_item(filing, {"2.01", "8.01"}):
+        return None
+    return re.search(
+        r"(?:completed|consummated|closed)\s+(?:the\s+)?(?:merger|transaction)|"
+        r"(?:merger|transaction)\s+(?:was\s+)?(?:completed|consummated|closed)",
+        text,
+        re.I,
+    )
+
+
+def _termination_disclosure(
+    filing: EdgarFiling,
+    text: str,
+) -> re.Match[str] | None:
+    if not _terminal_item(filing, {"1.02", "8.01"}):
+        return None
+    return re.search(
+        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)"
+        r".{0,160}?\b(?:has\s+been|was|were)\s+(?:validly\s+)?terminated\b|"
+        r"\b(?:company|parent|parties|board)\b.{0,160}?\bterminated\b.{0,160}?"
+        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)|"
+        r"\bentered\s+into\b.{0,120}?\btermination\s+agreement\b.{0,160}?"
+        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)",
+        text,
+        re.I,
+    )
+
+
+def _terminal_item(filing: EdgarFiling, allowed_items: set[str]) -> bool:
+    form = filing.form.upper()
+    if form not in _TERMINAL_FORMS:
+        return False
+    if form in {"6-K", "6-K/A"}:
+        return True
+    return bool(set(filing.items).intersection(allowed_items))
+
+
+def _timeline_evidence(text: str) -> DealTimelineEvidence | None:
+    guidance = _close_guidance(text)
+    outside_date = _outside_date(text)
+    milestones = _milestones(text)
+    if guidance is None and outside_date is None and not milestones:
+        return None
+    return DealTimelineEvidence(
+        guidance=guidance,
+        outside_date=outside_date.isoformat() if outside_date is not None else None,
+        milestones=milestones,
+    )
+
+
+def _close_guidance(text: str) -> CloseGuidance | None:
+    quarter = re.search(
+        r"\b(?:expected|expect)\b.{0,80}?"
+        r"\b(?:clos(?:e|ed|ing)|complet(?:e|ed|ion))\b\s+"
+        r"(?:in|during|by\s+(?:the\s+)?end\s+of)\s+(?:the\s+)?"
+        r"(first|second|third|fourth|[1-4](?:st|nd|rd|th)?|q[1-4])\s+quarter"
+        r"(?:\s+of)?\s+(?:calendar\s+year\s+)?(20\d{2})",
+        text,
+        re.I,
+    )
+    if quarter is not None:
+        number = _quarter_number(quarter[1])
+        year = int(quarter[2])
+        start_month = 3 * (number - 1) + 1
+        end_month = start_month + 2
+        earliest = date(year, start_month, 1)
+        latest = date(year + (end_month == 12), end_month % 12 + 1, 1) - timedelta(days=1)
+        return CloseGuidance(earliest.isoformat(), latest.isoformat())
+    half = re.search(
+        r"\b(?:expected|expect)\b.{0,80}?"
+        r"\b(?:clos(?:e|ed|ing)|complet(?:e|ed|ion))\b\s+"
+        r"(?:in|during)\s+(?:the\s+)?"
+        r"(first|second)\s+half(?:\s+of)?\s+"
+        r"(?:calendar\s+year\s+)?(20\d{2})",
+        text,
+        re.I,
+    )
+    if half is not None:
+        year = int(half[2])
+        if half[1].lower() == "first":
+            return CloseGuidance(f"{year}-01-01", f"{year}-06-30")
+        return CloseGuidance(f"{year}-07-01", f"{year}-12-31")
+    late_to_early = re.search(
+        r"\b(?:expected|expect)\b.{0,80}?"
+        r"\b(?:clos(?:e|ed|ing)|complet(?:e|ed|ion))\b\s+in\s+"
+        r"late\s+(20\d{2})\s+or\s+early\s+(20\d{2})",
+        text,
+        re.I,
+    )
+    if late_to_early is not None:
+        early_year = int(late_to_early[1])
+        late_year = int(late_to_early[2])
+        if late_year == early_year + 1:
+            return CloseGuidance(f"{early_year}-10-01", f"{late_year}-03-31")
+    mid_year = re.search(
+        r"\b(?:expected|expect)\b.{0,80}?"
+        r"\b(?:clos(?:e|ed|ing)|complet(?:e|ed|ion))\b\s+"
+        r"(?:is\s+|in\s+)?mid\s*-\s*(20\d{2})",
+        text,
+        re.I,
+    )
+    if mid_year is not None:
+        year = int(mid_year[1])
+        return CloseGuidance(f"{year}-04-01", f"{year}-09-30")
+    return None
+
+
+def _outside_date(text: str) -> date | None:
+    relative = re.search(
+        r"date\s+that\s+is\s+(\d{1,3})\s+days\s+after\s+"
+        r"([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2})\s*"
+        r"\(\s*(?:the\s+)?[\"“”']?\s*outside\s+date",
+        text,
+        re.I,
+    )
+    if relative is not None:
+        month = _MONTHS.get(relative[2].lower())
+        if month is None:
+            return None
+        outside_date = date(int(relative[4]), month, int(relative[3])) + timedelta(
+            days=int(relative[1])
+        )
+        return _extend_outside_date(
+            outside_date,
+            text[relative.end() : relative.end() + 320],
+        )
+    match = re.search(
+        r"(?:outside|termination|end)\s+date\s+(?:means|shall\s+be|is)\s+"
+        r"([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2})",
+        text,
+        re.I,
+    )
+    if match is None:
+        match = re.search(
+            r"(?:merger|transaction).{0,160}?"
+            r"(?:consummated|completed|closed).{0,120}?\bon\s+"
+            r"([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2}).{0,180}?"
+            r"(?:the\s+)?[\"“”']?\s*outside\s+date",
+            text,
+            re.I,
+        )
+    if match is None:
+        match = re.search(
+            r"([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2})\s*"
+            r"\(\s*(?:the\s+)?[\"“”']?\s*outside\s+date",
+            text,
+            re.I,
+        )
+    if match is None:
+        return None
+    rendered_outside_date = _rendered_date(match)
+    if rendered_outside_date is None:
+        return None
+    return _extend_outside_date(
+        rendered_outside_date,
+        text[match.end() : match.end() + 320],
+    )
+
+
+def _extend_outside_date(outside_date: date, extension: str) -> date:
+    exact_extensions = tuple(
+        rendered
+        for extension_match in re.finditer(
+            r"\bto\s+([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2})",
+            extension,
+            re.I,
+        )
+        if (rendered := _rendered_date(extension_match)) is not None
+    )
+    if exact_extensions:
+        outside_date = max(outside_date, *exact_extensions)
+    day_extension = re.search(
+        r"(?:up\s+to\s+|single\s+)?(\d{1,3})(?:[-\s]+)days?",
+        extension,
+        re.I,
+    )
+    if day_extension is not None:
+        outside_date += timedelta(days=int(day_extension[1]))
+    month_extension = re.search(
+        r"(?:period\s+of\s+|up\s+to\s+)?(?:[A-Za-z]+\s+)?"
+        r"\(?(\d{1,2})\)?(?:[-\s]+)months?",
+        extension,
+        re.I,
+    )
+    if month_extension is not None:
+        outside_date = _add_months(outside_date, int(month_extension[1]))
+    return outside_date
+
+
+def _milestones(text: str) -> tuple[TimelineMilestone, ...]:
+    patterns = (
+        (
+            TimelineMilestoneKind.SHAREHOLDER_VOTE,
+            r"(?:special\s+)?meeting\s+of\s+(?:the\s+)?(?:company'?s\s+)?"
+            r"(?:stockholders|shareholders).{0,120}?(?:held|scheduled)\s+(?:on|for)\s+"
+            r"([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2}).{0,160}?\bvote\b",
+        ),
+        (
+            TimelineMilestoneKind.TENDER_EXPIRATION,
+            r"(?:offer|tender\s+offer).{0,120}?\bexpire(?:s|d)?\b.{0,80}?"
+            r"([A-Za-z]+)\s+(\d{1,2}),\s+(20\d{2})",
+        ),
+    )
+    milestones: list[TimelineMilestone] = []
+    for kind, pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match is None:
+            continue
+        scheduled_for = _rendered_date(match)
+        if scheduled_for is not None:
+            milestones.append(TimelineMilestone(kind, scheduled_for.isoformat()))
+    return tuple(milestones)
+
+
+def _rendered_date(match: re.Match[str]) -> date | None:
+    month = _MONTHS.get(match[1].lower())
+    if month is None:
+        return None
+    return date(int(match[3]), month, int(match[2]))
+
+
+def _quarter_number(value: str) -> int:
+    normalized = value.lower()
+    names = {"first": 1, "second": 2, "third": 3, "fourth": 4}
+    if normalized in names:
+        return names[normalized]
+    number = re.search(r"[1-4]", normalized)
+    if number is None:
+        raise EdgarSourceError(f"unsupported closing quarter {value}")
+    return int(number[0])
+
+
+def _add_months(value: date, months: int) -> date:
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    next_month = date(year + (month == 12), month % 12 + 1, 1)
+    last_day = (next_month - timedelta(days=1)).day
+    return date(year, month, min(value.day, last_day))
 
 
 def _agreement_is_identified(text: str, event: EventObservation) -> bool:

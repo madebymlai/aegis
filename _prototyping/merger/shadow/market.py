@@ -147,6 +147,9 @@ def _mark(
             beta=beta,
             median_dollar_volume=float(liquidity),
             annual_cash_rate=annual_cash_rate,
+            preannouncement_closes=tuple(
+                float(value) for value in before_target["Close"].tail(20)
+            ),
         ),
         None,
     )

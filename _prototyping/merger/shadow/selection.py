@@ -6,19 +6,24 @@ import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Protocol
 
+from .break_value import BreakValueModel
 from .ledger import EventObservation, EventStatus
+from .timeline import DealTimeline
 
 _MINIMUM_CONCURRENT = 10
 _MAXIMUM_LIFECYCLE_SLOTS = 40
 _NAME_CAP = 0.10
 _BREAK_LOSS_CAP = 0.02
 _MINIMUM_MEDIAN_DOLLAR_VOLUME = 1_000_000.00
-_EXPECTED_CLOSE_DAYS = 175
 _SLIPPAGE = 0.0005
-_FIXED_FEE = 0.35
+_AUTO_FX_CONVERSION_RATE = 0.0003
+_TIERED_BASE_COMMISSION_PER_SHARE = 0.0035
+_TIERED_BASE_COMMISSION_MINIMUM = 0.35
+_TIERED_BASE_COMMISSION_VALUE_CAP = 0.01
 
 
 class SelectionError(ValueError):
@@ -62,7 +67,9 @@ class SelectionExclusionReason(StrEnum):
     INACTIVE = "inactive"
     MISSING_OFFER_OR_MARK = "missing_offer_or_mark"
     ANNOUNCEMENT_NOT_YET_TRADEABLE = "announcement_not_yet_tradeable"
-    MARKET_PROBABILITY_UNDEFINED = "market_probability_undefined"
+    TIMELINE_UNAVAILABLE = "timeline_unavailable"
+    NO_POSITIVE_DISCOUNTED_SPREAD = "no_positive_discounted_spread"
+    BREAK_VALUE_UNIDENTIFIED = "break_value_unidentified"
     WHOLE_SHARE_NAME_CAP = "whole_share_name_cap"
     INSUFFICIENT_LIQUIDITY = "insufficient_liquidity"
 
@@ -81,6 +88,7 @@ class MarketMark:
     beta: float
     median_dollar_volume: float
     annual_cash_rate: float
+    preannouncement_closes: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,10 +104,16 @@ class CompletionCase:
     agreement_date: str
     offer_price: float
     close: float
+    expected_close: str
+    latest_close: str
     discounted_offer: float
     fallback_price: float
+    break_value_lower: float
+    break_value_upper: float
     raw_market_probability: float
     market_probability: float
+    market_probability_lower: float
+    market_probability_upper: float
     break_loss: float
     days_since_announcement: int
 
@@ -146,6 +160,14 @@ class SelectionAssessment:
     as_of: str
     raw_market_probability: float
     market_probability: float
+    market_probability_lower: float
+    market_probability_upper: float
+    expected_close: str
+    latest_close: str
+    discounted_offer: float
+    break_value_lower: float
+    break_value_central: float
+    break_value_upper: float
     completion_gain: float
     break_loss: float
     feature_timestamp: str
@@ -191,9 +213,78 @@ class ShadowDecision:
     as_of: str
     capital: float
     positions: tuple[ShadowPosition, ...]
-    estimated_commissions: float
+    estimated_base_commission: float
     estimated_slippage: float
+    estimated_fx_conversion: float
     cash_reserve: float
+
+
+@dataclass(frozen=True)
+class _ExecutionCostQuote:
+    """One authoritative execution-cost estimate for a position or book."""
+
+    base_commission: float
+    slippage: float
+    fx_conversion: float
+
+    @property
+    def total(self) -> float:
+        return self.base_commission + self.slippage + self.fx_conversion
+
+
+@dataclass(frozen=True)
+class _ExecutionCostModel:
+    """Quote affordability and book costs under one IBKR pricing assumption."""
+
+    slippage_rate: float
+    auto_fx_conversion_rate: float
+    base_commission_per_share: float
+    base_commission_minimum: float
+    base_commission_value_cap: float
+
+    def quote_book(self, positions: Iterable[ShadowPosition]) -> _ExecutionCostQuote:
+        positions = tuple(positions)
+        notional = sum(position.shares * position.price for position in positions)
+        return _ExecutionCostQuote(
+            base_commission=sum(
+                self._base_commission(position.shares, position.price)
+                for position in positions
+            ),
+            slippage=notional * self.slippage_rate,
+            fx_conversion=notional * self.auto_fx_conversion_rate,
+        )
+
+    def affordable_shares(self, budget: float, price: float) -> int:
+        proportional_rate = self.slippage_rate + self.auto_fx_conversion_rate
+        shares = math.floor(budget / (price * (1.0 + proportional_rate)))
+        while shares > 0 and self._order_total(shares, price) > budget:
+            shares -= 1
+        return shares
+
+    def _order_total(self, shares: int, price: float) -> float:
+        notional = shares * price
+        return (
+            notional
+            + self._base_commission(shares, price)
+            + notional * (self.slippage_rate + self.auto_fx_conversion_rate)
+        )
+
+    def _base_commission(self, shares: int, price: float) -> float:
+        trade_value = shares * price
+        commission = max(
+            shares * self.base_commission_per_share,
+            self.base_commission_minimum,
+        )
+        return min(commission, trade_value * self.base_commission_value_cap)
+
+
+_EXECUTION_COST_MODEL = _ExecutionCostModel(
+    slippage_rate=_SLIPPAGE,
+    auto_fx_conversion_rate=_AUTO_FX_CONVERSION_RATE,
+    base_commission_per_share=_TIERED_BASE_COMMISSION_PER_SHARE,
+    base_commission_minimum=_TIERED_BASE_COMMISSION_MINIMUM,
+    base_commission_value_cap=_TIERED_BASE_COMMISSION_VALUE_CAP,
+)
 
 
 @dataclass(frozen=True)
@@ -225,9 +316,9 @@ class MarketImpliedSelectionEngine:
                 event_id=case.event_id,
                 feature_timestamp=case.market_observed_at,
                 model_probability=case.market_probability,
-                lower_probability=case.market_probability,
-                selected=case.market_probability >= 0.70,
-                rank_score=case.market_probability,
+                lower_probability=case.market_probability_lower,
+                selected=case.market_probability_lower >= 0.70,
+                rank_score=case.market_probability_lower,
             )
             for case in cases
         )
@@ -241,8 +332,12 @@ class CashMergerSelector:
         engine: CompletionSelectionEngine | None = None,
         *,
         authority: SelectionAuthority = SelectionAuthority.MARKET_BASELINE,
+        timeline: DealTimeline | None = None,
+        break_value_model: BreakValueModel | None = None,
     ) -> None:
         self._engine = engine or MarketImpliedSelectionEngine()
+        self._timeline = timeline or DealTimeline()
+        self._break_value_model = break_value_model or BreakValueModel()
         self._engine_owns_decision = (
             engine is None or authority is SelectionAuthority.QUALIFIED_CHALLENGER
         )
@@ -278,12 +373,16 @@ class CashMergerSelector:
         }
         cases: list[CompletionCase] = []
         exclusions: list[SelectionExclusion] = []
-        for event in _latest_by_event(events, as_of):
+        histories = _histories_by_event(events, as_of)
+        for event_id in sorted(histories):
+            history = histories[event_id]
             case, exclusion = _completion_case(
-                event,
-                marks_by_instrument.get(event.instrument_id),
+                history,
+                marks_by_instrument.get(history[-1].instrument_id),
                 as_of,
                 capital,
+                timeline=self._timeline,
+                break_value_model=self._break_value_model,
             )
             if case is not None:
                 cases.append(case)
@@ -329,37 +428,60 @@ class CashMergerSelector:
 
 
 def _completion_case(
-    event: EventObservation,
+    history: tuple[EventObservation, ...],
     mark: MarketMark | None,
     as_of: datetime,
     capital: float,
+    *,
+    timeline: DealTimeline,
+    break_value_model: BreakValueModel,
 ) -> tuple[CompletionCase | None, SelectionExclusion | None]:
+    event = history[-1]
     if event.status not in {EventStatus.ANNOUNCED, EventStatus.AMENDED}:
         return None, _exclusion(event, SelectionExclusionReason.INACTIVE)
     if event.offer_price is None or mark is None:
         return None, _exclusion(event, SelectionExclusionReason.MISSING_OFFER_OR_MARK)
-    announced = datetime.fromisoformat(event.observed_at)
+    close_range = timeline.estimate(history, as_of=as_of)
+    if close_range is None:
+        return None, _exclusion(event, SelectionExclusionReason.TIMELINE_UNAVAILABLE)
+    announced = datetime.fromisoformat(close_range.announced_at)
     if as_of.date() <= announced.date():
         return None, _exclusion(
             event, SelectionExclusionReason.ANNOUNCEMENT_NOT_YET_TRADEABLE
         )
     age = (as_of.date() - announced.date()).days
-    remaining_days = max(_EXPECTED_CLOSE_DAYS - age, 0)
+    remaining_days = max(
+        (date.fromisoformat(close_range.expected_close) - as_of.date()).days,
+        0,
+    )
     discounted_offer = event.offer_price / (
         1.0 + mark.annual_cash_rate * remaining_days / 365.0
     )
-    fallback = mark.preannouncement_close * math.exp(
-        mark.beta * math.log(mark.market_close / mark.announcement_market_close)
-    )
-    if not fallback < mark.close < discounted_offer:
+    break_value = break_value_model.estimate(mark)
+    if mark.close >= discounted_offer:
         return None, _exclusion(
-            event, SelectionExclusionReason.MARKET_PROBABILITY_UNDEFINED
+            event, SelectionExclusionReason.NO_POSITIVE_DISCOUNTED_SPREAD
+        )
+    if break_value.central >= mark.close:
+        return None, _exclusion(
+            event, SelectionExclusionReason.BREAK_VALUE_UNIDENTIFIED
         )
     if mark.close > capital * _NAME_CAP:
         return None, _exclusion(event, SelectionExclusionReason.WHOLE_SHARE_NAME_CAP)
     if mark.median_dollar_volume < _MINIMUM_MEDIAN_DOLLAR_VOLUME:
         return None, _exclusion(event, SelectionExclusionReason.INSUFFICIENT_LIQUIDITY)
-    raw_market_probability = (mark.close - fallback) / (discounted_offer - fallback)
+    raw_market_probability = _raw_probability(
+        mark.close,
+        discounted_offer,
+        break_value.central,
+    )
+    market_probability = _bounded_probability(raw_market_probability)
+    market_probability_lower = _bounded_probability(
+        _raw_probability(mark.close, discounted_offer, break_value.upper)
+    )
+    market_probability_upper = _bounded_probability(
+        _raw_probability(mark.close, discounted_offer, break_value.lower)
+    )
     return CompletionCase(
         event_id=event.event_id,
         instrument_id=event.instrument_id,
@@ -370,13 +492,29 @@ def _completion_case(
         agreement_date=event.agreement_date,
         offer_price=event.offer_price,
         close=mark.close,
+        expected_close=close_range.expected_close,
+        latest_close=close_range.latest_close,
         discounted_offer=discounted_offer,
-        fallback_price=fallback,
+        fallback_price=break_value.central,
+        break_value_lower=break_value.lower,
+        break_value_upper=break_value.upper,
         raw_market_probability=raw_market_probability,
-        market_probability=raw_market_probability,
-        break_loss=(mark.close - fallback) / mark.close,
+        market_probability=market_probability,
+        market_probability_lower=market_probability_lower,
+        market_probability_upper=market_probability_upper,
+        break_loss=max((mark.close - break_value.central) / mark.close, 0.0),
         days_since_announcement=age,
     ), None
+
+
+def _raw_probability(close: float, offer: float, break_value: float) -> float:
+    if break_value >= close:
+        return 0.0
+    return (close - break_value) / (offer - break_value)
+
+
+def _bounded_probability(raw_probability: float) -> float:
+    return min(max(raw_probability, 0.0), 1.0)
 
 
 def _exclusion(
@@ -432,6 +570,14 @@ def _assess(
                 as_of=case.selection_as_of,
                 raw_market_probability=case.raw_market_probability,
                 market_probability=case.market_probability,
+                market_probability_lower=case.market_probability_lower,
+                market_probability_upper=case.market_probability_upper,
+                expected_close=case.expected_close,
+                latest_close=case.latest_close,
+                discounted_offer=case.discounted_offer,
+                break_value_lower=case.break_value_lower,
+                break_value_central=case.fallback_price,
+                break_value_upper=case.break_value_upper,
                 completion_gain=(case.discounted_offer - case.close) / case.close,
                 break_loss=case.break_loss,
                 feature_timestamp=forecast.feature_timestamp,
@@ -478,7 +624,7 @@ def _selected_for_decision(
 ) -> bool:
     if engine_owns_decision:
         return assessment.selected
-    return case.market_probability >= 0.70
+    return case.market_probability_lower >= 0.70
 
 
 def _decision_rank(
@@ -487,7 +633,11 @@ def _decision_rank(
     *,
     engine_owns_decision: bool,
 ) -> float:
-    return assessment.rank_score if engine_owns_decision else case.market_probability
+    return (
+        assessment.rank_score
+        if engine_owns_decision
+        else case.market_probability_lower
+    )
 
 
 def _expected_payoff(
@@ -523,16 +673,18 @@ def _decision(
     )
     if len(positions) < _MINIMUM_CONCURRENT:
         return _cash_decision(as_of, capital)
-    commissions = len(positions) * _FIXED_FEE
     traded = sum(position.shares * position.price for position in positions)
-    slippage = traded * _SLIPPAGE
+    costs = _EXECUTION_COST_MODEL.quote_book(positions)
     return ShadowDecision(
         as_of=as_of.isoformat(),
         capital=capital,
         positions=positions,
-        estimated_commissions=round(commissions, 2),
-        estimated_slippage=round(slippage, 2),
-        cash_reserve=round(capital - traded - commissions - slippage, 2),
+        estimated_base_commission=_money(costs.base_commission),
+        estimated_slippage=_money(costs.slippage),
+        estimated_fx_conversion=_money(costs.fx_conversion),
+        cash_reserve=_money(
+            capital - traded - costs.total,
+        ),
     )
 
 
@@ -545,7 +697,7 @@ def _whole_share_position(
 ) -> ShadowPosition | None:
     weight = min(_NAME_CAP, equal_weight, _BREAK_LOSS_CAP / case.break_loss)
     budget = capital * weight
-    shares = math.floor((budget - _FIXED_FEE) / (case.close * (1.0 + _SLIPPAGE)))
+    shares = _EXECUTION_COST_MODEL.affordable_shares(budget, case.close)
     if shares < 1:
         return None
     return ShadowPosition(
@@ -562,27 +714,32 @@ def _whole_share_position(
     )
 
 
+def _money(value: float) -> float:
+    return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def _cash_decision(as_of: datetime, capital: float) -> ShadowDecision:
     return ShadowDecision(
         as_of=as_of.isoformat(),
         capital=capital,
         positions=(),
-        estimated_commissions=0.0,
+        estimated_base_commission=0.0,
         estimated_slippage=0.0,
+        estimated_fx_conversion=0.0,
         cash_reserve=capital,
     )
 
 
-def _latest_by_event(
+def _histories_by_event(
     observations: Iterable[EventObservation], as_of: datetime
-) -> tuple[EventObservation, ...]:
-    latest: dict[str, EventObservation] = {}
+) -> dict[str, tuple[EventObservation, ...]]:
+    histories: dict[str, list[EventObservation]] = {}
     for observation in sorted(
         (item for item in observations if _available(item.observed_at, as_of)),
         key=lambda item: (item.observed_at, item.event_id, item.source_accession),
     ):
-        latest[observation.event_id] = observation
-    return tuple(latest[event_id] for event_id in sorted(latest))
+        histories.setdefault(observation.event_id, []).append(observation)
+    return {event_id: tuple(history) for event_id, history in histories.items()}
 
 
 def _available(observed_at: str, as_of: datetime) -> bool:

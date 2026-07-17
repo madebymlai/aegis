@@ -34,6 +34,7 @@ def _filing(
     observed_at: str,
     submission: bytes,
     *,
+    form: str = "8-K",
     items: tuple[str, ...] = ("1.01",),
     document_types: tuple[str, ...] = (),
 ) -> EdgarFiling:
@@ -41,7 +42,7 @@ def _filing(
         accession=accession,
         cik="1",
         filed_at=datetime.fromisoformat(observed_at),
-        form="8-K",
+        form=form,
         source_url=f"https://www.sec.gov/Archives/{accession}",
         submission=submission,
         items=items,
@@ -236,3 +237,336 @@ def test_cold_window_observes_completion_after_its_announcement() -> None:
         "announced",
         "completed",
     )
+
+
+def test_announcement_extracts_close_guidance_and_contractual_outside_date() -> None:
+    filing = _filing(
+        "0000000001-26-000008",
+        "2026-01-03T12:00:00+00:00",
+        b"""<SEC-DOCUMENT>
+        <DOCUMENT><TYPE>8-K<TEXT>
+        The transaction is expected to close in the second quarter of 2026.
+        Each share will receive $10.20 per share in cash.
+        </TEXT></DOCUMENT>
+        <DOCUMENT><TYPE>EX-2.1<TEXT>
+        AGREEMENT AND PLAN OF MERGER dated as of January 2, 2026.
+        Each share shall be converted into the right to receive $10.20 per share in cash.
+        The Outside Date means September 30, 2026.
+        </TEXT></DOCUMENT>
+        </SEC-DOCUMENT>""",
+        document_types=("8-K", "EX-2.1"),
+    )
+
+    refresh = _source(filing).refresh(
+        start=date(2026, 1, 3),
+        end=date(2026, 1, 3),
+        active_events=(),
+    )
+
+    timeline = refresh.observations[0].timeline
+    assert timeline is not None
+    assert timeline.guidance is not None
+    assert timeline.guidance.earliest == "2026-04-01"
+    assert timeline.guidance.latest == "2026-06-30"
+    assert timeline.outside_date == "2026-09-30"
+
+
+def test_guidance_accepts_close_by_end_of_quarter_wording() -> None:
+    filing = _filing(
+        "0000000001-26-000016",
+        "2026-02-09T12:00:00+00:00",
+        b"""<SEC-DOCUMENT>
+        <DOCUMENT><TYPE>8-K<TEXT>
+        The transaction is expected to close by the end of the third quarter of 2026.
+        Each share will receive $10.20 per share in cash.
+        </TEXT></DOCUMENT>
+        <DOCUMENT><TYPE>EX-2.1<TEXT>
+        AGREEMENT AND PLAN OF MERGER dated as of February 8, 2026.
+        Each share shall be converted into the right to receive $10.20 per share in cash.
+        </TEXT></DOCUMENT>
+        </SEC-DOCUMENT>""",
+        document_types=("8-K", "EX-2.1"),
+    )
+
+    observation = _source(filing).refresh(
+        start=date(2026, 2, 9),
+        end=date(2026, 2, 9),
+        active_events=(),
+    ).observations[0]
+
+    assert observation.timeline is not None
+    assert observation.timeline.guidance is not None
+    assert observation.timeline.guidance.earliest == "2026-07-01"
+    assert observation.timeline.guidance.latest == "2026-09-30"
+
+
+def test_guidance_accepts_completed_in_calendar_half_wording() -> None:
+    active = _active_announcement()
+    proxy = _filing(
+        "0000000001-26-000017",
+        "2026-07-09T12:00:00+00:00",
+        b"""<SEC-DOCUMENT><DOCUMENT><TYPE>PREM14A<TEXT>
+        The parties currently expect the Merger to be completed in second half of
+        calendar year 2026 under the Agreement and Plan of Merger dated as of
+        January 2, 2026.
+        </TEXT></DOCUMENT></SEC-DOCUMENT>""",
+        form="PREM14A",
+        items=(),
+        document_types=("PREM14A",),
+    )
+
+    observation = _source(proxy).refresh(
+        start=date(2026, 7, 9),
+        end=date(2026, 7, 9),
+        active_events=(active,),
+    ).observations[0]
+
+    assert observation.timeline is not None
+    assert observation.timeline.guidance is not None
+    assert observation.timeline.guidance.earliest == "2026-07-01"
+    assert observation.timeline.guidance.latest == "2026-12-31"
+
+
+def test_guidance_accepts_late_year_or_early_next_year_wording() -> None:
+    active = _active_announcement()
+    update = _filing(
+        "0000000001-26-000018",
+        "2026-06-26T12:00:00+00:00",
+        b"""<SEC-DOCUMENT><DOCUMENT><TYPE>8-K<TEXT>
+        Under the Agreement and Plan of Merger dated as of January 2, 2026, the
+        transaction is expected to close in late 2026 or early 2027.
+        </TEXT></DOCUMENT></SEC-DOCUMENT>""",
+        items=("8.01",),
+    )
+
+    observation = _source(update).refresh(
+        start=date(2026, 6, 26),
+        end=date(2026, 6, 26),
+        active_events=(active,),
+    ).observations[0]
+
+    assert observation.timeline is not None
+    assert observation.timeline.guidance is not None
+    assert observation.timeline.guidance.earliest == "2026-10-01"
+    assert observation.timeline.guidance.latest == "2027-03-31"
+
+
+def test_guidance_accepts_mid_year_wording() -> None:
+    filing = _filing(
+        "0000000001-26-000020",
+        "2026-06-15T12:00:00+00:00",
+        b"""<SEC-DOCUMENT>
+        <DOCUMENT><TYPE>8-K<TEXT>
+        The transaction is expected to close in mid-2027.
+        Each share will receive $10.20 per share in cash.
+        </TEXT></DOCUMENT>
+        <DOCUMENT><TYPE>EX-2.1<TEXT>
+        AGREEMENT AND PLAN OF MERGER dated as of June 12, 2026.
+        Each share shall be converted into the right to receive $10.20 per share in cash.
+        </TEXT></DOCUMENT>
+        </SEC-DOCUMENT>""",
+        document_types=("8-K", "EX-2.1"),
+    )
+
+    observation = _source(filing).refresh(
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+        active_events=(),
+    ).observations[0]
+
+    assert observation.timeline is not None
+    assert observation.timeline.guidance is not None
+    assert observation.timeline.guidance.earliest == "2027-04-01"
+    assert observation.timeline.guidance.latest == "2027-09-30"
+
+
+def test_proxy_vote_date_becomes_a_causal_nonterminal_timeline_milestone() -> None:
+    active = _active_announcement()
+    proxy = _filing(
+        "0000000001-26-000009",
+        "2026-04-10T12:00:00+00:00",
+        b"""<SEC-DOCUMENT><DOCUMENT><TYPE>DEFM14A<TEXT>
+        A special meeting of stockholders will be held on May 15, 2026 to vote on
+        the merger contemplated by the Agreement and Plan of Merger dated as of
+        January 2, 2026.
+        </TEXT></DOCUMENT></SEC-DOCUMENT>""",
+        form="DEFM14A",
+        items=(),
+        document_types=("DEFM14A",),
+    )
+
+    refresh = _source(proxy).refresh(
+        start=date(2026, 4, 10),
+        end=date(2026, 4, 10),
+        active_events=(active,),
+    )
+
+    observation = refresh.observations[0]
+    assert observation.status.value == "amended"
+    assert observation.event_id == active.event_id
+    assert observation.timeline is not None
+    assert observation.timeline.milestones[0].kind.value == "shareholder_vote"
+    assert observation.timeline.milestones[0].scheduled_for == "2026-05-15"
+
+
+def test_proxy_termination_boilerplate_cannot_resolve_an_active_merger() -> None:
+    active = _active_announcement()
+    proxy = _filing(
+        "0000000001-26-000014",
+        "2026-04-10T12:00:00+00:00",
+        b"""<SEC-DOCUMENT><DOCUMENT><TYPE>DEFM14A<TEXT>
+        The Agreement and Plan of Merger dated as of January 2, 2026 may be
+        terminated under specified circumstances. The transaction is expected to
+        close in the second quarter of 2026.
+        </TEXT></DOCUMENT></SEC-DOCUMENT>""",
+        form="DEFM14A",
+        items=(),
+        document_types=("DEFM14A",),
+    )
+
+    refresh = _source(proxy).refresh(
+        start=date(2026, 4, 10),
+        end=date(2026, 4, 10),
+        active_events=(active,),
+    )
+
+    assert len(refresh.observations) == 1
+    assert refresh.observations[0].status.value == "amended"
+    assert refresh.observations[0].timeline is not None
+
+
+def test_solicitation_completion_wording_cannot_resolve_an_active_merger() -> None:
+    active = _active_announcement()
+    solicitation = _filing(
+        "0000000001-26-000015",
+        "2026-04-11T12:00:00+00:00",
+        b"""<SEC-DOCUMENT><DOCUMENT><TYPE>DEFA14A<TEXT>
+        The presentation discusses a previously consummated transaction and the
+        Agreement and Plan of Merger dated as of January 2, 2026.
+        </TEXT></DOCUMENT></SEC-DOCUMENT>""",
+        form="DEFA14A",
+        items=(),
+        document_types=("DEFA14A",),
+    )
+
+    refresh = _source(solicitation).refresh(
+        start=date(2026, 4, 11),
+        end=date(2026, 4, 11),
+        active_events=(active,),
+    )
+
+    assert refresh.observations == ()
+    assert refresh.reviews == ()
+
+
+def test_outside_date_is_extracted_from_the_common_termination_clause() -> None:
+    filing = _filing(
+        "0000000001-26-000012",
+        "2026-01-03T12:00:00+00:00",
+        b"""<SEC-DOCUMENT>
+        <DOCUMENT><TYPE>8-K<TEXT>
+        Each share will receive $10.20 per share in cash.
+        </TEXT></DOCUMENT>
+        <DOCUMENT><TYPE>EX-2.1<TEXT>
+        AGREEMENT AND PLAN OF MERGER dated as of January 2, 2026.
+        Each share shall be converted into the right to receive $10.20 per share in cash.
+        Either party may terminate if the merger has not been consummated on or before
+        March 29, 2027 (the "Outside Date"), which date may be extended by up to 90 days.
+        </TEXT></DOCUMENT>
+        </SEC-DOCUMENT>""",
+        document_types=("8-K", "EX-2.1"),
+    )
+
+    refresh = _source(filing).refresh(
+        start=date(2026, 1, 3),
+        end=date(2026, 1, 3),
+        active_events=(),
+    )
+
+    assert refresh.observations[0].timeline is not None
+    assert refresh.observations[0].timeline.outside_date == "2027-06-27"
+
+
+def test_relative_outside_date_and_extension_are_computed_from_the_contract() -> None:
+    filing = _filing(
+        "0000000001-26-000019",
+        "2026-06-17T12:00:00+00:00",
+        b"""<SEC-DOCUMENT>
+        <DOCUMENT><TYPE>8-K<TEXT>
+        The transaction is expected to close in the third quarter of 2026.
+        Each share will receive $10.20 per share in cash.
+        </TEXT></DOCUMENT>
+        <DOCUMENT><TYPE>EX-2.1<TEXT>
+        AGREEMENT AND PLAN OF MERGER dated as of June 16, 2026.
+        Each share shall be converted into the right to receive $10.20 per share in cash.
+        Either party may terminate if the Merger has not been consummated on or before
+        the date that is 150 days after June 16, 2026 (the "Outside Date"), subject to
+        a single 30-day extension in specified circumstances.
+        </TEXT></DOCUMENT>
+        </SEC-DOCUMENT>""",
+        document_types=("8-K", "EX-2.1"),
+    )
+
+    observation = _source(filing).refresh(
+        start=date(2026, 6, 17),
+        end=date(2026, 6, 17),
+        active_events=(),
+    ).observations[0]
+
+    assert observation.timeline is not None
+    assert observation.timeline.outside_date == "2026-12-13"
+
+
+def test_named_outside_date_with_parenthetical_extension_is_extracted() -> None:
+    filing = _filing(
+        "0000000001-26-000021",
+        "2026-06-15T12:00:00+00:00",
+        b"""<SEC-DOCUMENT>
+        <DOCUMENT><TYPE>8-K<TEXT>
+        The transaction is expected to close in mid-2027.
+        Each share will receive $10.20 per share in cash.
+        </TEXT></DOCUMENT>
+        <DOCUMENT><TYPE>EX-2.1<TEXT>
+        AGREEMENT AND PLAN OF MERGER dated as of June 12, 2026.
+        Each share shall be converted into the right to receive $10.20 per share in cash.
+        Either party may terminate if the Merger shall not have been consummated on or
+        before 11:59 p.m., New York City time, on June 12, 2027 (such time or such later
+        time agreed in writing by the parties, the "Outside Date"); provided that the
+        Outside Date shall automatically be extended for one additional three (3)-month
+        period if regulatory approvals have not then been obtained.
+        </TEXT></DOCUMENT>
+        </SEC-DOCUMENT>""",
+        document_types=("8-K", "EX-2.1"),
+    )
+
+    observation = _source(filing).refresh(
+        start=date(2026, 6, 15),
+        end=date(2026, 6, 15),
+        active_events=(),
+    ).observations[0]
+
+    assert observation.timeline is not None
+    assert observation.timeline.outside_date == "2027-09-12"
+
+
+def test_ordinary_proxy_does_not_create_a_merger_review_item() -> None:
+    active = _active_announcement()
+    proxy = _filing(
+        "0000000001-26-000013",
+        "2026-04-10T12:00:00+00:00",
+        b"""<SEC-DOCUMENT><DOCUMENT><TYPE>DEFM14A<TEXT>
+        The annual meeting will elect directors and ratify the independent auditor.
+        </TEXT></DOCUMENT></SEC-DOCUMENT>""",
+        form="DEFM14A",
+        items=(),
+        document_types=("DEFM14A",),
+    )
+
+    refresh = _source(proxy).refresh(
+        start=date(2026, 4, 10),
+        end=date(2026, 4, 10),
+        active_events=(active,),
+    )
+
+    assert refresh.observations == ()
+    assert refresh.reviews == ()

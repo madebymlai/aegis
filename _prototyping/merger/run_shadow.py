@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +39,10 @@ def main() -> None:
             catalog_path=config["catalog_path"],
             market_instrument_id=config["market_instrument_id"],
         ),
-        start=shadow.next_refresh_start(end=end),
+        start=shadow.next_refresh_start(
+            end=end,
+            bootstrap_start=args.bootstrap_start,
+        ),
         end=end,
         as_of=as_of,
         capital=config["shadow_capital"],
@@ -85,6 +88,15 @@ def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument(
+        "--bootstrap-start",
+        type=_date,
+        required=True,
+        help=(
+            "First SEC filing date to replay when the state directory is empty; "
+            "later runs resume from persisted evidence."
+        ),
+    )
+    parser.add_argument(
         "--state-dir",
         type=Path,
         default=default_cache / "aegis" / "cash-merger-shadow",
@@ -94,6 +106,15 @@ def _arguments() -> argparse.Namespace:
         help="Timezone-aware ISO timestamp; defaults to the current UTC time.",
     )
     return parser.parse_args()
+
+
+def _date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "--bootstrap-start must be an ISO date (YYYY-MM-DD)"
+        ) from error
 
 
 def _timestamp(value: str | None) -> datetime:

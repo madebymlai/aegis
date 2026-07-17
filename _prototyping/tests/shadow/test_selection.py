@@ -1,14 +1,17 @@
 """Behavior checks for market-anchored, swappable merger selection."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
 from _prototyping.merger.shadow import (
     CashMergerSelector,
+    CloseGuidance,
     CompletionCase,
     CompletionForecast,
     CompletionSelectionEngine,
+    DealTimelineEvidence,
     EngineCausalityError,
     EventObservation,
     EventStatus,
@@ -37,6 +40,9 @@ def _event(number: int) -> EventObservation:
         source_accession=accession,
         source_url=f"https://example.test/{ticker}",
         evidence="Each share converts into $10.20 in cash.",
+        timeline=DealTimelineEvidence(
+            guidance=CloseGuidance("2026-03-01", "2026-03-01"),
+        ),
     )
 
 
@@ -52,6 +58,7 @@ def _mark(number: int, close: float = 10.00) -> MarketMark:
         beta=0.00,
         median_dollar_volume=5_000_000.00,
         annual_cash_rate=0.00,
+        preannouncement_closes=(9.00, 9.00, 9.00),
     )
 
 
@@ -139,9 +146,39 @@ def test_market_baseline_preserves_whole_share_cash_and_cost_accounting() -> Non
     assert tuple(sorted(position.ticker for position in decision.positions)) == (
         _EXPECTED_TICKERS
     )
-    assert decision.estimated_commissions == 3.50
+    assert decision.estimated_base_commission == 3.50
     assert decision.estimated_slippage == 2.45
-    assert decision.cash_reserve == 94.05
+    assert decision.estimated_fx_conversion == 1.47
+    assert decision.cash_reserve == 92.58
+
+
+def _low_price_decision():
+    events = tuple(
+        replace(_event(number), offer_price=2.20) for number in range(1, 11)
+    )
+    marks = tuple(
+        replace(
+            _mark(number, 2.00),
+            preannouncement_close=1.50,
+            preannouncement_closes=(1.50, 1.50, 1.50),
+        )
+        for number in range(1, 11)
+    )
+
+    return CashMergerSelector().select(
+        events,
+        marks,
+        as_of=_AS_OF,
+        capital=5_000.00,
+    ).decision
+
+
+def test_cost_aware_sizing_reserves_tiered_commission_above_the_minimum() -> None:
+    assert _low_price_decision().positions[0].shares == 199
+
+
+def test_tiered_base_commission_increases_with_large_share_counts() -> None:
+    assert _low_price_decision().estimated_base_commission == 6.97
 
 
 def test_unqualified_challenger_is_audited_while_market_baseline_controls_trades() -> None:
@@ -200,7 +237,7 @@ def test_completion_engine_cannot_use_a_future_training_cohort() -> None:
         )
 
 
-def test_selector_reports_when_market_probability_cannot_be_formed() -> None:
+def test_selector_excludes_a_deal_without_positive_discounted_spread() -> None:
     selection = CashMergerSelector().select(
         (_event(1),),
         (_mark(1, 10.30),),
@@ -212,5 +249,86 @@ def test_selector_reports_when_market_probability_cannot_be_formed() -> None:
     assert selection.exclusions[0].event_id == "1:announcement-01"
     assert (
         selection.exclusions[0].reason
-        is SelectionExclusionReason.MARKET_PROBABILITY_UNDEFINED
+        is SelectionExclusionReason.NO_POSITIVE_DISCOUNTED_SPREAD
     )
+
+
+def test_selector_excludes_an_unidentified_break_value_instead_of_assigning_zero() -> None:
+    mark = replace(
+        _mark(1),
+        preannouncement_close=10.10,
+        preannouncement_closes=(10.05, 10.10, 10.15),
+    )
+
+    selection = CashMergerSelector().select(
+        (_event(1),),
+        (mark,),
+        as_of=_AS_OF,
+        capital=5_000.00,
+    )
+
+    assert selection.assessments == ()
+    assert (
+        selection.exclusions[0].reason
+        is SelectionExclusionReason.BREAK_VALUE_UNIDENTIFIED
+    )
+
+
+def test_selector_uses_causal_close_guidance_instead_of_a_fixed_deal_horizon() -> None:
+    event = _event(1)
+    mark = _mark(1)
+    event = replace(
+        event,
+        timeline=DealTimelineEvidence(
+            guidance=CloseGuidance("2026-02-12", "2026-02-12"),
+        ),
+    )
+    mark = replace(mark, annual_cash_rate=0.10)
+
+    selection = CashMergerSelector().select(
+        (event,),
+        (mark,),
+        as_of=_AS_OF,
+        capital=5_000.00,
+    )
+
+    assessment = selection.assessments[0]
+    assert assessment.expected_close == "2026-02-12"
+    assert assessment.discounted_offer == pytest.approx(10.1721300137)
+
+
+def test_selector_audits_break_uncertainty_and_uses_its_lower_probability_bound() -> None:
+    mark = replace(
+        _mark(1),
+        preannouncement_closes=(8.00, 9.00, 10.00),
+    )
+
+    selection = CashMergerSelector().select(
+        (_event(1),),
+        (mark,),
+        as_of=_AS_OF,
+        capital=5_000.00,
+    )
+
+    assessment = selection.assessments[0]
+    assert assessment.break_value_lower == 8.50
+    assert assessment.break_value_central == 9.00
+    assert assessment.break_value_upper == 9.50
+    assert assessment.market_probability_lower == pytest.approx(0.7142857142857143)
+    assert assessment.market_probability == pytest.approx(0.8333333333333333)
+    assert assessment.market_probability_upper == pytest.approx(0.8823529411764706)
+    assert assessment.selected is True
+
+
+def test_selector_excludes_a_deal_when_no_causal_close_range_exists() -> None:
+    event = replace(_event(1), timeline=None)
+
+    selection = CashMergerSelector().select(
+        (event,),
+        (_mark(1),),
+        as_of=_AS_OF,
+        capital=5_000.00,
+    )
+
+    assert selection.assessments == ()
+    assert selection.exclusions[0].reason is SelectionExclusionReason.TIMELINE_UNAVAILABLE

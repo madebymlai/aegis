@@ -277,3 +277,55 @@ def test_distant_stock_component_is_not_a_fixed_cash_event() -> None:
 
     assert refresh.observations == ()
     assert refresh.reviews[0].reason == "unique fixed-cash offer not extracted"
+
+
+def test_same_agreement_in_multiple_filings_preserves_one_event_identity() -> None:
+    first = EdgarFiling(
+        accession="0000000001-26-000010",
+        cik="1",
+        filed_at=datetime(2026, 1, 10, 12, tzinfo=UTC),
+        form="8-K",
+        source_url="https://www.sec.gov/Archives/d01-first",
+        submission=_submission(agreement_date="January 9, 2026", offer_price="10.20"),
+        document_types=("8-K", "EX-2.1"),
+    )
+    amendment = EdgarFiling(
+        accession="0000000001-26-000011",
+        cik="1",
+        filed_at=datetime(2026, 1, 10, 13, tzinfo=UTC),
+        form="8-K/A",
+        source_url="https://www.sec.gov/Archives/d01-amendment",
+        submission=_submission(agreement_date="January 9, 2026", offer_price="10.20"),
+        document_types=("8-K/A", "EX-2.1"),
+    )
+
+    refresh = EdgarEventSource(
+        ("D01.XNAS",),
+        gateway=_GatewayWithFilings((first, amendment)),
+    ).refresh(
+        start=date(2026, 1, 10),
+        end=date(2026, 1, 10),
+        active_events=(),
+    )
+
+    assert tuple(event.event_id for event in refresh.observations) == (
+        "1:0000000001-26-000010",
+        "1:0000000001-26-000010",
+    )
+    assert tuple(event.status.value for event in refresh.observations) == (
+        "announced",
+        "amended",
+    )
+
+    replay = EdgarEventSource(
+        ("D01.XNAS",),
+        gateway=_GatewayWithFilings((first, amendment)),
+    ).refresh(
+        start=date(2026, 1, 10),
+        end=date(2026, 1, 10),
+        active_events=(refresh.observations[-1],),
+    )
+
+    assert {event.event_id for event in replay.observations} == {
+        "1:0000000001-26-000010"
+    }

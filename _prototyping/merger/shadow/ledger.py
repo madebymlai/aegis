@@ -11,6 +11,12 @@ from enum import StrEnum
 from pathlib import Path
 
 from .artifacts import canonical_bytes, write_once
+from .timeline import (
+    CloseGuidance,
+    DealTimelineEvidence,
+    TimelineMilestone,
+    TimelineMilestoneKind,
+)
 
 
 class EventStatus(StrEnum):
@@ -39,6 +45,7 @@ class EventObservation:
     source_accession: str
     source_url: str
     evidence: str
+    timeline: DealTimelineEvidence | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +139,20 @@ def _payload(observation: EventObservation) -> bytes:
 def _load(path: Path) -> EventObservation:
     payload = json.loads(path.read_text())
     payload["status"] = EventStatus(payload["status"])
+    timeline = payload.get("timeline")
+    if timeline is not None:
+        guidance = timeline.get("guidance")
+        payload["timeline"] = DealTimelineEvidence(
+            guidance=CloseGuidance(**guidance) if guidance is not None else None,
+            outside_date=timeline.get("outside_date"),
+            milestones=tuple(
+                TimelineMilestone(
+                    kind=TimelineMilestoneKind(milestone["kind"]),
+                    scheduled_for=milestone["scheduled_for"],
+                )
+                for milestone in timeline.get("milestones", ())
+            ),
+        )
     return EventObservation(**payload)
 
 

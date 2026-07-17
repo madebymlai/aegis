@@ -1,5 +1,6 @@
 """Research-only prospective cash-merger shadow ledger and decision engine."""
 
+from .break_value import BreakValueEstimate, BreakValueModel
 from .cash_rate import FredDtb3RateSource, ObservedCashRate
 from .edgar import (
     EdgarEventSource,
@@ -52,14 +53,28 @@ from .shadow import (
     ShadowMarkSource,
     ShadowRunEvidence,
 )
+from .timeline import (
+    CloseGuidance,
+    DealCloseEstimate,
+    DealTimeline,
+    DealTimelineEvidence,
+    TimelineMilestone,
+    TimelineMilestoneKind,
+)
 
 __all__ = [
     "AegisCatalogMarkSource",
+    "BreakValueEstimate",
+    "BreakValueModel",
     "CashMergerSelector",
     "CashMergerShadow",
+    "CloseGuidance",
     "CompletionCase",
     "CompletionForecast",
     "CompletionSelectionEngine",
+    "DealCloseEstimate",
+    "DealTimeline",
+    "DealTimelineEvidence",
     "EdgarEventSource",
     "EdgarFiling",
     "EdgarGateway",
@@ -97,4 +112,6 @@ __all__ = [
     "ShadowRunEvidence",
     "SourceRefresh",
     "SourceReview",
+    "TimelineMilestone",
+    "TimelineMilestoneKind",
 ]
