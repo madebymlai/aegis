@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
-from .decision import MarketMark
 from .ledger import EventObservation, EventStatus
+from .selection import MarketMark
 
 
 @dataclass(frozen=True)

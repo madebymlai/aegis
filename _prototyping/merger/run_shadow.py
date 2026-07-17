@@ -59,8 +59,12 @@ def main() -> None:
                     "reviews": evidence.reviews,
                 },
                 "decision": {
-                    "formed_this_run": evidence.decision_formed,
-                    "positions": len(evidence.decision.positions),
+                    "forecast_engine": evidence.selection.engine.engine_id,
+                    "decision_engine": evidence.selection.decision_engine_id,
+                    "formed_this_run": evidence.selection_formed,
+                    "assessments": len(evidence.selection.assessments),
+                    "exclusions": len(evidence.selection.exclusions),
+                    "positions": len(evidence.selection.decision.positions),
                     "terminal_exit_event_ids": evidence.terminal_exit_event_ids,
                 },
                 "market_unavailable": [

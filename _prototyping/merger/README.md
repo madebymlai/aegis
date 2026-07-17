@@ -6,8 +6,8 @@ This directory contains all cash-merger experimental work. It is deliberately ou
 `historical/` retains the successive Massive-backed experiments and their reports.
 `legacy_aegis_rd/` retains the earlier retired Aegis RD component/config attempt and its
 generated runs; its old checks are under `_prototyping/tests/legacy_aegis_rd` and are evidence,
-not an active suite. `shadow/` is the forward evidence collector for the surviving frozen `q70` control. The
-control is **not promoted alpha**: the gate remains closed until the prospective ledger has
+not an active suite. `shadow/` is the forward evidence collector for the surviving market-implied
+`q70` control. The control is **not promoted alpha**: the gate remains closed until the prospective ledger has
 at least 100 resolved events and 10 adverse resolutions.
 
 ## Prospective run
@@ -30,13 +30,23 @@ Each run:
 5. appends content-addressed event observations without rewriting history;
 6. fetches the latest public FRED `DTB3` cash rate with an immutable offline cache;
 7. prices active configured targets through Aegis's catalog-backed IBKR path;
-8. forms the unchanged monthly whole-share `q70` decision and reports terminal exits; and
-9. writes immutable evidence under the runtime state directory.
+8. computes the market-implied completion baseline once, passes immutable deal cases through the
+   selected completion engine, and records market and model probabilities side by side;
+9. applies unchanged monthly whole-share sizing outside the engine and reports terminal exits; and
+10. writes immutable evidence under the runtime state directory.
 
 The configured InstrumentIds are authoritative. A filing cannot create a tradeable instrument,
 and the prototype does not guess a venue, submit an order, or alter a production schema. EdgarTools
 owns SEC access, ticker/CIK reference data, fair-access throttling, and its standard `~/.edgar`
 cache; the prototype owns merger extraction, lifecycle state, and evidence.
+
+`CashMergerSelector.select(...)` is the public selection interface. A completion engine implements
+one `forecast(cases)` method and cannot replace the selector's market-implied probability, hard
+tradability filters, break-loss caps, whole-share sizing, or execution-cost accounting. The default
+engine is the no-alpha `market-implied-q70` benchmark. Any challenger must carry an immutable model
+artifact identity and training cutoff for the forecast batch, plus a causal feature timestamp for
+every deal. Injected challengers remain shadow-only while the market baseline controls positions;
+qualified-challenger authority must be granted explicitly after out-of-sample evidence exists.
 
 ## Behavior checks
 
