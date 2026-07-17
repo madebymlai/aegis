@@ -17,6 +17,8 @@ from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 
+from aegis_data._ensure_coverage import FetchedRecords, ensure_coverage
+from aegis_data.catalog import gap_fill_boundary
 
 @customdataclass
 class FixtureRecord(Data):
@@ -173,14 +175,36 @@ def ingest(
         raise ValueError("custom data ingest start must not be after end")
     catalog = ParquetDataCatalog(str(catalog_path))
     for instrument_id in instrument_ids:
-        _fill_in_provider_order(
+        ensure_coverage(
             catalog,
-            record_type,
-            instrument_id,
-            start=start,
-            end=end,
-            providers=providers,
-            clock_ns=clock_ns,
+            data_cls=record_type,
+            identifier=instrument_id.value,
+            subject=f"custom data for {instrument_id.value}",
+            fetchers=tuple(
+                _record_fetcher(provider, instrument_id, record_type)
+                for provider in providers
+            ),
+            missing_intervals=lambda: _missing_intervals(
+                catalog,
+                record_type,
+                instrument_id,
+                start_ns=start.value,
+                end_ns=end.value,
+            ),
+            coverage_error=lambda missing: CustomDataCoverageError(
+                instrument_id, tuple(missing)
+            ),
+            provider_boundary=gap_fill_boundary,
+            empty_interval_writer=lambda empty_start, empty_end: _write_empty_marker(
+                catalog,
+                record_type,
+                instrument_id,
+                start=pd.Timestamp(empty_start, tz="UTC"),
+                end=pd.Timestamp(empty_end, tz="UTC"),
+                checked_at_ns=clock_ns(),
+            ),
+            consolidate_start_ns=start.value,
+            consolidate_end_ns=end.value,
         )
 
 
@@ -340,83 +364,32 @@ def records(
     )
 
 
-def _fill_in_provider_order(
-    catalog: ParquetDataCatalog,
-    record_type: type[RecordT],
-    instrument_id: InstrumentId,
-    *,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    providers: Sequence[CustomDataProviderPort[RecordT]],
-    clock_ns: Callable[[], int],
-) -> None:
-    for provider in providers:
-        missing = _missing_intervals(
-            catalog,
-            record_type,
-            instrument_id,
-            start_ns=start.value,
-            end_ns=end.value,
-        )
-        for missing_start_ns, missing_end_ns in missing:
-            _fill_interval(
-                catalog,
-                record_type,
-                instrument_id,
-                provider,
-                start=pd.Timestamp(missing_start_ns, tz="UTC"),
-                end=pd.Timestamp(missing_end_ns, tz="UTC"),
-                clock_ns=clock_ns,
-            )
-
-
-def _fill_interval(
-    catalog: ParquetDataCatalog,
-    record_type: type[RecordT],
-    instrument_id: InstrumentId,
+def _record_fetcher(
     provider: CustomDataProviderPort[RecordT],
-    *,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    clock_ns: Callable[[], int],
-) -> None:
-    served = provider.request_records(instrument_id, start=start, end=end)
-    served_from = max(_utc(served.served_from), start)
-    if served_from > end:
-        return
-    selected = tuple(
-        sorted(
-            (
-                record
-                for record in served.records
-                if _record_belongs_to_interval(
-                    record,
-                    record_type=record_type,
-                    instrument_id=instrument_id,
-                    start=served_from,
-                    end=end,
-                )
-            ),
-            key=lambda record: record.ts_event,
+    instrument_id: InstrumentId,
+    record_type: type[RecordT],
+) -> Callable[[pd.Timestamp, pd.Timestamp], FetchedRecords[RecordT]]:
+    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> FetchedRecords[RecordT]:
+        served = provider.request_records(instrument_id, start=start, end=end)
+        selected = tuple(
+            sorted(
+                (
+                    record
+                    for record in served.records
+                    if _record_belongs_to_interval(
+                        record,
+                        record_type=record_type,
+                        instrument_id=instrument_id,
+                        start=start,
+                        end=end,
+                    )
+                ),
+                key=lambda record: record.ts_event,
+            )
         )
-    )
-    if not selected:
-        _write_empty_marker(
-            catalog,
-            record_type,
-            instrument_id,
-            start=served_from,
-            end=end,
-            checked_at_ns=clock_ns(),
-        )
-        return
-    catalog.write_data(
-        list(selected),
-        data_cls=record_type,
-        identifier=instrument_id.value,
-        start=served_from.value,
-        end=end.value,
-    )
+        return FetchedRecords(selected, _utc(served.served_from))
+
+    return fetch
 
 
 def _record_belongs_to_interval(

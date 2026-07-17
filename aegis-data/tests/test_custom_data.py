@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.catalog import GapFillProviderError
 from aegis_data.custom_data import (
     CustomDataCoverageError,
     CustomDataProviderPort,
@@ -76,6 +77,30 @@ def test_ingest_is_idempotent_and_records_round_trip_typed(tmp_path: Path) -> No
     assert provider.requests == [(_utc("2024-01-01"), _utc("2024-01-03"))]
     assert stored == (_record("2024-01-02", 7.0),)
     assert isinstance(stored[0], FixtureRecord)
+
+
+def test_ingest_translates_provider_failures_at_the_shared_coverage_boundary(
+    tmp_path: Path,
+) -> None:
+    class _BrokenProvider(CustomDataProviderPort[FixtureRecord]):
+        def request_records(
+            self,
+            instrument_id: InstrumentId,
+            *,
+            start: pd.Timestamp,
+            end: pd.Timestamp,
+        ) -> ServedCustomData[FixtureRecord]:
+            raise RuntimeError("vendor socket vanished")
+
+    with pytest.raises(GapFillProviderError, match="custom data for SPY.ARCA"):
+        ingest(
+            FixtureRecord,
+            (_INSTRUMENT,),
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-03"),
+            providers=(_BrokenProvider(),),
+            catalog_path=tmp_path,
+        )
 
 
 def test_ingest_fills_providers_in_declared_order(tmp_path: Path) -> None:

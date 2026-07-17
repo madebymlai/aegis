@@ -14,6 +14,7 @@ from nautilus_trader.model.instruments import FuturesContract
 from platformdirs import user_data_dir
 
 from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
+from aegis_data._ensure_coverage import FetchedRecords, ensure_coverage
 from aegis_data.distributions import Distribution, query_distribution_data
 from aegis_data.instrument import native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
@@ -468,39 +469,30 @@ class CatalogBackedDataPort:
         )
 
     def _ensure_covered(self, bar_type: BarType, request: CatalogWindowRequest) -> None:
-        missing = self._missing_intervals(bar_type, request)
-        if not missing:
-            return
-        if self.provider is None:
-            raise _coverage_gap(bar_type, missing)
-        for start_ns, end_ns in missing:
-            with gap_fill_boundary(str(bar_type)):
-                served = self.provider.request_bars(
-                    bar_type,
-                    start=pd.Timestamp(start_ns, tz="UTC"),
-                    end=pd.Timestamp(end_ns, tz="UTC"),
-                )
-            if served.bars:
-                # Claim coverage only from where the source's history actually
-                # reached (#75): a pre-wall head stays missing for the gate below,
-                # while a fully walked interval is covered edge to edge even where
-                # no bars trade (weekends, holidays).
-                self.catalog.write_data(
-                    list(served.bars),
-                    start=max(start_ns, served.served_from.value),
-                    end=end_ns,
-                )
-        self.catalog.consolidate_data(
-            _bar_cls(), identifier=str(bar_type), deduplicate=True
-        )
-        remaining = self._missing_intervals(bar_type, request)
-        if remaining:
-            raise _coverage_gap(bar_type, remaining)
-        # The fill served this instrument's bars; persist its definition too so the
-        # shared corpus never holds bars without a definition (ADR-0008).
+        fetchers: tuple[
+            Callable[[pd.Timestamp, pd.Timestamp], FetchedRecords[Any]], ...
+        ] = ()
+        if self.provider is not None:
+            fetchers = (_bar_fetcher(self.provider, bar_type),)
+        on_coverage_filled = None
         if self.definition_seeder is not None:
-            with gap_fill_boundary(str(bar_type)):
-                self.definition_seeder(bar_type.instrument_id)
+            definition_seeder = self.definition_seeder
+
+            def seed_definition() -> None:
+                definition_seeder(bar_type.instrument_id)
+
+            on_coverage_filled = seed_definition
+        ensure_coverage(
+            self.catalog,
+            data_cls=_bar_cls(),
+            identifier=str(bar_type),
+            subject=str(bar_type),
+            fetchers=fetchers,
+            missing_intervals=lambda: self._missing_intervals(bar_type, request),
+            coverage_error=lambda missing: _coverage_gap(bar_type, missing),
+            provider_boundary=gap_fill_boundary,
+            on_coverage_filled=on_coverage_filled,
+        )
 
     def _missing_intervals(
         self, bar_type: BarType, request: CatalogWindowRequest
@@ -578,6 +570,17 @@ def gap_fill_boundary(subject: str) -> Iterator[None]:
         raise
     except Exception as exc:
         raise _gap_fill_failure(subject, exc) from exc
+
+
+def _bar_fetcher(
+    provider: NautilusDataProviderPort,
+    bar_type: BarType,
+) -> Callable[[pd.Timestamp, pd.Timestamp], FetchedRecords[Any]]:
+    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> FetchedRecords[Any]:
+        served = provider.request_bars(bar_type, start=start, end=end)
+        return FetchedRecords(served.bars, served.served_from)
+
+    return fetch
 
 
 def _gap_fill_failure(subject: str, exc: Exception) -> GapFillProviderError:
