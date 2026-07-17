@@ -16,8 +16,10 @@ from aegis_data.custom_data import (
     UnknownCustomArrayError,
     VOCABULARY,
     arrays,
+    capture,
     correct,
     coverage,
+    ensure_arrays,
     ingest,
     records,
     records_for_arrays,
@@ -79,6 +81,32 @@ def test_ingest_is_idempotent_and_records_round_trip_typed(tmp_path: Path) -> No
     assert provider.requests == [(_utc("2024-01-01"), _utc("2024-01-03"))]
     assert stored == (_record("2024-01-02", 7.0),)
     assert isinstance(stored[0], FixtureRecord)
+
+
+def test_nonempty_ingest_records_the_verified_interval_provenance(
+    tmp_path: Path,
+) -> None:
+    checked_at_ns = _utc("2024-02-01").value
+    provider = _Provider((_record("2024-01-02", 7.0),))
+    ingest(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        providers=(provider,),
+        catalog_path=tmp_path,
+        clock_ns=lambda: checked_at_ns,
+    )
+
+    report = coverage(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        catalog_path=tmp_path,
+    )
+
+    assert report[0].checked_at_ns == checked_at_ns
 
 
 def test_records_for_arrays_resolves_kinds_and_returns_covered_records(
@@ -229,6 +257,89 @@ def test_ingest_fills_only_an_interior_native_gap(tmp_path: Path) -> None:
         (
             pd.Timestamp(_utc("2024-01-03").value + 1, tz="UTC"),
             pd.Timestamp(_utc("2024-01-07").value - 1, tz="UTC"),
+        )
+    ]
+
+
+def test_ensure_arrays_heals_only_the_gap_between_live_records(
+    tmp_path: Path,
+) -> None:
+    first = _record("2024-01-01", 2.0)
+    last = _record("2024-01-03", 8.0)
+    capture(first, catalog_path=tmp_path)
+    capture(last, catalog_path=tmp_path)
+    provider = _Provider(())
+
+    ensure_arrays(
+        ("FixtureValue", "FixtureAvailable"),
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        providers={FixtureRecord: (provider,)},
+        catalog_path=tmp_path,
+    )
+    assert provider.requests == [
+        (
+            pd.Timestamp("2024-01-01 00:00:00.000000001", tz="UTC"),
+            pd.Timestamp("2024-01-02 23:59:59.999999999", tz="UTC"),
+        )
+    ]
+
+
+def test_ensure_arrays_makes_no_request_for_a_fully_covered_window(
+    tmp_path: Path,
+) -> None:
+    seed = _Provider(())
+    ensure_arrays(
+        ("FixtureValue", "FixtureAvailable"),
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        providers={FixtureRecord: (seed,)},
+        catalog_path=tmp_path,
+    )
+    unused = _Provider(())
+
+    ensure_arrays(
+        ("FixtureValue", "FixtureAvailable"),
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        providers={FixtureRecord: (unused,)},
+        catalog_path=tmp_path,
+    )
+
+    assert unused.requests == []
+
+
+def test_marker_backed_gap_does_not_break_a_later_horizon_extension(
+    tmp_path: Path,
+) -> None:
+    capture(_record("2024-01-01", 2.0), catalog_path=tmp_path)
+    capture(_record("2024-01-03", 8.0), catalog_path=tmp_path)
+    ensure_arrays(
+        ("FixtureValue", "FixtureAvailable"),
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        providers={FixtureRecord: (_Provider(()),)},
+        catalog_path=tmp_path,
+    )
+    extension = _Provider((_record("2024-01-04", 9.0),))
+
+    ensure_arrays(
+        ("FixtureValue", "FixtureAvailable"),
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-04"),
+        providers={FixtureRecord: (extension,)},
+        catalog_path=tmp_path,
+    )
+
+    assert extension.requests == [
+        (
+            pd.Timestamp("2024-01-03 00:00:00.000000001", tz="UTC"),
+            _utc("2024-01-04"),
         )
     ]
 

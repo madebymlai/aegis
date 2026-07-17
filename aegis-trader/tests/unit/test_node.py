@@ -237,6 +237,11 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
 ) -> None:
     events: list[str] = []
 
+    attached_custom_arrays: list[object] = []
+    attached_custom_array_coverage: list[object] = []
+    custom_arrays = object()
+    custom_array_coverage = object()
+
     class _Trader:
         def add_strategy(self, strategy: object) -> None:
             events.append("strategy")
@@ -249,6 +254,16 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
         def build(self) -> None:
             events.append("build")
 
+    def build_strategy(
+        _book: object,
+        *,
+        custom_arrays: object,
+        custom_array_coverage: object,
+    ) -> object:
+        attached_custom_arrays.append(custom_arrays)
+        attached_custom_array_coverage.append(custom_array_coverage)
+        return object()
+
     monkeypatch.setattr("aegis_trader.trader.node.TradingNode", _BuiltNode)
     monkeypatch.setattr(
         "aegis_trader.trader.node.attach_live_clients",
@@ -257,6 +272,22 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
     monkeypatch.setattr(
         "aegis_trader.trader.node.add_live_custom_data",
         lambda *args, **kwargs: events.append("custom"),
+    )
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.build_live_custom_array_coverage",
+        lambda *args, **kwargs: events.append("coverage") or custom_array_coverage,
+    )
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.warm_live_custom_data",
+        lambda *args, **kwargs: events.append("warm"),
+    )
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.build_live_custom_arrays",
+        lambda *args, **kwargs: events.append("arrays") or custom_arrays,
+    )
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.build_live_strategy",
+        build_strategy,
     )
     instrument_id = InstrumentId.from_str("VUSA.XLON")
     registry = StubBundleRegistry(
@@ -276,7 +307,17 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
         custom_data_providers=(object(),),
     )
 
-    assert events == ["broker", "custom", "build", "strategy"]
+    assert events == [
+        "broker",
+        "custom",
+        "coverage",
+        "warm",
+        "arrays",
+        "build",
+        "strategy",
+    ]
+    assert attached_custom_arrays == [custom_arrays]
+    assert attached_custom_array_coverage == [custom_array_coverage]
 
 
 # --------------------------------------------------------------------------- #
@@ -312,8 +353,10 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
 
     node = _FakeNode(build_live_node_config(trader_id="BOOK-EU-01"))
     connection = IBConnectionSettings(
-        port=4002, client_id=9,
-        account_id="DU1234567", trader_id="BOOK-EU-01",
+        port=4002,
+        client_id=9,
+        account_id="DU1234567",
+        trader_id="BOOK-EU-01",
     )
     instrument_ids = (
         InstrumentId.from_str("VUSA.XLON"),
@@ -333,9 +376,15 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
     assert execution.dockerized_gateway == data.dockerized_gateway
     assert set(data.instrument_provider.load_ids) == {"VUSA.XLON", "EUR/USD.IDEALPRO"}
     assert execution.account_id == "DU1234567"
-    assert set(execution.instrument_provider.load_ids) == set(data.instrument_provider.load_ids)
-    assert node.data_factories[IB_CLIENT_NAME] is InteractiveBrokersLiveDataClientFactory
-    assert node.exec_factories[IB_CLIENT_NAME] is InteractiveBrokersLiveExecClientFactory
+    assert set(execution.instrument_provider.load_ids) == set(
+        data.instrument_provider.load_ids
+    )
+    assert (
+        node.data_factories[IB_CLIENT_NAME] is InteractiveBrokersLiveDataClientFactory
+    )
+    assert (
+        node.exec_factories[IB_CLIENT_NAME] is InteractiveBrokersLiveExecClientFactory
+    )
 
 
 def test_attach_live_clients_preserves_an_existing_data_client():
@@ -378,8 +427,10 @@ def test_attach_live_clients_pins_mic_venues():
 
     node = _FakeNode(build_live_node_config(trader_id="BOOK-EU-01"))
     connection = IBConnectionSettings(
-        port=4002, client_id=9,
-        account_id="DU1234567", trader_id="BOOK-EU-01",
+        port=4002,
+        client_id=9,
+        account_id="DU1234567",
+        trader_id="BOOK-EU-01",
     )
 
     attach_live_clients(node, connection, (InstrumentId.from_str("VUSA.XLON"),))

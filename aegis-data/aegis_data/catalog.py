@@ -540,6 +540,11 @@ class CatalogBackedDataPort:
             missing_intervals=lambda: self._missing_intervals(bar_type, request),
             coverage_error=lambda missing: _coverage_gap(bar_type, missing),
             provider_boundary=gap_fill_boundary,
+            consolidate=lambda: self.catalog.consolidate_data(
+                _bar_cls(),
+                identifier=str(bar_type),
+                deduplicate=True,
+            ),
             on_coverage_filled=on_coverage_filled,
         )
 

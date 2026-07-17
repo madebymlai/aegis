@@ -38,12 +38,14 @@ class FixtureRecord(Data):
     value: float = 0.0
     provider: str = "fixture"
 
+
 @customdataclass
 class _DormantFixtureRecord(Data):
     """Known fixture shape with deliberately absent provider wiring."""
 
     instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
     value: float = 0.0
+
 
 @customdataclass
 class _CoverageMarker(Data):
@@ -55,6 +57,7 @@ class _CoverageMarker(Data):
     end_ns: int = 0
     checked_at_ns: int = 0
     applicable: bool = True
+
 
 RecordT = TypeVar("RecordT", bound=Data)
 
@@ -138,7 +141,9 @@ class LiveDataClientName:
 
     def __post_init__(self) -> None:
         if not self.value:
-            raise InvalidLiveDataClientNameError("live data client name must not be empty")
+            raise InvalidLiveDataClientNameError(
+                "live data client name must not be empty"
+            )
 
 
 @dataclass(frozen=True)
@@ -333,6 +338,29 @@ def ingest(
         )
 
 
+def ensure_arrays(
+    array_names: Sequence[str],
+    instrument_ids: Sequence[InstrumentId],
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    providers: Mapping[type[Data], Sequence[CustomDataProviderPort[Any]]],
+    catalog_path: Path,
+    clock_ns: Callable[[], int] = time_ns,
+) -> None:
+    """Ensure catalog coverage for every kind behind the requested arrays."""
+    for kind in _kinds_for_array_names(array_names):
+        ingest(
+            kind.record_type,
+            instrument_ids,
+            start=start,
+            end=end,
+            providers=providers.get(kind.record_type, ()),
+            catalog_path=catalog_path,
+            clock_ns=clock_ns,
+        )
+
+
 def _ensure_instrument_coverage(
     *,
     catalog: ParquetDataCatalog,
@@ -364,20 +392,31 @@ def _ensure_instrument_coverage(
             instrument_id, tuple(missing)
         ),
         provider_boundary=gap_fill_boundary,
-        empty_interval_writer=lambda empty: _write_empty_marker(
+        verified_interval_writer=lambda verified: _write_coverage_marker(
             catalog,
             record_type,
             instrument_id,
-            start=empty.start,
-            end=empty.end,
+            start=verified.start,
+            end=verified.end,
             checked_at_ns=clock_ns(),
         ),
-        consolidation_interval=requested,
+        consolidate=lambda: catalog.consolidate_data(
+            _CoverageMarker,
+            identifier=_coverage_identifier(record_type, instrument_id),
+            start=requested.start_ns,
+            end=requested.end_ns,
+            deduplicate=True,
+        ),
         select_records=_records_within_event_window,
     )
 
 
-def capture(record: RecordT, *, catalog_path: Path) -> None:
+def capture(
+    record: RecordT,
+    *,
+    catalog_path: Path,
+    clock_ns: Callable[[], int] = time_ns,
+) -> None:
     """Persist one live record at its point-in-time catalog coordinate."""
     record_type = type(record)
     _kind_for(record_type)
@@ -387,12 +426,21 @@ def capture(record: RecordT, *, catalog_path: Path) -> None:
         record_type=record_type,
         instrument_id=instrument_id,
     )
-    ParquetDataCatalog(str(catalog_path)).write_data(
+    catalog = ParquetDataCatalog(str(catalog_path))
+    catalog.write_data(
         [record],
         data_cls=record_type,
         identifier=instrument_id.value,
         start=record.ts_event,
         end=record.ts_event,
+    )
+    _write_coverage_marker(
+        catalog,
+        record_type,
+        instrument_id,
+        start=pd.Timestamp(record.ts_event, tz="UTC"),
+        end=pd.Timestamp(record.ts_event, tz="UTC"),
+        checked_at_ns=clock_ns(),
     )
 
 
@@ -442,14 +490,20 @@ def correct(
             start=start.value,
             end=end.value,
         )
-        return
-    _write_empty_marker(
+    _write_coverage_marker(
         catalog,
         record_type,
         instrument_id,
         start=start,
         end=end,
         checked_at_ns=clock_ns(),
+    )
+    catalog.consolidate_data(
+        _CoverageMarker,
+        identifier=_coverage_identifier(record_type, instrument_id),
+        start=start.value,
+        end=end.value,
+        deduplicate=True,
     )
 
 
@@ -1101,52 +1155,18 @@ def _missing_intervals(
     start_ns: int,
     end_ns: int,
 ) -> list[CoverageInterval]:
-    native_missing = [
+    return [
         CoverageInterval(missing_start, missing_end)
         for missing_start, missing_end in catalog.get_missing_intervals_for_request(
             start_ns,
             end_ns,
-            record_type,
-            identifier=instrument_id.value,
-        )
-    ]
-    empty_intervals = [
-        CoverageInterval(empty_start, empty_end)
-        for empty_start, empty_end in catalog.get_intervals(
             _CoverageMarker,
             identifier=_coverage_identifier(record_type, instrument_id),
         )
     ]
-    return _subtract_covered(native_missing, empty_intervals)
 
 
-def _subtract_covered(
-    missing: Sequence[CoverageInterval],
-    covered: Sequence[CoverageInterval],
-) -> list[CoverageInterval]:
-    remaining = list(missing)
-    for covered_interval in covered:
-        next_remaining: list[CoverageInterval] = []
-        for interval in remaining:
-            if (
-                covered_interval.end_ns < interval.start_ns
-                or covered_interval.start_ns > interval.end_ns
-            ):
-                next_remaining.append(interval)
-                continue
-            if interval.start_ns < covered_interval.start_ns:
-                next_remaining.append(
-                    CoverageInterval(interval.start_ns, covered_interval.start_ns - 1)
-                )
-            if covered_interval.end_ns < interval.end_ns:
-                next_remaining.append(
-                    CoverageInterval(covered_interval.end_ns + 1, interval.end_ns)
-                )
-        remaining = next_remaining
-    return remaining
-
-
-def _write_empty_marker(
+def _write_coverage_marker(
     catalog: ParquetDataCatalog,
     record_type: type[Data],
     instrument_id: InstrumentId,
@@ -1299,6 +1319,7 @@ __all__ = [
     "capture",
     "correct",
     "coverage",
+    "ensure_arrays",
     "ingest",
     "records",
     "records_for_arrays",

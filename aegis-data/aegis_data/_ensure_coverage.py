@@ -20,16 +20,6 @@ class CoverageCatalog(Protocol):
         identifier: str | None = None,
     ) -> None: ...
 
-    def consolidate_data(
-        self,
-        data_cls: type,
-        identifier: str | None = None,
-        start: int | None = None,
-        end: int | None = None,
-        *,
-        deduplicate: bool = False,
-    ) -> None: ...
-
 
 @dataclass(frozen=True)
 class CoverageInterval:
@@ -61,11 +51,10 @@ RecordT = TypeVar("RecordT")
 MissingIntervals = Callable[[], list[CoverageInterval]]
 CoverageError = Callable[[Sequence[CoverageInterval]], Exception]
 ProviderBoundary = Callable[[str], AbstractContextManager[None]]
-EmptyIntervalWriter = Callable[[CoverageInterval], None]
+VerifiedIntervalWriter = Callable[[CoverageInterval], None]
 CoverageSuccess = Callable[[], None]
-RecordSelector = Callable[
-    [Sequence[RecordT], CoverageInterval], Sequence[RecordT]
-]
+Consolidator = Callable[[], None]
+RecordSelector = Callable[[Sequence[RecordT], CoverageInterval], Sequence[RecordT]]
 
 
 @dataclass(frozen=True)
@@ -89,16 +78,16 @@ def ensure_coverage(
     missing_intervals: MissingIntervals,
     coverage_error: CoverageError,
     provider_boundary: ProviderBoundary,
-    empty_interval_writer: EmptyIntervalWriter | None = None,
+    consolidate: Consolidator,
+    verified_interval_writer: VerifiedIntervalWriter | None = None,
     on_coverage_filled: CoverageSuccess | None = None,
-    consolidation_interval: CoverageInterval | None = None,
     select_records: RecordSelector[Any] | None = None,
 ) -> None:
-    """Fill, consolidate, and re-verify one requested catalog window.
+    """Fill and re-verify one requested catalog window.
 
     Fetchers are tried in order and each fills only what earlier ones left
-    missing (fill-order). A verified-empty interval is covered when an empty
-    interval writer is configured; otherwise it remains for the next fetcher.
+    missing (fill-order). A verified-interval writer can record provider
+    verification independently of whether the provider returned any records.
     An *environmental* failure raised inside
     ``provider_boundary`` (gateway drop, timeout) aborts the whole request —
     deliberately: providers here are complementary (each owns a window), not
@@ -106,6 +95,10 @@ def ensure_coverage(
     rather than silently deferring to a lesser source. Add catch-and-continue
     only when a genuinely redundant provider exists, with a test pinning which
     semantic is wanted.
+
+    The injected consolidator owns which physical dataset represents coverage:
+    bars consolidate their record files, while sparse Custom Data consolidates
+    its generic checked-interval records.
     """
     initial_missing = missing_intervals()
     if not initial_missing:
@@ -133,24 +126,10 @@ def ensure_coverage(
                     start=verified.start_ns,
                     end=verified.end_ns,
                 )
-            elif empty_interval_writer is not None:
-                empty_interval_writer(verified)
+            if verified_interval_writer is not None:
+                verified_interval_writer(verified)
 
-    catalog.consolidate_data(
-        data_cls,
-        identifier=identifier,
-        start=(
-            consolidation_interval.start_ns
-            if consolidation_interval is not None
-            else None
-        ),
-        end=(
-            consolidation_interval.end_ns
-            if consolidation_interval is not None
-            else None
-        ),
-        deduplicate=True,
-    )
+    consolidate()
     remaining = missing_intervals()
     if remaining:
         raise coverage_error(remaining)

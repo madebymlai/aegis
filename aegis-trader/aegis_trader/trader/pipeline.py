@@ -52,6 +52,9 @@ CustomArrayBuilder: TypeAlias = Callable[
     [Sequence[str], Sequence[InstrumentId], pd.DatetimeIndex],
     dict[str, pd.DataFrame],
 ]
+CustomArrayCoverage: TypeAlias = Callable[
+    [Sequence[str], Sequence[InstrumentId], pd.DatetimeIndex], None
+]
 
 
 class CustomArrayBuilderNotAttachedError(RuntimeError):
@@ -164,6 +167,7 @@ class RebalancePipeline:
         book: AssembledBook,
         ledger: SleeveLedger,
         custom_arrays: CustomArrayBuilder | None = None,
+        custom_array_coverage: CustomArrayCoverage | None = None,
     ) -> None:
         self._book_state = book_state
         self._market_data = market_data
@@ -171,6 +175,7 @@ class RebalancePipeline:
         self._sleeves = book.sleeves
         self._ledger = ledger
         self._custom_arrays = custom_arrays
+        self._custom_array_coverage = custom_array_coverage
         self._bundle_bands = book.bands
         self._last_sleeve_weights: dict[SleeveName, float] = {}
         # The latest valid target frame per Sleeve: due computations replace an
@@ -210,7 +215,9 @@ class RebalancePipeline:
         """Realized skew query over the owned ledger."""
         return self._ledger.realized_book_skew(weights, names)
 
-    def attribution(self, budgets: Mapping[SleeveName, float]) -> dict[SleeveName, float]:
+    def attribution(
+        self, budgets: Mapping[SleeveName, float]
+    ) -> dict[SleeveName, float]:
         """Per-sleeve P&L attribution query over the owned ledger."""
         return self._ledger.attribution(budgets)
 
@@ -407,9 +414,7 @@ class RebalancePipeline:
         custom_names = tuple(
             name for name in contract.required_arrays if not is_bar_derived_array(name)
         )
-        panels = {
-            name: _combine_array_series(sleeve_bars, name) for name in bar_names
-        }
+        panels = {name: _combine_array_series(sleeve_bars, name) for name in bar_names}
         if not custom_names:
             return panels
         if self._custom_arrays is None:
@@ -421,9 +426,13 @@ class RebalancePipeline:
             if panels
             else _combine_array_series(sleeve_bars, "Close").index
         )
-        panels.update(
-            self._custom_arrays(custom_names, contract.instrument_ids, index)
-        )
+        if self._custom_array_coverage is not None:
+            self._custom_array_coverage(
+                custom_names,
+                contract.instrument_ids,
+                index,
+            )
+        panels.update(self._custom_arrays(custom_names, contract.instrument_ids, index))
         return panels
 
     def _currency_conversion(
@@ -528,8 +537,9 @@ class RebalancePipeline:
             sleeve_bars[instrument_id] = bars
         if contract.missing_index is MissingIndexPolicy.DROP:
             return _last_common_bars(sleeve_bars, needed)
-        if contract.missing_index is MissingIndexPolicy.RAISE and not _bars_share_timestamps(
-            sleeve_bars
+        if (
+            contract.missing_index is MissingIndexPolicy.RAISE
+            and not _bars_share_timestamps(sleeve_bars)
         ):
             raise MissingIndexAlignmentError(
                 "missing_index='raise' bundle contract received misaligned bar timestamps"
@@ -583,7 +593,11 @@ class RebalancePipeline:
 
     def _collect_sizing_params(
         self,
-    ) -> tuple[dict[InstrumentId, InstrumentSizing], dict[str, float], dict[InstrumentId, float]]:
+    ) -> tuple[
+        dict[InstrumentId, InstrumentSizing],
+        dict[str, float],
+        dict[InstrumentId, float],
+    ]:
         instrument_metas: dict[InstrumentId, InstrumentSizing] = {}
         prices: dict[InstrumentId, float] = {}
         currencies: set[str] = set()
@@ -657,9 +671,7 @@ def _combine_array_series(
     return pd.concat(frames.values(), axis=1)
 
 
-def _lookback_limit(
-    contract: DataContract, *, target_count: int, needed: int
-) -> int:
+def _lookback_limit(contract: DataContract, *, target_count: int, needed: int) -> int:
     if contract.missing_index is not MissingIndexPolicy.DROP or target_count <= 1:
         return needed
     return needed + DROP_POLICY_LOOKBACK_SLACK
@@ -706,7 +718,9 @@ def _bars_share_timestamps(
 def _orders_for_fresh_instruments(
     orders: Sequence[OrderIntent], fresh_instrument_ids: frozenset[InstrumentId]
 ) -> tuple[OrderIntent, ...]:
-    return tuple(order for order in orders if order.instrument_id in fresh_instrument_ids)
+    return tuple(
+        order for order in orders if order.instrument_id in fresh_instrument_ids
+    )
 
 
 def _sleeve_target_snapshot(
@@ -724,7 +738,9 @@ def _sleeve_target_snapshot(
 def _column_instrument_id(column: object) -> InstrumentId:
     if isinstance(column, InstrumentId):
         return column
-    raise ValueError(f"target weight columns must be InstrumentId values; got {column!r}")
+    raise ValueError(
+        f"target weight columns must be InstrumentId values; got {column!r}"
+    )
 
 
 def _halt_cause(exc: ValueError) -> HaltCause:

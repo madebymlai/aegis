@@ -78,6 +78,7 @@ from aegis_trader.domain.types import (
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
     CustomArrayBuilder,
+    CustomArrayCoverage,
     DueSleeve,
     GateOutcome,
     RebalancePipeline,
@@ -92,7 +93,6 @@ from aegis_trader.trader.book_startup import (
     bootstrap,
 )
 from aegis_trader.trader.roll_desk import RollDesk
-
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -134,12 +134,14 @@ class RebalanceStrategy(Strategy):
         *,
         bar_type_resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
         custom_arrays: CustomArrayBuilder | None = None,
+        custom_array_coverage: CustomArrayCoverage | None = None,
     ) -> None:
         super().__init__(config)
         # The one raw bar-type resolution seam (aegis-rd-tggo.1): every
         # subscribe/unsubscribe/request and cache read resolves through it.
         self._bar_type_resolver = bar_type_resolver
         self._custom_arrays = custom_arrays
+        self._custom_array_coverage = custom_array_coverage
         self._assembled_book: AssembledBook | None = None
         # ── bar-driven per-Sleeve cadence state (aegis-rd-9qkr.3) ─────────
         # A Sleeve's clock advances only on bars of streams it consumes; its
@@ -227,7 +229,9 @@ class RebalanceStrategy(Strategy):
 
     def _require_sleeve_ledger(self) -> SleeveLedger:
         if self._sleeve_ledger is None:
-            raise RuntimeError("sleeve ledger queried before book registration built it")
+            raise RuntimeError(
+                "sleeve ledger queried before book registration built it"
+            )
         return self._sleeve_ledger
 
     def _build_roll_desk(self) -> RollDesk:
@@ -235,8 +239,9 @@ class RebalanceStrategy(Strategy):
         # declarations by book startup, which hands them to RollDesk.start.
         return RollDesk(
             catalog_port=self._continuous_port(),
-            instrument_present=lambda instrument_id: self.cache.instrument(instrument_id)
-            is not None,
+            instrument_present=lambda instrument_id: (
+                self.cache.instrument(instrument_id) is not None
+            ),
         )
 
     def _continuous_port(self) -> CatalogBackedDataPort:
@@ -269,9 +274,7 @@ class RebalanceStrategy(Strategy):
             portfolio=self.portfolio,
             cache=self.cache,
             base_currency=base_ccy,
-            covered_instrument_ids=frozenset(
-                assembled_book.loadable_instrument_ids
-            ),
+            covered_instrument_ids=frozenset(assembled_book.loadable_instrument_ids),
         )
         roll_desk = self._build_roll_desk()
         self._roll_desk = roll_desk
@@ -291,6 +294,7 @@ class RebalanceStrategy(Strategy):
             fx_reference_pairs=self._fx_reference_pairs(),
             warmup_cache_on_start=self.config.warmup_cache_on_start,
             custom_arrays=self._custom_arrays,
+            custom_array_coverage=self._custom_array_coverage,
         )
         if isinstance(boot, Halt):
             self._halt_from_roll_intent(boot)
@@ -324,7 +328,9 @@ class RebalanceStrategy(Strategy):
         mid = (tick.bid_price.as_double() + tick.ask_price.as_double()) / 2.0
         if mid <= 0.0:
             return
-        self.cache.set_mark_xrate(instrument.base_currency, instrument.quote_currency, mid)
+        self.cache.set_mark_xrate(
+            instrument.base_currency, instrument.quote_currency, mid
+        )
 
     def on_bar(self, bar: Bar) -> None:
         """Advance the consuming Sleeves' clocks and coalesce due transitions.
@@ -384,9 +390,7 @@ class RebalanceStrategy(Strategy):
         consumers = self._consumers_by_bar_type.get(bar_type)
         if consumers is not None:
             return consumers
-        continuous_id = self._require_roll_desk().continuous_id(
-            bar_type.instrument_id
-        )
+        continuous_id = self._require_roll_desk().continuous_id(bar_type.instrument_id)
         if continuous_id is None:
             return ()
         return self._sleeves_by_continuous_id.get(continuous_id, ())
@@ -502,7 +506,9 @@ class RebalanceStrategy(Strategy):
             return True
         assert_never(intent)
 
-    def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
+    def _mark_bars(
+        self, instrument_id: InstrumentId, timeframe: str
+    ) -> tuple[BarType, ...]:
         return self._bar_type_resolver.resolve(instrument_id, timeframe).mark_bars
 
     def _resolve_derived_mark(self, bar: Bar) -> tuple[InstrumentId, float] | None:
@@ -588,7 +594,9 @@ class RebalanceStrategy(Strategy):
     def _log_startup_halt(self, result: StartupResult) -> None:
         gate = result.halt_gate.value if result.halt_gate is not None else "unknown"
         reason = result.halt_reason or "unknown startup failure"
-        self.log.error(f"Startup gate FAILED: gate={gate} reason={reason}. HALTING the book.")
+        self.log.error(
+            f"Startup gate FAILED: gate={gate} reason={reason}. HALTING the book."
+        )
 
     def _log_startup_pass(self, result: StartupResult) -> None:
         nav = 0.0 if result.nav is None else result.nav
@@ -659,12 +667,9 @@ class RebalanceStrategy(Strategy):
 
         if attribution:
             total_book_pnl = sum(attribution.values())
-            parts = ", ".join(
-                f"{s.value}={pnl:.2f}" for s, pnl in attribution.items()
-            )
+            parts = ", ".join(f"{s.value}={pnl:.2f}" for s, pnl in attribution.items())
             self.log.info(
-                f"Per-sleeve P&L attribution: {parts} "
-                f"(book total={total_book_pnl:.2f})"
+                f"Per-sleeve P&L attribution: {parts} (book total={total_book_pnl:.2f})"
             )
 
     # -- RiskEngine callbacks ---------------------------------------------------

@@ -5,13 +5,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import pytest
 from nautilus_trader.cache.cache import Cache
 from nautilus_trader.common.component import LiveClock, MessageBus
-from nautilus_trader.config import LiveDataClientConfig, LoggingConfig, TradingNodeConfig
+from nautilus_trader.config import (
+    LiveDataClientConfig,
+    LoggingConfig,
+    TradingNodeConfig,
+)
 from nautilus_trader.core.data import Data
 from nautilus_trader.data.messages import RequestData, SubscribeData, UnsubscribeData
 from nautilus_trader.live.data_client import LiveDataClient
@@ -25,12 +30,18 @@ from aegis_data.custom_data import (
     InvalidLiveCustomDataCapabilityError,
     LiveCustomDataCapability,
     LiveDataClientName,
-    arrays,
+    ServedCustomData,
 )
 from aegis_trader.trader.live_custom_data import (
     LiveDataClientConflictError,
     add_live_custom_data,
+    build_live_custom_array_coverage,
+    build_live_custom_arrays,
+    warm_live_custom_data,
 )
+from aegis_trader.domain.book_config import BookConfig, SleeveConfig
+from aegis_trader.domain.types import SleeveName
+from tests.support.factories import assemble_test_book, make_bundle
 
 
 class _FixtureClient(LiveDataClient):
@@ -72,8 +83,14 @@ class _FixtureFactory(LiveDataClientFactory):
 
 
 class _StreamingProvider:
-    def __init__(self, config: LiveDataClientConfig) -> None:
+    def __init__(
+        self,
+        config: LiveDataClientConfig,
+        available: tuple[FixtureRecord, ...] = (),
+    ) -> None:
         self._config = config
+        self._available = available
+        self.requests: list[tuple[pd.Timestamp, pd.Timestamp]] = []
 
     def live_data_capability(self) -> LiveCustomDataCapability:
         return LiveCustomDataCapability(
@@ -82,6 +99,22 @@ class _StreamingProvider:
             factory=_FixtureFactory,
             record_types=(FixtureRecord,),
         )
+
+    def request_records(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> ServedCustomData[FixtureRecord]:
+        self.requests.append((start, end))
+        records = tuple(
+            record
+            for record in self._available
+            if record.instrument_id == instrument_id
+            and start.value <= record.ts_event <= end.value
+        )
+        return ServedCustomData(records, start)
 
 
 class _FetchOnlyProvider:
@@ -118,6 +151,7 @@ class _Node:
 @contextmanager
 def _native_capture(
     catalog_path: Path,
+    provider: _StreamingProvider | None = None,
 ) -> Iterator[Callable[[Data], None]]:
     loop = asyncio.new_event_loop()
     node = TradingNode(
@@ -126,7 +160,7 @@ def _native_capture(
     )
     add_live_custom_data(
         node,
-        (_StreamingProvider(LiveDataClientConfig()),),
+        (provider or _StreamingProvider(LiveDataClientConfig()),),
         catalog_path=catalog_path,
     )
     node.build()
@@ -193,7 +227,9 @@ def test_live_custom_data_rejects_a_client_id_already_owned_by_the_node(
     assert node.data_factories == {}
 
 
-def test_live_custom_data_rejects_an_invalid_provider_capability(tmp_path: Path) -> None:
+def test_live_custom_data_rejects_an_invalid_provider_capability(
+    tmp_path: Path,
+) -> None:
     node = _Node(LiveDataClientConfig())
 
     with pytest.raises(InvalidLiveCustomDataCapabilityError):
@@ -206,24 +242,161 @@ def test_live_custom_data_rejects_an_invalid_provider_capability(tmp_path: Path)
     assert node.data_factories == {}
 
 
-def test_native_custom_data_delivery_is_captured_for_arrays(tmp_path: Path) -> None:
-    timestamp = pd.Timestamp("2024-01-02", tz="UTC")
+def test_native_capture_gap_is_healed_by_live_array_coverage(tmp_path: Path) -> None:
+    first_timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+    last_timestamp = pd.Timestamp("2024-01-03", tz="UTC")
     instrument_id = InstrumentId.from_str("SPY.ARCA")
-    record = FixtureRecord(
-        timestamp.value,
-        timestamp.value,
+    first = FixtureRecord(
+        first_timestamp.value,
+        first_timestamp.value,
         instrument_id=instrument_id,
-        value=7.0,
+        value=2.0,
         provider="fixture-live",
     )
-    with _native_capture(tmp_path) as deliver:
-        deliver(record)
-        panels = arrays(
-            ("FixtureValue", "FixtureAvailable"),
-            (instrument_id,),
-            index=pd.DatetimeIndex([timestamp]),
-            catalog_path=tmp_path,
-        )
+    last = FixtureRecord(
+        last_timestamp.value,
+        last_timestamp.value,
+        instrument_id=instrument_id,
+        value=8.0,
+        provider="fixture-live",
+    )
+    provider = _StreamingProvider(LiveDataClientConfig())
+    with _native_capture(tmp_path, provider) as deliver:
+        deliver(first)
+        deliver(last)
+    ensure_custom_arrays = build_live_custom_array_coverage(
+        (provider,),
+        catalog_path=tmp_path,
+    )
+    index = pd.date_range(first_timestamp, last_timestamp, tz="UTC")
 
-        assert panels["FixtureValue"].to_numpy().tolist() == [[7.0]]
-        assert panels["FixtureAvailable"].to_numpy().tolist() == [[1.0]]
+    ensure_custom_arrays(
+        ("FixtureValue", "FixtureAvailable"),
+        (instrument_id,),
+        index,
+    )
+    panels = build_live_custom_arrays(catalog_path=tmp_path)(
+        ("FixtureValue", "FixtureAvailable"),
+        (instrument_id,),
+        index,
+    )
+
+    assert provider.requests == [
+        (
+            pd.Timestamp("2024-01-01 00:00:00.000000001", tz="UTC"),
+            pd.Timestamp("2024-01-02 23:59:59.999999999", tz="UTC"),
+        )
+    ]
+    assert panels["FixtureValue"].to_numpy().tolist() == [[2.0], [2.0], [8.0]]
+
+
+def test_live_array_coverage_makes_no_request_for_a_covered_window(
+    tmp_path: Path,
+) -> None:
+    instrument_id = InstrumentId.from_str("SPY.ARCA")
+    index = pd.date_range("2024-01-01", "2024-01-03", tz="UTC")
+    seed = _StreamingProvider(LiveDataClientConfig())
+    build_live_custom_array_coverage((seed,), catalog_path=tmp_path)(
+        ("FixtureValue", "FixtureAvailable"),
+        (instrument_id,),
+        index,
+    )
+    unused = _StreamingProvider(LiveDataClientConfig())
+
+    build_live_custom_array_coverage((unused,), catalog_path=tmp_path)(
+        ("FixtureValue", "FixtureAvailable"),
+        (instrument_id,),
+        index,
+    )
+
+    assert unused.requests == []
+
+
+def test_live_startup_warms_the_declared_custom_array_window(
+    tmp_path: Path,
+) -> None:
+    instrument_id = InstrumentId.from_str("SPY.ARCA")
+    book_config = BookConfig(
+        sleeves=(
+            SleeveConfig(
+                name=SleeveName("fixture"),
+                wheel_filename="fixture.whl",
+                risk_share=1.0,
+            ),
+        )
+    )
+    book = assemble_test_book(
+        book_config,
+        {
+            "fixture.whl": make_bundle(
+                required_arrays=(
+                    "Close",
+                    "FixtureValue",
+                    "FixtureAvailable",
+                ),
+                native_instrument_ids=(instrument_id,),
+                lookback_bars=0,
+            )
+        },
+    )
+    record_timestamp = pd.Timestamp("2024-01-02", tz="UTC")
+    provider = _StreamingProvider(
+        LiveDataClientConfig(),
+        (
+            FixtureRecord(
+                record_timestamp.value,
+                record_timestamp.value,
+                instrument_id=instrument_id,
+                value=7.0,
+                provider="fixture-history",
+            ),
+        ),
+    )
+    now = datetime(2024, 1, 3, tzinfo=timezone.utc)
+
+    ensure_custom_arrays = build_live_custom_array_coverage(
+        (provider,),
+        catalog_path=tmp_path,
+    )
+    warm_live_custom_data(
+        book,
+        ensure_custom_arrays,
+        now=now,
+    )
+
+    assert provider.requests == [
+        (pd.Timestamp("2023-12-31", tz="UTC"), pd.Timestamp(now))
+    ]
+
+
+def test_live_custom_array_projection_reads_the_warmed_catalog(
+    tmp_path: Path,
+) -> None:
+    instrument_id = InstrumentId.from_str("SPY.ARCA")
+    timestamp = pd.Timestamp("2024-01-02", tz="UTC")
+    provider = _StreamingProvider(
+        LiveDataClientConfig(),
+        (
+            FixtureRecord(
+                timestamp.value,
+                timestamp.value,
+                instrument_id=instrument_id,
+                value=7.0,
+                provider="fixture-history",
+            ),
+        ),
+    )
+    index = pd.date_range("2024-01-01", "2024-01-03", tz="UTC")
+    build_live_custom_array_coverage((provider,), catalog_path=tmp_path)(
+        ("FixtureValue", "FixtureAvailable"),
+        (instrument_id,),
+        index,
+    )
+
+    panels = build_live_custom_arrays(catalog_path=tmp_path)(
+        ("FixtureValue", "FixtureAvailable"),
+        (instrument_id,),
+        index,
+    )
+
+    assert panels["FixtureValue"].to_numpy().tolist() == [[0.0], [7.0], [7.0]]

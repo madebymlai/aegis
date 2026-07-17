@@ -33,6 +33,7 @@ from aegis_trader.domain.types import OrderSide, SleeveName
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
     CustomArrayBuilder,
+    CustomArrayCoverage,
     DueSleeve,
     GateOutcome,
     RebalancePipeline,
@@ -436,6 +437,7 @@ def _pipeline(
     book: BookConfig | None = None,
     bundle: ExecutionBundle | None = None,
     custom_arrays: CustomArrayBuilder | None = None,
+    custom_array_coverage: CustomArrayCoverage | None = None,
 ) -> RebalancePipeline:
     config = book or _book()
     loaded_bundle = bundle or _FixedWeightBundle(0.5)
@@ -448,6 +450,7 @@ def _pipeline(
         ),
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
         custom_arrays=custom_arrays,
+        custom_array_coverage=custom_array_coverage,
     )
 
 
@@ -458,6 +461,7 @@ def _started_pipeline(
     book: BookConfig | None = None,
     bundle: ExecutionBundle | None = None,
     custom_arrays: CustomArrayBuilder | None = None,
+    custom_array_coverage: CustomArrayCoverage | None = None,
 ) -> RebalancePipeline:
     pipeline = _pipeline(
         book_state=book_state,
@@ -465,6 +469,7 @@ def _started_pipeline(
         book=book,
         bundle=bundle,
         custom_arrays=custom_arrays,
+        custom_array_coverage=custom_array_coverage,
     )
     startup_result = pipeline.startup_check()
     assert startup_result.trading_enabled is True
@@ -579,11 +584,49 @@ def test_custom_arrays_use_the_union_index_for_nan_policy() -> None:
 
     pipeline.rebalance(_all_due())
 
-    expected_index = pd.DatetimeIndex(
-        [_DAY_NS, 2 * _DAY_NS, 3 * _DAY_NS, 4 * _DAY_NS]
-    )
+    expected_index = pd.DatetimeIndex([_DAY_NS, 2 * _DAY_NS, 3 * _DAY_NS, 4 * _DAY_NS])
     assert bundle.fixture_panel is not None
     assert bundle.fixture_panel.index.equals(expected_index)
+
+
+def test_custom_array_coverage_runs_before_projection() -> None:
+    bundle = _CalendarParityBundle(
+        missing_index=MissingIndexPolicy.NAN,
+        custom_arrays=True,
+    )
+    events: list[str] = []
+
+    def ensure_custom_arrays(
+        names: Sequence[str],
+        instrument_ids: Sequence[InstrumentId],
+        index: pd.DatetimeIndex,
+    ) -> None:
+        events.append("ensure")
+
+    def custom_arrays(
+        names: Sequence[str],
+        instrument_ids: Sequence[InstrumentId],
+        index: pd.DatetimeIndex,
+    ) -> dict[str, pd.DataFrame]:
+        events.append("project")
+        return {
+            name: pd.DataFrame(1.0, index=index, columns=instrument_ids)
+            for name in names
+        }
+
+    pipeline = _started_pipeline(
+        market_data=_MarketData(
+            bars_by_instrument_id=_mixed_calendar_bars(),
+            fresh_instrument_ids=frozenset({_LSE_LEG, _BRU_LEG}),
+        ),
+        bundle=bundle,
+        custom_arrays=custom_arrays,
+        custom_array_coverage=ensure_custom_arrays,
+    )
+
+    pipeline.rebalance(_all_due())
+
+    assert events == ["ensure", "project"]
 
 
 def test_rebalance_pipeline_holds_when_drop_policy_has_too_few_common_bars() -> None:
@@ -609,7 +652,9 @@ def test_rebalance_pipeline_holds_when_drop_policy_has_too_few_common_bars() -> 
     assert result.halt_reason is None
 
 
-def test_rebalance_pipeline_surfaces_raise_policy_misalignment_as_sleeve_failure() -> None:
+def test_rebalance_pipeline_surfaces_raise_policy_misalignment_as_sleeve_failure() -> (
+    None
+):
     # The raise policy still refuses to compute on a misaligned panel, but the
     # refusal is bounded to the sleeve (aegis-rd-hd54): surfaced, never propagated.
     pipeline = _started_pipeline(
@@ -692,7 +737,9 @@ def test_apply_roll_rebases_ledger_by_ratio_event() -> None:
     assert attribution[_SLEEVE] == pytest.approx(19.0909090909)
 
 
-def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instrument() -> None:
+def test_rebalance_pipeline_filters_orders_when_market_data_reports_stale_instrument() -> (
+    None
+):
     result = _started_pipeline(
         market_data=_MarketData(fresh_instrument_ids=frozenset())
     ).rebalance(_all_due())
@@ -808,7 +855,9 @@ def test_rebalance_pipeline_isolates_a_sleeve_whose_compute_raises() -> None:
     result = pipeline.rebalance(_all_due(_SLEEVE, SleeveName("poison")))
 
     assert result.summary.gate_outcome == GateOutcome.PASS
-    assert [failure.sleeve for failure in result.sleeve_failures] == [SleeveName("poison")]
+    assert [failure.sleeve for failure in result.sleeve_failures] == [
+        SleeveName("poison")
+    ]
     assert "component exploded" in result.sleeve_failures[0].reason
     assert result.summary.num_sleeves == 1
     assert [order.instrument_id for order in result.orders] == [_INSTRUMENT_ID]
@@ -1223,7 +1272,9 @@ class _ConversionSleeveBundle(ExecutionBundle):
         currency_conversion: CurrencyConversion | None = None,
     ) -> pd.DataFrame:
         close = native_prices.array("Close")
-        target = pd.DataFrame({self._instrument_id: [0.5] * len(close)}, index=close.index)
+        target = pd.DataFrame(
+            {self._instrument_id: [0.5] * len(close)}, index=close.index
+        )
         target.columns.name = "instrument_id"
         return target
 
