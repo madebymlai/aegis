@@ -97,8 +97,9 @@ def ensure_coverage(
     """Fill, consolidate, and re-verify one requested catalog window.
 
     Fetchers are tried in order and each fills only what earlier ones left
-    missing (fill-order). A fetcher with no data for an interval leaves it for
-    the next fetcher. An *environmental* failure raised inside
+    missing (fill-order). A verified-empty interval is covered when an empty
+    interval writer is configured; otherwise it remains for the next fetcher.
+    An *environmental* failure raised inside
     ``provider_boundary`` (gateway drop, timeout) aborts the whole request —
     deliberately: providers here are complementary (each owns a window), not
     redundant failover, so a source that cannot even be reached fails closed
@@ -112,7 +113,6 @@ def ensure_coverage(
     if not fetchers:
         raise coverage_error(initial_missing)
 
-    wrote_records = False
     for fetch in fetchers:
         for missing in missing_intervals():
             with provider_boundary(subject):
@@ -133,26 +133,24 @@ def ensure_coverage(
                     start=verified.start_ns,
                     end=verified.end_ns,
                 )
-                wrote_records = True
             elif empty_interval_writer is not None:
                 empty_interval_writer(verified)
 
-    if wrote_records:
-        catalog.consolidate_data(
-            data_cls,
-            identifier=identifier,
-            start=(
-                consolidation_interval.start_ns
-                if consolidation_interval is not None
-                else None
-            ),
-            end=(
-                consolidation_interval.end_ns
-                if consolidation_interval is not None
-                else None
-            ),
-            deduplicate=True,
-        )
+    catalog.consolidate_data(
+        data_cls,
+        identifier=identifier,
+        start=(
+            consolidation_interval.start_ns
+            if consolidation_interval is not None
+            else None
+        ),
+        end=(
+            consolidation_interval.end_ns
+            if consolidation_interval is not None
+            else None
+        ),
+        deduplicate=True,
+    )
     remaining = missing_intervals()
     if remaining:
         raise coverage_error(remaining)
