@@ -529,31 +529,41 @@ def _missing_intervals(
             identifier=instrument_id.value,
         )
     ]
-    empty_intervals = catalog.get_intervals(
-        _CoverageMarker,
-        identifier=_coverage_identifier(record_type, instrument_id),
-    )
+    empty_intervals = [
+        CoverageInterval(empty_start, empty_end)
+        for empty_start, empty_end in catalog.get_intervals(
+            _CoverageMarker,
+            identifier=_coverage_identifier(record_type, instrument_id),
+        )
+    ]
     return _subtract_covered(native_missing, empty_intervals)
 
 
 def _subtract_covered(
     missing: Sequence[CoverageInterval],
-    covered: Sequence[tuple[int, int]],
+    covered: Sequence[CoverageInterval],
 ) -> list[CoverageInterval]:
     remaining = list(missing)
-    for covered_start, covered_end in covered:
+    for covered_interval in covered:
         next_remaining: list[CoverageInterval] = []
         for interval in remaining:
-            if covered_end < interval.start_ns or covered_start > interval.end_ns:
+            if (
+                covered_interval.end_ns < interval.start_ns
+                or covered_interval.start_ns > interval.end_ns
+            ):
                 next_remaining.append(interval)
                 continue
-            if interval.start_ns < covered_start:
+            if interval.start_ns < covered_interval.start_ns:
                 next_remaining.append(
-                    CoverageInterval(interval.start_ns, covered_start - 1)
+                    CoverageInterval(
+                        interval.start_ns, covered_interval.start_ns - 1
+                    )
                 )
-            if covered_end < interval.end_ns:
+            if covered_interval.end_ns < interval.end_ns:
                 next_remaining.append(
-                    CoverageInterval(covered_end + 1, interval.end_ns)
+                    CoverageInterval(
+                        covered_interval.end_ns + 1, interval.end_ns
+                    )
                 )
         remaining = next_remaining
     return remaining

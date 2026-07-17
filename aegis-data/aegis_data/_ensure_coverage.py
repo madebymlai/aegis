@@ -11,9 +11,24 @@ import pandas as pd
 class CoverageCatalog(Protocol):
     """Only the catalog commands needed by Ensure Coverage."""
 
-    def write_data(self, *args: Any, **kwargs: Any) -> Any: ...
+    def write_data(
+        self,
+        data: list[Any],
+        start: int | None = None,
+        end: int | None = None,
+        data_cls: type | None = None,
+        identifier: str | None = None,
+    ) -> None: ...
 
-    def consolidate_data(self, *args: Any, **kwargs: Any) -> Any: ...
+    def consolidate_data(
+        self,
+        data_cls: type,
+        identifier: str | None = None,
+        start: int | None = None,
+        end: int | None = None,
+        *,
+        deduplicate: bool = False,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -79,13 +94,25 @@ def ensure_coverage(
     consolidation_interval: CoverageInterval | None = None,
     select_records: RecordSelector[Any] | None = None,
 ) -> None:
-    """Fill, consolidate, and re-verify one requested catalog window."""
+    """Fill, consolidate, and re-verify one requested catalog window.
+
+    Fetchers are tried in order and each fills only what earlier ones left
+    missing (fill-order). A fetcher with no data for an interval leaves it for
+    the next fetcher. An *environmental* failure raised inside
+    ``provider_boundary`` (gateway drop, timeout) aborts the whole request —
+    deliberately: providers here are complementary (each owns a window), not
+    redundant failover, so a source that cannot even be reached fails closed
+    rather than silently deferring to a lesser source. Add catch-and-continue
+    only when a genuinely redundant provider exists, with a test pinning which
+    semantic is wanted.
+    """
     initial_missing = missing_intervals()
     if not initial_missing:
         return
     if not fetchers:
         raise coverage_error(initial_missing)
 
+    wrote_records = False
     for fetch in fetchers:
         for missing in missing_intervals():
             with provider_boundary(subject):
@@ -106,24 +133,26 @@ def ensure_coverage(
                     start=verified.start_ns,
                     end=verified.end_ns,
                 )
+                wrote_records = True
             elif empty_interval_writer is not None:
                 empty_interval_writer(verified)
 
-    catalog.consolidate_data(
-        data_cls,
-        identifier=identifier,
-        start=(
-            consolidation_interval.start_ns
-            if consolidation_interval is not None
-            else None
-        ),
-        end=(
-            consolidation_interval.end_ns
-            if consolidation_interval is not None
-            else None
-        ),
-        deduplicate=True,
-    )
+    if wrote_records:
+        catalog.consolidate_data(
+            data_cls,
+            identifier=identifier,
+            start=(
+                consolidation_interval.start_ns
+                if consolidation_interval is not None
+                else None
+            ),
+            end=(
+                consolidation_interval.end_ns
+                if consolidation_interval is not None
+                else None
+            ),
+            deduplicate=True,
+        )
     remaining = missing_intervals()
     if remaining:
         raise coverage_error(remaining)
