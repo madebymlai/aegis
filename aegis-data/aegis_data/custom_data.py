@@ -32,6 +32,18 @@ class FixtureRecord(Data):
 
 
 @customdataclass
+class _DormantFixtureRecord(Data):
+    """Known fixture shape with deliberately absent provider wiring."""
+
+    instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
+    value: float = 0.0
+
+    @classmethod
+    def schema(cls) -> Any:
+        return cls._schema
+
+
+@customdataclass
 class _CoverageMarker(Data):
     """A checked interval that contained no records for one typed kind."""
 
@@ -92,14 +104,28 @@ _KINDS = (
         value_attribute="value",
         provisioned=True,
     ),
+    _Kind(
+        record_type=_DormantFixtureRecord,
+        value_array="DormantFixtureValue",
+        availability_array="DormantFixtureAvailable",
+        age_array="DormantFixtureAgeDays",
+        value_attribute="value",
+        provisioned=False,
+    ),
 )
 
+KNOWN_CUSTOM_ARRAY_NAMES = frozenset(
+    array_name for kind in _KINDS for array_name in kind.array_names
+)
 VOCABULARY = frozenset(
     array_name
     for kind in _KINDS
     if kind.provisioned
     for array_name in kind.array_names
 )
+AVAILABILITY_BY_VALUE = {
+    kind.value_array: kind.availability_array for kind in _KINDS
+}
 
 
 class UnknownCustomDataRecordError(ValueError):
@@ -585,9 +611,11 @@ __all__ = [
     "CustomDataCoverageError",
     "CustomDataProviderPort",
     "FixtureRecord",
+    "KNOWN_CUSTOM_ARRAY_NAMES",
     "ServedCustomData",
     "UnknownCustomDataRecordError",
     "VOCABULARY",
+    "AVAILABILITY_BY_VALUE",
     "arrays",
     "correct",
     "coverage",
