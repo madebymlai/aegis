@@ -12,7 +12,9 @@ from time import time_ns
 from typing import Any, Callable, Generic, Protocol, TypeVar, cast
 
 import pandas as pd
+from nautilus_trader.config import LiveDataClientConfig
 from nautilus_trader.core.data import Data
+from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId
@@ -118,6 +120,53 @@ class CustomDataProviderPort(Protocol[RecordT]):
         start: pd.Timestamp,
         end: pd.Timestamp,
     ) -> ServedCustomData[RecordT]: ...
+
+
+class InvalidLiveCustomDataCapabilityError(TypeError):
+    """Raised when a provider describes an invalid live-data capability."""
+
+
+class InvalidLiveDataClientNameError(ValueError):
+    """Raised when a live custom-data client name is empty."""
+
+
+@dataclass(frozen=True)
+class LiveDataClientName:
+    """Provider-neutral name for one live custom-data client."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not self.value:
+            raise InvalidLiveDataClientNameError("live data client name must not be empty")
+
+
+@dataclass(frozen=True)
+class LiveCustomDataCapability:
+    """The native Nautilus capability exposed by a streaming provider."""
+
+    client_name: LiveDataClientName
+    config: LiveDataClientConfig
+    factory: type[LiveDataClientFactory]
+    record_types: tuple[type[Data], ...]
+
+    def __post_init__(self) -> None:
+        valid = (
+            isinstance(self.client_name, LiveDataClientName)
+            and isinstance(self.config, LiveDataClientConfig)
+            and isinstance(self.factory, type)
+            and issubclass(self.factory, LiveDataClientFactory)
+            and bool(self.record_types)
+            and all(
+                isinstance(record_type, type) and issubclass(record_type, Data)
+                for record_type in self.record_types
+            )
+        )
+        if not valid:
+            raise InvalidLiveCustomDataCapabilityError(
+                "live custom-data capability requires a client name, live client config, "
+                "factory, and at least one Data record type"
+            )
 
 
 @dataclass(frozen=True)
@@ -325,6 +374,25 @@ def _ensure_instrument_coverage(
         ),
         consolidation_interval=requested,
         select_records=_records_within_event_window,
+    )
+
+
+def capture(record: RecordT, *, catalog_path: Path) -> None:
+    """Persist one live record at its point-in-time catalog coordinate."""
+    record_type = type(record)
+    _kind_for(record_type)
+    instrument_id = cast(InstrumentId, record.instrument_id)
+    _validate_record(
+        record,
+        record_type=record_type,
+        instrument_id=instrument_id,
+    )
+    ParquetDataCatalog(str(catalog_path)).write_data(
+        [record],
+        data_cls=record_type,
+        identifier=instrument_id.value,
+        start=record.ts_event,
+        end=record.ts_event,
     )
 
 
@@ -1216,7 +1284,11 @@ __all__ = [
     "CustomDataCoverageError",
     "CustomDataProviderPort",
     "FixtureRecord",
+    "InvalidLiveCustomDataCapabilityError",
+    "InvalidLiveDataClientNameError",
     "KNOWN_CUSTOM_ARRAY_NAMES",
+    "LiveCustomDataCapability",
+    "LiveDataClientName",
     "ServedCustomData",
     "VerifiedRecordRequirements",
     "UnknownCustomArrayError",
@@ -1224,6 +1296,7 @@ __all__ = [
     "VOCABULARY",
     "AVAILABILITY_BY_VALUE",
     "arrays",
+    "capture",
     "correct",
     "coverage",
     "ingest",

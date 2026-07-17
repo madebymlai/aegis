@@ -26,6 +26,7 @@ import logging
 import os
 import signal
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 import msgspec
@@ -53,6 +54,7 @@ from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import IBConnectionSettings, load_book_config
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.risk_guard import RiskGuardConfig
+from aegis_trader.trader.live_custom_data import add_live_custom_data
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _log = logging.getLogger("aegis_trader")
@@ -139,6 +141,7 @@ def build_live_node(
     connection: IBConnectionSettings,
     *,
     registry: BundleRegistryPort | None = None,
+    custom_data_providers: Sequence[object] = (),
 ) -> TradingNode:
     """Assemble a built, runnable live ``TradingNode`` for *book* over *connection*.
 
@@ -161,6 +164,11 @@ def build_live_node(
         )
     )
     attach_live_clients(node, connection, assembled_book.loadable_instrument_ids)
+    add_live_custom_data(
+        node,
+        custom_data_providers,
+        catalog_path=catalog_root(),
+    )
     node.build()
     node.trader.add_strategy(build_live_strategy(assembled_book))
     return node

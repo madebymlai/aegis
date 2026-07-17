@@ -15,11 +15,13 @@ import signal
 import subprocess
 import sys
 
+import msgspec
 import pytest
 from nautilus_trader.common import Environment
 from nautilus_trader.config import (
     CacheConfig,
     LiveDataEngineConfig,
+    LiveDataClientConfig,
     LoggingConfig,
     TradingNodeConfig,
 )
@@ -230,6 +232,53 @@ def test_build_live_node_rejects_an_invalid_book_before_broker_attachment(
     assert broker_attachments == []
 
 
+def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+
+    class _Trader:
+        def add_strategy(self, strategy: object) -> None:
+            events.append("strategy")
+
+    class _BuiltNode:
+        def __init__(self, *, config: TradingNodeConfig) -> None:
+            self._config = config
+            self.trader = _Trader()
+
+        def build(self) -> None:
+            events.append("build")
+
+    monkeypatch.setattr("aegis_trader.trader.node.TradingNode", _BuiltNode)
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.attach_live_clients",
+        lambda *args: events.append("broker"),
+    )
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.add_live_custom_data",
+        lambda *args, **kwargs: events.append("custom"),
+    )
+    instrument_id = InstrumentId.from_str("VUSA.XLON")
+    registry = StubBundleRegistry(
+        {"trend.whl": make_bundle(native_instrument_ids=(instrument_id,))}
+    )
+    connection = IBConnectionSettings(
+        port=4002,
+        client_id=9,
+        account_id="DU1234567",
+        trader_id="BOOK-EU-01",
+    )
+
+    build_live_node(
+        _book(),
+        connection,
+        registry=registry,
+        custom_data_providers=(object(),),
+    )
+
+    assert events == ["broker", "custom", "build", "strategy"]
+
+
 # --------------------------------------------------------------------------- #
 # IBKR live client wiring (needs ibapi — exercised here, not in aegis-data)
 # --------------------------------------------------------------------------- #
@@ -287,6 +336,32 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
     assert set(execution.instrument_provider.load_ids) == set(data.instrument_provider.load_ids)
     assert node.data_factories[IB_CLIENT_NAME] is InteractiveBrokersLiveDataClientFactory
     assert node.exec_factories[IB_CLIENT_NAME] is InteractiveBrokersLiveExecClientFactory
+
+
+def test_attach_live_clients_preserves_an_existing_data_client():
+    pytest.importorskip("ibapi")
+    from aegis_data.ibkr import attach_live_clients
+
+    fixture_config = LiveDataClientConfig()
+    node = _FakeNode(
+        msgspec.structs.replace(
+            build_live_node_config(trader_id="BOOK-EU-01"),
+            data_clients={"FIXTURE": fixture_config},
+        )
+    )
+
+    attach_live_clients(
+        node,
+        IBConnectionSettings(
+            port=4002,
+            client_id=9,
+            account_id="DU1234567",
+            trader_id="BOOK-EU-01",
+        ),
+        (InstrumentId.from_str("VUSA.XLON"),),
+    )
+
+    assert node._config.data_clients["FIXTURE"] is fixture_config
 
 
 def test_attach_live_clients_pins_mic_venues():
