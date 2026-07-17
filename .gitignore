@@ -23,3 +23,11 @@ vbt.toml
 .venv/
 .venv-sandcastle/
 .agents/
+
+# Scratch/prototype temp dirs — re-fetchable data, never versioned. Matched as
+# whole directory names at any depth (not the substring *temp*, which would also
+# swallow research/vault/templates/). Also catch *.tmp/*.temp scratch files.
+tmp/
+temp/
+*.tmp
+*.temp
