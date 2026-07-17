@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
+from nautilus_trader.core.data import Data
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import FuturesContract
 from platformdirs import user_data_dir
@@ -19,7 +20,7 @@ from aegis_data._ensure_coverage import (
     ServedRecords,
     ensure_coverage,
 )
-from aegis_data.distributions import Distribution, query_distribution_data
+from aegis_data.distributions import Distribution, distribution_records
 from aegis_data.instrument import native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.ohlcv import bars_to_ohlcv
@@ -28,8 +29,6 @@ from aegis_data.roll import DatedContract
 if TYPE_CHECKING:
     from nautilus_trader.model.data import Bar, BarType
     from nautilus_trader.model.instruments import Instrument
-
-    from aegis_data._distribution_coverage import DistributionCoverageService
 
 AEGIS_DATA_DIR_ENV = "AEGIS_DATA_DIR"
 CATALOG_DIRNAME = "catalog"
@@ -136,8 +135,13 @@ class CatalogWindow:
     ohlcv: dict[InstrumentId, pd.DataFrame]
     instruments: dict[InstrumentId, "Instrument"]
     size_increment_by_instrument: dict[InstrumentId, float]
-    distributions: tuple[Distribution, ...]
+    records: tuple[Data, ...]
     distribution_coverage: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def distributions(self) -> tuple[Distribution, ...]:
+        """Distribution records consumed by return and cash projections."""
+        return distribution_records(self.records)
 
 
 @dataclass(frozen=True)
@@ -157,6 +161,14 @@ def continuous_root_legs(catalog: Any, root: str) -> tuple[DatedContract, ...]:
         if instrument.underlying == root
     ]
     return tuple(sorted(legs, key=lambda leg: leg.last_trade))
+
+
+def continuous_instrument_legs(
+    catalog: Any, instrument_id: InstrumentId
+) -> tuple[DatedContract, ...]:
+    """List dated legs for the root carried by an instrument identifier."""
+    root, _separator, _venue = instrument_id.value.rpartition(".")
+    return continuous_root_legs(catalog, root)
 
 
 def catalog_definitions(
@@ -215,13 +227,32 @@ class CatalogBackedDataPort:
         definition completeness needs), definition completeness is judged
         BEFORE distribution verification (a missing definition is an authoring
         fault and must never surface as the environmental coverage-gap error),
-        and ONE verification pass serves both the returned distributions and
-        the coverage report.
+        and ONE verification command gates the subsequent warm record/report
+        query.
         """
         ohlcv = self._load_raw_bars(request)
         instruments = self._complete_definitions(request.instrument_ids)
-        distribution_coverage = self._coverage_service().verify_window(
-            request.instrument_ids, start=request.start, end=request.end
+        from aegis_data.custom_data import (
+            read_record_requirements,
+            verify_record_requirements,
+        )
+
+        verify_record_requirements(
+            self.catalog,
+            request.instrument_ids,
+            start=request.start,
+            end=request.end,
+            providers=self._record_providers(),
+            clock_ns=self.clock_ns,
+            mark_bars=self._mark_bars,
+            ensure_bar_coverage=self._ensure_bar_interval,
+        )
+        verified = read_record_requirements(
+            self.catalog,
+            request.instrument_ids,
+            start=request.start,
+            end=request.end,
+            mark_bars=self._mark_bars,
         )
         return CatalogWindow(
             ohlcv=ohlcv,
@@ -230,13 +261,8 @@ class CatalogBackedDataPort:
                 instrument_id: native_size_increment(instrument)
                 for instrument_id, instrument in instruments.items()
             },
-            distributions=query_distribution_data(
-                self.catalog,
-                request.instrument_ids,
-                start=request.start,
-                end=request.end,
-            ),
-            distribution_coverage=distribution_coverage,
+            records=verified.records,
+            distribution_coverage=verified.coverage,
         )
 
     def _complete_definitions(
@@ -300,7 +326,9 @@ class CatalogBackedDataPort:
                 frames[instrument_id] = sided
         return frames
 
-    def read_native_bars(self, request: CatalogWindowRequest) -> dict[InstrumentId, list[Bar]]:
+    def read_native_bars(
+        self, request: CatalogWindowRequest
+    ) -> dict[InstrumentId, list[Bar]]:
         """The window's stored native ``Bar``\\ s per instrument — a pure warm read.
 
         The single owner of the catalog ``Bar`` query (the window read's bar pass
@@ -318,7 +346,9 @@ class CatalogBackedDataPort:
             for instrument_id in request.instrument_ids
         }
 
-    def _query_bars(self, bar_type: BarType, request: CatalogWindowRequest) -> list[Bar]:
+    def _query_bars(
+        self, bar_type: BarType, request: CatalogWindowRequest
+    ) -> list[Bar]:
         bars = self.catalog.query(
             _bar_cls(),
             identifiers=[str(bar_type)],
@@ -334,7 +364,9 @@ class CatalogBackedDataPort:
         by_ts_event: dict[int, Bar] = {bar.ts_event: bar for bar in bars}
         return [by_ts_event[ts_event] for ts_event in sorted(by_ts_event)]
 
-    def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
+    def _mark_bars(
+        self, instrument_id: InstrumentId, timeframe: str
+    ) -> tuple[BarType, ...]:
         return self.resolver.resolve(instrument_id, timeframe).mark_bars
 
     def instruments(
@@ -388,8 +420,14 @@ class CatalogBackedDataPort:
         raw bars, yet its not-applicable rows are real Run evidence.  An
         unresolvable id still fails loud.
         """
-        return self._coverage_service().coverage_report(
-            tuple(instrument_ids), start=start, end=end
+        from aegis_data.custom_data import record_coverage_report
+
+        return record_coverage_report(
+            self.catalog,
+            tuple(instrument_ids),
+            start=start,
+            end=end,
+            mark_bars=self._mark_bars,
         )
 
     def force_reverify_distribution_coverage(
@@ -399,8 +437,17 @@ class CatalogBackedDataPort:
         start: str | int | pd.Timestamp,
         end: str | int | pd.Timestamp,
     ) -> None:
-        self._coverage_service().force_reverify(
-            tuple(instrument_ids), start=start, end=end
+        from aegis_data.custom_data import force_reverify_record_requirements
+
+        force_reverify_record_requirements(
+            self.catalog,
+            tuple(instrument_ids),
+            start=start,
+            end=end,
+            providers=self._record_providers(),
+            clock_ns=self.clock_ns,
+            mark_bars=self._mark_bars,
+            ensure_bar_coverage=self._ensure_bar_interval,
         )
 
     def fetch_contract_ohlcv(
@@ -444,17 +491,15 @@ class CatalogBackedDataPort:
                 f"continuous-future root {root!r} legs span multiple venues "
                 f"{sorted(venue.value for venue in venues)}; expected one"
             )
-        return ResolvedContinuousRoot(InstrumentId(Symbol(root), next(iter(venues))), legs)
+        return ResolvedContinuousRoot(
+            InstrumentId(Symbol(root), next(iter(venues))), legs
+        )
 
-    def _coverage_service(self) -> DistributionCoverageService:
-        from aegis_data._distribution_coverage import DistributionCoverageService
-
-        return DistributionCoverageService(
-            self.catalog,
-            self.distribution_provider,
-            clock_ns=self.clock_ns,
-            resolver=self.resolver,
-            ensure_bar_coverage=self._ensure_bar_interval,
+    def _record_providers(self) -> tuple[object, ...]:
+        return tuple(
+            provider
+            for provider in (self.provider, self.distribution_provider)
+            if provider is not None
         )
 
     def _ensure_bar_interval(
@@ -552,7 +597,6 @@ def catalog_data_port(
     return CatalogBackedDataPort(
         catalog,
         provider=provider,
-        distribution_provider=provider,
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),

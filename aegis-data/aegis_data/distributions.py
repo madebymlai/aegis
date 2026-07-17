@@ -52,6 +52,11 @@ class Distribution(Data):
         return cls._schema
 
 
+def distribution_records(records: Sequence[Data]) -> tuple[Distribution, ...]:
+    """Select the Distribution consumer view from generic typed records."""
+    return tuple(record for record in records if isinstance(record, Distribution))
+
+
 def recover_distributions_from_adjusted_last(
     *,
     instrument_id: InstrumentId,
@@ -263,6 +268,7 @@ def _optional_ns(value: str | int | pd.Timestamp | None) -> int | None:
 
 __all__ = [
     "Distribution",
+    "distribution_records",
     "query_distribution_data",
     "recover_distributions_from_adjusted_last",
     "request_distribution_data",

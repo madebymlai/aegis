@@ -21,7 +21,7 @@ from aegis_data.custom_data import (
     arrays as build_custom_arrays,
     records_for_arrays,
 )
-from aegis_data.distributions import Distribution
+from aegis_data.distributions import Distribution, distribution_records
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.config import CacheConfig, LoggingConfig
@@ -101,10 +101,15 @@ class BacktestMarketData:
 
     instruments: Mapping[InstrumentId, Instrument]
     ohlcv: Mapping[InstrumentId, pd.DataFrame]
-    distributions: tuple[Distribution, ...] = ()
+    records: tuple[Data, ...] = ()
     quote_frames: Mapping[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = field(
         default_factory=dict
     )
+
+    @property
+    def distributions(self) -> tuple[Distribution, ...]:
+        """Distribution records consumed by the dividend cash module."""
+        return distribution_records(self.records)
 
 
 @dataclass(frozen=True)
@@ -163,7 +168,7 @@ class CatalogBacktestDataSource:
         return BacktestMarketData(
             instruments=window.instruments,
             ohlcv=window.ohlcv,
-            distributions=window.distributions,
+            records=window.records,
             quote_frames=data_port.load_quote_frames(request),
         )
 
@@ -174,7 +179,6 @@ class CatalogBacktestDataSource:
         return CatalogBackedDataPort(
             catalog,
             provider=self.provider,
-            distribution_provider=_distribution_provider(self.provider),
             resolver=self.resolver,
         )
 
@@ -208,7 +212,9 @@ def run_book_backtest(
     # identical bars.  The sim/fill projection below is DERIVED from the resolved
     # markings, research-side only, and never serialized (aegis-rd-tggo.5).
     resolver = (
-        bar_type_resolver if bar_type_resolver is not None else _book_resolver(assembled_book)
+        bar_type_resolver
+        if bar_type_resolver is not None
+        else _book_resolver(assembled_book)
     )
     source = data_source or CatalogBacktestDataSource(
         catalog_path=catalog_path,
@@ -216,7 +222,10 @@ def run_book_backtest(
         resolver=resolver,
     )
     loaded = tuple(
-        (timeframe, source.load(instrument_ids, timeframe=timeframe, start=start, end=end))
+        (
+            timeframe,
+            source.load(instrument_ids, timeframe=timeframe, start=start, end=end),
+        )
         for timeframe, instrument_ids in _stream_load_groups(assembled_book)
     )
     market_data = _merged_market_data(loaded)
@@ -256,18 +265,20 @@ def run_book_backtest(
             added_instrument_ids=added_instrument_ids,
         )
     custom_catalog_path = catalog_path if catalog_path is not None else catalog_root()
-    custom_records = records_for_arrays(
+    array_records = records_for_arrays(
         _custom_array_requirements(assembled_book),
         start=pd.Timestamp(start),
         end=pd.Timestamp(end),
         catalog_path=custom_catalog_path,
     )
-    _add_custom_data(engine, custom_records)
+    _add_custom_data(engine, (*market_data.records, *array_records))
     engine.sort_data()
     _add_equity_recorder(
         engine,
         book=book,
-        streams=tuple(requirement.stream for requirement in assembled_book.required_streams),
+        streams=tuple(
+            requirement.stream for requirement in assembled_book.required_streams
+        ),
         resolver=resolver,
     )
     _add_strategy(
@@ -323,17 +334,17 @@ def _merged_market_data(
         return loaded[0][1]
     instruments: dict[InstrumentId, Instrument] = {}
     ohlcv: dict[InstrumentId, pd.DataFrame] = {}
-    distributions: list[Distribution] = []
+    records: list[Data] = []
     quote_frames: dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = {}
     for _timeframe, market_data in loaded:
         instruments.update(market_data.instruments)
         ohlcv.update(market_data.ohlcv)
-        distributions.extend(market_data.distributions)
+        records.extend(market_data.records)
         quote_frames.update(market_data.quote_frames)
     return BacktestMarketData(
         instruments=instruments,
         ohlcv=ohlcv,
-        distributions=tuple(distributions),
+        records=tuple(records),
         quote_frames=quote_frames,
     )
 
@@ -368,12 +379,6 @@ def _custom_array_requirements(
         for instrument_id, names in names_by_instrument_id.items()
         if names
     }
-
-
-def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | None:
-    if provider is None or not hasattr(provider, "request_adjusted_last"):
-        return None
-    return provider
 
 
 def book_return_stats(
@@ -538,7 +543,11 @@ def _add_venues(
             None if native_venue in quote_marked_venues else cost_models.fill_model
         )
         modules = [
-            *([financing_module] if index == 0 and financing_module is not None else []),
+            *(
+                [financing_module]
+                if index == 0 and financing_module is not None
+                else []
+            ),
             *build_dividend_modules(distributions),
         ]
         # Financing is book-level: it nets the shared cache across all venue
@@ -607,7 +616,6 @@ def _add_instruments_and_bars(
             # does: one quote per bar close (strategy.on_quote_tick), so sizing's
             # fx_rate read works from the same series the panel conversion uses.
             engine.add_data(_fx_quotes(instrument, frame), sort=False)
-    _add_distribution_data(engine, market_data.distributions)
 
 
 def _wrangle_quote_external_bars(
@@ -623,23 +631,6 @@ def _wrangle_quote_external_bars(
         _normalize_ohlcv(ask_ohlcv),
         timeframe,
         resolver=resolver,
-    )
-
-
-def _add_distribution_data(
-    engine: BacktestEngine,
-    distributions: Sequence[Distribution],
-) -> None:
-    if not distributions:
-        return
-    data_type = DataType(Distribution)
-    engine.add_data(
-        [
-            CustomData(data_type=data_type, data=distribution)
-            for distribution in distributions
-        ],
-        validate=False,
-        sort=False,
     )
 
 
@@ -784,5 +775,7 @@ def _account_currencies(
 
 
 def _instrument_venues(instruments: Sequence[Instrument]) -> tuple[Venue, ...]:
-    venues = {instrument.id.venue.value: instrument.id.venue for instrument in instruments}
+    venues = {
+        instrument.id.venue.value: instrument.id.venue for instrument in instruments
+    }
     return tuple(venues[key] for key in sorted(venues))

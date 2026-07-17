@@ -93,7 +93,6 @@ def test_records_for_arrays_resolves_kinds_and_returns_covered_records(
         providers=(provider,),
         catalog_path=tmp_path,
     )
-
     stored = records_for_arrays(
         {_INSTRUMENT: ("FixtureValue", "FixtureAvailable")},
         start=_utc("2024-01-01"),
@@ -156,13 +155,16 @@ def test_ingest_never_persists_records_before_provider_served_from(
             catalog_path=tmp_path,
         )
 
-    assert records(
-        FixtureRecord,
-        (_INSTRUMENT,),
-        start=_utc("2024-01-01"),
-        end=_utc("2024-01-06"),
-        catalog_path=tmp_path,
-    ) == ()
+    assert (
+        records(
+            FixtureRecord,
+            (_INSTRUMENT,),
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-06"),
+            catalog_path=tmp_path,
+        )
+        == ()
+    )
 
 
 def test_ingest_fills_providers_in_declared_order(tmp_path: Path) -> None:
@@ -195,9 +197,7 @@ def test_ingest_fills_providers_in_declared_order(tmp_path: Path) -> None:
 
 
 def test_ingest_fills_only_an_interior_native_gap(tmp_path: Path) -> None:
-    seed = _Provider(
-        (_record("2024-01-02", 2.0), _record("2024-01-08", 8.0))
-    )
+    seed = _Provider((_record("2024-01-02", 2.0), _record("2024-01-08", 8.0)))
     ingest(
         FixtureRecord,
         (_INSTRUMENT,),
@@ -233,7 +233,9 @@ def test_ingest_fills_only_an_interior_native_gap(tmp_path: Path) -> None:
     ]
 
 
-def test_arrays_distinguishes_verified_empty_from_never_ingested(tmp_path: Path) -> None:
+def test_arrays_distinguishes_verified_empty_from_never_ingested(
+    tmp_path: Path,
+) -> None:
     checked_at_ns = _utc("2024-02-01").value
     empty = _Provider(())
     index = pd.date_range("2024-01-01", "2024-01-03", tz="UTC")
@@ -320,9 +322,7 @@ def test_arrays_projects_fixture_records_causally_on_the_exact_index(
     tmp_path: Path,
 ) -> None:
     index = pd.date_range("2024-01-01", "2024-01-05", tz="UTC")
-    provider = _Provider(
-        (_record("2024-01-02", 2.0), _record("2024-01-04", 4.0))
-    )
+    provider = _Provider((_record("2024-01-02", 2.0), _record("2024-01-04", 4.0)))
     ingest(
         FixtureRecord,
         (_INSTRUMENT,),
