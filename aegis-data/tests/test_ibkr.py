@@ -34,7 +34,6 @@ from aegis_data.ibkr import (
     IbkrRequestError,
     seed_instrument_definitions,
 )
-from aegis_data.ibkr.historical import _ib_request_end_datetime
 
 
 class _FakeHistoricClient:
@@ -188,7 +187,9 @@ def test_request_bars_can_pass_expired_future_contracts() -> None:
     assert contract.includeExpired is True
 
 
-def test_request_bars_keeps_non_futures_on_instrument_ids_when_expired_enabled() -> None:
+def test_request_bars_keeps_non_futures_on_instrument_ids_when_expired_enabled() -> (
+    None
+):
     fake = _FakeHistoricClient(bars=[], instruments=[])
     provider = IbkrHistoricalProvider(
         include_expired_futures=True,
@@ -225,6 +226,7 @@ def test_request_bars_wraps_a_fault_in_a_named_error_and_still_closes() -> None:
     """A fault during the fetch surfaces as one ``IbkrRequestError`` naming the
     bar type (not a bare error), with the original chained — and the session is
     still closed."""
+
     class _Boom(_FakeHistoricClient):
         async def request_bars(self, **kwargs: Any) -> list[Any]:
             raise RuntimeError("ib down")
@@ -251,6 +253,7 @@ def test_request_bars_converts_a_dead_vendor_call_into_a_named_error() -> None:
     qualification when an instrument cannot resolve to one asset, shared-request
     futures).  A session call that makes no progress past the deadline surfaces
     as an ``IbkrRequestError`` instead of hanging forever."""
+
     class _Stuck(_FakeHistoricClient):
         async def request_bars(self, **kwargs: Any) -> list[Any]:
             await asyncio.sleep(3600)
@@ -289,7 +292,9 @@ def test_request_bars_converts_a_dead_connect_into_a_named_error() -> None:
         )
 
 
-def test_request_instruments_converts_a_stuck_qualification_into_a_named_error() -> None:
+def test_request_instruments_converts_a_stuck_qualification_into_a_named_error() -> (
+    None
+):
     class _StuckQualification(_FakeHistoricClient):
         async def request_instruments(self, **kwargs: Any) -> list[Any]:
             await asyncio.sleep(3600)
@@ -309,9 +314,12 @@ def test_request_instruments_wraps_a_failed_qualification_in_a_named_error() -> 
     """The opaque-crash case: a failed contract qualification (modelled by the
     adapter's ``int``-vs-``None`` reconnect ``TypeError``) becomes a clear error
     naming the instrument, instead of leaking the bare ``TypeError``."""
+
     class _Boom(_FakeHistoricClient):
         async def request_instruments(self, **kwargs: Any) -> list[Any]:
-            raise TypeError("'<=' not supported between instances of 'int' and 'NoneType'")
+            raise TypeError(
+                "'<=' not supported between instances of 'int' and 'NoneType'"
+            )
 
     fake = _Boom(bars=[], instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
@@ -330,13 +338,6 @@ def test_unknown_market_data_type_fails_at_construction() -> None:
         IbkrHistoricalProvider(market_data_type="BOGUS")
 
 
-def test_adjusted_last_raw_request_omits_unsupported_end_datetime() -> None:
-    end = pd.Timestamp("2026-06-01", tz="UTC")
-
-    assert _ib_request_end_datetime("ADJUSTED_LAST", end) == ""
-    assert _ib_request_end_datetime("TRADES", end) == "20260601 00:00:00 UTC"
-
-
 def test_provider_satisfies_the_pure_fetch_port() -> None:
     port: NautilusDataProviderPort = IbkrHistoricalProvider(
         client_factory=lambda: _FakeHistoricClient(bars=[], instruments=[])
@@ -349,7 +350,9 @@ def test_importing_the_adapter_does_not_import_ibapi() -> None:
     live wiring both live here) must not pull ``ibapi`` — every IBKR import is
     deferred to call time, so non-IBKR code does not initialize the vendor stack."""
     for module_name in tuple(sys.modules):
-        if module_name == "aegis_data.ibkr" or module_name.startswith("aegis_data.ibkr."):
+        if module_name == "aegis_data.ibkr" or module_name.startswith(
+            "aegis_data.ibkr."
+        ):
             sys.modules.pop(module_name)
         if module_name == "ibapi" or module_name.startswith("ibapi."):
             sys.modules.pop(module_name)
