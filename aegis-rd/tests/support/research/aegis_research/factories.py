@@ -479,6 +479,15 @@ def make_candidate_portfolio(
 SINGLE_CANDIDATE_ID = "single"
 
 
+def _wrap_single_candidate(allocations: pd.DataFrame) -> pd.DataFrame:
+    """Lift a flat symbol frame into the one-candidate MultiIndex the batch path expects."""
+    columns = pd.MultiIndex.from_product(
+        [[SINGLE_CANDIDATE_ID], allocations.columns],
+        names=["candidate_id", SYMBOL_LEVEL],
+    )
+    return pd.DataFrame(allocations.to_numpy(), index=allocations.index, columns=columns)
+
+
 def make_single_book_portfolio(
     close: pd.DataFrame,
     allocations: pd.DataFrame,
@@ -501,13 +510,7 @@ def make_single_book_portfolio(
     seam. Not a production interface — the batch entry is the only production
     path.
     """
-    columns = pd.MultiIndex.from_product(
-        [[SINGLE_CANDIDATE_ID], allocations.columns],
-        names=["candidate_id", SYMBOL_LEVEL],
-    )
-    alloc_mi = pd.DataFrame(
-        allocations.to_numpy(), index=allocations.index, columns=columns
-    )
+    alloc_mi = _wrap_single_candidate(allocations)
     return simulate_portfolio_batch(
         close,
         alloc_mi,
@@ -543,13 +546,7 @@ def make_engine_mechanics_portfolio(
     entry rejects. Every behavioral test drives ``simulate_portfolio_batch``;
     only exact-cash-math pins may use this seam.
     """
-    columns = pd.MultiIndex.from_product(
-        [[SINGLE_CANDIDATE_ID], allocations.columns],
-        names=["candidate_id", SYMBOL_LEVEL],
-    )
-    alloc_mi = pd.DataFrame(
-        allocations.to_numpy(), index=allocations.index, columns=columns
-    )
+    alloc_mi = _wrap_single_candidate(allocations)
     expanded_close = expand_market_frame_to_candidate_columns(
         close, alloc_mi.columns, feature_name="Close"
     )

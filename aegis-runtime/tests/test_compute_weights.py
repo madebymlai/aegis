@@ -13,6 +13,7 @@ from aegis_runtime.bundle import (
 )
 from aegis_runtime.currency import CurrencyConversion
 from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.exposure_validation import GrossExposureBreach
 
 
 def _index(n: int) -> pd.DatetimeIndex:
@@ -137,6 +138,39 @@ def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:
     assert list(weights.columns) == list(instrument_ids)
     assert weights.index.equals(idx)
     assert (weights.to_numpy() == 0.5).all()
+
+
+def test_compute_weights_rejects_gross_above_the_sleeve_contract() -> None:
+    # 0.75 + 0.75 = gross 1.5 > SLEEVE_GROSS_LIMIT: the bundle fails closed on
+    # its own emitted weights — the source-level tripwire for a broken component.
+    idx = _index(3)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [10.0, 11.0, 12.0], instrument_ids[1]: [20.0, 21.0, 22.0]},
+        index=idx,
+    )
+    bundle = _bundle("over_gross_strategy", contract=_eur_contract())
+
+    with pytest.raises(GrossExposureBreach, match="gross_cap 1.0"):
+        bundle.compute_weights(MarketDataBundle({"Close": close}), currency_conversion=None)
+
+
+def test_compute_weights_admits_a_fully_invested_book_at_exactly_unit_gross() -> None:
+    # Equality is inside the contract: a fully-invested sleeve sits AT gross 1.0
+    # and must not trip on the boundary (strict > with the kernel's tolerance).
+    idx = _index(3)
+    instrument_ids = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ"))
+    close = pd.DataFrame(
+        {instrument_ids[0]: [10.0, 11.0, 12.0], instrument_ids[1]: [20.0, 21.0, 22.0]},
+        index=idx,
+    )
+    bundle = _bundle("equal_weight_strategy", contract=_eur_contract())
+
+    weights = bundle.compute_weights(
+        MarketDataBundle({"Close": close}), currency_conversion=None
+    )
+
+    assert weights.abs().sum(axis=1).tolist() == [1.0, 1.0, 1.0]
 
 
 def test_compute_weights_keys_output_by_native_instrument_id() -> None:

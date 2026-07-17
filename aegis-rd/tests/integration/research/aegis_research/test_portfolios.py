@@ -472,7 +472,7 @@ def test_batch_rejects_longonly_candidate_with_a_negative_weight() -> None:
         simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
 
-def test_batch_accepts_valid_market_neutral_book_within_caps() -> None:
+def test_batch_accepts_valid_market_neutral_book_within_contract() -> None:
     index = pd.date_range("2024-01-01", periods=3)
     close = pd.DataFrame(
         {"A": [10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0]},
@@ -970,7 +970,7 @@ def test_records_count_exit_trades_for_long_and_short_legs() -> None:
     assert set(exit_symbols) == {(SINGLE_CANDIDATE_ID, "A"), (SINGLE_CANDIDATE_ID, "B")}
 
 
-def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, PortfolioConfig]:
+def _at_contract_stress_rebalance_inputs() -> tuple[pd.DataFrame, pd.DataFrame, PortfolioConfig]:
     """Return (close, allocations, config) for a leveraged long/short book.
 
     Gross equals the unit sleeve contract (1.0) — the largest book the gate
@@ -1007,11 +1007,11 @@ def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, Portfoli
     return close, allocations, config
 
 
-def test_underfilled_leveraged_book_fills_cleanly_with_surplus_buying_power() -> None:
+def test_at_contract_book_fills_cleanly_with_surplus_buying_power() -> None:
     # With surplus buying power (leverage = k x SLEEVE_GROSS_LIMIT, k >= 2), the
     # formerly under-filled at-contract book fills exactly: zero NoCash
     # rejections, realized weights == requested at the mid-run rebalance.
-    close, allocations, config = _underfilled_leverage_inputs()
+    close, allocations, config = _at_contract_stress_rebalance_inputs()
     pf = make_single_book_portfolio(close, allocations, config)
 
     # No NoCash rejections in the logs.
