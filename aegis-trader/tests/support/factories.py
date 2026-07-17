@@ -27,6 +27,7 @@ _DEFAULT_INSTRUMENT_ID = InstrumentId.from_str("AAPL.NASDAQ")
 def make_bundle(
     *,
     timeframe: str = "1D",
+    required_arrays: tuple[str, ...] = ("Close",),
     native_instrument_ids: tuple[InstrumentId, ...] = (_DEFAULT_INSTRUMENT_ID,),
     exchange_instrument_ids: tuple[InstrumentId, ...] = (),
     continuous_futures: Mapping[str, InstrumentId] | None = None,
@@ -54,7 +55,7 @@ def make_bundle(
     )
     contract = DataContract(
         instrument_ids=instrument_ids,
-        required_arrays=("Close",),
+        required_arrays=required_arrays,
         base_currency="EUR",
         timeframe=timeframe,
         missing_index=MissingIndexPolicy.DROP,

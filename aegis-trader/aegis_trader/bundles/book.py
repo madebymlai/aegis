@@ -21,6 +21,10 @@ from aegis_trader.domain.types import SleeveName
 
 _log = _logging.getLogger(__name__)
 
+# The five bar-derived arrays are the only ones any data path can materialize;
+# the Custom Data module's vocabulary will widen this set (aegis-rd-iecr).
+_DELIVERABLE_ARRAY_NAMES = frozenset({"Open", "High", "Low", "Close", "Volume"})
+
 @_dataclass(frozen=True)
 class ContinuousRootDeclaration:
     """One coherent continuous-root declaration.
@@ -59,6 +63,22 @@ class ContinuousDeclarationConflictError(ValueError):
         )
 
 
+class UndeliverableArrayError(ValueError):
+    """A Sleeve declares a required array no data path can materialize.
+
+    Without this check the Book assembles, and the Sleeve then fails every
+    rebalance as a swallowed per-period compute error (aegis-rd-nar9)."""
+
+    def __init__(self, *, sleeve: SleeveName, arrays: tuple[str, ...]) -> None:
+        self.sleeve = sleeve
+        self.arrays = arrays
+        super().__init__(
+            f"sleeve {sleeve.value!r} requires array(s) {list(arrays)} that no "
+            f"data path can materialize; deliverable arrays are "
+            f"{sorted(_DELIVERABLE_ARRAY_NAMES)}"
+        )
+
+
 @_dataclass(frozen=True)
 class AssembledBook:
     config: BookConfig
@@ -79,6 +99,7 @@ class AssembledBook:
 def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> AssembledBook:
     """Resolve every Sleeve and prove all structural Commingled Book invariants."""
     sleeves = _load_sleeves(book_config, registry)
+    _validate_required_arrays(sleeves)
     continuous_declarations = _continuous_declarations(sleeves)
     analytics_horizon = derive_horizon(
         tuple(bundle.contract.timeframe for bundle in sleeves.values())
@@ -104,6 +125,17 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
         required_streams=_required_streams(sleeves),
         analytics_horizon=analytics_horizon,
     )
+
+
+def _validate_required_arrays(
+    sleeves: _Mapping[SleeveName, ExecutionBundle],
+) -> None:
+    for sleeve_name, bundle in sleeves.items():
+        undeliverable = tuple(
+            sorted(set(bundle.contract.required_arrays) - _DELIVERABLE_ARRAY_NAMES)
+        )
+        if undeliverable:
+            raise UndeliverableArrayError(sleeve=sleeve_name, arrays=undeliverable)
 
 
 def _contract_history_bars(bundle: ExecutionBundle) -> int:
@@ -241,5 +273,6 @@ __all__ = [
     "AssembledBook",
     "ContinuousDeclarationConflictError",
     "ContinuousRootDeclaration",
+    "UndeliverableArrayError",
     "assemble_book",
 ]

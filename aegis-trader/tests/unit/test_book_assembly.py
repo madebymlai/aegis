@@ -14,6 +14,7 @@ from aegis_trader.bundles.book import (
     ContinuousDeclarationConflictError,
     ContinuousRootDeclaration,
     InstrumentBandError,
+    UndeliverableArrayError,
     assemble_book,
 )
 from aegis_trader.bundles.bands import BundleBands
@@ -332,6 +333,30 @@ def test_assemble_book_rejects_bands_owned_by_two_sleeves() -> None:
 
     assert excinfo.value.instrument_id == _AAPL
     assert excinfo.value.sleeves == (SleeveName("carry"), SleeveName("trend"))
+
+
+def test_assemble_book_rejects_undeliverable_required_arrays() -> None:
+    config = _book(("merger", "merger.whl"))
+    bundle = make_bundle(required_arrays=("Close", "OpenInterest", "fhfsdhf"))
+    registry = StubBundleRegistry({"merger.whl": bundle})
+
+    with pytest.raises(UndeliverableArrayError) as excinfo:
+        assemble_book(config, registry)
+
+    assert excinfo.value.sleeve == SleeveName("merger")
+    assert excinfo.value.arrays == ("OpenInterest", "fhfsdhf")
+    assert "OpenInterest" in str(excinfo.value)
+    assert "merger" in str(excinfo.value)
+
+
+def test_assemble_book_accepts_every_bar_derived_array() -> None:
+    config = _book(("trend", "trend.whl"))
+    bundle = make_bundle(required_arrays=("Open", "High", "Low", "Close", "Volume"))
+    registry = StubBundleRegistry({"trend.whl": bundle})
+
+    assembled = assemble_book(config, registry)
+
+    assert assembled.sleeves == {SleeveName("trend"): bundle}
 
 
 def test_assemble_book_rejects_conflicting_continuous_root_declarations() -> None:
