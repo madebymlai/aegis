@@ -89,6 +89,62 @@ def test_unrelated_contract_termination_cannot_close_an_active_merger() -> None:
     assert refresh.reviews[0].reason == "filing does not identify the active agreement"
 
 
+def test_non_lifecycle_filing_cannot_resolve_an_active_merger() -> None:
+    active = _active_announcement()
+    employment_agreement = _filing(
+        "0000000001-26-000006",
+        "2026-02-10T12:00:00+00:00",
+        b"""<SEC-DOCUMENT><DOCUMENT><TYPE>8-K<TEXT>
+        Item 1.01. In connection with the Agreement and Plan of Merger dated as of
+        January 2, 2026, executives signed employment agreements effective if the
+        transaction is completed. Risks include payment of a termination fee pursuant
+        to the Merger Agreement.
+        </TEXT></DOCUMENT></SEC-DOCUMENT>""",
+        items=("1.01", "5.02"),
+    )
+
+    refresh = _source(employment_agreement).refresh(
+        start=date(2026, 2, 10),
+        end=date(2026, 2, 10),
+        active_events=(active,),
+    )
+
+    assert refresh.observations == ()
+    assert refresh.reviews == ()
+
+
+def test_conditional_termination_language_cannot_replace_an_active_merger() -> None:
+    active = _active_announcement()
+    separate_acquisition = _filing(
+        "0000000001-26-000007",
+        "2026-02-12T12:00:00+00:00",
+        b"""<SEC-DOCUMENT>
+        <DOCUMENT><TYPE>8-K<TEXT>
+        The company entered a separate Agreement and Plan of Merger dated as of
+        February 11, 2026 to acquire another business for an aggregate price.
+        Its completion is conditioned on the prior transaction under the Agreement
+        and Plan of Merger dated as of January 2, 2026. Either party may terminate
+        this separate agreement if the January 2 Merger Agreement is validly terminated.
+        </TEXT></DOCUMENT>
+        <DOCUMENT><TYPE>EX-2.1<TEXT>
+        AGREEMENT AND PLAN OF MERGER dated as of February 11, 2026.
+        This agreement may be terminated if the Agreement and Plan of Merger dated
+        as of January 2, 2026 is validly terminated.
+        </TEXT></DOCUMENT>
+        </SEC-DOCUMENT>""",
+        items=("1.01", "9.01"),
+        document_types=("8-K", "EX-2.1"),
+    )
+
+    refresh = _source(separate_acquisition).refresh(
+        start=date(2026, 2, 12),
+        end=date(2026, 2, 12),
+        active_events=(active,),
+    )
+
+    assert refresh.observations == ()
+
+
 def test_replacement_filing_closes_old_event_and_opens_new_event() -> None:
     active = _active_announcement()
     replacement = _filing(

@@ -4,7 +4,26 @@ shadow_capital: 5000
 # This list is the complete authorized universe. EdgarTools resolves each InstrumentId's
 # symbol to a CIK internally; SEC filings cannot introduce instruments outside this list.
 instrument_ids:
+  - CCO.XNYS
+  - LPRO.XNAS
+  - PAYO.XNAS
+  - KORE.XNYS
+  - GBTG.XNYS
+  - CCRN.XNAS
+  - OGN.XNYS
+  - AES.XNYS
+  - DBRG.XNYS
+  - IMXI.XNAS
+  - SLP.XNAS
+  - AVNS.XNYS
+  - ALOT.XNAS
+  - RAMP.XNYS
   - DSGR.XNAS
+  - CRNX.XNAS
+  - APGE.XNAS
+  - TECH.XNAS
+  - BHF.XNAS
+  - EA.XNAS
 
 market_instrument_id: SPY.ARCA
 # catalog_path: ~/.cache/aegis/catalog

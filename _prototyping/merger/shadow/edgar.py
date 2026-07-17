@@ -276,7 +276,7 @@ def _opens_agreement(filing: EdgarFiling) -> bool:
 
 def _could_change_lifecycle(filing: EdgarFiling) -> bool:
     document_types = set(filing.document_types) or set(_documents(filing.submission))
-    return bool(set(filing.items).intersection({"1.01", "1.02", "2.01"}) or "EX-2.1" in document_types)
+    return bool(set(filing.items).intersection({"1.02", "2.01"}) or "EX-2.1" in document_types)
 
 
 def _latest_active(events: Iterable[EventObservation]) -> tuple[EventObservation, ...]:
@@ -401,8 +401,12 @@ def _lifecycle(
         re.I,
     )
     terminated = re.search(
-        r"(?:terminated|termination).{0,180}(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)|"
-        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger).{0,180}(?:terminated|termination)",
+        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)"
+        r".{0,160}?\b(?:has\s+been|was|were)\s+(?:validly\s+)?terminated\b|"
+        r"\b(?:company|parent|parties|board)\b.{0,160}?\bterminated\b.{0,160}?"
+        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)|"
+        r"\bentered\s+into\b.{0,120}?\btermination\s+agreement\b.{0,160}?"
+        r"(?:merger\s+agreement|agreement\s+and\s+plan\s+of\s+merger)",
         text,
         re.I,
     )
@@ -502,21 +506,48 @@ def _agreement_date(text: str) -> date | None:
 
 def _cash_offer(agreement: str, disclosure: str) -> float | None:
     combined = f"{disclosure} {agreement}"
-    if re.search(
-        r"exchange\s+ratio|stock\s+consideration|contingent\s+value\s+right|\bCVR\b", combined, re.I
-    ):
-        return None
     patterns = (
-        r"\$([0-9]+(?:\.[0-9]+)?)\s+per\s+(?:share|common\s+unit)\s+in\s+cash",
-        r"right\s+to\s+receive\s+\$([0-9]+(?:\.[0-9]+)?)\s+per\s+(?:share|common\s+unit)\s+in\s+cash",
+        r"right\s+to\s+receive\s+\$([0-9]+(?:\.[0-9]+)?)"
+        r"(?:\s+per\s+(?:share|common\s+share|common\s+unit))?"
+        r"(?:,?\s+net)?\s+in\s+cash",
+        r"right\s+to\s+receive\s+cash\s+in\s+an?\s+amount\s+"
+        r"(?:equal\s+to\s+)?\$([0-9]+(?:\.[0-9]+)?)",
+        r"\$([0-9]+(?:\.[0-9]+)?)\s+per\s+"
+        r"(?:share|common\s+share|common\s+unit)"
+        r"(?:,?\s+net)?\s+in\s+(?:cash|an?\s+all-cash\s+transaction)",
     )
-    prices = {
-        float(match[1])
-        for pattern in patterns
-        for match in re.finditer(pattern, combined, re.I)
-        if 0.01 <= float(match[1]) <= 10_000.00
-    }
+    prices: set[float] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, combined, re.I):
+            if _has_nearby_non_cash_consideration(combined, match):
+                continue
+            price = float(match[1])
+            if 0.01 <= price <= 10_000.00:
+                prices.add(price)
     return next(iter(prices)) if len(prices) == 1 else None
+
+
+def _has_nearby_non_cash_consideration(text: str, cash_match: re.Match[str]) -> bool:
+    variable = (
+        r"(?:[0-9]+(?:\.[0-9]+)?\s+)?(?:buyer\s+)?shares?\b|"
+        r"stock\s+consideration|common\s+stock|ordinary\s+shares?|"
+        r"contingent\s+value\s+rights?|\bCVRs?\b"
+    )
+    before = text[max(0, cash_match.start() - 600) : cash_match.start()]
+    after = text[cash_match.end() : cash_match.end() + 600]
+    stock_before_cash = re.search(
+        rf"(?:{variable}).{{0,500}}\bplus\b\s*$|"
+        rf"(?:{variable}).{{0,120}}\band\b\s*$",
+        before,
+        re.I,
+    )
+    stock_after_cash = re.search(
+        rf"\bplus\b.{{0,500}}(?:{variable})|"
+        rf"^\s*(?:,\s*)?(?:without\s+interest\s*)?\band\b.{{0,120}}(?:{variable})",
+        after,
+        re.I,
+    )
+    return stock_before_cash is not None or stock_after_cash is not None
 
 
 def _unique_filings(filings: Iterable[EdgarFiling]) -> tuple[EdgarFiling, ...]:
