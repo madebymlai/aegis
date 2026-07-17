@@ -63,8 +63,6 @@ def _artifact(
             strategy=strategy,
             indicators=(),
             instrument_bands={instrument_id: DriftBand(up=0.10, down=0.20)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="longonly",
         ),
         component_sources={"strategy.py": "def run(*args, **kwargs):\n    raise AssertionError\n"},
@@ -120,7 +118,7 @@ def test_write_wheel_requires_the_first_v4_capable_runtime(tmp_path) -> None:
         )
         metadata = zf.read(metadata_path).decode()
 
-    assert "Requires-Dist: aegis-runtime>=0.2.0" in metadata
+    assert "Requires-Dist: aegis-runtime>=0.3.0" in metadata
 
 
 def test_write_wheel_uses_same_name_when_same_candidate_already_exists(tmp_path) -> None:

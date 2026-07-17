@@ -145,7 +145,6 @@ def _run_config(
         "portfolio": {
             "fees": 0.0,
             "slippage": 0.0,
-            "gross_cap": 1.0,
             "direction": "longonly",
             "short_borrow_rate": 0.0,
             "short_rebate_rate": 0.0,

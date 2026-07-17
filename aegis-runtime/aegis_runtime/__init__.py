@@ -1,4 +1,5 @@
 from aegis_runtime.bundle import (
+    SLEEVE_GROSS_LIMIT,
     SUPPORTED_ADJUSTMENT_MODES,
     BundleManifest,
     ComponentSpec,
@@ -31,6 +32,7 @@ from aegis_runtime.roll_sensitivity import RollSensitivityError
 __all__ = [
     "BundleManifest",
     "RollSensitivityError",
+    "SLEEVE_GROSS_LIMIT",
     "SUPPORTED_ADJUSTMENT_MODES",
     "ComponentSpec",
     "ComponentStrategyInputs",

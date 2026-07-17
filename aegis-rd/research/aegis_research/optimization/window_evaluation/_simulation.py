@@ -9,7 +9,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from aegis_data.distributions import Distribution
-from aegis_runtime import DriftBand, debit_interest, gate, validate_exposure
+from aegis_runtime import (
+    SLEEVE_GROSS_LIMIT,
+    DriftBand,
+    ExposureLimits,
+    debit_interest,
+    gate,
+    validate_exposure,
+)
 from aegis_runtime.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 from numba import njit
@@ -39,22 +46,25 @@ VBT_PF_METHOD = "from_signals"
 VBT_RESOLVED_SIZE_TYPE = "targetpercent"
 VBT_LEVERAGE_MODE = "eager"
 VBT_STATICIZED_CACHE_ENV = "AERD_VBT_STATICIZED_CACHE_DIR"
-# Surplus buying power for the VBT engine, expressed as a multiple of gross_cap.
-# Exposure Validation is the sole gross_cap enforcer (ADR-0007 amended 2026-06-09);
-# giving the engine k x gross_cap of headroom (k >= 2) prevents the engine from silently
-# under-filling orders during compliant at-cap rebalance transitions that need >1x cap
-# of temporary buying power (e.g. sell A -> buy B when call_seq="auto" sequences buys
-# before sells). The multiplier is tied to gross_cap (never np.inf) to stay bounded for
-# any config, avoiding a 0 x inf division-by-zero at zero free cash.
+# Surplus buying power for the VBT engine, as a multiple of the unit-gross sleeve
+# contract (SLEEVE_GROSS_LIMIT; aegis-rd-ui1m). Exposure Validation is the sole
+# gross enforcer (ADR-0007 amended 2026-06-09); giving the engine k x unit gross
+# of headroom (k >= 2) prevents it from silently under-filling orders during
+# compliant at-cap rebalance transitions that need >1x of temporary buying power
+# (e.g. sell A -> buy B when call_seq="auto" sequences buys before sells; the vbt
+# maintainer confirms no processing order can guarantee a sell frees cash, and
+# leverage headroom is one of the two sanctioned fixes). The product stays finite
+# (never np.inf) to remain bounded, avoiding a 0 x inf division-by-zero at zero
+# free cash.
 #
 # k = 2 is the floor, not the value: under drawdown drift a compliant transition can
-# transiently need ~3x cap (book at cap + equity halves -> drifted gross ~2x cap relative
+# transiently need ~3x (book at cap + equity halves -> drifted gross ~2x relative
 # to current equity, co-held with the new at-cap book when sequencing fails). k = 5 keeps
 # legitimate Runs clear of the tripwire. Margin interest is priced on negative group cash,
 # which decrements by full order notional under eager leverage; ``pf.debt`` is bookkeeping
 # and must not be interpreted as the loan. If the tripwire ever fires on a legitimate Run,
 # raise k — never reintroduce a tolerance (ADR-0011 amendment).
-_GROSS_CAP_LEVERAGE_MULTIPLIER = 5
+_SLEEVE_GROSS_LEVERAGE_MULTIPLIER = 5
 # VBT ``price`` strings: both ``nextopen``/``nextclose`` set ``from_ago=1`` (shift one
 # bar -> no same-bar look-ahead); they differ only in which price of bar t+1 they fill at.
 VBT_NEXT_OPEN_PRICE = "nextopen"
@@ -419,7 +429,7 @@ def _build_portfolio(
         size_granularity=_size_granularity(masked.columns, book),
         slippage=config.slippage,
         init_cash=config.init_cash,
-        leverage=config.gross_cap * _GROSS_CAP_LEVERAGE_MULTIPLIER,
+        leverage=SLEEVE_GROSS_LIMIT * _SLEEVE_GROSS_LEVERAGE_MULTIPLIER,
         leverage_mode=VBT_LEVERAGE_MODE,
         cash_earnings=vbt.RepEval("np.full(wrapper.shape_2d, 0.0)"),
         arg_config={"cash_earnings": {"full_shape": True}},
@@ -505,7 +515,7 @@ def _band_arrays(
 def _assert_no_nocash_rejection(pf: vbt.Portfolio) -> None:
     """Exact tripwire: any NoCash rejection is a genuine bug.
 
-    With surplus buying power (leverage = k x gross_cap, k >= 2) the engine always has
+    With surplus buying power (leverage = k x SLEEVE_GROSS_LIMIT, k >= 2) the engine always has
     headroom to fill every Exposure-Limits-compliant order.  A NoCash rejection under
     these conditions is not a tolerance-graded under-fill — it is a genuine mis-fill
     that must fail closed so no Candidate is silently scored on a corrupted book.
@@ -637,7 +647,7 @@ def simulate_portfolio_batch(
     # a Candidate is; the offender phrasing is supplied here).
     validate_exposure(
         allocations,
-        book.config.exposure_limits,
+        ExposureLimits(SLEEVE_GROSS_LIMIT, None, book.config.direction),
         group_by=allocations.columns.droplevel(SYMBOL_LEVEL),
         describe_group=lambda candidate: f"candidate {candidate!r}",
     )

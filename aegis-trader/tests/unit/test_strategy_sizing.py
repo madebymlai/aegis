@@ -121,8 +121,6 @@ class _PenceBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)

@@ -125,7 +125,7 @@ def _validation_error_to_issues_whole_tree(
     """Map every pydantic ``ValidationError`` entry to a ``ConfigValidationIssue``.
 
     ``loc`` is a full-path tuple across the whole tree (e.g.
-    ``('portfolio', 'gross_cap')`` or ``('indicators', 0, 'id')``).
+    ``('portfolio', 'direction')`` or ``('indicators', 0, 'id')``).
     Int elements use bracket notation (``[i]``); string elements are dotted.
     The pydantic ``msg`` is taken verbatim.
     """

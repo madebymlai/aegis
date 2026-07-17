@@ -18,7 +18,9 @@ from aegis_runtime.bundle import (
 )
 from aegis_runtime.drift_band import DriftBand
 
-BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v4"
+# v5 (aegis-rd-ui1m): the plan no longer carries gross_cap/net_cap — unit gross
+# is the fixed sleeve contract (bundle.SLEEVE_GROSS_LIMIT), not a locked number.
+BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v5"
 
 _ADJUSTMENT_MODE_BY_VALUE = {mode.value: mode for mode in SUPPORTED_ADJUSTMENT_MODES}
 
@@ -73,8 +75,6 @@ def dump_bundle_payload(
             "strategy": _dump_component_spec(plan.strategy),
             "indicators": [_dump_component_spec(spec) for spec in plan.indicators],
             "instrument_bands": _dump_instrument_bands(plan.instrument_bands),
-            "gross_cap": plan.gross_cap,
-            "net_cap": plan.net_cap,
             "direction": plan.direction,
         },
     }
@@ -141,8 +141,6 @@ def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
         instrument_bands=_load_instrument_bands(
             _required_mapping(plan_payload, "instrument_bands", "LockedExecutionPlan")
         ),
-        gross_cap=_required_value(plan_payload, "gross_cap", "LockedExecutionPlan"),
-        net_cap=plan_payload.get("net_cap"),
         direction=_required_value(plan_payload, "direction", "LockedExecutionPlan"),
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)

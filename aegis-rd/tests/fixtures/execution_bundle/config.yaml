@@ -1,4 +1,4 @@
-schema_version: 10
+schema_version: 11
 name: export_registry_seam
 output_dir: runs/export_registry_seam
 lock: export-fixture-run
@@ -13,8 +13,6 @@ data:
 
 portfolio:
   direction: longonly
-  gross_cap: 1.0
-  net_cap: 1.0
 
 strategy:
   id: tests.export_strategy

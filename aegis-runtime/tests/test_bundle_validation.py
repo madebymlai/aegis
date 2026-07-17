@@ -4,6 +4,7 @@ import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.bundle import (
+    SLEEVE_GROSS_LIMIT,
     ComponentSpec,
     DataContract,
     LockedExecutionPlan,
@@ -46,23 +47,35 @@ def _close(instrument_ids: tuple[InstrumentId, ...] = (_id("A.XNAS"), _id("B.XNA
     )
 
 
-# --- LockedExecutionPlan caps validation ---------------------------------------
+# --- LockedExecutionPlan exposure contract -----------------------------------
 
-def test_locked_execution_plan_rejects_illegal_caps_at_construction() -> None:
-    # An illegal triple must fail when the plan is built (bundle load), not on the
-    # first weight computation.
-    with pytest.raises(InvalidExposureLimits, match="gross_cap must be positive"):
-        LockedExecutionPlan(
-            strategy=ComponentSpec(
-                family="strategy", component_id="s", module="m",
-                input_names=(), output_names=(), params={},
-            ),
-            indicators=(),
-            instrument_bands={_id("A.XNAS"): DriftBand.symmetric(0.0)},
-            gross_cap=0.0,
-            net_cap=None,
-            direction="both",
-        )
+def _plan(direction: str) -> LockedExecutionPlan:
+    return LockedExecutionPlan(
+        strategy=ComponentSpec(
+            family="strategy", component_id="s", module="m",
+            input_names=(), output_names=(), params={},
+        ),
+        indicators=(),
+        instrument_bands={_id("A.XNAS"): DriftBand.symmetric(0.0)},
+        direction=direction,
+    )
+
+
+def test_locked_execution_plan_rejects_illegal_direction_at_construction() -> None:
+    # An illegal direction must fail when the plan is built (bundle load), not on
+    # the first weight computation.
+    with pytest.raises(InvalidExposureLimits, match="direction must be one of"):
+        _plan("sideways")
+
+
+def test_locked_execution_plan_builds_unit_gross_exposure_limits() -> None:
+    # The sleeve weight contract is fixed: unit gross, net bounded by gross.
+    # Only direction is locked per bundle.
+    limits = _plan("longonly").exposure_limits
+
+    assert limits.gross_cap == SLEEVE_GROSS_LIMIT == 1.0
+    assert limits.net_cap == SLEEVE_GROSS_LIMIT
+    assert limits.direction == "longonly"
 
 
 # --- _validate_market_data ---------------------------------------------------

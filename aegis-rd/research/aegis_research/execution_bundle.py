@@ -115,8 +115,6 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
         strategy=components.strategy,
         indicators=components.indicators,
         instrument_bands=instrument_bands_from(instruments, config.portfolio),
-        gross_cap=config.portfolio.gross_cap,
-        net_cap=config.portfolio.net_cap,
         direction=config.portfolio.direction,
     )
     version = strategy_definition.version

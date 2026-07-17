@@ -483,7 +483,9 @@ def test_strategy_manifest_rejects_forbidden_gross_cap_key(tmp_path) -> None:
         "version": "1.0.0",
         "input_names": ["Close"],
         "output_name": "active",
-        "gross_cap": 0.5,
+        # Portfolio policy was never a manifest field; since aegis-rd-ui1m it is
+        # not even config — it must stay rejected as an unknown key.
+        "gross_cap": 1.0,
         "owns_portfolio": False,
     }
     path.write_text(

@@ -2,8 +2,8 @@
 
 Each factory supplies valid defaults for every field and accepts **overrides.
 Routing construction through factories means porting one helper instead of N call
-sites when section defaults change (e.g. when pydantic v2 adoption drops
-gross_cap and data.arrays schema defaults).
+sites when section defaults change (e.g. when the unit-gross sleeve contract
+dropped gross_cap/net_cap from the schema, aegis-rd-ui1m).
 
 These are test-support only — no production code changes.
 """
@@ -61,6 +61,8 @@ from research.aegis_research.optimization.run_data_contract import (
 )
 from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.optimization.window_evaluation._simulation import (
+    _build_portfolio,
+    expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
 )
 from tests.support.research.aegis_research.test_doubles import FakeDataResult
@@ -116,8 +118,6 @@ def make_portfolio_config(**overrides: Any) -> PortfolioConfig:
         "init_cash": 10_000.0,
         "fees": 0.001,
         "slippage": 0.0005,
-        "gross_cap": 1.0,
-        "net_cap": 1.0,
         "direction": "longonly",
         "short_borrow_rate": 0.005,
         "short_rebate_rate": 0.0,
@@ -522,4 +522,43 @@ def make_single_book_portfolio(
         periods_per_year=periods_per_year,
         distributions=distributions,
         currency_conversion=currency_conversion,
+    )
+
+
+def make_engine_mechanics_portfolio(
+    close: pd.DataFrame,
+    allocations: pd.DataFrame,
+    config: PortfolioConfig,
+    *,
+    periods_per_year: int = 252,
+    futures_roots: tuple[str, ...] = (),
+) -> vbt.Portfolio:
+    """Simulate one book on the engine seam directly below the exposure gate.
+
+    Engine-mechanics pins only. The gate forbids gross above the unit sleeve
+    contract as an END state (aegis-rd-ui1m), but the engine's surplus buying
+    power still finances such states TRANSIENTLY (buys sequenced before sells,
+    drawdown-drifted books mid-rebalance), so the margin-interest and
+    futures-mask cash semantics must stay pinned on books the public batch
+    entry rejects. Every behavioral test drives ``simulate_portfolio_batch``;
+    only exact-cash-math pins may use this seam.
+    """
+    columns = pd.MultiIndex.from_product(
+        [[SINGLE_CANDIDATE_ID], allocations.columns],
+        names=["candidate_id", SYMBOL_LEVEL],
+    )
+    alloc_mi = pd.DataFrame(
+        allocations.to_numpy(), index=allocations.index, columns=columns
+    )
+    expanded_close = expand_market_frame_to_candidate_columns(
+        close, alloc_mi.columns, feature_name="Close"
+    )
+    return _build_portfolio(
+        expanded_close,
+        alloc_mi,
+        ResolvedBook(config=config, futures_roots=futures_roots),
+        open_frame=None,
+        market_index=None,
+        group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
+        periods_per_year=periods_per_year,
     )

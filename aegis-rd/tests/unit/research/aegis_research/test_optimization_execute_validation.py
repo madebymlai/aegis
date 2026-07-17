@@ -19,7 +19,7 @@ def _base_config(execute: dict[str, object] | None = None) -> dict:
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "p10",
         "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-03-21"),
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [],
         "ranking": {"metric": "total_return"},

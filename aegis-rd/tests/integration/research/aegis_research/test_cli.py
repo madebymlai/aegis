@@ -228,7 +228,7 @@ def test_run_success_payload_is_the_emitted_json_contract(
                 "name": "stubbed_run",
                 "output_dir": "runs",
                 "data": native_data_config_payload(instruments=["SYN.XNAS"]),
-                "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+                "portfolio": {"direction": "longonly"},
                 "strategy": {"id": "demo.strategy"},
                 "indicators": [],
                 "ranking": {"metric": "total_return"},
@@ -339,7 +339,7 @@ def _signed_book_run_config(
             end="2024-04-30",
             path=catalog_path,
         ),
-        "portfolio": {"gross_cap": 1.0, "direction": direction},
+        "portfolio": {"direction": direction},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},
@@ -597,9 +597,9 @@ def test_show_config_schema_exits_zero_and_prints_markdown(
     assert "## Component IDs" in guide
     assert "## Example Run Config" in guide
 
-    # Prepass overlay: optimization required, schema_version const 10
+    # Prepass overlay: optimization required, schema_version const 11
     assert "optimization`** — required" in guide
-    assert "schema_version`** — must be present and exactly `10`" in guide
+    assert "schema_version`** — must be present and exactly `11`" in guide
 
     # Pointers to other show subcommands
     assert "`aerd show splitters <method>`" in guide
@@ -641,8 +641,8 @@ def test_show_config_schema_marks_optimization_required_and_schema_version_const
     assert "optimization`** — required" in guide
     assert "forward contract requires" in guide.lower()
 
-    # schema_version is const 10 (model default is CONFIG_SCHEMA_VERSION)
-    assert "schema_version`** — must be present and exactly `10`" in guide
+    # schema_version is const 11 (model default is CONFIG_SCHEMA_VERSION)
+    assert "schema_version`** — must be present and exactly `11`" in guide
 
 
 def test_show_config_schema_literal_catalogs_interpolated(
@@ -790,7 +790,6 @@ def test_show_config_schema_embedded_example_validates(
             "timeframe": "1D",
         },
         "portfolio": {
-            "gross_cap": 1.0,
             "direction": "longonly",
         },
         "strategy": {"id": "demo.strategy"},
@@ -848,7 +847,7 @@ def test_show_config_schema_coherence_optimization_required(
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "test",
         "data": native_data_config_payload(instruments=["A.XNAS"], end="2024-04-10"),
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "sharpe_ratio"},
@@ -1074,7 +1073,7 @@ def test_show_strategy_schema_exits_zero_and_prints_markdown(
     assert "`active`" in markdown
     assert "`target_weights`" in markdown
     # Ownership boundaries
-    assert "portfolio.gross_cap" in markdown
+    assert "SLEEVE_GROSS_LIMIT" in markdown
     assert "owns_portfolio" in markdown
     # NaN-selection convention
     assert "NaN" in markdown
@@ -1283,7 +1282,6 @@ def test_authoring_story_round_trip(
             end="2024-09-07",
         ),
         "portfolio": {
-            "gross_cap": 1.0,
             "direction": "longonly",
         },
         "strategy": {"id": "example.ma_cross"},
@@ -1401,9 +1399,9 @@ def test_config_schema_guide_marks_optimization_required() -> None:
 
 
 def test_config_schema_guide_marks_schema_version_const() -> None:
-    """Drift: schema_version is marked as const 10 (not a model default)."""
+    """Drift: schema_version is marked as const 11 (not a model default)."""
     guide = _render_guide("config-schema")
-    assert "schema_version`** — must be present and exactly `10`" in guide
+    assert "schema_version`** — must be present and exactly `11`" in guide
 
 
 def test_config_schema_guide_states_native_data_contract() -> None:
@@ -1590,7 +1588,7 @@ def test_strategy_schema_guide_documents_nan_selection() -> None:
 def test_strategy_schema_guide_documents_ownership_boundaries() -> None:
     """Drift: component vs config/policy ownership boundaries are documented."""
     guide = _render_guide("strategy-schema")
-    assert "portfolio.gross_cap" in guide
+    assert "SLEEVE_GROSS_LIMIT" in guide
     assert "portfolio.direction" in guide
     assert "owns_portfolio" in guide
 

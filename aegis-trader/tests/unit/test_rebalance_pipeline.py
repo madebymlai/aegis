@@ -77,8 +77,6 @@ class _FixedWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_INSTRUMENT_ID: instrument_band},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -131,8 +129,6 @@ class _ContinuousWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_ES: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -184,8 +180,6 @@ class _CalendarParityBundle(ExecutionBundle):
                 _LSE_LEG: DriftBand.symmetric(0.0),
                 _BRU_LEG: DriftBand.symmetric(0.0),
             },
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -234,8 +228,6 @@ class _PoisonBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_LSE_LEG: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -843,8 +835,6 @@ class _SpyConversionBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_INSTRUMENT_ID: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -943,8 +933,6 @@ class _SpyContinuousConversionBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_ES: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -1176,8 +1164,6 @@ class _ConversionSleeveBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={instrument_id: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)

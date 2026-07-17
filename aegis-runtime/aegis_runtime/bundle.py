@@ -19,6 +19,15 @@ from aegis_runtime.futures_roots import validate_bare_root
 
 INSTRUMENT_ID_LEVEL = "instrument_id"
 
+# The sleeve weight contract: emitted weights are fractions of sleeve NAV, so a
+# bundle's gross exposure (Σ|wᵢ|) never exceeds 1.0 — scale is not the sleeve's
+# decision. The book allocator is the only leverager; the book's own ceiling
+# lives in aegis-trader book.toml and flows through its own ExposureLimits.
+# Sleeve enforcement sites pass this explicitly; it must never become a default
+# parameter of ExposureLimits (a default would leak sleeve policy into the book
+# path). (aegis-rd-ui1m)
+SLEEVE_GROSS_LIMIT = 1.0
+
 # The only continuous-futures re-basing algebras Aegis supports. Forward modes are
 # rejected everywhere (research never materialises them), so a bundle can only
 # declare what a locked Run can actually have used.
@@ -177,8 +186,6 @@ class LockedExecutionPlan:
     strategy: ComponentSpec
     indicators: tuple[ComponentSpec, ...]
     instrument_bands: Mapping[InstrumentId, DriftBand]
-    gross_cap: float
-    net_cap: float | None
     direction: str
     _exposure_limits: ExposureLimits = field(init=False, repr=False, compare=False)
 
@@ -192,17 +199,19 @@ class LockedExecutionPlan:
                 raise ValueError(
                     "LockedExecutionPlan.instrument_bands values must be DriftBand values"
                 )
-        # An illegal caps triple fails here — at plan construction (bundle load) —
-        # not on the first weight computation.
+        # An illegal direction fails here — at plan construction (bundle load) —
+        # not on the first weight computation. Gross is the fixed sleeve contract,
+        # never a locked number.
         object.__setattr__(
             self,
             "_exposure_limits",
-            ExposureLimits(self.gross_cap, self.net_cap, self.direction),
+            ExposureLimits(SLEEVE_GROSS_LIMIT, None, self.direction),
         )
 
     @property
     def exposure_limits(self) -> ExposureLimits:
-        """This plan's validated Exposure Limits, built once from the locked triple."""
+        """This plan's Exposure Limits: the unit-gross sleeve contract plus the
+        locked direction."""
         return self._exposure_limits
 
 
@@ -227,18 +236,6 @@ class ExecutionBundle:
         self.contract = contract
         self.manifest = manifest
         self._plan = plan
-
-    @property
-    def gross_cap(self) -> float:
-        """The locked plan's gross-exposure cap (max Σ|wᵢ|) — the
-        manifest-grounded source of what research validated for this bundle."""
-        return self._plan.gross_cap
-
-    @property
-    def net_cap(self) -> float | None:
-        """The locked plan's net-exposure cap (max |Σwᵢ|), or ``None`` when the
-        plan leaves net exposure bounded only by the gross cap."""
-        return self._plan.net_cap
 
     @property
     def direction(self) -> str:

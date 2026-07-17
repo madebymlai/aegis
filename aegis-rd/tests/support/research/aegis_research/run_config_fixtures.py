@@ -36,7 +36,7 @@ def build_resolved_run_config(
             "end": "2024-01-03",
             "timeframe": "1D",
         },
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},

@@ -70,8 +70,6 @@ def _plan(instrument_ids: tuple[InstrumentId, ...] | None = None) -> LockedExecu
         instrument_bands={
             instrument_id: DriftBand(up=0.10, down=0.20) for instrument_id in instrument_ids
         },
-        gross_cap=1.0,
-        net_cap=None,
         direction="longonly",
     )
 
@@ -101,8 +99,10 @@ def test_bundle_payload_round_trips_native_instrument_ids() -> None:
     assert bundle.contract == contract
     assert bundle.manifest == _manifest(contract)
     assert bundle.instrument_bands == plan.instrument_bands
-    assert bundle.gross_cap == plan.gross_cap
-    assert bundle.net_cap == plan.net_cap
+    assert bundle.direction == plan.direction
+    # Unit gross is the fixed sleeve contract, never a payload field (aegis-rd-ui1m).
+    assert "gross_cap" not in payload["plan"]
+    assert "net_cap" not in payload["plan"]
 
 
 def test_bundle_payload_round_trips_band_destination_fraction() -> None:
@@ -115,8 +115,6 @@ def test_bundle_payload_round_trips_band_destination_fraction() -> None:
             instrument_id: DriftBand(up=0.10, down=0.20, destination_fraction=0.5)
             for instrument_id in contract.instrument_ids
         },
-        gross_cap=plan.gross_cap,
-        net_cap=plan.net_cap,
         direction=plan.direction,
     )
 
@@ -180,16 +178,20 @@ def test_bundle_payload_omits_adjustment_mode_for_etf_only_contracts() -> None:
     assert bundle.contract.adjustment_mode is None
 
 
-def test_bundle_payload_rejects_v3_schema() -> None:
-    """Forward-First: v3 recorded no adjustment mode, so no v3 payload is trusted —
-    an old-schema bundle fails by version, never by silently discarding the field."""
+@pytest.mark.parametrize(
+    "old_version", ["execution_bundle.v3", "execution_bundle.v4"]
+)
+def test_bundle_payload_rejects_old_schema_versions(old_version: str) -> None:
+    """Forward-First: v3 recorded no adjustment mode, v4 locked caps in the plan
+    (aegis-rd-ui1m) — no old-schema payload is trusted. It fails by version,
+    never by silently discarding or reinterpreting a field."""
     contract = _contract()
     payload = dump_bundle_payload(
         contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
     )
-    payload["schema_version"] = "execution_bundle.v3"
+    payload["schema_version"] = old_version
 
-    with pytest.raises(BundlePayloadSchemaError, match="execution_bundle.v4"):
+    with pytest.raises(BundlePayloadSchemaError, match="execution_bundle.v5"):
         load_bundle_payload(payload)
 
 

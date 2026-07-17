@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
 from aegis_data.marking import split_mark_token
-from aegis_runtime import DriftBand, ExposureLimits
+from aegis_runtime import DriftBand
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -24,7 +24,9 @@ from research.aegis_research.configuration.field_types import (
     UnitInterval,
 )
 
-CONFIG_SCHEMA_VERSION = 10
+# v11 (aegis-rd-ui1m): portfolio.gross_cap / portfolio.net_cap removed — the
+# exposure envelope is the fixed unit-gross sleeve contract, not config.
+CONFIG_SCHEMA_VERSION = 11
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
@@ -298,7 +300,6 @@ class PortfolioConfig:
     # (the EUR->ccy buy and the ccy->EUR sell). Default 0 = off, so a single-currency
     # book is unaffected.
     fx_conversion_cost: NonNegativeRate = 0.0
-    net_cap: NonNegativeRate = 1.0
     # Per-name no-trade band as a fraction of NAV (live-research parity). A
     # position is left to drift and is rebalanced to target only once its weight
     # crosses the directional width: ``band_up`` gates trims and ``band_down``
@@ -333,9 +334,9 @@ class PortfolioConfig:
     # the 90k tier break. Keep in sync with aegis-trader/book.toml
     # [costs.margin_interest] - same pin, two homes.
     margin_interest_rate: NonNegativeRate = 0.0367
-    # No schema default — required. Keyword-only so a required field can sit among
-    # defaulted ones — every construction site splats **raw anyway.
-    gross_cap: PositiveCash = field(kw_only=True)
+    # The exposure envelope is NOT configurable: sleeve weights are unit-gross by
+    # contract (aegis_runtime.bundle.SLEEVE_GROSS_LIMIT; aegis-rd-ui1m) — the book
+    # allocator is the only leverager. Only direction is declared per run.
     # Required (validation rejects a config missing it); no silent long-only default.
     direction: Literal["longonly", "shortonly", "both"] = field(kw_only=True)
 
@@ -365,11 +366,6 @@ class PortfolioConfig:
                 else override.destination_fraction
             ),
         )
-
-    @property
-    def exposure_limits(self) -> ExposureLimits:
-        """This Run's validated Exposure Limits, built from the gross/net/direction triple."""
-        return ExposureLimits(self.gross_cap, self.net_cap, self.direction)
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

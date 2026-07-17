@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "15e128b957ea30722bf0f8fc99d1f746c3854dca63712df47694c946bcf0866e",
+      "hash": "0fdb3e808c9887d7166e73b2256a7cd9defac2deb7e27f20357b34c8bb4057ef",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 64625,
+      "size": 64371,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -118,10 +118,8 @@
       "fill_timing": "next_close",
       "fixed_fee": 0.0,
       "fx_conversion_cost": 0.0,
-      "gross_cap": 1.0,
       "init_cash": 10000.0,
       "margin_interest_rate": 0.0367,
-      "net_cap": 1.0,
       "short_borrow_rate": 0.005,
       "short_rebate_rate": 0.0,
       "slippage": 0.0005
@@ -138,7 +136,7 @@
       "min_oos_trades": 5,
       "year_freq": "252D"
     },
-    "schema_version": 10,
+    "schema_version": 11,
     "strategy": {
       "id": "tests.momentum_rotator",
       "params": {}
@@ -147,12 +145,12 @@
   "evidence": {
     "component_registry_fingerprint": "9fc1dd446661fe44915f69debe840ce7a1071e10231bb583b7c7e794c1d4b77e",
     "config": {
-      "authored_config_hash": "d91ebac0dcc8f80f429e906f78d1dcb1efe48a228e01edf51eb8ae1b4a3d8485",
+      "authored_config_hash": "7d945f5c923c37a3c17bf7a1c088f5adafcb706e40e5af1e392f6d4272a15920",
       "raw_config_identity": {
-        "hash": "0dc44cf31073247e09698586f078b79a6b0b0aeb16be2ac1c0f3ba59f17eaa10"
+        "hash": "c847889f1d5c746c629dd59df30329a77f1952449474b8dd2e45e1df43701ca4"
       },
-      "resolved_config_hash": "4d687570f8073749e96de1f3072f5a8af2b3f0d4df5dc05b824ecc3e45e6243e",
-      "schema_version": 10,
+      "resolved_config_hash": "a05e835cfe5386b917e726be7c83e15b3a5fdcb83bdd7927be57cffc103b0735",
+      "schema_version": 11,
       "selection": {
         "config_path": "<masked>",
         "source": "explicit"
@@ -184,7 +182,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_ea0ecd5799c3891fc3a9bc4c5dd71494",
+          "candidate_key": "cand_b02f9b04b43e7dfa72d170c34b793159",
           "held_out_metrics": {
             "0": {
               "max_dd": 14.7265124905672,
@@ -231,10 +229,8 @@
               "fill_timing": "next_close",
               "fixed_fee": 0.0,
               "fx_conversion_cost": 0.0,
-              "gross_cap": 1.0,
               "init_cash": 10000.0,
               "margin_interest_rate": 0.0367,
-              "net_cap": 1.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005
@@ -562,7 +558,7 @@
           }
         },
         {
-          "candidate_key": "cand_4de9bf3a6a7c58b6fc982ee913aae85a",
+          "candidate_key": "cand_5197441358a3e6d7fcb72b7777e0fae3",
           "held_out_metrics": {
             "0": {
               "max_dd": 16.867248207176864,
@@ -609,10 +605,8 @@
               "fill_timing": "next_close",
               "fixed_fee": 0.0,
               "fx_conversion_cost": 0.0,
-              "gross_cap": 1.0,
               "init_cash": 10000.0,
               "margin_interest_rate": 0.0367,
-              "net_cap": 1.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005
@@ -940,7 +934,7 @@
           }
         },
         {
-          "candidate_key": "cand_67e59b28a4167ea952331f107feb83e6",
+          "candidate_key": "cand_be29e393a53cb4d7d3536f78814a9fc8",
           "held_out_metrics": {
             "0": {
               "max_dd": 22.55486762309763,
@@ -987,10 +981,8 @@
               "fill_timing": "next_close",
               "fixed_fee": 0.0,
               "fx_conversion_cost": 0.0,
-              "gross_cap": 1.0,
               "init_cash": 10000.0,
               "margin_interest_rate": 0.0367,
-              "net_cap": 1.0,
               "short_borrow_rate": 0.005,
               "short_rebate_rate": 0.0,
               "slippage": 0.0005

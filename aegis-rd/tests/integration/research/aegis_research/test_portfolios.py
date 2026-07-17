@@ -17,6 +17,7 @@ from research.aegis_research.optimization.window_evaluation._simulation import (
 )
 from tests.support.research.aegis_research.factories import (
     SINGLE_CANDIDATE_ID,
+    make_engine_mechanics_portfolio,
     make_portfolio_config,
     make_single_book_portfolio,
 )
@@ -412,7 +413,7 @@ def test_signed_both_direction_run_opens_a_real_short_position() -> None:
     pf = make_single_book_portfolio(
         close,
         allocations,
-        make_portfolio_config(fees=0, slippage=0, gross_cap=1.0, direction="both"),
+        make_portfolio_config(fees=0, slippage=0, direction="both"),
     )
 
     assets = pf.assets
@@ -420,29 +421,6 @@ def test_signed_both_direction_run_opens_a_real_short_position() -> None:
     assert assets.iloc[1][(SINGLE_CANDIDATE_ID, "B")] < 0
     realized = pf.get_allocations(group_by=False)
     assert realized.iloc[1][(SINGLE_CANDIDATE_ID, "B")] < 0
-
-
-def test_batch_rejects_candidate_breaching_net_cap_and_names_it() -> None:
-    index = pd.date_range("2024-01-01", periods=3)
-    close = pd.DataFrame(
-        {"A": [10.0, 10.0, 10.0], "B": [20.0, 20.0, 20.0]},
-        index=index,
-    )
-    columns = pd.MultiIndex.from_product(
-        [["cand-ok", "cand-net-long"], ["A", "B"]],
-        names=["candidate_id", "symbol"],
-    )
-    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
-    allocations.loc[index[0], ("cand-ok", "A")] = 0.5
-    allocations.loc[index[0], ("cand-ok", "B")] = -0.5
-    allocations.loc[index[0], ("cand-net-long", "A")] = 0.5
-    allocations.loc[index[0], ("cand-net-long", "B")] = 0.5
-
-    config = make_portfolio_config(
-        fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"
-    )
-    with pytest.raises(ValueError, match="cand-net-long"):
-        simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
 
 def test_batch_accepts_partial_nan_sparse_allocation_updates() -> None:
@@ -488,7 +466,7 @@ def test_batch_rejects_longonly_candidate_with_a_negative_weight() -> None:
     allocations.loc[index[0], ("cand-has-short", "B")] = -0.5
 
     config = make_portfolio_config(
-        fees=0, slippage=0, gross_cap=1.0, net_cap=1.0, direction="longonly"
+        fees=0, slippage=0, direction="longonly"
     )
     with pytest.raises(ValueError, match="longonly"):
         simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
@@ -509,7 +487,7 @@ def test_batch_accepts_valid_market_neutral_book_within_caps() -> None:
     allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
 
     config = make_portfolio_config(
-        fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"
+        fees=0, slippage=0, direction="both"
     )
     pf = simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
@@ -528,7 +506,7 @@ def test_single_portfolio_rejects_book_breaching_gross_cap() -> None:
     )
 
     config = make_portfolio_config(
-        fees=0, slippage=0, gross_cap=1.0, net_cap=1.0, direction="longonly"
+        fees=0, slippage=0, direction="longonly"
     )
     with pytest.raises(ValueError, match="gross_cap"):
         make_single_book_portfolio(close, allocations, config)
@@ -541,20 +519,20 @@ def test_market_neutral_run_book_is_net_zero_and_realized_matches_requested() ->
         index=index,
     )
     allocations = pd.DataFrame(
-        {"A": [1.0, np.nan, np.nan, np.nan, np.nan], "B": [-1.0, np.nan, np.nan, np.nan, np.nan]},
+        {"A": [0.5, np.nan, np.nan, np.nan, np.nan], "B": [-0.5, np.nan, np.nan, np.nan, np.nan]},
         index=index,
     )
 
     pf = make_single_book_portfolio(
         close,
         allocations,
-        make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both"),
+        make_portfolio_config(fees=0, slippage=0, direction="both"),
     )
 
     realized = pf.get_allocations(group_by=None)
     fill_row = realized.loc[index[0]]
-    assert fill_row[(SINGLE_CANDIDATE_ID, "A")] == pytest.approx(1.0, abs=2e-5)
-    assert fill_row[(SINGLE_CANDIDATE_ID, "B")] == pytest.approx(-1.0, abs=2e-5)
+    assert fill_row[(SINGLE_CANDIDATE_ID, "A")] == pytest.approx(0.5, abs=2e-5)
+    assert fill_row[(SINGLE_CANDIDATE_ID, "B")] == pytest.approx(-0.5, abs=2e-5)
     assert fill_row.sum() == pytest.approx(0.0, abs=1e-9)
 
 
@@ -687,11 +665,10 @@ def test_short_leg_carry_drops_return_and_long_leg_is_never_charged() -> None:
         index=index,
     )
 
-    carry_on = make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, direction="both")
+    carry_on = make_portfolio_config(fees=0, slippage=0, direction="both")
     carry_off = make_portfolio_config(
         fees=0,
         slippage=0,
-        gross_cap=2.0,
         direction="both",
         short_borrow_rate=0.0,
         short_rebate_rate=0.0,
@@ -719,15 +696,13 @@ def test_levered_long_book_pays_margin_interest_on_negative_group_cash() -> None
         init_cash=10_000.0,
         fees=0,
         slippage=0,
-        gross_cap=2.0,
-        net_cap=2.0,
         direction="longonly",
         margin_interest_rate=rate,
         short_borrow_rate=0.0,
         short_rebate_rate=0.0,
     )
 
-    total_return = _total_return(make_single_book_portfolio(close, allocations, config))
+    total_return = _total_return(make_engine_mechanics_portfolio(close, allocations, config))
 
     assert total_return == pytest.approx(-0.0015, abs=1e-9)
 
@@ -745,8 +720,6 @@ def test_levered_pure_futures_book_pays_no_margin_interest() -> None:
         init_cash=10_000.0,
         fees=0,
         slippage=0,
-        gross_cap=2.0,
-        net_cap=2.0,
         direction="longonly",
         margin_interest_rate=rate,
         short_borrow_rate=0.0,
@@ -754,7 +727,7 @@ def test_levered_pure_futures_book_pays_no_margin_interest() -> None:
     )
 
     total_return = _total_return(
-        make_single_book_portfolio(close, allocations, config, futures_roots=("ES",))
+        make_engine_mechanics_portfolio(close, allocations, config, futures_roots=("ES",))
     )
 
     assert total_return == pytest.approx(0.0, abs=1e-9)
@@ -773,8 +746,6 @@ def test_mixed_spot_and_futures_book_charges_only_spot_cash_deficit() -> None:
         init_cash=10_000.0,
         fees=0,
         slippage=0,
-        gross_cap=2.0,
-        net_cap=2.0,
         direction="longonly",
         margin_interest_rate=rate,
         short_borrow_rate=0.0,
@@ -782,7 +753,7 @@ def test_mixed_spot_and_futures_book_charges_only_spot_cash_deficit() -> None:
     )
 
     total_return = _total_return(
-        make_single_book_portfolio(close, allocations, config, futures_roots=("ES",))
+        make_engine_mechanics_portfolio(close, allocations, config, futures_roots=("ES",))
     )
 
     assert total_return == pytest.approx(-0.0006, abs=1e-9)
@@ -799,16 +770,14 @@ def test_all_false_futures_mask_is_a_margin_interest_noop() -> None:
         init_cash=10_000.0,
         fees=0,
         slippage=0,
-        gross_cap=2.0,
-        net_cap=2.0,
         direction="longonly",
         margin_interest_rate=rate,
         short_borrow_rate=0.0,
         short_rebate_rate=0.0,
     )
 
-    mask_free = make_single_book_portfolio(close, allocations, config)
-    all_false_mask = make_single_book_portfolio(
+    mask_free = make_engine_mechanics_portfolio(close, allocations, config)
+    all_false_mask = make_engine_mechanics_portfolio(
         close, allocations, config, futures_roots=("ES",)
     )
 
@@ -825,15 +794,13 @@ def test_explicit_zero_margin_interest_rate_charges_nothing() -> None:
         init_cash=10_000.0,
         fees=0,
         slippage=0,
-        gross_cap=2.0,
-        net_cap=2.0,
         direction="longonly",
         margin_interest_rate=0.0,
         short_borrow_rate=0.0,
         short_rebate_rate=0.0,
     )
 
-    pf = make_single_book_portfolio(close, allocations, config)
+    pf = make_engine_mechanics_portfolio(close, allocations, config)
     total_return = _total_return(pf)
 
     assert total_return == pytest.approx(0.0, abs=1e-9)
@@ -861,7 +828,6 @@ def test_unlevered_champion_shaped_book_is_bit_identical_with_margin_interest_en
         init_cash=10_000.0,
         fees=0,
         slippage=0,
-        gross_cap=1.0,
         direction="both",
         margin_interest_rate=0.0324,
         short_borrow_rate=0.0,
@@ -871,7 +837,6 @@ def test_unlevered_champion_shaped_book_is_bit_identical_with_margin_interest_en
         init_cash=10_000.0,
         fees=0,
         slippage=0,
-        gross_cap=1.0,
         direction="both",
         margin_interest_rate=0.0,
         short_borrow_rate=0.0,
@@ -996,7 +961,7 @@ def test_records_count_exit_trades_for_long_and_short_legs() -> None:
     pf = make_single_book_portfolio(
         close,
         allocations,
-        make_portfolio_config(fees=0, slippage=0, gross_cap=1.0, direction="both"),
+        make_portfolio_config(fees=0, slippage=0, direction="both"),
     )
 
     exit_trades = pf.exit_trades.records_readable
@@ -1008,10 +973,11 @@ def test_records_count_exit_trades_for_long_and_short_legs() -> None:
 def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, PortfolioConfig]:
     """Return (close, allocations, config) for a leveraged long/short book.
 
-    Gross equals the leverage cap (5.0), then a mid-run price drift at bar 10
-    forces a rebalance that stresses the cash-sharing pool.  With the surplus
-    buying-power multiplier (k >= 2) the book fills cleanly; without it, the
-    engine would under-fill under eager leverage.
+    Gross equals the unit sleeve contract (1.0) — the largest book the gate
+    admits — then a mid-run price drift at bar 10 forces a rebalance that
+    stresses the cash-sharing pool.  With the surplus buying-power multiplier
+    (k >= 2) the book fills cleanly; without it, the engine would under-fill
+    under eager leverage.
     """
     index = pd.date_range("2024-01-01", periods=20)
     symbols = ["A", "B", "C", "D"]
@@ -1024,21 +990,15 @@ def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, Portfoli
         },
         index=index,
     )
-    columns = pd.MultiIndex.from_product(
-        [["cand-underfilled"], symbols],
-        names=["candidate_id", "symbol"],
-    )
-    allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
+    allocations = pd.DataFrame(np.nan, index=index, columns=symbols, dtype=float)
     for i, s in enumerate(symbols):
-        allocations.loc[index[0], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
+        allocations.loc[index[0], s] = 0.25 if i % 2 == 0 else -0.25
     for i, s in enumerate(symbols):
-        allocations.loc[index[10], ("cand-underfilled", s)] = 1.25 if i % 2 == 0 else -1.25
+        allocations.loc[index[10], s] = 0.25 if i % 2 == 0 else -0.25
 
     config = make_portfolio_config(
         fees=0,
         slippage=0,
-        gross_cap=5.0,
-        net_cap=0.0,
         direction="both",
         init_cash=10000,
         short_borrow_rate=0.0,
@@ -1048,11 +1008,11 @@ def _underfilled_leverage_inputs() -> tuple[pd.DataFrame, pd.DataFrame, Portfoli
 
 
 def test_underfilled_leveraged_book_fills_cleanly_with_surplus_buying_power() -> None:
-    # With surplus buying power (leverage = k x gross_cap, k >= 2), the
-    # formerly under-filled leveraged book now fills exactly: zero NoCash
+    # With surplus buying power (leverage = k x SLEEVE_GROSS_LIMIT, k >= 2), the
+    # formerly under-filled at-contract book fills exactly: zero NoCash
     # rejections, realized weights == requested at the mid-run rebalance.
     close, allocations, config = _underfilled_leverage_inputs()
-    pf = simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
+    pf = make_single_book_portfolio(close, allocations, config)
 
     # No NoCash rejections in the logs.
     records = pf.logs.records
@@ -1061,11 +1021,11 @@ def test_underfilled_leveraged_book_fills_cleanly_with_surplus_buying_power() ->
     # Realized allocations match requested at the bar-10 rebalance.
     realized = pf.get_allocations(group_by=None)
     fill_row = realized.loc[allocations.index[10]]
-    # cand-underfilled: A/C long, B/D short at 1.25 each
-    assert fill_row[("cand-underfilled", "A")] == pytest.approx(1.25, abs=1e-9)
-    assert fill_row[("cand-underfilled", "B")] == pytest.approx(-1.25, abs=1e-9)
-    assert fill_row[("cand-underfilled", "C")] == pytest.approx(1.25, abs=1e-9)
-    assert fill_row[("cand-underfilled", "D")] == pytest.approx(-1.25, abs=1e-9)
+    # A/C long, B/D short at 0.25 each
+    assert fill_row[(SINGLE_CANDIDATE_ID, "A")] == pytest.approx(0.25, abs=1e-9)
+    assert fill_row[(SINGLE_CANDIDATE_ID, "B")] == pytest.approx(-0.25, abs=1e-9)
+    assert fill_row[(SINGLE_CANDIDATE_ID, "C")] == pytest.approx(0.25, abs=1e-9)
+    assert fill_row[(SINGLE_CANDIDATE_ID, "D")] == pytest.approx(-0.25, abs=1e-9)
 
 
 def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
@@ -1086,7 +1046,7 @@ def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
     pf = simulate_portfolio_batch(
         close, allocations,
         ResolvedBook(
-            make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both")
+            make_portfolio_config(fees=0, slippage=0, direction="both")
         ),
         periods_per_year=252,
     )
@@ -1110,7 +1070,7 @@ def test_batch_nocash_tripwire_is_invoked_and_error_propagates(monkeypatch) -> N
     allocations = pd.DataFrame(np.nan, index=index, columns=columns, dtype=float)
     allocations.loc[index[0], ("cand-neutral", "A")] = 0.5
     allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
-    config = make_portfolio_config(fees=0, slippage=0, gross_cap=2.0, net_cap=0.0, direction="both")
+    config = make_portfolio_config(fees=0, slippage=0, direction="both")
 
     calls = []
 
@@ -1269,7 +1229,7 @@ def test_same_close_fill_timing_fills_at_current_bar_close() -> None:
 
 
 def test_portfolio_config_fill_timing_defaults_to_next_close() -> None:
-    assert PortfolioConfig(gross_cap=1.0, direction="longonly").fill_timing == "next_close"
+    assert PortfolioConfig(direction="longonly").fill_timing == "next_close"
 
 
 def test_next_open_fill_timing_without_open_prices_raises() -> None:

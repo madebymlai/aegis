@@ -129,8 +129,6 @@ class WeightSleeveBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands=bands,
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)

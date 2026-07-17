@@ -54,7 +54,6 @@ class _FixedWeightBundle(ExecutionBundle):
         timeframe: str = "1D",
         lookback_bars: int = 20,
         band: DriftBand | None = None,
-        gross_cap: float = 1.0,
     ) -> None:
         self._instrument_id = instrument_id
         contract = DataContract(
@@ -83,8 +82,6 @@ class _FixedWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={instrument_id: band or DriftBand.symmetric(0.0)},
-            gross_cap=gross_cap,
-            net_cap=None,
             direction="both",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -272,8 +269,6 @@ class _FuturesBundle(_FixedWeightBundle):
             ),
             indicators=(),
             instrument_bands={continuous_id: DriftBand.symmetric(0.0)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="both",
         )
         ExecutionBundle.__init__(self, contract=contract, manifest=manifest, plan=plan)

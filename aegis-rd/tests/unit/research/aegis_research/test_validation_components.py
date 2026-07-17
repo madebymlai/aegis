@@ -70,7 +70,7 @@ def _resolve(
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "comp-val-test",
         "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": strategy if strategy is not None else {"id": "demo.strategy"},
         "indicators": indicators if indicators is not None else [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},

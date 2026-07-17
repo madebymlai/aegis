@@ -93,8 +93,6 @@ def _bundle(
         instrument_bands={
             instrument_id: DriftBand.symmetric(0.0) for instrument_id in contract.instrument_ids
         },
-        gross_cap=1.0,
-        net_cap=1.0,
         direction="longonly",
     )
     manifest = BundleManifest(

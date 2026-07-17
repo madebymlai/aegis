@@ -82,8 +82,6 @@ def make_bundle(
         ),
         indicators=(),
         instrument_bands=resolved_bands,
-        gross_cap=1.0,
-        net_cap=None,
         direction=direction,
     )
     return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)

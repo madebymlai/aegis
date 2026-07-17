@@ -166,8 +166,6 @@ class _TwoLegFixedWeightBundle(ExecutionBundle):
                 instrument_id: DriftBand.symmetric(0.02)
                 for instrument_id in self._instrument_ids
             },
-            gross_cap=1.0,
-            net_cap=None,
             direction="longonly",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)

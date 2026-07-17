@@ -104,9 +104,6 @@ class _FixedWeightBundle(ExecutionBundle):
         self,
         instrument_id: InstrumentId,
         weight: float,
-        *,
-        gross_cap: float = 1.0,
-        net_cap: float | None = None,
     ) -> None:
         self._instrument_id = instrument_id
         self._weight = weight
@@ -137,8 +134,6 @@ class _FixedWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={instrument_id: DriftBand.symmetric(0.02)},
-            gross_cap=gross_cap,
-            net_cap=net_cap,
             direction="longonly",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -213,8 +208,6 @@ class _TwoVenueBundle(ExecutionBundle):
             instrument_bands={
                 instrument_id: DriftBand.symmetric(0.0) for instrument_id in self._instrument_ids
             },
-            gross_cap=1.0,
-            net_cap=None,
             direction="longonly",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -269,8 +262,6 @@ class _ContinuousRootBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_ES: DriftBand.symmetric(0.02)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="longonly",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)
@@ -619,12 +610,7 @@ def _run_margin_interest_fixture(tmp_path):
     )
     registry = StubBundleRegistry(
         {
-            _WHEEL: _FixedWeightBundle(
-                _INSTRUMENT_ID,
-                1.5,
-                gross_cap=2.0,
-                net_cap=2.0,
-            )
+            _WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 1.5)
         }
     )
 
@@ -655,12 +641,7 @@ def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
     registry = StubBundleRegistry(
         {
-            _WHEEL: _FixedWeightBundle(
-                _INSTRUMENT_ID,
-                0.5,
-                gross_cap=2.0,
-                net_cap=2.0,
-            )
+            _WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)
         }
     )
 

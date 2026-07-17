@@ -11,7 +11,7 @@ _ES = InstrumentId.from_str("ES.XCME")
 
 
 def _portfolio(**kwargs: object) -> PortfolioConfig:
-    return PortfolioConfig(gross_cap=1.0, direction="both", **kwargs)  # type: ignore[arg-type]
+    return PortfolioConfig(direction="both", **kwargs)  # type: ignore[arg-type]
 
 
 def test_instrument_bands_from_fans_sleeve_default_to_every_instrument() -> None:

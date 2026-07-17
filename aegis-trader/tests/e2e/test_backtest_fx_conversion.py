@@ -87,8 +87,6 @@ class _UsdFixedWeightBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={_USD_INSTRUMENT_ID: DriftBand.symmetric(0.02)},
-            gross_cap=1.0,
-            net_cap=None,
             direction="longonly",
         )
         super().__init__(contract=contract, manifest=manifest, plan=plan)

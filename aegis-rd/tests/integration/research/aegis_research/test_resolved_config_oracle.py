@@ -42,9 +42,9 @@ def _raw(name: str, portfolio: dict[str, object]) -> dict[str, object]:
 
 
 REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
-    "canonical_grid": _raw("canonical_run", {"gross_cap": 1.0, "direction": "longonly"}),
-    # integer-literal caps — the case that diverges if numeric fields are coerced to float
-    "int_valued_caps": _raw("int_caps", {"gross_cap": 1, "net_cap": 1, "direction": "both"}),
+    "canonical_grid": _raw("canonical_run", {"direction": "longonly"}),
+    # integer-literal cash — the case that diverges if numeric fields are coerced to float
+    "int_valued_cash": _raw("int_cash", {"direction": "both", "init_cash": 10_000}),
 }
 
 # Re-pinned when ``margin_interest_rate`` moved to the first-tier pin (0.0367,
@@ -59,9 +59,12 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 # Re-pinned 2026-07-10 for the declared mark mode (aegis-rd-tggo.2): DataConfig
 # grew ``mark_modes``, the parsed form of the ``:MODE`` token on tradeable ids
 # (``UEQC.IBIS:QUOTE``), so the resolved document carries the declaration.
+# Re-pinned 2026-07-17 for the unit-gross sleeve contract (aegis-rd-ui1m):
+# portfolio.gross_cap/net_cap left the schema (schema_version 11), so the
+# resolved document shrank; the int-coercion case now rides init_cash.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "3c9f40558a9f695a660323d7120a8dd9a58efa83230581c2c6c630afd544bc2b",
-    "int_valued_caps": "383fc2084f8be530b724357d3273863036af4baa655646edd1ad136719899959",
+    "canonical_grid": "16d4d6ef68271db53b41ba949af63a23313467177f283418145c9a07e27aadaf",
+    "int_valued_cash": "ff743a3ccfb3b6e32c4369bfa2fa8441db666439d8e12fe3ca92fc865beca3de",
 }
 
 

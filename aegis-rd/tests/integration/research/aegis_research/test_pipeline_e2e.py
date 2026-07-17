@@ -44,7 +44,7 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
                     end="2024-10-27",
                     path=tmp_path / "catalog",
                 ),
-                "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+                "portfolio": {"direction": "longonly"},
                 "strategy": {"id": "tests.momentum_rotator"},
                 "indicators": [
                     {

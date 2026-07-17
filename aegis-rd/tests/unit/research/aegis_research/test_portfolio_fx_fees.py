@@ -14,7 +14,7 @@ def test_per_symbol_fees_charge_each_leg_its_own_rate_in_simulation() -> None:
     allocations = pd.DataFrame(
         {"A": [0.0, 0.5, 0.5, 0.5], "B": [0.0, 0.5, 0.5, 0.5]}, index=index
     )
-    config = PortfolioConfig(gross_cap=1.0, direction="both", fees=0.0)
+    config = PortfolioConfig(direction="both", fees=0.0)
 
     cheap = make_single_book_portfolio(
         close, allocations, config, fees_by_symbol=pd.Series({"A": 0.001, "B": 0.001})
@@ -35,10 +35,10 @@ def test_fixed_fee_charges_a_flat_amount_on_every_order() -> None:
     # order count is deterministic.
     allocations = pd.DataFrame({"A": [0.0, 1.0, 1.0, 1.0]}, index=index)
     free = PortfolioConfig(
-        gross_cap=1.0, direction="longonly", fees=0.0, slippage=0.0, fill_timing="same_close"
+        direction="longonly", fees=0.0, slippage=0.0, fill_timing="same_close"
     )
     charged = PortfolioConfig(
-        gross_cap=1.0, direction="longonly", fees=0.0, slippage=0.0,
+        direction="longonly", fees=0.0, slippage=0.0,
         fill_timing="same_close", fixed_fee=2.0,
     )
 

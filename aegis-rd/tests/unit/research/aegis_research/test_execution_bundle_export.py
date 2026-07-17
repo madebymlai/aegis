@@ -40,7 +40,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
         ComponentSpec(
             family="indicators",
             component_id="tests.export_indicator",
-            module="aegis_exec_tests_export_strategy_cand_f2e.indicator_0",
+            module="aegis_exec_tests_export_strategy_cand_605.indicator_0",
             input_names=("Close",),
             output_names=("signal",),
             params={"window": 5},
@@ -49,7 +49,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
     assert artifact.plan.strategy == ComponentSpec(
         family="strategies",
         component_id="tests.export_strategy",
-        module="aegis_exec_tests_export_strategy_cand_f2e.strategy",
+        module="aegis_exec_tests_export_strategy_cand_605.strategy",
         input_names=("Close",),
         output_names=(),
         params={"holding_period": 2},
@@ -139,7 +139,7 @@ def _seed_candidate_store(store_path: Path) -> None:
             "source_hash": "fixture-source",
         },
         data_identity={"schema_version": "candidate_data_identity.fixture"},
-        book_settings={"gross_cap": 1.0, "net_cap": 1.0},
+        book_settings={"net_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     with CandidateStore(store_path) as store:

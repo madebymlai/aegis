@@ -220,7 +220,8 @@ def _render_portfolio_section() -> str:
     return _render_nested_section(
         "portfolio",
         title="### `portfolio` (required)",
-        tag="keyword-only (no silent default); requires explicit `gross_cap` and `direction`",
+        tag="keyword-only (no silent default); requires explicit `direction` — the "
+        "exposure envelope is the fixed unit-gross sleeve contract, not config",
         extra_lines=[
             "**`band_up` / `band_down`** — sleeve-wide no-trade band widths. "
             "`band_up` gates trims and `band_down` gates adds. Defaults are zero, "
@@ -465,7 +466,6 @@ def _render_example() -> str:
       timeframe: "1D"
 
     portfolio:
-      gross_cap: 1.0
       direction: longonly
       base_currency: EUR
       band_up: 0.0
@@ -524,7 +524,6 @@ def _render_futures_example() -> str:
       timeframe: "1D"
 
     portfolio:
-      gross_cap: 1.0
       direction: longonly
       base_currency: EUR
       band_up: 0.0

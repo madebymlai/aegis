@@ -1,4 +1,4 @@
-schema_version: 10
+schema_version: 11
 name: tests_tune_lock_vol
 output_dir: runs/etf_vanguard_tune
 
@@ -11,7 +11,6 @@ data:
   arrays: [OHLCV]
 
 portfolio:
-  gross_cap: 0.8
   direction: longonly
   fees: 0.0005
   slippage: 0.0005

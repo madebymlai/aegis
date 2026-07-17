@@ -336,7 +336,7 @@ def _run_config_payload(
             end="2024-03-21",
             path=catalog_path,
         ),
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": strategy,
         "indicators": indicators,
         "ranking": {"metric": "total_return"},

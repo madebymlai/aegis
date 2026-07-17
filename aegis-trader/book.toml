@@ -30,7 +30,10 @@ sleeve_reversion_fraction = 0.5
 # or ~USD 424.4k average debit.  Treat the old "+13% net" analytic overlay as
 # superseded by these measured per-currency engine numbers.
 # Commingled Book caps as fractions of NAV, applied after Sleeve allocation and
-# netting. Each Execution Bundle separately enforces its standalone Sleeve limits.
+# netting. This is the ONLY configurable exposure ceiling: sleeve weights are
+# unit-gross by contract (aegis_runtime SLEEVE_GROSS_LIMIT, enforced fail-closed
+# by every Execution Bundle; aegis-rd-ui1m), so the allocator below is the only
+# leverager.
 gross_cap = 1.75
 
 # Backtest funding: 5,000 EUR only (foreign legs reached via per-currency margin loans).

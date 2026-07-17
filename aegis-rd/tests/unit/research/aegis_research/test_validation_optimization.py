@@ -50,7 +50,7 @@ def _resolve(optimization: dict[str, Any] | None, *, tmp_path: Path):
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "val-test",
         "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
-        "portfolio": {"gross_cap": 1.0, "direction": "longonly"},
+        "portfolio": {"direction": "longonly"},
         "strategy": {"id": "demo.strategy"},
         "indicators": [],
         "ranking": {"metric": "total_return"},
