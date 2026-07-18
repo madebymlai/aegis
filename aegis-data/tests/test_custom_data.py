@@ -14,6 +14,7 @@ from aegis_data.custom_data import (
     FixtureRecord,
     ServedCustomData,
     UnknownCustomArrayError,
+    UnknownCustomDataRecordError,
     VOCABULARY,
     arrays,
     capture,
@@ -24,8 +25,20 @@ from aegis_data.custom_data import (
     records,
     records_for_arrays,
 )
+from aegis_data.distributions import Distribution
 
 _INSTRUMENT = InstrumentId.from_str("SPY.ARCA")
+
+
+def test_distribution_is_not_a_custom_array_record_kind(tmp_path: Path) -> None:
+    with pytest.raises(UnknownCustomDataRecordError, match="Distribution"):
+        records(
+            Distribution,
+            (_INSTRUMENT,),
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-03"),
+            catalog_path=tmp_path,
+        )
 
 
 @dataclass

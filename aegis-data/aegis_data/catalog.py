@@ -232,22 +232,22 @@ class CatalogBackedDataPort:
         """
         ohlcv = self._load_raw_bars(request)
         instruments = self._complete_definitions(request.instrument_ids)
-        from aegis_data.custom_data import (
-            read_record_requirements,
-            verify_record_requirements,
+        from aegis_data._distribution_verification import (
+            ensure_distribution_window,
+            read_distribution_window,
         )
 
-        verify_record_requirements(
+        ensure_distribution_window(
             self.catalog,
             request.instrument_ids,
             start=request.start,
             end=request.end,
-            providers=self._record_providers(),
+            provider=self.distribution_provider,
             clock_ns=self.clock_ns,
             mark_bars=self._mark_bars,
             ensure_bar_coverage=self._ensure_bar_interval,
         )
-        verified = read_record_requirements(
+        verified = read_distribution_window(
             self.catalog,
             request.instrument_ids,
             start=request.start,
@@ -420,9 +420,9 @@ class CatalogBackedDataPort:
         raw bars, yet its not-applicable rows are real Run evidence.  An
         unresolvable id still fails loud.
         """
-        from aegis_data.custom_data import record_coverage_report
+        from aegis_data._distribution_verification import distribution_coverage_report
 
-        return record_coverage_report(
+        return distribution_coverage_report(
             self.catalog,
             tuple(instrument_ids),
             start=start,
@@ -437,14 +437,16 @@ class CatalogBackedDataPort:
         start: str | int | pd.Timestamp,
         end: str | int | pd.Timestamp,
     ) -> None:
-        from aegis_data.custom_data import force_reverify_record_requirements
+        from aegis_data._distribution_verification import (
+            force_reverify_distribution_window,
+        )
 
-        force_reverify_record_requirements(
+        force_reverify_distribution_window(
             self.catalog,
             tuple(instrument_ids),
             start=start,
             end=end,
-            providers=self._record_providers(),
+            provider=self.distribution_provider,
             clock_ns=self.clock_ns,
             mark_bars=self._mark_bars,
             ensure_bar_coverage=self._ensure_bar_interval,
@@ -495,13 +497,6 @@ class CatalogBackedDataPort:
             InstrumentId(Symbol(root), next(iter(venues))), legs
         )
 
-    def _record_providers(self) -> tuple[object, ...]:
-        return tuple(
-            provider
-            for provider in (self.provider, self.distribution_provider)
-            if provider is not None
-        )
-
     def _ensure_bar_interval(
         self,
         bar_type: BarType,
@@ -532,15 +527,21 @@ class CatalogBackedDataPort:
 
             on_coverage_filled = seed_definition
         ensure_coverage(
-            self.catalog,
-            data_cls=_bar_cls(),
-            identifier=str(bar_type),
             subject=str(bar_type),
             fetchers=fetchers,
             missing_intervals=lambda: self._missing_intervals(bar_type, request),
+            commit=lambda verified, records: self.catalog.write_data(
+                list(records),
+                data_cls=_bar_cls(),
+                identifier=str(bar_type),
+                start=verified.start_ns,
+                end=verified.end_ns,
+            )
+            if records
+            else None,
             coverage_error=lambda missing: _coverage_gap(bar_type, missing),
             provider_boundary=gap_fill_boundary,
-            consolidate=lambda: self.catalog.consolidate_data(
+            finalize=lambda: self.catalog.consolidate_data(
                 _bar_cls(),
                 identifier=str(bar_type),
                 deduplicate=True,

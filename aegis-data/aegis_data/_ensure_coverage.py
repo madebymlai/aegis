@@ -3,22 +3,9 @@
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, TypeVar
 
 import pandas as pd
-
-
-class CoverageCatalog(Protocol):
-    """Only the catalog commands needed by Ensure Coverage."""
-
-    def write_data(
-        self,
-        data: list[Any],
-        start: int | None = None,
-        end: int | None = None,
-        data_cls: type | None = None,
-        identifier: str | None = None,
-    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -51,9 +38,9 @@ RecordT = TypeVar("RecordT")
 MissingIntervals = Callable[[], list[CoverageInterval]]
 CoverageError = Callable[[Sequence[CoverageInterval]], Exception]
 ProviderBoundary = Callable[[str], AbstractContextManager[None]]
-VerifiedIntervalWriter = Callable[[CoverageInterval], None]
 CoverageSuccess = Callable[[], None]
-Consolidator = Callable[[], None]
+CoverageCommit = Callable[[CoverageInterval, tuple[RecordT, ...]], None]
+CoverageFinalizer = Callable[[], None]
 RecordSelector = Callable[[Sequence[RecordT], CoverageInterval], Sequence[RecordT]]
 
 
@@ -69,25 +56,22 @@ RecordFetcher = Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[RecordT]]
 
 
 def ensure_coverage(
-    catalog: CoverageCatalog,
     *,
-    data_cls: type,
-    identifier: str,
     subject: str,
     fetchers: Sequence[RecordFetcher[Any]],
     missing_intervals: MissingIntervals,
+    commit: CoverageCommit[Any],
+    finalize: CoverageFinalizer,
     coverage_error: CoverageError,
     provider_boundary: ProviderBoundary,
-    consolidate: Consolidator,
-    verified_interval_writer: VerifiedIntervalWriter | None = None,
     on_coverage_filled: CoverageSuccess | None = None,
     select_records: RecordSelector[Any] | None = None,
 ) -> None:
     """Fill and re-verify one requested catalog window.
 
     Fetchers are tried in order and each fills only what earlier ones left
-    missing (fill-order). A verified-interval writer can record provider
-    verification independently of whether the provider returned any records.
+    missing (fill-order). The caller commits every provider-verified interval,
+    including empty results, so each record domain owns its persistence model.
     An *environmental* failure raised inside
     ``provider_boundary`` (gateway drop, timeout) aborts the whole request —
     deliberately: providers here are complementary (each owns a window), not
@@ -96,7 +80,7 @@ def ensure_coverage(
     only when a genuinely redundant provider exists, with a test pinning which
     semantic is wanted.
 
-    The injected consolidator owns which physical dataset represents coverage:
+    The injected finalizer owns which physical dataset represents coverage:
     bars consolidate their record files, while sparse Custom Data consolidates
     its generic checked-interval records.
     """
@@ -118,18 +102,9 @@ def ensure_coverage(
                 if select_records is None
                 else select_records(served.records, verified)
             )
-            if records:
-                catalog.write_data(
-                    list(records),
-                    data_cls=data_cls,
-                    identifier=identifier,
-                    start=verified.start_ns,
-                    end=verified.end_ns,
-                )
-            if verified_interval_writer is not None:
-                verified_interval_writer(verified)
+            commit(verified, records)
 
-    consolidate()
+    finalize()
     remaining = missing_intervals()
     if remaining:
         raise coverage_error(remaining)
