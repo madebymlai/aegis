@@ -8,6 +8,7 @@ from datetime import datetime
 import pandas as pd
 from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.continuous_contract_model import ContinuousContractModel
+from aegis_data.roll import DatedContract
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -136,16 +137,41 @@ class RollDesk:
     def recovery_streams(
         self,
         declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
+        end: datetime,
     ) -> tuple[tuple[str, InstrumentId, str], ...]:
         """Return every dated leg whose bars can causally determine a declared root."""
         streams = {
             (root, InstrumentId.from_str(leg.symbol), declaration.timeframe)
             for root, declaration in declarations.items()
-            for leg in self._catalog_port.resolve_continuous(root).legs
+            for leg in self._recovery_legs(
+                root,
+                start=history_starts[root],
+                end=end,
+            )
         }
         return tuple(
             sorted(streams, key=lambda item: (item[0], item[1].value, item[2]))
         )
+
+    def _recovery_legs(
+        self,
+        root: str,
+        *,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[DatedContract, ...]:
+        """Return interval legs plus the successor whose volume can trigger a Roll."""
+        legs = tuple(
+            leg
+            for leg in self._catalog_port.resolve_continuous(root).legs
+            if leg.last_trade >= start.date()
+        )
+        end_leg = next(
+            (index for index, leg in enumerate(legs) if leg.last_trade >= end.date()),
+            len(legs) - 1,
+        )
+        return legs[: end_leg + 2]
 
     def start_recovery(
         self,

@@ -207,7 +207,6 @@ class StartupFastForward:
         )
         self._terminal: Ready | Halt | None = None
         self._begun = False
-        self._through: datetime | None = None
         self._book_activity: int | None = None
         self._startup_result: StartupResult | None = None
         self._continuous_history_starts: dict[str, datetime] = {}
@@ -218,7 +217,6 @@ class StartupFastForward:
         if self._begun:
             raise RecoveryProtocolError("startup fast-forward began more than once")
         self._begun = True
-        self._through = through
 
         startup = self._pipeline.startup_check()
         self._startup_result = startup
@@ -276,7 +274,9 @@ class StartupFastForward:
             }
             try:
                 recovery_streams = self._roll_desk.recovery_streams(
-                    self._book.continuous_declarations
+                    self._book.continuous_declarations,
+                    self._continuous_history_starts,
+                    through,
                 )
             except Exception as exc:
                 return self._halt(
@@ -295,7 +295,7 @@ class StartupFastForward:
                         through,
                     )
                     self._requests[key] = request
-                    self._required_events[key] = 0
+                    self._required_events[key] = 1
                     self._continuous_root_by_bar_type[bar_type] = root
                     requests.append(request)
 
@@ -368,10 +368,6 @@ class StartupFastForward:
             return marking_halt
 
         if self._roll_desk is not None and self._book.continuous_declarations:
-            if self._through is None:
-                raise RecoveryProtocolError(
-                    "startup fast-forward has no recovery boundary"
-                )
             effective_starts = dict(self._continuous_history_starts)
             for root in self._book.continuous_declarations:
                 timestamps = [
@@ -402,9 +398,6 @@ class StartupFastForward:
         if replay_halt is not None:
             return replay_halt
         for root, declaration in self._book.continuous_declarations.items():
-            frontier_halt = self._validate_continuous_frontier(root)
-            if frontier_halt is not None:
-                return frontier_halt
             series = (
                 self._roll_desk.series(declaration.continuous_id)
                 if self._roll_desk
@@ -417,39 +410,6 @@ class StartupFastForward:
                     f"continuous root {root!r} recovered {0 if series is None else len(series)} bars; required {required}",
                 )
         return self._ready()
-
-    def _validate_continuous_frontier(self, root: str) -> Halt | None:
-        if self._roll_desk is None or self._through is None:
-            raise RecoveryProtocolError(
-                "continuous frontier validated before recovery initialization"
-            )
-        continuous_id = self._book.continuous_declarations[root].continuous_id
-        front = self._roll_desk.front_leg(continuous_id)
-        if front is None:
-            return self._halt(
-                StartupGate.RECOVERY_HISTORY,
-                f"continuous root {root!r} recovered no execution front",
-            )
-        timestamps = [
-            timestamp
-            for (bar_type, timestamp) in self._received
-            if bar_type.instrument_id == front
-        ]
-        timeframe = self._book.continuous_declarations[root].timeframe
-        tail_start = startup_history_start(
-            self._through,
-            timeframe=timeframe,
-            required_bar_window=1,
-        )
-        if not timestamps or max(timestamps) < int(
-            tail_start.timestamp() * 1_000_000_000
-        ):
-            return self._halt(
-                StartupGate.RECOVERY_HISTORY,
-                f"continuous root {root!r} front {front.value} has no history "
-                "at the recovery frontier",
-            )
-        return None
 
     def _replay(self) -> Halt | None:
         by_timestamp: dict[int, list[Bar]] = {}

@@ -261,7 +261,11 @@ def test_recovery_replays_both_volume_rolls_and_releases_only_the_current_front(
     declarations = _declarations()
     history_starts = {"ES": _HISTORY_START}
 
-    streams = desk.recovery_streams(declarations)
+    streams = desk.recovery_streams(
+        declarations,
+        history_starts,
+        _dt("2024-07-01"),
+    )
     start_outcome = desk.start_recovery(
         declarations=declarations,
         history_starts=history_starts,

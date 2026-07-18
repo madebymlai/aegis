@@ -373,6 +373,21 @@ def test_fast_forward_halts_when_a_futures_roll_transition_is_unavailable() -> N
     assert outcome.gate == StartupGate.RECOVERY_HISTORY
 
 
+def test_fast_forward_does_not_invent_a_calendar_freshness_deadline() -> None:
+    port, native = es_port_two_rolls()
+    fast_forward, _roll_desk, _book = _futures_fast_forward(port)
+    loading = fast_forward.begin(through=datetime(2024, 7, 8, tzinfo=timezone.utc))
+    assert isinstance(loading, Recovering)
+    closure_history = _history_through(
+        native,
+        datetime(2024, 7, 3, tzinfo=timezone.utc),
+    )
+
+    outcome = _complete_futures_history(fast_forward, loading, closure_history)
+
+    assert isinstance(outcome, Ready)
+
+
 def test_fast_forward_halts_when_quote_marking_sides_do_not_share_timestamps() -> None:
     book_config = BookConfig(
         sleeves=(SleeveConfig(_SLEEVE, "trend.whl", 1.0),),
@@ -896,6 +911,17 @@ def _requested_futures_bars(
             key=lambda bar: (bar.ts_event, str(bar.bar_type)),
         )
     )
+
+
+def _history_through(
+    native: Mapping[InstrumentId, Sequence[Bar]],
+    through: datetime,
+) -> dict[InstrumentId, tuple[Bar, ...]]:
+    through_ns = int(through.timestamp() * 1_000_000_000)
+    return {
+        instrument_id: tuple(bar for bar in bars if bar.ts_event <= through_ns)
+        for instrument_id, bars in native.items()
+    }
 
 
 def _within_request(bar: Bar, request: Any) -> bool:
