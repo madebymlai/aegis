@@ -13,6 +13,7 @@ importing the adapter never pulls ``ibapi`` (the lazy boundary).
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -33,12 +34,14 @@ from aegis_data.catalog import (
     CatalogWindowRequest,
     GapFillProviderError,
     NautilusDataProviderPort,
+    ServedBars,
 )
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
     seed_instrument_definitions,
 )
+from aegis_data.ibkr.historical import _HistoricSession
 
 
 class _FakeHistoricClient:
@@ -68,6 +71,64 @@ class _SlowEmptyHistoricClient(_FakeHistoricClient):
     async def request_bars(self, **kwargs: Any) -> list[Any]:
         await asyncio.sleep(kwargs["timeout"])
         return []
+
+
+class _VendorRequest:
+    def __init__(self, future: asyncio.Future[list[Any]], req_id: int = 17) -> None:
+        self.future = future
+        self.req_id = req_id
+
+
+class _FailureSwallowingNativeClient:
+    async def _await_request(
+        self,
+        request: _VendorRequest,
+        timeout: int,
+        default_value: Any | None = None,
+        suppress_timeout_warning: bool = False,
+    ) -> Any:
+        del timeout, suppress_timeout_warning
+        try:
+            return await request.future
+        except ConnectionError:
+            return default_value
+
+    async def _stop_async(self) -> None:
+        pass
+
+
+class _ConnectionFailingVendorClient:
+    def __init__(self) -> None:
+        self._client = _FailureSwallowingNativeClient()
+
+    async def connect(self) -> None:
+        pass
+
+    async def request_bars(self, **kwargs: Any) -> list[Any]:
+        del kwargs
+        future = asyncio.get_running_loop().create_future()
+        future.set_exception(ConnectionError("IB Gateway connection lost"))
+        return await self._client._await_request(
+            _VendorRequest(future),
+            timeout=120,
+            default_value=[],
+        )
+
+    async def request_instruments(self, **kwargs: Any) -> list[Any]:
+        del kwargs
+        return []
+
+
+class _EmptyVendorClient(_ConnectionFailingVendorClient):
+    async def request_bars(self, **kwargs: Any) -> list[Any]:
+        del kwargs
+        future = asyncio.get_running_loop().create_future()
+        future.set_result([])
+        return await self._client._await_request(
+            _VendorRequest(future),
+            timeout=120,
+            default_value=[],
+        )
 
 
 def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
@@ -164,6 +225,139 @@ def test_request_bars_preempts_session_empty_fallback() -> None:
         )
 
     assert isinstance(excinfo.value.__cause__, TimeoutError)
+
+
+def test_request_bars_preserves_vendor_connection_failure() -> None:
+    vendor = _ConnectionFailingVendorClient()
+    provider = IbkrHistoricalProvider(
+        client_factory=lambda: _HistoricSession(vendor),
+    )
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    with pytest.raises(IbkrRequestError) as excinfo:
+        provider.request_bars(
+            bar_type,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+        )
+
+    completion_error = excinfo.value.__cause__
+    assert isinstance(completion_error.__cause__, ConnectionError)
+
+
+def test_request_bars_preserves_genuine_empty_vendor_history() -> None:
+    vendor = _EmptyVendorClient()
+    provider = IbkrHistoricalProvider(
+        client_factory=lambda: _HistoricSession(vendor),
+    )
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    result = provider.request_bars(
+        bar_type,
+        start=pd.Timestamp("2024-01-01", tz="UTC"),
+        end=pd.Timestamp("2024-02-01", tz="UTC"),
+    )
+
+    assert result == ServedBars((), pd.Timestamp("2024-02-01", tz="UTC"))
+
+
+def test_historical_failure_scope_resets_before_unrelated_requests() -> None:
+    vendor = _ConnectionFailingVendorClient()
+    session = _HistoricSession(vendor)
+
+    async def exercise_session() -> tuple[RuntimeError | None, list[Any]]:
+        failure: RuntimeError | None = None
+        try:
+            await session.request_bars()
+        except RuntimeError as exc:
+            failure = exc
+
+        future = asyncio.get_running_loop().create_future()
+        future.set_exception(ConnectionError("unrelated request failed"))
+        unrelated_result = await vendor._client._await_request(
+            _VendorRequest(future, req_id=18),
+            timeout=120,
+            default_value=[],
+        )
+        return failure, unrelated_result
+
+    failure, unrelated_result = asyncio.run(exercise_session())
+
+    assert isinstance(failure, RuntimeError)
+    assert unrelated_result == []
+
+
+def test_historical_session_matches_installed_request_await_contract() -> None:
+    """Guard the one intentional private upstream reach in the session adapter."""
+    check = """
+from inspect import Parameter, signature
+
+from nautilus_trader.adapters.interactive_brokers.client.client import (
+    InteractiveBrokersClient,
+)
+from aegis_data.ibkr.historical import _HistoricSession
+
+vendor = signature(InteractiveBrokersClient._await_request).parameters
+adapter = signature(_HistoricSession._await_request_preserving_failure).parameters
+expected_names = (
+    "self",
+    "request",
+    "timeout",
+    "default_value",
+    "suppress_timeout_warning",
+)
+assert tuple(vendor) == expected_names
+assert vendor["self"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert vendor["request"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert vendor["timeout"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert vendor["default_value"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert vendor["suppress_timeout_warning"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert vendor["self"].default is Parameter.empty
+assert vendor["request"].default is Parameter.empty
+assert vendor["timeout"].default is Parameter.empty
+assert vendor["default_value"].default is None
+assert vendor["suppress_timeout_warning"].default is False
+assert tuple(adapter) == expected_names
+assert adapter["self"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert adapter["request"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert adapter["timeout"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert adapter["default_value"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert adapter["suppress_timeout_warning"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert adapter["self"].default is Parameter.empty
+assert adapter["request"].default is Parameter.empty
+assert adapter["timeout"].default is Parameter.empty
+assert adapter["default_value"].default is None
+assert adapter["suppress_timeout_warning"].default is False
+"""
+
+    subprocess.run(
+        [sys.executable, "-c", check],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_catalog_port_preserves_vendor_connection_failure(tmp_path: Path) -> None:
+    vendor = _ConnectionFailingVendorClient()
+    provider = IbkrHistoricalProvider(
+        client_factory=lambda: _HistoricSession(vendor),
+    )
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path), provider=provider)
+    request = CatalogWindowRequest(
+        instrument_ids=(InstrumentId.from_str("AAPL.NASDAQ"),),
+        start="2024-01-01",
+        end="2024-02-01",
+    )
+
+    with pytest.raises(GapFillProviderError) as excinfo:
+        port.load_window(request)
+
+    provider_error = excinfo.value.__cause__
+    assert isinstance(provider_error, IbkrRequestError)
+    assert isinstance(provider_error.__cause__.__cause__, ConnectionError)
 
 
 def test_catalog_port_translates_request_deadline_to_provider_failure(

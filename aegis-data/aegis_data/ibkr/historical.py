@@ -17,6 +17,7 @@ import atexit
 import functools
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -101,6 +102,17 @@ class _AdjustedLastRegistrationError(RuntimeError):
 
 class _AdjustedLastCompletionError(RuntimeError):
     """A registered Nautilus adjusted-history request did not complete."""
+
+
+class _HistoricalRequestCompletionError(RuntimeError):
+    """A registered IBKR historical-bars request did not complete."""
+
+
+_PRESERVE_HISTORICAL_FAILURE: ContextVar[bool] = ContextVar(
+    "preserve_historical_failure",
+    default=False,
+)
+_HISTORICAL_REQUEST_FAILED = object()
 
 
 @dataclass(frozen=True)
@@ -488,12 +500,57 @@ class _HistoricSession:
         # Composition-root reach into Nautilus' missing public historic-session
         # interface.  Every request method talks only to this owned collaborator.
         self._native_client = client._client
+        self._await_vendor_request = self._native_client._await_request
+        self._native_client._await_request = self._await_request_preserving_failure
 
     async def connect(self) -> None:
         await self._client.connect()
 
     async def request_bars(self, **kwargs: Any) -> Sequence[Bar]:
-        return await self._client.request_bars(**kwargs)
+        token = _PRESERVE_HISTORICAL_FAILURE.set(True)
+        try:
+            return await self._client.request_bars(**kwargs)
+        finally:
+            _PRESERVE_HISTORICAL_FAILURE.reset(token)
+
+    async def _await_request_preserving_failure(
+        self,
+        request: Any,
+        timeout: int,
+        default_value: Any | None = None,
+        suppress_timeout_warning: bool = False,
+    ) -> Any:
+        preserve_failure = (
+            _PRESERVE_HISTORICAL_FAILURE.get()
+            and isinstance(default_value, list)
+            and not default_value
+        )
+        if not preserve_failure:
+            if default_value is None and not suppress_timeout_warning:
+                return await self._await_vendor_request(request, timeout)
+            return await self._await_vendor_request(
+                request,
+                timeout,
+                default_value=default_value,
+                suppress_timeout_warning=suppress_timeout_warning,
+            )
+
+        result = await self._await_vendor_request(
+            request,
+            timeout,
+            default_value=_HISTORICAL_REQUEST_FAILED,
+            suppress_timeout_warning=suppress_timeout_warning,
+        )
+        if result is not _HISTORICAL_REQUEST_FAILED:
+            return result
+
+        error = _HistoricalRequestCompletionError(
+            f"IBKR historical request {request.req_id} did not complete"
+        )
+        cause = _completed_request_failure(request)
+        if cause is not None:
+            raise error from cause
+        raise error
 
     async def request_instruments(self, **kwargs: Any) -> Sequence[Instrument]:
         return await self._client.request_instruments(**kwargs)
@@ -529,6 +586,13 @@ class _HistoricSession:
         # The historic client has no public teardown; stopping the inner client
         # drains its background tasks cleanly (so closing the loop is quiet).
         await self._native_client._stop_async()
+
+
+def _completed_request_failure(request: Any) -> BaseException | None:
+    future = request.future
+    if future.cancelled():
+        return None
+    return future.exception()
 
 
 async def _request_native_adjusted_last(
