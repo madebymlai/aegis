@@ -146,8 +146,7 @@ class SleeveArrays:
             return
         catalog = self._require_catalog()
         ensure_arrays(
-            custom_names,
-            need.instrument_ids,
+            dict.fromkeys(need.instrument_ids, custom_names),
             start=need.start,
             end=need.end,
             providers=catalog.providers,

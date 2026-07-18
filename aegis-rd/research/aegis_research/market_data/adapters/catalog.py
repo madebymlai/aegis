@@ -16,7 +16,12 @@ from aegis_data.catalog import (
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
-from aegis_data.custom_data import arrays as custom_data_arrays
+from aegis_data.custom_data import (
+    CustomDataCoverageError,
+    CustomDataProviderMap,
+    arrays,
+    ensure_arrays,
+)
 from aegis_runtime.currency import (
     CurrencyConversion,
     build_currency_conversion_from_codes,
@@ -50,11 +55,12 @@ def load_catalog_source(
     config: DataConfig,
     *,
     port: CatalogBackedDataPort | None = None,
+    custom_data_providers: CustomDataProviderMap | None = None,
 ) -> MarketDataLoad:
     # ADR-0006: research fills like live — a catalog miss backfills through the
-    # port (unconditional, ungated); a warm read never connects. The concrete
-    # provider is wired inside aegis-data's factory, so this module depends only on
-    # the CatalogBackedDataPort abstraction (DIP).
+    # port (unconditional, ungated); a warm read never connects. OHLCV provider
+    # composition stays inside aegis-data, while typed custom providers arrive as
+    # runtime dependencies rather than becoming part of DataConfig.
     #
     # This module is the only one that talks to the port, so it owns the
     # environmental-vs-authoring triage: the port's two environmental errors
@@ -67,13 +73,24 @@ def load_catalog_source(
         else catalog_data_port(config.path, resolver=declared_marking_resolver(config))
     )
     try:
-        return _load_from_port(data_port, config)
-    except (CatalogCoverageGapError, GapFillProviderError) as error:
+        return _load_from_port(
+            data_port,
+            config,
+            custom_data_providers=custom_data_providers,
+        )
+    except (
+        CatalogCoverageGapError,
+        CustomDataCoverageError,
+        GapFillProviderError,
+    ) as error:
         raise MarketDataUnavailableError(str(error)) from error
 
 
 def _load_from_port(
-    data_port: CatalogBackedDataPort, config: DataConfig
+    data_port: CatalogBackedDataPort,
+    config: DataConfig,
+    *,
+    custom_data_providers: CustomDataProviderMap | None,
 ) -> MarketDataLoad:
     start = _required_window_edge(config.start, "start")
     end = _required_window_edge(config.end, "end")
@@ -111,8 +128,21 @@ def _load_from_port(
         )
     frames = {**raw_frames, **continuous_frames}
     tradeable_instrument_ids = (*instrument_ids(config.instruments), *continuous_frames)
+    panel_index = _panel_index(config, frames, tradeable_instrument_ids)
+    _ensure_custom_array_coverage(
+        config,
+        tradeable_instrument_ids,
+        index=panel_index,
+        providers=custom_data_providers,
+    )
     native_data = native_from_array_dict(
-        _array_panels(config, frames, tradeable_instrument_ids), config
+        _array_panels(
+            config,
+            frames,
+            tradeable_instrument_ids,
+            index=panel_index,
+        ),
+        config,
     )
     # The exchange: FX legs rode in via native_instrument_ids and stay OUT of the
     # tradeable native_data above (no weights/signals/positions); here they become a
@@ -259,11 +289,9 @@ def _array_panels(
     config: DataConfig,
     frames: dict[InstrumentId, pd.DataFrame],
     instrument_ids: tuple[InstrumentId, ...],
+    *,
+    index: pd.DatetimeIndex,
 ) -> dict[str, pd.DataFrame]:
-    # Resolve the post-alignment bar index once for both sources. ``drop`` intersects
-    # mixed calendars; every other policy retains the constructor's union. Custom Data
-    # is projected directly onto that exact index before VBT receives the merged features.
-    index = _panel_index(config, frames, instrument_ids)
     array_names = config.effective_arrays
     panels = {
         array: pd.DataFrame(
@@ -272,17 +300,43 @@ def _array_panels(
         for array in array_names
         if is_bar_derived_array(array)
     }
-    custom_names = tuple(array for array in array_names if not is_bar_derived_array(array))
+    custom_names = _custom_array_names(config)
     if custom_names:
+        catalog_path = resolve_catalog_path(config.path)
         panels.update(
-            custom_data_arrays(
+            arrays(
                 custom_names,
                 instrument_ids,
                 index=pd.DatetimeIndex(index),
-                catalog_path=resolve_catalog_path(config.path),
+                catalog_path=catalog_path,
             )
         )
     return {array: panels[array] for array in array_names}
+
+
+def _ensure_custom_array_coverage(
+    config: DataConfig,
+    instrument_ids: tuple[InstrumentId, ...],
+    *,
+    index: pd.DatetimeIndex,
+    providers: CustomDataProviderMap | None,
+) -> None:
+    custom_names = _custom_array_names(config)
+    if not custom_names or len(index) == 0:
+        return
+    ensure_arrays(
+        dict.fromkeys(instrument_ids, custom_names),
+        start=pd.Timestamp(index[0]),
+        end=pd.Timestamp(index[-1]),
+        providers=providers or {},
+        catalog_path=resolve_catalog_path(config.path),
+    )
+
+
+def _custom_array_names(config: DataConfig) -> tuple[str, ...]:
+    return tuple(
+        array for array in config.effective_arrays if not is_bar_derived_array(array)
+    )
 
 
 def _panel_index(

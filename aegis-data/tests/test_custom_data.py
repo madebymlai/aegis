@@ -271,8 +271,7 @@ def test_ensure_arrays_heals_only_the_gap_between_live_records(
     provider = _Provider(())
 
     ensure_arrays(
-        ("FixtureValue", "FixtureAvailable"),
-        (_INSTRUMENT,),
+        {_INSTRUMENT: ("FixtureValue", "FixtureAvailable")},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
         providers={FixtureRecord: (provider,)},
@@ -291,8 +290,7 @@ def test_ensure_arrays_makes_no_request_for_a_fully_covered_window(
 ) -> None:
     seed = _Provider(())
     ensure_arrays(
-        ("FixtureValue", "FixtureAvailable"),
-        (_INSTRUMENT,),
+        {_INSTRUMENT: ("FixtureValue", "FixtureAvailable")},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
         providers={FixtureRecord: (seed,)},
@@ -301,8 +299,7 @@ def test_ensure_arrays_makes_no_request_for_a_fully_covered_window(
     unused = _Provider(())
 
     ensure_arrays(
-        ("FixtureValue", "FixtureAvailable"),
-        (_INSTRUMENT,),
+        {_INSTRUMENT: ("FixtureValue", "FixtureAvailable")},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
         providers={FixtureRecord: (unused,)},
@@ -318,8 +315,7 @@ def test_marker_backed_gap_does_not_break_a_later_horizon_extension(
     capture(_record("2024-01-01", 2.0), catalog_path=tmp_path)
     capture(_record("2024-01-03", 8.0), catalog_path=tmp_path)
     ensure_arrays(
-        ("FixtureValue", "FixtureAvailable"),
-        (_INSTRUMENT,),
+        {_INSTRUMENT: ("FixtureValue", "FixtureAvailable")},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
         providers={FixtureRecord: (_Provider(()),)},
@@ -328,8 +324,7 @@ def test_marker_backed_gap_does_not_break_a_later_horizon_extension(
     extension = _Provider((_record("2024-01-04", 9.0),))
 
     ensure_arrays(
-        ("FixtureValue", "FixtureAvailable"),
-        (_INSTRUMENT,),
+        {_INSTRUMENT: ("FixtureValue", "FixtureAvailable")},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-04"),
         providers={FixtureRecord: (extension,)},

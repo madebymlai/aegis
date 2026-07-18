@@ -28,6 +28,7 @@ from research.aegis_research.market_data.contracts import (
 
 if TYPE_CHECKING:
     from aegis_data.catalog import CatalogBackedDataPort
+    from aegis_data.custom_data import CustomDataProviderMap
 
 close_from_ohlcv = _features.close_from_ohlcv
 array_from_ohlcv = _features.array_from_ohlcv
@@ -51,9 +52,16 @@ __all__ = [
 
 
 def load_market_data(
-    config: DataConfig, *, port: CatalogBackedDataPort | None = None
+    config: DataConfig,
+    *,
+    port: CatalogBackedDataPort | None = None,
+    custom_data_providers: CustomDataProviderMap | None = None,
 ) -> Any:
-    result = load_market_data_result(config, port=port)
+    result = load_market_data_result(
+        config,
+        port=port,
+        custom_data_providers=custom_data_providers,
+    )
     result.assert_usable()
     return result.native_data
 
@@ -63,15 +71,20 @@ def load_market_data_result(
     *,
     required_arrays: tuple[str, ...] | None = None,
     port: CatalogBackedDataPort | None = None,
+    custom_data_providers: CustomDataProviderMap | None = None,
 ) -> MarketDataResult:
     """Load catalog data, then apply Aegis evidence/quality contracts.
 
-    ``port`` is the one injection seam — the same ``CatalogBackedDataPort``
-    production wires — threaded to the catalog loader; omitted, the standard
-    port is composed inside aegis-data.
+    Runtime providers stay outside ``DataConfig``: ``port`` fills native market
+    data, while ``custom_data_providers`` fills typed adjacent data. Both are
+    threaded to the catalog loader without changing reproducible data identity.
     """
     try:
-        source = load_catalog_source(config, port=port)
+        source = load_catalog_source(
+            config,
+            port=port,
+            custom_data_providers=custom_data_providers,
+        )
     except MarketDataUnavailableError as error:
         # The failure rides the same observe -> judge -> describe sequence as
         # success, so an unavailable window becomes judged Run Evidence.

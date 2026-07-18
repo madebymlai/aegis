@@ -125,6 +125,10 @@ class CustomDataProviderPort(Protocol[RecordT]):
     ) -> ServedCustomData[RecordT]: ...
 
 
+type CustomArrayRequirements = Mapping[InstrumentId, Sequence[str]]
+type CustomDataProviderMap = Mapping[type[Data], Sequence[CustomDataProviderPort[Any]]]
+
+
 class InvalidLiveCustomDataCapabilityError(TypeError):
     """Raised when a provider describes an invalid live-data capability."""
 
@@ -339,23 +343,28 @@ def ingest(
 
 
 def ensure_arrays(
-    array_names: Sequence[str],
-    instrument_ids: Sequence[InstrumentId],
+    requirements: CustomArrayRequirements,
     *,
     start: pd.Timestamp,
     end: pd.Timestamp,
-    providers: Mapping[type[Data], Sequence[CustomDataProviderPort[Any]]],
+    providers: CustomDataProviderMap,
     catalog_path: Path,
     clock_ns: Callable[[], int] = time_ns,
 ) -> None:
     """Ensure catalog coverage for every kind behind the requested arrays."""
-    for kind in _kinds_for_array_names(array_names):
+    instrument_ids_by_record_type: dict[type[Data], dict[InstrumentId, None]] = {}
+    for instrument_id, array_names in requirements.items():
+        for kind in _kinds_for_array_names(array_names):
+            instrument_ids_by_record_type.setdefault(kind.record_type, {})[
+                instrument_id
+            ] = None
+    for record_type, instrument_ids in instrument_ids_by_record_type.items():
         ingest(
-            kind.record_type,
-            instrument_ids,
+            record_type,
+            tuple(instrument_ids),
             start=start,
             end=end,
-            providers=providers.get(kind.record_type, ()),
+            providers=providers.get(record_type, ()),
             catalog_path=catalog_path,
             clock_ns=clock_ns,
         )
@@ -1293,8 +1302,10 @@ def _dedupe(instrument_ids: Sequence[InstrumentId]) -> tuple[InstrumentId, ...]:
 
 
 __all__ = [
+    "CustomArrayRequirements",
     "CustomDataCoverage",
     "CustomDataCoverageError",
+    "CustomDataProviderMap",
     "CustomDataProviderPort",
     "FixtureRecord",
     "InvalidLiveCustomDataCapabilityError",

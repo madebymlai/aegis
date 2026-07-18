@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 import pytest
 from aegis_data.custom_data import (
+    CustomDataCoverageError,
     CustomDataProviderPort,
     FixtureRecord,
     ServedCustomData,
@@ -207,6 +208,9 @@ class _FixtureArrayBundle(ExecutionBundle):
 
 
 class _FixtureProvider(CustomDataProviderPort[FixtureRecord]):
+    def __init__(self) -> None:
+        self.requests: list[tuple[InstrumentId, pd.Timestamp, pd.Timestamp]] = []
+
     def request_records(
         self,
         instrument_id: InstrumentId,
@@ -214,6 +218,7 @@ class _FixtureProvider(CustomDataProviderPort[FixtureRecord]):
         start: pd.Timestamp,
         end: pd.Timestamp,
     ) -> ServedCustomData[FixtureRecord]:
+        self.requests.append((instrument_id, start, end))
         timestamp = pd.Timestamp("2020-01-01", tz="UTC").value
         return ServedCustomData(
             (
@@ -507,14 +512,35 @@ def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> No
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT_ID,),
-        start=pd.Timestamp("2020-01-01", tz="UTC"),
-        end=pd.Timestamp("2020-01-05", tz="UTC"),
-        providers=(_FixtureProvider(),),
+    provider = _FixtureProvider()
+    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
         catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        custom_data_providers={FixtureRecord: (provider,)},
     )
+
+    try:
+        fills = _closed_orders(result.engine)
+        assert len(fills) == 1
+        assert fills[0].instrument_id == _INSTRUMENT_ID
+    finally:
+        result.engine.dispose()
+
+
+def test_run_book_backtest_fills_custom_array_coverage_on_cold_catalog(
+    tmp_path,
+) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    provider = _FixtureProvider()
     registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
 
     result = run_book_backtest(
@@ -526,14 +552,71 @@ def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> No
         data_source=_verified_zero_distribution_source(
             catalog_path, (_INSTRUMENT_ID,)
         ),
+        custom_data_providers={FixtureRecord: (provider,)},
     )
 
     try:
-        fills = _closed_orders(result.engine)
-        assert len(fills) == 1
-        assert fills[0].instrument_id == _INSTRUMENT_ID
+        assert provider.requests == [
+            (
+                _INSTRUMENT_ID,
+                pd.Timestamp("2020-01-01", tz="UTC"),
+                pd.Timestamp("2020-01-05", tz="UTC"),
+            )
+        ]
     finally:
         result.engine.dispose()
+
+
+def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    ingest(
+        FixtureRecord,
+        (_INSTRUMENT_ID,),
+        start=pd.Timestamp("2020-01-01", tz="UTC"),
+        end=pd.Timestamp("2020-01-05", tz="UTC"),
+        providers=(_FixtureProvider(),),
+        catalog_path=catalog_path,
+    )
+    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+    unused = _FixtureProvider()
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        custom_data_providers={FixtureRecord: (unused,)},
+    )
+
+    try:
+        assert unused.requests == []
+    finally:
+        result.engine.dispose()
+
+
+def test_run_book_backtest_fails_on_uncovered_custom_arrays(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+
+    with pytest.raises(CustomDataCoverageError, match="custom data"):
+        run_book_backtest(
+            book_path,
+            start="2020-01-01",
+            end="2020-01-05",
+            catalog_path=catalog_path,
+            registry=registry,
+            data_source=_verified_zero_distribution_source(
+                catalog_path, (_INSTRUMENT_ID,)
+            ),
+        )
 
 
 def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:

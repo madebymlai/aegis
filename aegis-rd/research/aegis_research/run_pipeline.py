@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
@@ -39,6 +39,9 @@ from research.aegis_research.provenance.data_artifacts import write_data_metadat
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunStore
 
+if TYPE_CHECKING:
+    from aegis_data.custom_data import CustomDataProviderMap
+
 
 def run_strategy_sweep(
     resolved_config: ResolvedRunConfig,
@@ -49,6 +52,7 @@ def run_strategy_sweep(
     parent_run_id: str | None = None,
     supersedes_run_id: str | None = None,
     on_run_refs: Callable[[dict[str, Any]], None] | None = None,
+    custom_data_providers: CustomDataProviderMap | None = None,
 ) -> dict[str, Any]:
     """Run a strategy sweep end-to-end, recording provenance for the Run.
 
@@ -102,6 +106,7 @@ def run_strategy_sweep(
         data_result = load_market_data_result(
             config.data,
             required_arrays=array_contract.required_arrays,
+            custom_data_providers=custom_data_providers,
         )
         metric_registry = resolved_config.metric_registry
         facts = RunDataFacts(

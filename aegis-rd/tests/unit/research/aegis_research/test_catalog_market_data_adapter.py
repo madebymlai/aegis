@@ -8,7 +8,7 @@ import pytest
 from aegis_data.bar_type import mic_canonical_instrument_id
 from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
-from aegis_data.custom_data import FixtureRecord, correct
+from aegis_data.custom_data import FixtureRecord, ServedCustomData, correct
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.testing import FakeCatalog, bars, future
 from aegis_runtime.currency import MissingFxPairError
@@ -84,6 +84,35 @@ class _RecordingFakeCatalog(FakeCatalog):
         if data_cls is Bar:
             self.queried_bar_identifiers.extend(identifiers or [])
         return super().query(data_cls, identifiers, start, end, **kwargs)
+
+
+class _FixtureProvider:
+    def __init__(self, *, value: float | None = None) -> None:
+        self.value = value
+        self.requests: list[tuple[InstrumentId, pd.Timestamp, pd.Timestamp]] = []
+
+    def request_records(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> ServedCustomData[FixtureRecord]:
+        self.requests.append((instrument_id, start, end))
+        records = (
+            ()
+            if self.value is None
+            else (
+                FixtureRecord(
+                    end.value,
+                    end.value,
+                    instrument_id=instrument_id,
+                    value=self.value,
+                    provider="fixture",
+                ),
+            )
+        )
+        return ServedCustomData(records=records, served_from=start)
 
 
 def _fake_port(
@@ -174,14 +203,106 @@ def test_catalog_adapter_loads_custom_arrays_alongside_bar_arrays(
     instrument_id = _id("AAPL.NASDAQ")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
     catalog_path = tmp_path / "catalog"
-    timestamp = pd.Timestamp("2024-01-02", tz="UTC")
+    provider = _FixtureProvider(value=7.0)
+    port, _catalog = _fake_port(
+        {instrument_id: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    )
+    config = make_data_config(
+        arrays=["Close", "FixtureValue", "FixtureAvailable"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ"],
+        start="2024-01-01",
+        end="2024-01-03",
+        path=str(catalog_path),
+    )
+
+    result = load_market_data_result(
+        config,
+        port=port,
+        custom_data_providers={FixtureRecord: (provider,)},
+    )
+
+    bundle = market_data_bundle(result)
+    assert bundle.array("Close")[instrument_id].tolist() == [10.0, 11.0]
+    assert bundle.array("FixtureValue")[instrument_id].tolist() == [0.0, 7.0]
+    assert bundle.array("FixtureAvailable")[instrument_id].tolist() == [0.0, 1.0]
+
+
+def test_catalog_adapter_fills_custom_array_coverage_on_cold_load(
+    tmp_path: Path,
+) -> None:
+    instrument_id = _id("AAPL.NASDAQ")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    catalog_path = tmp_path / "catalog"
+    provider = _FixtureProvider(value=7.0)
+    port, _catalog = _fake_port(
+        {instrument_id: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    )
+    config = make_data_config(
+        arrays=["Close", "FixtureValue", "FixtureAvailable"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ"],
+        start="2024-01-01",
+        end="2024-01-03",
+        path=str(catalog_path),
+    )
+
+    load_market_data_result(
+        config,
+        port=port,
+        custom_data_providers={FixtureRecord: (provider,)},
+    )
+
+    assert provider.requests == [
+        (
+            instrument_id,
+            pd.Timestamp("2024-01-01", tz="UTC"),
+            pd.Timestamp("2024-01-02", tz="UTC"),
+        )
+    ]
+
+
+def test_catalog_adapter_does_not_request_custom_data_for_covered_window(
+    tmp_path: Path,
+) -> None:
+    instrument_id = _id("AAPL.NASDAQ")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    catalog_path = tmp_path / "catalog"
     _cover_fixture(
         catalog_path,
         instrument_id,
         start=pd.Timestamp("2024-01-01", tz="UTC"),
-        end=timestamp,
+        end=pd.Timestamp("2024-01-02", tz="UTC"),
         value=7.0,
     )
+    port, _catalog = _fake_port(
+        {instrument_id: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    )
+    config = make_data_config(
+        arrays=["Close", "FixtureValue", "FixtureAvailable"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ"],
+        start="2024-01-01",
+        end="2024-01-03",
+        path=str(catalog_path),
+    )
+    unused = _FixtureProvider()
+
+    load_market_data_result(
+        config,
+        port=port,
+        custom_data_providers={FixtureRecord: (unused,)},
+    )
+
+    assert unused.requests == []
+
+
+def test_catalog_adapter_reports_unavailable_custom_data_without_provider(
+    tmp_path: Path,
+) -> None:
+    instrument_id = _id("AAPL.NASDAQ")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    catalog_path = tmp_path / "catalog"
     port, _catalog = _fake_port(
         {instrument_id: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
     )
@@ -196,10 +317,8 @@ def test_catalog_adapter_loads_custom_arrays_alongside_bar_arrays(
 
     result = load_market_data_result(config, port=port)
 
-    bundle = market_data_bundle(result)
-    assert bundle.array("Close")[instrument_id].tolist() == [10.0, 11.0]
-    assert bundle.array("FixtureValue")[instrument_id].tolist() == [0.0, 7.0]
-    assert bundle.array("FixtureAvailable")[instrument_id].tolist() == [0.0, 1.0]
+    assert result.quality.state == "data_unavailable"
+    assert result.native_data is None
 
 
 def test_catalog_adapter_preserves_custom_panels_through_vbt(

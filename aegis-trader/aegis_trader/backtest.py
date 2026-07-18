@@ -18,6 +18,8 @@ import pandas as pd
 from aegis_data.array_names import OHLCV_ARRAY_NAMES
 from aegis_data.custom_data import (
     VOCABULARY as CUSTOM_ARRAY_VOCABULARY,
+    CustomDataProviderMap,
+    ensure_arrays,
     records_for_arrays,
 )
 from aegis_data.distributions import Distribution, distribution_records
@@ -192,6 +194,7 @@ def run_book_backtest(
     registry: BundleRegistryPort | None = None,
     data_source: BacktestDataSource | None = None,
     provider: NautilusDataProviderPort | None = None,
+    custom_data_providers: CustomDataProviderMap | None = None,
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
     bar_type_resolver: RawBarTypeResolver | None = None,
@@ -200,9 +203,9 @@ def run_book_backtest(
 
     There is no Historical Store, symbol map, or provider-specific identity on
     this path.  The catalog must hold instrument definitions keyed by the same
-    native ``InstrumentId`` values declared by the Execution Bundles.  Raw bars
-    are read through ``CatalogBackedDataPort``, so catalog coverage gaps fail
-    before the Nautilus engine starts.
+    native ``InstrumentId`` values declared by the Execution Bundles. Raw bars
+    and custom arrays fill catalog gaps through their shared coverage engine, so
+    an unservable window fails before the Nautilus engine starts.
     """
     book = load_book_config(book_path)
     registry = registry if registry is not None else EntryPointBundleRegistry()
@@ -230,6 +233,21 @@ def run_book_backtest(
     )
     market_data = _merged_market_data(loaded)
     _validate_market_data(assembled_book, market_data)
+    custom_catalog_path = catalog_path if catalog_path is not None else catalog_root()
+    custom_array_requirements = _custom_array_requirements(assembled_book)
+    ensure_arrays(
+        custom_array_requirements,
+        start=pd.Timestamp(start),
+        end=pd.Timestamp(end),
+        providers=custom_data_providers or {},
+        catalog_path=custom_catalog_path,
+    )
+    array_records = records_for_arrays(
+        custom_array_requirements,
+        start=pd.Timestamp(start),
+        end=pd.Timestamp(end),
+        catalog_path=custom_catalog_path,
+    )
 
     engine = BacktestEngine(
         build_backtest_engine_config(
@@ -264,13 +282,6 @@ def run_book_backtest(
             resolver=resolver,
             added_instrument_ids=added_instrument_ids,
         )
-    custom_catalog_path = catalog_path if catalog_path is not None else catalog_root()
-    array_records = records_for_arrays(
-        _custom_array_requirements(assembled_book),
-        start=pd.Timestamp(start),
-        end=pd.Timestamp(end),
-        catalog_path=custom_catalog_path,
-    )
     _add_custom_data(engine, (*market_data.records, *array_records))
     engine.sort_data()
     _add_equity_recorder(
