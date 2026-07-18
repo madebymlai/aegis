@@ -96,6 +96,7 @@ from aegis_trader.trader.roll_desk import RollDesk
 from aegis_trader.trader.startup_fast_forward import (
     HistoryRequest,
     Ready,
+    RECOVERY_TOPIC,
     Recovering,
     RecoveryUpdate,
     StartupFastForward,
@@ -512,6 +513,7 @@ class RebalanceStrategy(Strategy):
     # ── internal helpers ──────────────────────────────────────────────────────
 
     def _handle_recovery(self, update: RecoveryUpdate) -> None:
+        self.msgbus.publish(RECOVERY_TOPIC, update, external_pub=False)
         if isinstance(update, Halt):
             self._halt_from_roll_intent(update)
             return

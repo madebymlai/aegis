@@ -26,7 +26,7 @@ import logging
 import os
 import signal
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,6 +62,7 @@ from aegis_trader.trader.live_custom_data import (
 )
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
+from aegis_trader.trader.startup_fast_forward import RECOVERY_TOPIC, RecoveryUpdate
 
 _log = logging.getLogger("aegis_trader")
 
@@ -227,10 +228,13 @@ def start_trader(
     *,
     pid_file: Path | None = None,
     registry: BundleRegistryPort | None = None,
+    recovery_handler: Callable[[RecoveryUpdate], None] | None = None,
 ) -> int:
     """Build and run the live trader for the book at *book_path* in the foreground."""
     book = load_book_config(book_path)
     node = build_live_node(book, connection, registry=registry)
+    if recovery_handler is not None:
+        node.kernel.msgbus.subscribe(RECOVERY_TOPIC, recovery_handler)
     return run_node(node, pid_file=pid_file or default_pid_file())
 
 

@@ -29,6 +29,7 @@ from aegis_trader.trader.startup_fast_forward import (
     HistoryRequestKey,
     Recovering,
     RecoveryProgress,
+    RECOVERY_TOPIC,
 )
 
 
@@ -178,6 +179,12 @@ class _RecoveryRelayHarness:
     def __init__(self) -> None:
         self._fast_forward = _Recovery()
         self.requested_bars: list[dict[str, object]] = []
+        self.published: list[tuple[str, object, bool]] = []
+        self.msgbus = SimpleNamespace(
+            publish=lambda topic, msg, external_pub: self.published.append(
+                (topic, msg, external_pub)
+            )
+        )
 
     def request_bars(self, bar_type: object, **kwargs: object) -> None:
         self.requested_bars.append({"bar_type": bar_type, **kwargs})
@@ -195,7 +202,8 @@ def test_recovery_relay_pairs_each_history_request_with_its_callback() -> None:
         end,
     )
 
-    harness._handle_recovery(Recovering((request,), RecoveryProgress(0, 1, 0, None)))
+    update = Recovering((request,), RecoveryProgress(0, 1, 0, None))
+    harness._handle_recovery(update)
     callback = harness.requested_bars[0]["callback"]
     assert callable(callback)
     callback(object())
@@ -208,6 +216,7 @@ def test_recovery_relay_pairs_each_history_request_with_its_callback() -> None:
         "update_catalog": True,
     }
     assert harness._fast_forward.loaded == [HistoryRequestKey(7)]
+    assert harness.published[0] == (RECOVERY_TOPIC, update, False)
 
 
 class _FakeMarketData:

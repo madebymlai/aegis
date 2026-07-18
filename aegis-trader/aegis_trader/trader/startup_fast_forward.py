@@ -80,6 +80,8 @@ class Ready:
 
 RecoveryUpdate: TypeAlias = Recovering | Ready | Halt
 
+RECOVERY_TOPIC = "aegis.startup.recovery"
+
 
 class RecoveryProtocolError(RuntimeError):
     """The adapter called the recovery lifecycle in an impossible order."""
@@ -577,5 +579,6 @@ __all__ = [
     "RecoveryProgress",
     "RecoveryProtocolError",
     "RecoveryUpdate",
+    "RECOVERY_TOPIC",
     "StartupFastForward",
 ]

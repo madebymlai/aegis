@@ -15,9 +15,11 @@ import types
 import pytest
 
 from aegis_trader.backtest import BookBacktestResult
-from aegis_trader.domain.analytics_horizon import derive_horizon
-from aegis_trader.cli import main
+from aegis_trader.cli import _recovery_logger, main
 from aegis_trader.config import ConnectionConfigError
+from aegis_trader.domain.analytics_horizon import derive_horizon
+from aegis_trader.domain.startup import StartupResult
+from aegis_trader.trader.startup_fast_forward import Ready, Recovering, RecoveryProgress
 
 _BOOK_TOML = """
 base_currency = "EUR"
@@ -211,8 +213,15 @@ def test_trader_start_resolves_connection_from_env_and_runs(tmp_path, monkeypatc
     monkeypatch.setenv("IB_PORT", "4002")
     captured: dict = {}
 
-    def fake_start(path, connection, *, pid_file=None, registry=None):
-        captured.update(path=path, connection=connection, pid_file=pid_file)
+    def fake_start(
+        path, connection, *, pid_file=None, registry=None, recovery_handler=None
+    ):
+        captured.update(
+            path=path,
+            connection=connection,
+            pid_file=pid_file,
+            recovery_handler=recovery_handler,
+        )
         return 0
 
     monkeypatch.setattr("aegis_trader.trader.node.start_trader", fake_start)
@@ -224,6 +233,21 @@ def test_trader_start_resolves_connection_from_env_and_runs(tmp_path, monkeypatc
     assert captured["connection"].account_id == "DU1234567"
     assert captured["connection"].port == 4002
     assert captured["pid_file"] == pid_file
+    assert callable(captured["recovery_handler"])
+
+
+def test_trader_start_cli_renders_recovery_progress_without_repeating_it(caplog):
+    report = _recovery_logger()
+
+    with caplog.at_level(logging.INFO, logger="aegis_trader"):
+        report(Recovering((), RecoveryProgress(1, 3, 42, 100)))
+        report(Recovering((), RecoveryProgress(1, 3, 43, 101)))
+        report(Ready((), 200, (), (), StartupResult(trading_enabled=True)))
+
+    assert caplog.messages == [
+        "Startup recovery: requests_remaining=2, historical_events=42",
+        "Startup recovery complete; book_activity=200",
+    ]
 
 
 def test_trader_start_fails_closed_without_account(tmp_path, monkeypatch):
