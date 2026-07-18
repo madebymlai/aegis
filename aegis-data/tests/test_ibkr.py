@@ -28,7 +28,12 @@ from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.catalog import NautilusDataProviderPort
+from aegis_data.catalog import (
+    CatalogBackedDataPort,
+    CatalogWindowRequest,
+    GapFillProviderError,
+    NautilusDataProviderPort,
+)
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
@@ -57,6 +62,12 @@ class _FakeHistoricClient:
     async def request_instruments(self, **kwargs: Any) -> list[Any]:
         self.instrument_calls.append(kwargs)
         return self._instruments
+
+
+class _SlowEmptyHistoricClient(_FakeHistoricClient):
+    async def request_bars(self, **kwargs: Any) -> list[Any]:
+        await asyncio.sleep(kwargs["timeout"])
+        return []
 
 
 def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
@@ -133,6 +144,51 @@ def test_request_bars_claims_nothing_when_no_bars_are_returned() -> None:
 
     assert list(out.bars) == []
     assert out.served_from == pd.Timestamp("2024-03-01", tz="UTC")
+
+
+def test_request_bars_preempts_session_empty_fallback() -> None:
+    """The request deadline fires before a slow session can fall back to ``[]``."""
+    fake = _SlowEmptyHistoricClient(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(
+        client_factory=lambda: fake,
+        timeout=1,
+        call_deadline=2,
+    )
+    bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
+
+    with pytest.raises(IbkrRequestError) as excinfo:
+        provider.request_bars(
+            bar_type,
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-02-01", tz="UTC"),
+        )
+
+    assert isinstance(excinfo.value.__cause__, TimeoutError)
+
+
+def test_catalog_port_translates_request_deadline_to_provider_failure(
+    tmp_path: Path,
+) -> None:
+    fake = _SlowEmptyHistoricClient(bars=[], instruments=[])
+    provider = IbkrHistoricalProvider(
+        client_factory=lambda: fake,
+        timeout=1,
+        call_deadline=2,
+    )
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir()
+    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path), provider=provider)
+    request = CatalogWindowRequest(
+        instrument_ids=(InstrumentId.from_str("AAPL.NASDAQ"),),
+        start="2024-01-01",
+        end="2024-02-01",
+    )
+
+    with pytest.raises(GapFillProviderError) as excinfo:
+        port.load_window(request)
+
+    assert isinstance(excinfo.value.__cause__, IbkrRequestError)
+    assert isinstance(excinfo.value.__cause__.__cause__, TimeoutError)
 
 
 def test_request_bars_serves_from_the_listing_when_history_clamps_short() -> None:

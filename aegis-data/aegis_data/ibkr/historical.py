@@ -183,6 +183,10 @@ class IbkrHistoricalProvider:
         end: pd.Timestamp,
         instrument_kwargs: Mapping[str, Any],
     ) -> ServedBars:
+        # The session turns its own timeout into an empty response. Keep that fallback
+        # strictly later so Aegis can preserve the provider failure as an exception.
+        request_deadline = min(float(self.timeout), self.call_deadline)
+        session_timeout = int(max(float(self.timeout), self.call_deadline)) + 1
         pulled = await asyncio.wait_for(
             session.request_bars(
                 bar_specifications=[str(bar_type.spec)],
@@ -190,10 +194,10 @@ class IbkrHistoricalProvider:
                 duration=_ib_duration(start, end),
                 tz_name="UTC",
                 use_rth=self.use_rth,
-                timeout=self.timeout,
+                timeout=session_timeout,
                 **instrument_kwargs,
             ),
-            timeout=self.call_deadline,
+            timeout=request_deadline,
         )
         # The whole-unit duration can reach before `start`; keep only the window.
         bars = [bar for bar in (pulled or []) if bar.ts_event >= start.value]
