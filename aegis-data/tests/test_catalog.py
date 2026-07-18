@@ -28,6 +28,7 @@ from aegis_data.catalog import (
     catalog_root,
     continuous_root_legs,
     raw_bar_type,
+    resolve_catalog_path,
 )
 from aegis_data.distributions import (
     Distribution,
@@ -174,6 +175,17 @@ def test_catalog_root_uses_aegis_data_dir_catalog_subpath(tmp_path: Path) -> Non
     root = catalog_root({"AEGIS_DATA_DIR": str(tmp_path / "aegis-data")})
 
     assert root == tmp_path / "aegis-data" / "catalog"
+
+
+def test_resolve_catalog_path_expands_an_explicit_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    path = resolve_catalog_path("~/catalog")
+
+    assert path == tmp_path / "catalog"
 
 
 def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:

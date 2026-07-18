@@ -8,6 +8,7 @@ import pytest
 from aegis_data.bar_type import mic_canonical_instrument_id
 from aegis_data.catalog import CatalogBackedDataPort, CatalogCoverageGapError
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
+from aegis_data.custom_data import FixtureRecord, correct
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.testing import FakeCatalog, bars, future
 from aegis_runtime.currency import MissingFxPairError
@@ -165,6 +166,91 @@ def test_catalog_adapter_requests_exchange_ids_but_exposes_only_tradeable_column
     assert coverage["EUR/USD.IDEALPRO"]["applicable"] is False
     assert coverage["EUR/USD.IDEALPRO"]["event_count"] == 0
     assert result.distributions == ()
+
+
+def test_catalog_adapter_loads_custom_arrays_alongside_bar_arrays(
+    tmp_path: Path,
+) -> None:
+    instrument_id = _id("AAPL.NASDAQ")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    catalog_path = tmp_path / "catalog"
+    timestamp = pd.Timestamp("2024-01-02", tz="UTC")
+    _cover_fixture(
+        catalog_path,
+        instrument_id,
+        start=pd.Timestamp("2024-01-01", tz="UTC"),
+        end=timestamp,
+        value=7.0,
+    )
+    port, _catalog = _fake_port(
+        {instrument_id: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
+    )
+    config = make_data_config(
+        arrays=["Close", "FixtureValue", "FixtureAvailable"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ"],
+        start="2024-01-01",
+        end="2024-01-03",
+        path=str(catalog_path),
+    )
+
+    result = load_market_data_result(config, port=port)
+
+    bundle = market_data_bundle(result)
+    assert bundle.array("Close")[instrument_id].tolist() == [10.0, 11.0]
+    assert bundle.array("FixtureValue")[instrument_id].tolist() == [0.0, 7.0]
+    assert bundle.array("FixtureAvailable")[instrument_id].tolist() == [0.0, 1.0]
+
+
+def test_catalog_adapter_preserves_custom_panels_through_vbt(
+    tmp_path: Path,
+) -> None:
+    first = _id("AAPL.NASDAQ")
+    second = _id("MSFT.NASDAQ")
+    instrument_ids = (first, second)
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    catalog_path = tmp_path / "catalog"
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    end = pd.Timestamp("2024-01-02", tz="UTC")
+    _cover_fixture(
+        catalog_path,
+        first,
+        start=start,
+        end=end,
+        value=7.0,
+    )
+    _cover_fixture(
+        catalog_path,
+        second,
+        start=start,
+        end=end,
+    )
+    port, _catalog = _fake_port(
+        {
+            first: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0]),
+            second: _frame(index, close=[20.0, 21.0], volume=[200.0, 210.0]),
+        }
+    )
+    config = make_data_config(
+        arrays=["Close", "FixtureValue", "FixtureAvailable"],
+        base_currency="USD",
+        instruments=["AAPL.NASDAQ", "MSFT.NASDAQ"],
+        start="2024-01-01",
+        end="2024-01-03",
+        path=str(catalog_path),
+    )
+    expected_value = pd.DataFrame(
+        [[0.0, 0.0], [7.0, 0.0]], index=index, columns=instrument_ids
+    )
+    expected_available = pd.DataFrame(
+        [[0.0, 0.0], [1.0, 0.0]], index=index, columns=instrument_ids
+    )
+
+    result = load_market_data_result(config, port=port)
+
+    bundle = market_data_bundle(result)
+    pd.testing.assert_frame_equal(bundle.array("FixtureValue"), expected_value)
+    pd.testing.assert_frame_equal(bundle.array("FixtureAvailable"), expected_available)
 
 
 def test_catalog_adapter_merges_continuous_future_roots_as_tradeable_columns(
@@ -507,6 +593,37 @@ def _frame(
             "Volume": volume,
         },
         index=index,
+    )
+
+
+def _cover_fixture(
+    catalog_path: Path,
+    instrument_id: InstrumentId,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    value: float | None = None,
+) -> None:
+    records = (
+        ()
+        if value is None
+        else (
+            FixtureRecord(
+                end.value,
+                end.value,
+                instrument_id=instrument_id,
+                value=value,
+                provider="fixture",
+            ),
+        )
+    )
+    correct(
+        FixtureRecord,
+        instrument_id,
+        records,
+        start=start,
+        end=end,
+        catalog_path=catalog_path,
     )
 
 

@@ -1,7 +1,7 @@
 {
   "artifacts": [
     {
-      "hash": "84d2c3a9c83ea5d1d24b0e5b6cfec63e016d720c7f251524d1ddbb7d8278e032",
+      "hash": "837afb264c829a0705efc1a762d5b052c032a7a0c21a10b4426daaf840f6d5da",
       "hash_algorithm": "sha256",
       "id": "data.metadata",
       "metadata": {},
@@ -10,14 +10,14 @@
       "role": "data_metadata",
       "schema_version": "data_metadata.v3",
       "shape": {},
-      "size": 21201,
+      "size": 20576,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
       "upstream_artifact_ids": []
     },
     {
-      "hash": "0fdb3e808c9887d7166e73b2256a7cd9defac2deb7e27f20357b34c8bb4057ef",
+      "hash": "09f05f99234bb4134b79f52377f50ba724a2276ee6813a4be5e39074f85a4d56",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "split_count": 3
       },
-      "size": 64371,
+      "size": 64187,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -182,7 +182,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_b02f9b04b43e7dfa72d170c34b793159",
+          "candidate_key": "cand_5e06d4bd1e9af4889c21e6d65718ed64",
           "held_out_metrics": {
             "0": {
               "max_dd": 14.7265124905672,
@@ -264,17 +264,17 @@
                 "Close",
                 "Volume"
               ],
-              "index_end": "2026-10-04 00:00:00+00:00",
+              "index_end": "2026-10-04 00:00:00",
               "index_evidence": {
-                "raw_index_end": "2026-10-04 00:00:00+00:00",
+                "raw_index_end": "2026-10-04 00:00:00",
                 "raw_index_has_duplicates": false,
                 "raw_index_monotonic_increasing": true,
-                "raw_index_start": "2024-01-01 00:00:00+00:00",
-                "raw_index_timezone": "UTC",
+                "raw_index_start": "2024-01-01 00:00:00",
+                "raw_index_timezone": null,
                 "raw_rows": 1008,
                 "source": "nautilus_catalog"
               },
-              "index_start": "2024-01-01 00:00:00+00:00",
+              "index_start": "2024-01-01 00:00:00",
               "instrument_ids": [
                 {
                   "kind": "repr",
@@ -558,7 +558,7 @@
           }
         },
         {
-          "candidate_key": "cand_5197441358a3e6d7fcb72b7777e0fae3",
+          "candidate_key": "cand_07320be9b742f1b3656a377ca6cf27a2",
           "held_out_metrics": {
             "0": {
               "max_dd": 16.867248207176864,
@@ -640,17 +640,17 @@
                 "Close",
                 "Volume"
               ],
-              "index_end": "2026-10-04 00:00:00+00:00",
+              "index_end": "2026-10-04 00:00:00",
               "index_evidence": {
-                "raw_index_end": "2026-10-04 00:00:00+00:00",
+                "raw_index_end": "2026-10-04 00:00:00",
                 "raw_index_has_duplicates": false,
                 "raw_index_monotonic_increasing": true,
-                "raw_index_start": "2024-01-01 00:00:00+00:00",
-                "raw_index_timezone": "UTC",
+                "raw_index_start": "2024-01-01 00:00:00",
+                "raw_index_timezone": null,
                 "raw_rows": 1008,
                 "source": "nautilus_catalog"
               },
-              "index_start": "2024-01-01 00:00:00+00:00",
+              "index_start": "2024-01-01 00:00:00",
               "instrument_ids": [
                 {
                   "kind": "repr",
@@ -934,7 +934,7 @@
           }
         },
         {
-          "candidate_key": "cand_be29e393a53cb4d7d3536f78814a9fc8",
+          "candidate_key": "cand_72af32dbf8e8f5469efd0698068a188b",
           "held_out_metrics": {
             "0": {
               "max_dd": 22.55486762309763,
@@ -1016,17 +1016,17 @@
                 "Close",
                 "Volume"
               ],
-              "index_end": "2026-10-04 00:00:00+00:00",
+              "index_end": "2026-10-04 00:00:00",
               "index_evidence": {
-                "raw_index_end": "2026-10-04 00:00:00+00:00",
+                "raw_index_end": "2026-10-04 00:00:00",
                 "raw_index_has_duplicates": false,
                 "raw_index_monotonic_increasing": true,
-                "raw_index_start": "2024-01-01 00:00:00+00:00",
-                "raw_index_timezone": "UTC",
+                "raw_index_start": "2024-01-01 00:00:00",
+                "raw_index_timezone": null,
                 "raw_rows": 1008,
                 "source": "nautilus_catalog"
               },
-              "index_start": "2024-01-01 00:00:00+00:00",
+              "index_start": "2024-01-01 00:00:00",
               "instrument_ids": [
                 {
                   "kind": "repr",
@@ -1790,9 +1790,9 @@
         ],
         "source_index": {
           "count": 1008,
-          "end": "2026-10-04 00:00:00+00:00",
-          "hash": "69768a1ddb6b6899b8cd9cdf4c5e79da54666dfc043f838e5159d90b18c58784",
-          "start": "2024-01-01 00:00:00+00:00"
+          "end": "2026-10-04 00:00:00",
+          "hash": "5e6ee7ebc29bf65a6b567b3ab54b7b9bcd8d566097c6fa2ee612f06c334d4393",
+          "start": "2024-01-01 00:00:00"
         },
         "splits": [
           {
@@ -1800,25 +1800,25 @@
             "sets": {
               "held_out": {
                 "count": 252,
-                "end": "2025-05-18 00:00:00+00:00",
-                "hash": "b2a46445781d4d39c2a4e29e66a5c5f1832f5cb8dc96f12f41e78d47acb61522",
+                "end": "2025-05-18 00:00:00",
+                "hash": "2370b5235f3ab65c6a0731edcec3674ea2e657bffe323133449968a349fa89c2",
                 "membership": {
                   "kind": "range",
                   "start": 252,
                   "stop": 504
                 },
-                "start": "2024-09-09 00:00:00+00:00"
+                "start": "2024-09-09 00:00:00"
               },
               "selection": {
                 "count": 252,
-                "end": "2024-09-08 00:00:00+00:00",
-                "hash": "6b0562d4920d7942306ccb288054a3571a36ab60ac2c30e03d4f8a57015e1203",
+                "end": "2024-09-08 00:00:00",
+                "hash": "36ecd15b6054c05e79fad8f694834c0a91dc0ca734af18fb771a74269d0c26c9",
                 "membership": {
                   "kind": "range",
                   "start": 0,
                   "stop": 252
                 },
-                "start": "2024-01-01 00:00:00+00:00"
+                "start": "2024-01-01 00:00:00"
               }
             }
           },
@@ -1827,25 +1827,25 @@
             "sets": {
               "held_out": {
                 "count": 252,
-                "end": "2026-01-25 00:00:00+00:00",
-                "hash": "47c6940ef725e3a9771171ccf91a5c6833d67769f3b1438aaafa3039711d9e22",
+                "end": "2026-01-25 00:00:00",
+                "hash": "c2fd205134e122a498f968df4fd60aeeffc465fca70a8880b8d0deb7b16701c7",
                 "membership": {
                   "kind": "range",
                   "start": 504,
                   "stop": 756
                 },
-                "start": "2025-05-19 00:00:00+00:00"
+                "start": "2025-05-19 00:00:00"
               },
               "selection": {
                 "count": 252,
-                "end": "2025-05-18 00:00:00+00:00",
-                "hash": "b2a46445781d4d39c2a4e29e66a5c5f1832f5cb8dc96f12f41e78d47acb61522",
+                "end": "2025-05-18 00:00:00",
+                "hash": "2370b5235f3ab65c6a0731edcec3674ea2e657bffe323133449968a349fa89c2",
                 "membership": {
                   "kind": "range",
                   "start": 252,
                   "stop": 504
                 },
-                "start": "2024-09-09 00:00:00+00:00"
+                "start": "2024-09-09 00:00:00"
               }
             }
           },
@@ -1854,25 +1854,25 @@
             "sets": {
               "held_out": {
                 "count": 252,
-                "end": "2026-10-04 00:00:00+00:00",
-                "hash": "d732e22345d0f0c5f0f3dd5c4b679552abf45317f3cf672828d15ed0c69a9f67",
+                "end": "2026-10-04 00:00:00",
+                "hash": "12170f5576e0f218dc7b8bc2d4894301c34e14fcb641954606a183200a15f5e9",
                 "membership": {
                   "kind": "range",
                   "start": 756,
                   "stop": 1008
                 },
-                "start": "2026-01-26 00:00:00+00:00"
+                "start": "2026-01-26 00:00:00"
               },
               "selection": {
                 "count": 252,
-                "end": "2026-01-25 00:00:00+00:00",
-                "hash": "47c6940ef725e3a9771171ccf91a5c6833d67769f3b1438aaafa3039711d9e22",
+                "end": "2026-01-25 00:00:00",
+                "hash": "c2fd205134e122a498f968df4fd60aeeffc465fca70a8880b8d0deb7b16701c7",
                 "membership": {
                   "kind": "range",
                   "start": 504,
                   "stop": 756
                 },
-                "start": "2025-05-19 00:00:00+00:00"
+                "start": "2025-05-19 00:00:00"
               }
             }
           }

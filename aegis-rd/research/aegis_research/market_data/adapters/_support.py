@@ -42,8 +42,8 @@ def native_from_array_dict(arrays: dict[str, pd.DataFrame], config: DataConfig) 
         columns_are_symbols=True,
         missing_index=config.missing_index,
         missing_columns="raise",
-        tz_localize=None,
-        tz_convert=None,
+        tz_localize=False,
+        tz_convert=False,
     )
 
 

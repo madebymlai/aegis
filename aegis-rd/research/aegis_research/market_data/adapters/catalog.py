@@ -5,15 +5,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pandas as pd
+from aegis_data.array_names import is_bar_derived_array
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
     CatalogWindowRequest,
     GapFillProviderError,
     catalog_data_port,
+    resolve_catalog_path,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
+from aegis_data.custom_data import arrays as custom_data_arrays
 from aegis_runtime.currency import (
     CurrencyConversion,
     build_currency_conversion_from_codes,
@@ -257,34 +260,46 @@ def _array_panels(
     frames: dict[InstrumentId, pd.DataFrame],
     instrument_ids: tuple[InstrumentId, ...],
 ) -> dict[str, pd.DataFrame]:
-    # ``missing_index: drop`` promises calendar intersection (vbt's own drop semantics),
-    # but the dict-of-Series constructor below union-joins first — on a mixed-calendar
-    # book (LSE + Xetra/SIX legs) that would hand vbt a single pre-holed index with
-    # nothing left to drop. Intersect here so the declared policy holds; any NaN that
-    # survives intersection is a real data defect and still fails the quality gate.
+    # Resolve the post-alignment bar index once for both sources. ``drop`` intersects
+    # mixed calendars; every other policy retains the constructor's union. Custom Data
+    # is projected directly onto that exact index before VBT receives the merged features.
     index = _panel_index(config, frames, instrument_ids)
+    array_names = config.effective_arrays
     panels = {
         array: pd.DataFrame(
             {instrument_id: frames[instrument_id][array] for instrument_id in instrument_ids}
-        )
-        for array in config.effective_arrays
+        ).loc[index]
+        for array in array_names
+        if is_bar_derived_array(array)
     }
-    if index is None:
-        return panels
-    return {array: panel.loc[index] for array, panel in panels.items()}
+    custom_names = tuple(array for array in array_names if not is_bar_derived_array(array))
+    if custom_names:
+        panels.update(
+            custom_data_arrays(
+                custom_names,
+                instrument_ids,
+                index=pd.DatetimeIndex(index),
+                catalog_path=resolve_catalog_path(config.path),
+            )
+        )
+    return {array: panels[array] for array in array_names}
 
 
 def _panel_index(
     config: DataConfig,
     frames: dict[InstrumentId, pd.DataFrame],
     instrument_ids: tuple[InstrumentId, ...],
-) -> pd.Index | None:
-    if config.missing_index != "drop" or not instrument_ids:
-        return None
-    index: pd.Index | None = None
-    for instrument_id in instrument_ids:
-        leg = frames[instrument_id].index
-        index = leg if index is None else index.intersection(leg)
+) -> pd.Index:
+    if not instrument_ids:
+        return pd.DatetimeIndex([])
+    index = frames[instrument_ids[0]].index
+    for instrument_id in instrument_ids[1:]:
+        instrument_index = frames[instrument_id].index
+        index = (
+            index.intersection(instrument_index)
+            if config.missing_index == "drop"
+            else index.union(instrument_index)
+        )
     return index
 
 

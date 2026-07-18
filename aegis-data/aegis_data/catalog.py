@@ -570,8 +570,13 @@ def catalog_root(env: Mapping[str, str] | None = None) -> Path:
     return Path(base).expanduser() / CATALOG_DIRNAME
 
 
+def resolve_catalog_path(path: str | Path | None = None) -> Path:
+    """Resolve an explicit or configured catalog path without opening it."""
+    return catalog_root() if path is None else Path(path).expanduser()
+
+
 def parquet_data_catalog(path: str | Path | None = None) -> Any:
-    root = catalog_root() if path is None else Path(path).expanduser()
+    root = resolve_catalog_path(path)
     root.mkdir(parents=True, exist_ok=True)
     from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
