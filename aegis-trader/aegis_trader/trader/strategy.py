@@ -179,6 +179,7 @@ class RebalanceStrategy(Strategy):
         self._sleeve_ledger: SleeveLedger | None = None
         self._pipeline: RebalancePipeline | None = None
         self._fast_forward: StartupFastForward | None = None
+        self._recovery_ready: Ready | None = None
         self._is_recovering = False
         self._book_activity: int | None = None
         self._stream_watermarks: dict[BarType, int] = {}
@@ -382,6 +383,13 @@ class RebalanceStrategy(Strategy):
         """
         if self._assembled_book is None or self._is_halted or self._is_recovering:
             return
+        if self._recovery_ready is not None:
+            admission = self._recovery_ready.admit_live(bar)
+            if isinstance(admission, Halt):
+                self._halt_from_roll_intent(admission)
+                return
+            if not admission:
+                return
         watermark = self._stream_watermarks.get(bar.bar_type)
         if watermark is not None and bar.ts_event <= watermark:
             return
@@ -522,10 +530,13 @@ class RebalanceStrategy(Strategy):
                 self._request_recovery_history(request)
             return
         if isinstance(update, Ready):
+            self._recovery_ready = update
             self._startup_result = update.startup_result
             self._log_startup_pass(update.startup_result)
             self._current_period_by_sleeve.update(dict(update.resume_periods))
-            self._stream_watermarks.update(dict(update.stream_watermarks))
+            self._stream_watermarks.update(
+                (bar.bar_type, bar.ts_event) for bar in update.boundary_bars
+            )
             self._book_activity = update.book_activity
             if self._apply_boot_intents(update.intents):
                 return

@@ -40,6 +40,7 @@ class RollDesk:
         self._models: dict[InstrumentId, ContinuousContractModel] = {}
         self._timeframe_by_continuous_id: dict[InstrumentId, str] = {}
         self._leg_to_continuous_id: dict[InstrumentId, InstrumentId] = {}
+        self._recovery_event_ns: dict[InstrumentId, int] = {}
         self._pending_leg_subscriptions: dict[InstrumentId, InstrumentId] = {}
 
     def start(
@@ -156,6 +157,7 @@ class RollDesk:
         models: dict[InstrumentId, ContinuousContractModel] = {}
         timeframes: dict[InstrumentId, str] = {}
         leg_to_continuous: dict[InstrumentId, InstrumentId] = {}
+        recovery_event_ns: dict[InstrumentId, int] = {}
         for root, declaration in sorted(declarations.items()):
             history_start = history_starts[root]
             model = ContinuousContractModel(
@@ -180,10 +182,14 @@ class RollDesk:
             models[declaration.continuous_id] = model
             timeframes[declaration.continuous_id] = declaration.timeframe
             leg_to_continuous[model.front_leg] = declaration.continuous_id
+            recovery_event_ns[declaration.continuous_id] = int(
+                history_start.timestamp() * 1_000_000_000
+            )
 
         self._models = models
         self._timeframe_by_continuous_id = timeframes
         self._leg_to_continuous_id = leg_to_continuous
+        self._recovery_event_ns = recovery_event_ns
         return ()
 
     def on_recovery_bar(self, bar: Bar) -> RollIntentBatch:
@@ -192,12 +198,12 @@ class RollDesk:
         if continuous_id is None:
             return ()
         model = self._models[continuous_id]
-        bar_day = pd.Timestamp(bar.ts_event, tz="UTC").date()
-        if not model.frame.empty and bar_day <= model.frame.index[-1].date():
+        if bar.ts_event <= self._recovery_event_ns[continuous_id]:
             return ()
 
         front_before = model.front_leg
         model.on_bar(bar)
+        self._recovery_event_ns[continuous_id] = bar.ts_event
         front_after = model.front_leg
         if front_after == front_before:
             return ()

@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
+from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Quantity
+from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.rebasing import spread_rebasing
 from aegis_data.bar_type import raw_bar_type
@@ -27,6 +28,7 @@ from aegis_trader.trader.strategy import RebalanceStrategy
 from aegis_trader.trader.startup_fast_forward import (
     HistoryRequest,
     HistoryRequestKey,
+    Ready,
     Recovering,
     RecoveryProgress,
     RECOVERY_TOPIC,
@@ -190,6 +192,62 @@ class _RecoveryRelayHarness:
         self.requested_bars.append({"bar_type": bar_type, **kwargs})
 
 
+class _BoundaryDesk:
+    def __init__(self) -> None:
+        self.bars: list[Bar] = []
+
+    def continuous_id(self, _instrument_id: InstrumentId) -> None:
+        return None
+
+    def on_bar(self, bar: Bar) -> tuple[()]:
+        self.bars.append(bar)
+        return ()
+
+
+class _BoundaryHarness:
+    on_bar: Any = RebalanceStrategy.on_bar
+
+    def __init__(self, ready: Ready) -> None:
+        self._assembled_book = object()
+        self._is_halted = False
+        self._is_recovering = False
+        self._recovery_ready = ready
+        self._stream_watermarks = {
+            bar.bar_type: bar.ts_event for bar in ready.boundary_bars
+        }
+        self._book_activity = ready.book_activity
+        self._desk = _BoundaryDesk()
+        self.observed: list[Bar] = []
+        self.halts: list[Halt] = []
+
+    def _require_roll_desk(self) -> _BoundaryDesk:
+        return self._desk
+
+    def _apply_roll_intents(self, _intents: object) -> bool:
+        return False
+
+    def _resolve_derived_mark(self, _bar: Bar) -> None:
+        return None
+
+    def _record_market_observation(
+        self,
+        bar: Bar,
+        _derived_mark: object,
+        _continuous_id: object,
+    ) -> None:
+        self.observed.append(bar)
+
+    def _bar_consumers(self, _bar_type: object, **_kwargs: object) -> tuple[()]:
+        return ()
+
+    def _advance_sleeve_clock(self, _sleeve: object, _timestamp_ns: int) -> None:
+        raise AssertionError("the boundary fixture has no Sleeve consumers")
+
+    def _halt_from_roll_intent(self, halt: Halt) -> None:
+        self.halts.append(halt)
+        self._is_halted = True
+
+
 def test_recovery_relay_pairs_each_history_request_with_its_callback() -> None:
     harness = _RecoveryRelayHarness()
     instrument_id = InstrumentId.from_str("VUSA.XLON")
@@ -217,6 +275,39 @@ def test_recovery_relay_pairs_each_history_request_with_its_callback() -> None:
     }
     assert harness._fast_forward.loaded == [HistoryRequestKey(7)]
     assert harness.published[0] == (RECOVERY_TOPIC, update, False)
+
+
+def test_strategy_processes_the_first_live_bar_exactly_once_after_recovery() -> None:
+    instrument_id = InstrumentId.from_str("VUSA.XLON")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    boundary = _bar(bar_type, 1_000, 100.0)
+    live = _bar(bar_type, 2_000, 101.0)
+    harness = _BoundaryHarness(
+        Ready((), boundary.ts_event, (), (boundary,), StartupResult(True))
+    )
+
+    harness.on_bar(live)
+    harness.on_bar(live)
+
+    assert harness.observed == [live]
+    assert harness._desk.bars == [live]
+    assert harness.halts == []
+
+
+def test_strategy_halts_a_conflicting_recovery_boundary_bar() -> None:
+    instrument_id = InstrumentId.from_str("VUSA.XLON")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    boundary = _bar(bar_type, 1_000, 100.0)
+    conflict = _bar(bar_type, 1_000, 999.0)
+    harness = _BoundaryHarness(
+        Ready((), boundary.ts_event, (), (boundary,), StartupResult(True))
+    )
+
+    harness.on_bar(conflict)
+
+    assert len(harness.halts) == 1
+    assert harness.halts[0].gate == StartupGate.RECOVERY_HISTORY
+    assert harness.observed == []
 
 
 class _FakeMarketData:
@@ -326,3 +417,17 @@ def test_submit_order_intents_halts_before_partial_submission_when_quantity_is_m
         "Order materialization FAILED: instrument not found for InstrumentId "
         "MISSING.XLON. HALTING the book."
     ]
+
+
+def _bar(bar_type: BarType, timestamp_ns: int, close: float) -> Bar:
+    price = Price.from_str(f"{close:.2f}")
+    return Bar(
+        bar_type,
+        price,
+        price,
+        price,
+        price,
+        Quantity.from_int(1_000),
+        timestamp_ns,
+        timestamp_ns,
+    )

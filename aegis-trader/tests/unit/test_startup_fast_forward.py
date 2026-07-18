@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from typing import Any
 
+import pandas as pd
+from aegis_runtime import ExecutionBundle
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 
+from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
-from aegis_data.testing import es_port_two_rolls
+from aegis_data.testing import FakeCatalog, es_port_two_rolls
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
@@ -17,13 +22,20 @@ from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
 from aegis_trader.domain.types import SleeveName
-from aegis_trader.trader.pipeline import RebalancePipeline
+from aegis_trader.trader.pipeline import (
+    CompletedRebalancePeriod,
+    DueSleeve,
+    RebalancePipeline,
+    RebalanceRequest,
+    RebalanceResult,
+)
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.trader.roll_desk import RollDesk
 from aegis_trader.bundles.marking import RecordedMarkingResolver
 from aegis_trader.trader.startup_fast_forward import (
     Ready,
     Recovering,
+    RecoveryUpdate,
     StartupFastForward,
 )
 from tests.support.factories import assemble_test_book, make_bundle
@@ -35,8 +47,10 @@ _WEEKLY_SLEEVE = SleeveName("carry")
 _DAY_NS = 86_400_000_000_000
 _FIRST_NS = 1_752_710_400_000_000_000
 _SECOND_NS = _FIRST_NS + _DAY_NS
+_THIRD_NS = _SECOND_NS + _DAY_NS
 _THROUGH = datetime(2025, 7, 19, tzinfo=timezone.utc)
 _ES = InstrumentId.from_str("ES.XCME")
+_ESM4 = InstrumentId.from_str("ESM4.XCME")
 _ESU4 = InstrumentId.from_str("ESU4.XCME")
 
 
@@ -55,8 +69,8 @@ class _BookState:
 
 
 class _MarketData:
-    def __init__(self) -> None:
-        self._bars = (
+    def __init__(self, bars: tuple[MarketBar, ...] | None = None) -> None:
+        self._bars = bars or (
             _market_bar(_FIRST_NS, 100.0),
             _market_bar(_SECOND_NS, 101.0),
         )
@@ -85,7 +99,8 @@ class _MarketData:
         period_ns: int,
         limit: int,
     ) -> tuple[MarketBar, ...]:
-        return self._bars[-limit:]
+        right_edge = (period + 1) * period_ns
+        return tuple(bar for bar in self._bars if bar.ts_event < right_edge)[-limit:]
 
     def has_bar_in_period(
         self,
@@ -96,6 +111,55 @@ class _MarketData:
         period_ns: int,
     ) -> bool:
         return True
+
+
+class _FixedBundle(ExecutionBundle):
+    def __init__(self, bundle: ExecutionBundle) -> None:
+        super().__init__(
+            contract=bundle.contract,
+            manifest=bundle.manifest,
+            plan=bundle._plan,  # noqa: SLF001 - clone the test fixture bundle
+        )
+
+    def compute_weights(
+        self,
+        native_prices: Any,
+        *,
+        currency_conversion: Any = None,
+    ) -> pd.DataFrame:
+        index = native_prices.array("Close").index
+        target = pd.DataFrame(
+            {
+                instrument_id: [0.5] * len(index)
+                for instrument_id in self.contract.instrument_ids
+            },
+            index=index,
+        )
+        target.columns.name = "instrument_id"
+        return target
+
+
+class _FailingBundle(_FixedBundle):
+    def compute_weights(
+        self,
+        native_prices: Any,
+        *,
+        currency_conversion: Any = None,
+    ) -> pd.DataFrame:
+        raise RuntimeError("fixture compute failed")
+
+
+class _CloseWeightBundle(_FixedBundle):
+    def compute_weights(
+        self,
+        native_prices: Any,
+        *,
+        currency_conversion: Any = None,
+    ) -> pd.DataFrame:
+        close = native_prices.array("Close")
+        target = pd.DataFrame({_INSTRUMENT: close.iloc[:, 0] / 100.0})
+        target.columns.name = "instrument_id"
+        return target
 
 
 def test_fast_forward_releases_subscriptions_after_the_book_history_barrier() -> None:
@@ -117,7 +181,7 @@ def test_fast_forward_releases_subscriptions_after_the_book_history_barrier() ->
     assert isinstance(ready, Ready)
     assert ready.intents == (SubscribeBars(_INSTRUMENT, "1D"),)
     assert ready.book_activity == _SECOND_NS
-    assert pipeline.observation_count == 2
+    assert pipeline.observation_count == 3
 
 
 def test_fast_forward_leaves_the_live_clock_at_the_replayed_book_frontier() -> None:
@@ -131,6 +195,79 @@ def test_fast_forward_leaves_the_live_clock_at_the_replayed_book_frontier() -> N
 
     assert isinstance(ready, Ready)
     assert dict(ready.resume_periods) == {_SLEEVE: _SECOND_NS // _DAY_NS}
+
+
+def test_fast_forward_halts_a_conflicting_live_boundary_bar() -> None:
+    fast_forward, _pipeline = _fast_forward()
+    loading = fast_forward.begin(through=_THROUGH)
+    assert isinstance(loading, Recovering)
+    request = loading.requests[0]
+    fast_forward.receive_history(_bar(request.bar_type, _FIRST_NS, 100.0))
+    fast_forward.receive_history(_bar(request.bar_type, _SECOND_NS, 101.0))
+    ready = fast_forward.history_loaded(request.key)
+    assert isinstance(ready, Ready)
+
+    outcome = ready.admit_live(_bar(request.bar_type, _SECOND_NS, 999.0))
+
+    assert isinstance(outcome, Halt)
+    assert outcome.gate == StartupGate.RECOVERY_HISTORY
+
+
+def test_fast_forward_ignores_an_identical_live_boundary_bar() -> None:
+    fast_forward, _pipeline = _fast_forward()
+    loading = fast_forward.begin(through=_THROUGH)
+    assert isinstance(loading, Recovering)
+    request = loading.requests[0]
+    boundary = _bar(request.bar_type, _SECOND_NS, 101.0)
+    fast_forward.receive_history(_bar(request.bar_type, _FIRST_NS, 100.0))
+    fast_forward.receive_history(boundary)
+    ready = fast_forward.history_loaded(request.key)
+    assert isinstance(ready, Ready)
+
+    outcome = ready.admit_live(boundary)
+
+    assert outcome is False
+
+
+def test_fast_forward_halts_a_conflicting_historical_duplicate() -> None:
+    fast_forward, _pipeline = _fast_forward()
+    loading = fast_forward.begin(through=_THROUGH)
+    assert isinstance(loading, Recovering)
+    request = loading.requests[0]
+    fast_forward.receive_history(_bar(request.bar_type, _FIRST_NS, 100.0))
+
+    outcome = fast_forward.receive_history(_bar(request.bar_type, _FIRST_NS, 999.0))
+
+    assert isinstance(outcome, Halt)
+    assert outcome.gate == StartupGate.RECOVERY_HISTORY
+
+
+def test_fast_forward_halts_an_incomplete_required_history_window() -> None:
+    fast_forward, _pipeline = _fast_forward()
+    loading = fast_forward.begin(through=_THROUGH)
+    assert isinstance(loading, Recovering)
+    request = loading.requests[0]
+    fast_forward.receive_history(_bar(request.bar_type, _FIRST_NS, 100.0))
+
+    outcome = fast_forward.history_loaded(request.key)
+
+    assert isinstance(outcome, Halt)
+    assert outcome.gate == StartupGate.RECOVERY_HISTORY
+
+
+def test_fast_forward_is_independent_of_callback_order_and_identical_duplicates() -> (
+    None
+):
+    ordered_ready, ordered_result, ordered_weights = _recover_two_streams(
+        reverse_delivery=False
+    )
+    reversed_ready, reversed_result, reversed_weights = _recover_two_streams(
+        reverse_delivery=True
+    )
+
+    assert reversed_ready == ordered_ready
+    assert reversed_result.orders == ordered_result.orders
+    assert reversed_weights == ordered_weights
 
 
 def test_fast_forward_keeps_its_terminal_outcome_for_late_deliveries() -> None:
@@ -166,11 +303,13 @@ def test_fast_forward_reconstructs_rolls_before_releasing_the_live_front() -> No
     book = assemble_test_book(
         book_config,
         {
-            "trend.whl": make_bundle(
-                native_instrument_ids=(),
-                continuous_futures={"ES": _ES},
-                adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
-                lookback_bars=80,
+            "trend.whl": _FixedBundle(
+                make_bundle(
+                    native_instrument_ids=(),
+                    continuous_futures={"ES": _ES},
+                    adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+                    lookback_bars=80,
+                )
             )
         },
     )
@@ -192,16 +331,7 @@ def test_fast_forward_reconstructs_rolls_before_releasing_the_live_front() -> No
     loading = fast_forward.begin(through=datetime(2024, 7, 1, tzinfo=timezone.utc))
     assert isinstance(loading, Recovering)
 
-    bars_by_instrument = native
-    for request in loading.requests:
-        for bar in bars_by_instrument[request.bar_type.instrument_id]:
-            if (
-                request.start.timestamp() * 1_000_000_000
-                <= bar.ts_event
-                <= request.end.timestamp() * 1_000_000_000
-            ):
-                fast_forward.receive_history(bar)
-        outcome = fast_forward.history_loaded(request.key)
+    outcome = _complete_futures_history(fast_forward, loading, native)
 
     assert isinstance(outcome, Ready)
     assert {request.bar_type.instrument_id for request in loading.requests} == set(
@@ -209,6 +339,38 @@ def test_fast_forward_reconstructs_rolls_before_releasing_the_live_front() -> No
     )
     assert outcome.intents == (SubscribeBars(_ESU4, "1D"),)
     assert roll_desk.front_leg(_ES) == _ESU4
+
+
+def test_fast_forward_continuous_state_matches_uninterrupted_processing() -> None:
+    port, native = es_port_two_rolls()
+    fast_forward, recovered_desk, book = _futures_fast_forward(port)
+    loading = fast_forward.begin(through=datetime(2024, 7, 1, tzinfo=timezone.utc))
+    assert isinstance(loading, Recovering)
+
+    outcome = _complete_futures_history(fast_forward, loading, native)
+    uninterrupted_desk = _process_uninterrupted_futures(port, book, loading, native)
+    recovered_series = recovered_desk.series(_ES)
+    uninterrupted_series = uninterrupted_desk.series(_ES)
+
+    assert isinstance(outcome, Ready)
+    assert recovered_series is not None
+    assert uninterrupted_series is not None
+    pd.testing.assert_frame_equal(recovered_series, uninterrupted_series)
+    assert recovered_desk.front_leg(_ES) == uninterrupted_desk.front_leg(_ES)
+
+
+def test_fast_forward_halts_when_the_current_futures_leg_has_no_history() -> None:
+    outcome = _recover_futures_without(_ESU4)
+
+    assert isinstance(outcome, Halt)
+    assert outcome.gate == StartupGate.RECOVERY_HISTORY
+
+
+def test_fast_forward_halts_when_a_futures_roll_transition_is_unavailable() -> None:
+    outcome = _recover_futures_without(_ESM4)
+
+    assert isinstance(outcome, Halt)
+    assert outcome.gate == StartupGate.RECOVERY_HISTORY
 
 
 def test_fast_forward_halts_when_quote_marking_sides_do_not_share_timestamps() -> None:
@@ -219,8 +381,8 @@ def test_fast_forward_halts_when_quote_marking_sides_do_not_share_timestamps() -
     book = assemble_test_book(
         book_config,
         {
-            "trend.whl": make_bundle(
-                native_instrument_ids=(_INSTRUMENT,), lookback_bars=1
+            "trend.whl": _FixedBundle(
+                make_bundle(native_instrument_ids=(_INSTRUMENT,), lookback_bars=1)
             )
         },
     )
@@ -273,13 +435,15 @@ def test_fast_forward_has_one_barrier_with_per_sleeve_cadence_positions() -> Non
     book = assemble_test_book(
         book_config,
         {
-            "trend.whl": make_bundle(
-                native_instrument_ids=(_INSTRUMENT,), lookback_bars=1
+            "trend.whl": _FixedBundle(
+                make_bundle(native_instrument_ids=(_INSTRUMENT,), lookback_bars=1)
             ),
-            "carry.whl": make_bundle(
-                native_instrument_ids=(_WEEKLY_INSTRUMENT,),
-                timeframe="1W",
-                lookback_bars=1,
+            "carry.whl": _FixedBundle(
+                make_bundle(
+                    native_instrument_ids=(_WEEKLY_INSTRUMENT,),
+                    timeframe="1W",
+                    lookback_bars=1,
+                )
             ),
         },
     )
@@ -312,9 +476,7 @@ def test_fast_forward_has_one_barrier_with_per_sleeve_cadence_positions() -> Non
     )
     fast_forward.receive_history(_bar(daily.bar_type, _FIRST_NS, 100.0))
     fast_forward.receive_history(_bar(daily.bar_type, _SECOND_NS, 101.0))
-    fast_forward.receive_history(
-        _bar(weekly.bar_type, _SECOND_NS - 7 * _DAY_NS, 200.0)
-    )
+    fast_forward.receive_history(_bar(weekly.bar_type, _SECOND_NS - 7 * _DAY_NS, 200.0))
     fast_forward.receive_history(_bar(weekly.bar_type, _SECOND_NS, 201.0))
 
     one_loaded = fast_forward.history_loaded(daily.key)
@@ -326,6 +488,116 @@ def test_fast_forward_has_one_barrier_with_per_sleeve_cadence_positions() -> Non
         _WEEKLY_SLEEVE: _SECOND_NS // (7 * _DAY_NS),
         _SLEEVE: _SECOND_NS // _DAY_NS,
     }
+
+
+def test_fast_forward_halts_when_a_sleeve_cannot_reconstruct_its_target() -> None:
+    book_config = BookConfig(
+        sleeves=(SleeveConfig(_SLEEVE, "trend.whl", 1.0),),
+        base_currency="EUR",
+    )
+    book = assemble_test_book(
+        book_config,
+        {
+            "trend.whl": _FailingBundle(
+                make_bundle(
+                    native_instrument_ids=(_INSTRUMENT,),
+                    lookback_bars=1,
+                )
+            )
+        },
+    )
+    fast_forward = StartupFastForward(
+        book=book,
+        pipeline=RebalancePipeline(
+            book_state=_BookState(),
+            market_data=_MarketData(),
+            book=book,
+            ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+            arrays=SleeveArrays.bar_only(),
+        ),
+        roll_desk=None,
+        bar_type_resolver=DeclaredMarkingResolver(),
+        fx_reference_pairs=(),
+    )
+    loading = fast_forward.begin(through=_THROUGH)
+    assert isinstance(loading, Recovering)
+    request = loading.requests[0]
+    fast_forward.receive_history(_bar(request.bar_type, _FIRST_NS, 100.0))
+    fast_forward.receive_history(_bar(request.bar_type, _SECOND_NS, 101.0))
+    fast_forward.receive_history(_bar(request.bar_type, _THIRD_NS, 102.0))
+
+    outcome = fast_forward.history_loaded(request.key)
+
+    assert isinstance(outcome, Halt)
+    assert outcome.gate == StartupGate.RECOVERY_HISTORY
+
+
+def test_fast_forward_converges_with_uninterrupted_market_processing() -> None:
+    book_config = BookConfig(
+        sleeves=(SleeveConfig(_SLEEVE, "trend.whl", 1.0),),
+        base_currency="EUR",
+    )
+    book = assemble_test_book(
+        book_config,
+        {
+            "trend.whl": _CloseWeightBundle(
+                make_bundle(native_instrument_ids=(_INSTRUMENT,), lookback_bars=30)
+            )
+        },
+    )
+    through_ns = int(_THROUGH.timestamp() * 1_000_000_000)
+    history = tuple(
+        _market_bar(through_ns - (34 - day) * _DAY_NS, 10.0 + day / 10.0)
+        for day in range(35)
+    )
+    live_bar = _market_bar(through_ns + _DAY_NS, 12.5)
+    market_bars = (*history, live_bar)
+    recovered_ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
+    uninterrupted_ledger = SleeveLedger(horizon=derive_horizon(("1D",)))
+    recovered = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(market_bars),
+        book=book,
+        ledger=recovered_ledger,
+        arrays=SleeveArrays.bar_only(),
+    )
+    uninterrupted = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(market_bars),
+        book=book,
+        ledger=uninterrupted_ledger,
+        arrays=SleeveArrays.bar_only(),
+    )
+    fast_forward = StartupFastForward(
+        book=book,
+        pipeline=recovered,
+        roll_desk=None,
+        bar_type_resolver=DeclaredMarkingResolver(),
+        fx_reference_pairs=(),
+    )
+    loading = fast_forward.begin(through=_THROUGH)
+    assert isinstance(loading, Recovering)
+    request = loading.requests[0]
+    ready = _complete_cash_history(fast_forward, request, history)
+    assert isinstance(ready, Ready)
+
+    uninterrupted_result = _process_market_history(
+        uninterrupted, request.bar_type.instrument_id, history, live_bar
+    )
+    recovered_result = _process_next_market_bar(
+        recovered, request.bar_type.instrument_id, history[-1], live_bar
+    )
+
+    assert recovered_result.orders == uninterrupted_result.orders
+    assert recovered.last_sleeve_weights == uninterrupted.last_sleeve_weights
+    assert dict(ready.resume_periods) == {_SLEEVE: 20_288}
+    recovered_covariance = recovered_ledger.realized_covariance(
+        (_SLEEVE,), min_returns=2
+    )
+    assert recovered_covariance is not None
+    assert recovered_covariance == uninterrupted_ledger.realized_covariance(
+        (_SLEEVE,), min_returns=2
+    )
 
 
 def _fast_forward() -> tuple[StartupFastForward, RebalancePipeline]:
@@ -342,8 +614,8 @@ def _fast_forward() -> tuple[StartupFastForward, RebalancePipeline]:
     book = assemble_test_book(
         book_config,
         {
-            "trend.whl": make_bundle(
-                native_instrument_ids=(_INSTRUMENT,), lookback_bars=1
+            "trend.whl": _FixedBundle(
+                make_bundle(native_instrument_ids=(_INSTRUMENT,), lookback_bars=1)
             )
         },
     )
@@ -378,6 +650,259 @@ def _bar(bar_type: BarType, timestamp_ns: int, close: float) -> Bar:
         Quantity.from_int(1_000),
         timestamp_ns,
         timestamp_ns,
+    )
+
+
+def _due_request(period_start_ns: int, timestamp_ns: int) -> RebalanceRequest:
+    return RebalanceRequest(
+        due=(
+            DueSleeve(
+                sleeve=_SLEEVE,
+                period=CompletedRebalancePeriod(
+                    period=period_start_ns // _DAY_NS,
+                    period_ns=_DAY_NS,
+                ),
+            ),
+        ),
+        timestamp_ns=timestamp_ns,
+    )
+
+
+def _complete_cash_history(
+    fast_forward: StartupFastForward,
+    request: Any,
+    history: Sequence[MarketBar],
+) -> RecoveryUpdate:
+    for bar in history:
+        fast_forward.receive_history(_bar(request.bar_type, bar.ts_event, bar.close))
+    return fast_forward.history_loaded(request.key)
+
+
+def _process_market_history(
+    pipeline: RebalancePipeline,
+    instrument_id: InstrumentId,
+    history: Sequence[MarketBar],
+    live_bar: MarketBar,
+) -> RebalanceResult:
+    pipeline.record_market_observation(
+        history[0].ts_event, {instrument_id: history[0].close}
+    )
+    for previous, bar in zip(history[:-1], history[1:], strict=True):
+        pipeline.record_market_observation(bar.ts_event, {instrument_id: bar.close})
+        pipeline.rebalance(_due_request(previous.ts_event, bar.ts_event + 1))
+    return _process_next_market_bar(pipeline, instrument_id, history[-1], live_bar)
+
+
+def _process_next_market_bar(
+    pipeline: RebalancePipeline,
+    instrument_id: InstrumentId,
+    previous: MarketBar,
+    bar: MarketBar,
+) -> RebalanceResult:
+    pipeline.record_market_observation(bar.ts_event, {instrument_id: bar.close})
+    return pipeline.rebalance(_due_request(previous.ts_event, bar.ts_event + 1))
+
+
+def _recover_futures_without(omitted: InstrumentId) -> RecoveryUpdate:
+    port, native = es_port_two_rolls()
+    filtered_port = CatalogBackedDataPort(
+        FakeCatalog(
+            port.catalog.instruments(),
+            {
+                str(bars[0].bar_type): bars
+                for instrument_id, bars in native.items()
+                if instrument_id != omitted
+            },
+        )
+    )
+    fast_forward, _roll_desk, _book = _futures_fast_forward(filtered_port)
+    loading = fast_forward.begin(through=datetime(2024, 7, 1, tzinfo=timezone.utc))
+    if not isinstance(loading, Recovering):
+        return loading
+    return _complete_futures_history(
+        fast_forward,
+        loading,
+        native,
+        omitted=frozenset({omitted}),
+    )
+
+
+def _recover_two_streams(
+    *,
+    reverse_delivery: bool,
+) -> tuple[Ready, RebalanceResult, dict[SleeveName, float]]:
+    book = assemble_test_book(
+        BookConfig(
+            sleeves=(SleeveConfig(_SLEEVE, "trend.whl", 1.0),),
+            base_currency="EUR",
+        ),
+        {
+            "trend.whl": _FixedBundle(
+                make_bundle(
+                    native_instrument_ids=(_INSTRUMENT, _WEEKLY_INSTRUMENT),
+                    lookback_bars=1,
+                )
+            )
+        },
+    )
+    pipeline = RebalancePipeline(
+        book_state=_BookState(),
+        market_data=_MarketData(
+            (
+                _market_bar(_FIRST_NS, 100.0),
+                _market_bar(_SECOND_NS, 101.0),
+                _market_bar(_THIRD_NS, 102.0),
+            )
+        ),
+        book=book,
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+        arrays=SleeveArrays.bar_only(),
+    )
+    fast_forward = StartupFastForward(
+        book=book,
+        pipeline=pipeline,
+        roll_desk=None,
+        bar_type_resolver=DeclaredMarkingResolver(),
+        fx_reference_pairs=(),
+    )
+    loading = fast_forward.begin(through=_THROUGH)
+    if not isinstance(loading, Recovering):
+        raise AssertionError(f"expected Recovering, got {loading!r}")
+    requests = loading.requests[::-1] if reverse_delivery else loading.requests
+    outcome: RecoveryUpdate = loading
+    for request in requests:
+        bars = (
+            _bar(request.bar_type, _FIRST_NS, 100.0),
+            _bar(request.bar_type, _SECOND_NS, 101.0),
+        )
+        delivered = bars[::-1] if reverse_delivery else bars
+        for bar in delivered:
+            fast_forward.receive_history(bar)
+        if reverse_delivery:
+            fast_forward.receive_history(delivered[0])
+        outcome = fast_forward.history_loaded(request.key)
+    if not isinstance(outcome, Ready):
+        raise AssertionError(f"expected Ready, got {outcome!r}")
+    marks = {_INSTRUMENT: 102.0, _WEEKLY_INSTRUMENT: 102.0}
+    pipeline.record_market_observation(_THIRD_NS, marks)
+    result = pipeline.rebalance(_due_request(_SECOND_NS, _THIRD_NS + 1))
+    return outcome, result, pipeline.last_sleeve_weights
+
+
+def _futures_fast_forward(port: Any) -> tuple[StartupFastForward, RollDesk, Any]:
+    roll_desk = RollDesk(
+        catalog_port=port,
+        instrument_present={_ESU4}.__contains__,
+    )
+    book = assemble_test_book(
+        BookConfig(
+            sleeves=(SleeveConfig(_SLEEVE, "trend.whl", 1.0),),
+            base_currency="EUR",
+        ),
+        {
+            "trend.whl": _FixedBundle(
+                make_bundle(
+                    native_instrument_ids=(),
+                    continuous_futures={"ES": _ES},
+                    adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+                    lookback_bars=80,
+                )
+            )
+        },
+    )
+    fast_forward = StartupFastForward(
+        book=book,
+        pipeline=RebalancePipeline(
+            book_state=_BookState(),
+            market_data=_MarketData(),
+            book=book,
+            ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+            arrays=SleeveArrays.bar_only(),
+        ),
+        roll_desk=roll_desk,
+        bar_type_resolver=DeclaredMarkingResolver(),
+        fx_reference_pairs=(),
+    )
+    return fast_forward, roll_desk, book
+
+
+def _complete_futures_history(
+    fast_forward: StartupFastForward,
+    loading: Recovering,
+    native: Mapping[InstrumentId, Sequence[Bar]],
+    *,
+    omitted: frozenset[InstrumentId] = frozenset(),
+) -> RecoveryUpdate:
+    outcome: RecoveryUpdate = loading
+    for request in loading.requests:
+        if request.bar_type.instrument_id not in omitted:
+            for bar in native[request.bar_type.instrument_id]:
+                if _within_request(bar, request):
+                    fast_forward.receive_history(bar)
+        outcome = fast_forward.history_loaded(request.key)
+    return outcome
+
+
+def _process_uninterrupted_futures(
+    port: Any,
+    book: Any,
+    loading: Recovering,
+    native: Mapping[InstrumentId, Sequence[Bar]],
+) -> RollDesk:
+    bars = _requested_futures_bars(loading, native)
+    first_event = datetime.fromtimestamp(
+        bars[0].ts_event / 1_000_000_000,
+        tz=timezone.utc,
+    )
+    desk = RollDesk(catalog_port=port, instrument_present={_ESU4}.__contains__)
+    desk.start(
+        end=first_event,
+        warmup=False,
+        declarations=book.continuous_declarations,
+        history_starts={"ES": first_event},
+    )
+    bars_by_timestamp: dict[int, list[Bar]] = {}
+    for bar in bars:
+        bars_by_timestamp.setdefault(bar.ts_event, []).append(bar)
+    for timestamp_ns in sorted(bars_by_timestamp):
+        if timestamp_ns <= bars[0].ts_event:
+            continue
+        front = desk.front_leg(_ES)
+        front_bar = next(
+            (
+                bar
+                for bar in bars_by_timestamp[timestamp_ns]
+                if bar.bar_type.instrument_id == front
+            ),
+            None,
+        )
+        if front_bar is not None:
+            desk.on_bar(front_bar)
+    return desk
+
+
+def _requested_futures_bars(
+    loading: Recovering,
+    native: Mapping[InstrumentId, Sequence[Bar]],
+) -> tuple[Bar, ...]:
+    return tuple(
+        sorted(
+            {
+                (bar.bar_type, bar.ts_event): bar
+                for request in loading.requests
+                for bar in native[request.bar_type.instrument_id]
+                if _within_request(bar, request)
+            }.values(),
+            key=lambda bar: (bar.ts_event, str(bar.bar_type)),
+        )
+    )
+
+
+def _within_request(bar: Bar, request: Any) -> bool:
+    return (
+        int(request.start.timestamp() * 1_000_000_000)
+        <= bar.ts_event
+        <= int(request.end.timestamp() * 1_000_000_000)
     )
 
 
