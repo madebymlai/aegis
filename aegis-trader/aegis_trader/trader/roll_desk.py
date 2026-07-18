@@ -88,7 +88,9 @@ class RollDesk:
 
             front_leg = model.front_leg
             models[declaration.continuous_id] = model
-            timeframe_by_continuous_id[declaration.continuous_id] = declaration.timeframe
+            timeframe_by_continuous_id[declaration.continuous_id] = (
+                declaration.timeframe
+            )
             leg_to_continuous_id[front_leg] = declaration.continuous_id
             if warmup:
                 intents.append(
@@ -128,6 +130,88 @@ class RollDesk:
             UnsubscribeBars(instrument_id=front_before, timeframe=timeframe),
             self._ensure_front_leg(front_after, continuous_id),
             RollEvent(continuous_id=continuous_id, rebasing=model.last_rebasing),
+        )
+
+    def recovery_streams(
+        self,
+        declarations: Mapping[str, ContinuousRootDeclaration],
+    ) -> tuple[tuple[str, InstrumentId, str], ...]:
+        """Return every dated leg whose bars can causally determine a declared root."""
+        streams = {
+            (root, InstrumentId.from_str(leg.symbol), declaration.timeframe)
+            for root, declaration in declarations.items()
+            for leg in self._catalog_port.resolve_continuous(root).legs
+        }
+        return tuple(
+            sorted(streams, key=lambda item: (item[0], item[1].value, item[2]))
+        )
+
+    def start_recovery(
+        self,
+        *,
+        declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
+    ) -> RollIntentBatch:
+        """Initialize each root at its replay origin, before chronological folding."""
+        models: dict[InstrumentId, ContinuousContractModel] = {}
+        timeframes: dict[InstrumentId, str] = {}
+        leg_to_continuous: dict[InstrumentId, InstrumentId] = {}
+        for root, declaration in sorted(declarations.items()):
+            history_start = history_starts[root]
+            model = ContinuousContractModel(
+                self._catalog_port,
+                root,
+                start=history_start.date().isoformat(),
+                timeframe=declaration.timeframe,
+                adjustment_mode=declaration.adjustment_mode,
+            )
+            model.materialize(end=history_start.date().isoformat())
+            if model.continuous_id != declaration.continuous_id:
+                return (
+                    Halt(
+                        StartupGate.CONTINUOUS_IDENTITY,
+                        (
+                            f"continuous root {root!r} materialized as "
+                            f"{model.continuous_id.value}, expected "
+                            f"{declaration.continuous_id.value}"
+                        ),
+                    ),
+                )
+            models[declaration.continuous_id] = model
+            timeframes[declaration.continuous_id] = declaration.timeframe
+            leg_to_continuous[model.front_leg] = declaration.continuous_id
+
+        self._models = models
+        self._timeframe_by_continuous_id = timeframes
+        self._leg_to_continuous_id = leg_to_continuous
+        return ()
+
+    def on_recovery_bar(self, bar: Bar) -> RollIntentBatch:
+        """Fold historical market time without emitting historical IO intents."""
+        continuous_id = self._leg_to_continuous_id.get(bar.bar_type.instrument_id)
+        if continuous_id is None:
+            return ()
+        model = self._models[continuous_id]
+        bar_day = pd.Timestamp(bar.ts_event, tz="UTC").date()
+        if not model.frame.empty and bar_day <= model.frame.index[-1].date():
+            return ()
+
+        front_before = model.front_leg
+        model.on_bar(bar)
+        front_after = model.front_leg
+        if front_after == front_before:
+            return ()
+        del self._leg_to_continuous_id[front_before]
+        self._leg_to_continuous_id[front_after] = continuous_id
+        return (RollEvent(continuous_id=continuous_id, rebasing=model.last_rebasing),)
+
+    def live_intents(self) -> RollIntentBatch:
+        """Release only the causally reconstructed execution fronts to live IO."""
+        return tuple(
+            self._ensure_front_leg(model.front_leg, continuous_id)
+            for continuous_id, model in sorted(
+                self._models.items(), key=lambda item: item[0].value
+            )
         )
 
     def on_instrument(self, instrument_id: InstrumentId) -> RollIntentBatch:

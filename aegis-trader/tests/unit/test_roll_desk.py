@@ -61,7 +61,9 @@ def _dt(day: str) -> datetime:
     return datetime.combine(pd.Timestamp(day).date(), datetime.min.time(), timezone.utc)
 
 
-def _bar_on(native: dict[InstrumentId, list[Bar]], instrument_id: InstrumentId, day: date) -> Bar:
+def _bar_on(
+    native: dict[InstrumentId, list[Bar]], instrument_id: InstrumentId, day: date
+) -> Bar:
     return next(
         bar
         for bar in native[instrument_id]
@@ -153,7 +155,9 @@ def test_roll_emits_an_additive_rebasing_under_a_spread_declaration() -> None:
     assert event.rebasing.apply(100.0) == pytest.approx(166.0)
 
 
-def test_start_halts_when_materialized_continuous_venue_differs_from_declaration() -> None:
+def test_start_halts_when_materialized_continuous_venue_differs_from_declaration() -> (
+    None
+):
     port, _native = es_port()
     desk = _desk(port)
 
@@ -215,7 +219,9 @@ def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> N
     assert desk.front_leg(_ES) == _ESU4
 
 
-def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument() -> None:
+def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument() -> (
+    None
+):
     port, native = es_port_two_rolls()
     desk = _desk(port, present=(_ESU4,))
     desk.start(
@@ -245,3 +251,38 @@ def test_on_instrument_completes_a_deferred_front_leg_subscription() -> None:
     intents = desk.on_instrument(_ESU4)
 
     assert intents == (SubscribeBars(_ESU4, "1D"),)
+
+
+def test_recovery_replays_both_volume_rolls_and_releases_only_the_current_front() -> (
+    None
+):
+    port, native = es_port_two_rolls()
+    desk = _desk(port, present=(_ESU4,))
+    declarations = _declarations()
+    history_starts = {"ES": _HISTORY_START}
+
+    streams = desk.recovery_streams(declarations)
+    start_outcome = desk.start_recovery(
+        declarations=declarations,
+        history_starts=history_starts,
+    )
+    events = [
+        intent
+        for bar in sorted(
+            (bar for bars in native.values() for bar in bars),
+            key=lambda item: (item.ts_event, str(item.bar_type)),
+        )
+        for intent in desk.on_recovery_bar(bar)
+        if isinstance(intent, RollEvent)
+    ]
+
+    assert streams == (
+        ("ES", _ESH4, "1D"),
+        ("ES", _ESM4, "1D"),
+        ("ES", _ESU4, "1D"),
+    )
+    assert start_outcome == ()
+    assert len(events) == 2
+    assert [event.continuous_id for event in events] == [_ES, _ES]
+    assert desk.front_leg(_ES) == _ESU4
+    assert desk.live_intents() == (SubscribeBars(_ESU4, "1D"),)

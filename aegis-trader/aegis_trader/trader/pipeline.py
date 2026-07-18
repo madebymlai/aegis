@@ -318,6 +318,21 @@ class RebalancePipeline:
             marks,
         )
 
+    def recover_market(
+        self,
+        request: RebalanceRequest,
+        marks: Mapping[InstrumentId, float],
+    ) -> tuple[SleeveComputeFailure, ...]:
+        """Advance market-derived state without reconstructing broker history."""
+        failures = self._compute_due_targets(request)
+        self._record_observation(
+            request.timestamp_ns,
+            1.0,
+            {},
+            marks,
+        )
+        return failures
+
     def _record_observation(
         self,
         timestamp_ns: int,

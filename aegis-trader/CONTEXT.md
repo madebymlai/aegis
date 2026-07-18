@@ -103,6 +103,13 @@ resolves to, re-based across every **Roll** so live stays identical to research.
 the continuous series is read, and a continuous root's execution front is resolved, only through it.
 _Avoid_: roll manager, roll engine, feeds orchestrator, continuous feed manager, continuous service, roll handler
 
+**Startup Fast-Forward**:
+The bounded future-in-past replay that restores a **Commingled Book** from its required market
+history through the live-start boundary, using the same causal state transitions as live trading
+but producing no historical orders; it is complete only when all required history is folded and
+the book is ready to reconcile and trade.
+_Avoid_: checkpoint restore, warmup, backfill, historical trading
+
 **Broker Connection**:
 The environment-resolved IBKR connection (`IBConnectionSettings`: host, port, client
 id, account id) that a live trader run trades through. Paper and live are **not** run

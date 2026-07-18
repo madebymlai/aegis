@@ -24,6 +24,12 @@ from aegis_trader.domain.startup import StartupGate, StartupResult
 from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource
 from aegis_trader.trader.book_startup import SubscribeQuoteTicks
 from aegis_trader.trader.strategy import RebalanceStrategy
+from aegis_trader.trader.startup_fast_forward import (
+    HistoryRequest,
+    HistoryRequestKey,
+    Recovering,
+    RecoveryProgress,
+)
 
 
 class _FakePipeline:
@@ -156,6 +162,54 @@ def test_boot_relay_applies_bar_and_quote_subscriptions_in_order() -> None:
     ]
 
 
+class _Recovery:
+    def __init__(self) -> None:
+        self.loaded: list[HistoryRequestKey] = []
+
+    def history_loaded(self, key: HistoryRequestKey) -> Recovering:
+        self.loaded.append(key)
+        return Recovering((), RecoveryProgress(1, 2, 3, None))
+
+
+class _RecoveryRelayHarness:
+    _handle_recovery: Any = RebalanceStrategy._handle_recovery
+    _request_recovery_history: Any = RebalanceStrategy._request_recovery_history
+
+    def __init__(self) -> None:
+        self._fast_forward = _Recovery()
+        self.requested_bars: list[dict[str, object]] = []
+
+    def request_bars(self, bar_type: object, **kwargs: object) -> None:
+        self.requested_bars.append({"bar_type": bar_type, **kwargs})
+
+
+def test_recovery_relay_pairs_each_history_request_with_its_callback() -> None:
+    harness = _RecoveryRelayHarness()
+    instrument_id = InstrumentId.from_str("VUSA.XLON")
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 7, 18, tzinfo=timezone.utc)
+    request = HistoryRequest(
+        HistoryRequestKey(7),
+        raw_bar_type(instrument_id, "1D"),
+        start,
+        end,
+    )
+
+    harness._handle_recovery(Recovering((request,), RecoveryProgress(0, 1, 0, None)))
+    callback = harness.requested_bars[0]["callback"]
+    assert callable(callback)
+    callback(object())
+
+    assert harness.requested_bars[0] == {
+        "bar_type": raw_bar_type(instrument_id, "1D"),
+        "start": start,
+        "end": end,
+        "callback": callback,
+        "update_catalog": True,
+    }
+    assert harness._fast_forward.loaded == [HistoryRequestKey(7)]
+
+
 class _FakeMarketData:
     def __init__(
         self,
@@ -237,7 +291,9 @@ def test_submit_order_intent_leaves_a_native_instrument_untouched() -> None:
     assert harness.submitted[0]["quantity"] == qty
 
 
-def test_submit_order_intents_halts_before_partial_submission_when_quantity_is_missing() -> None:
+def test_submit_order_intents_halts_before_partial_submission_when_quantity_is_missing() -> (
+    None
+):
     available = InstrumentId.from_str("VUSA.XLON")
     missing = InstrumentId.from_str("MISSING.XLON")
     harness = _SubmitHarness(
