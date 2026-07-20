@@ -20,11 +20,15 @@ from typing import Protocol
 
 import requests
 
-from research.aegis_research.external_data._snapshot_cache import newest_covering, sync_on_miss
+from _prototyping.external_data._snapshot_cache import (
+    newest_covering,
+    sync_on_miss,
+)
 
 _INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/master.idx"
 _ARCHIVE_URL = "https://www.sec.gov/Archives/{path}"
 _SEC_USER_AGENT = "Aegis Research m@laimk.dev"
+_MASTER_INDEX_START = date(1993, 1, 1)
 _DISCOVERY_FORMS = frozenset({"DEFM14A", "SC 14D9", "SC 14D9/A"})
 _FOLLOW_UP_FORMS = frozenset({"8-K", "8-K/A", "DEFA14A", "DEFM14A"})
 _ANNOUNCEMENT_FORMS = frozenset({"8-K"})
@@ -242,7 +246,14 @@ class _EdgarArchive:
             )
             if wait > 0.0:
                 time.sleep(wait)
-            response = self._session.get(url, timeout=self._client.timeout_seconds)
+            try:
+                response = self._session.get(url, timeout=self._client.timeout_seconds)
+            except requests.RequestException:
+                self._last_request_at = time.monotonic()
+                if attempt == self._client.max_retries:
+                    raise
+                time.sleep(min(2.0**attempt, 30.0))
+                continue
             self._last_request_at = time.monotonic()
             if response.status_code not in {429, 503} or attempt == self._client.max_retries:
                 return response
@@ -280,7 +291,10 @@ class EdgarMasterIndexClient:
 
     def filings(self, start: date, end: date) -> Iterator[SecFiling]:
         headers = {"User-Agent": _SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
-        lookup_start = start - timedelta(days=_SYMBOL_LOOKBACK_DAYS)
+        lookup_start = max(
+            start - timedelta(days=_SYMBOL_LOOKBACK_DAYS),
+            _MASTER_INDEX_START,
+        )
         with requests.Session() as session:
             session.headers.update(headers)
             archive = _EdgarArchive(session, self)
@@ -296,9 +310,15 @@ class SecCashMergerEventSource:
     client: FilingClient | None = None
 
     def sync(self, start: date, end: date) -> None:
-        """Ensure the cache covers the requested range, fetching only on a miss."""
+        """Ensure one continuous causal event tape covers the requested range.
 
-        sync_on_miss(lambda: self.load(start, end), lambda: self._fetch(start, end))
+        Merger state can cross calendar-year boundaries, so splitting discovery into
+        independent yearly fetches can orphan later amendments or resolutions.  The
+        two-year warm-up and evaluation window are therefore fetched and replayed as
+        one history.
+        """
+
+        self._sync_range(start, end, allow_empty=False)
 
     def load(self, start: date, end: date) -> CashMergerSnapshot:
         """Read a validated covering tape without contacting EDGAR."""
@@ -310,7 +330,13 @@ class SecCashMergerEventSource:
             end,
         )
 
-    def _fetch(self, start: date, end: date) -> None:
+    def _sync_range(self, start: date, end: date, *, allow_empty: bool) -> None:
+        sync_on_miss(
+            lambda: self.load(start, end),
+            lambda: self._fetch(start, end, allow_empty=allow_empty),
+        )
+
+    def _fetch(self, start: date, end: date, *, allow_empty: bool = False) -> None:
         if end < start:
             raise ValueError("cash-merger event range end precedes start")
         client = self.client or EdgarMasterIndexClient()
@@ -320,11 +346,13 @@ class SecCashMergerEventSource:
                 key=lambda event: (event.available_at, event.target_cik, event.accession),
             )
         )
-        if not events:
+        if not events and not allow_empty:
             raise CashMergerSourceError(
                 f"EDGAR returned no fixed-cash merger events for {start} through {end}"
             )
-        snapshot = _snapshot(events, start=start, end=end)
+        self._store(_snapshot(events, start=start, end=end))
+
+    def _store(self, snapshot: CashMergerSnapshot) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         payload = _snapshot_payload(snapshot)
         destination = _cached_snapshot_path(self.cache_dir, snapshot)
@@ -661,17 +689,31 @@ def _preceding_symbol(
     symbol_rows: dict[str, tuple[_MasterIndexRow, ...]],
     archive: _EdgarArchive,
 ) -> str | None:
-    candidates: list[tuple[str, str, str]] = []
     filing_available_at = _utc_iso(available_at)
-    for row in symbol_rows.get(cik, ()):
-        text = archive.document(row.archive_path)
-        observed_at = _utc_iso(_acceptance_timestamp(text, row.filed_on.isoformat()))
-        if observed_at > filing_available_at:
+    filing_date = datetime.fromisoformat(filing_available_at).date()
+    rows = symbol_rows.get(cik, ())
+    cursor = len(rows) - 1
+    while cursor >= 0:
+        candidate_date = rows[cursor].filed_on
+        same_day: list[_MasterIndexRow] = []
+        while cursor >= 0 and rows[cursor].filed_on == candidate_date:
+            same_day.append(rows[cursor])
+            cursor -= 1
+        if candidate_date > filing_date:
             continue
-        symbol = _trading_symbol(text)
-        if symbol is not None:
-            candidates.append((observed_at, row.archive_path, symbol))
-    return max(candidates)[2] if candidates else None
+
+        candidates: list[tuple[str, str, str]] = []
+        for row in same_day:
+            text = archive.document(row.archive_path)
+            observed_at = _utc_iso(_acceptance_timestamp(text, row.filed_on.isoformat()))
+            if observed_at > filing_available_at:
+                continue
+            symbol = _trading_symbol(text)
+            if symbol is not None:
+                candidates.append((observed_at, row.archive_path, symbol))
+        if candidates:
+            return max(candidates)[2]
+    return None
 
 
 def _acceptance_timestamp(text: str, filed_on: str) -> str:

@@ -12,21 +12,22 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from cash_merger.massive import MassiveClient
-from cash_merger.target_events import MassiveTargetEventSource
 
 from _prototyping.merger.historical.recent import (
     MassiveEventTapeSource,
     MassiveHistoricalBars,
     MassiveMarkSource,
-    MassiveOfflineEvidenceClient,
     adapt_events,
+)
+from _prototyping.merger.legacy_aegis_rd.external_data.sec_cash_mergers import (
+    SecCashMergerEventSource,
 )
 from _prototyping.merger.shadow.shadow import CashMergerShadow
 
 _DEFAULT_CACHE = (
     Path(__file__).resolve().parent / "historical" / "cache-v5" / "massive-http"
 )
-_LATEST_EVENT_DISCOVERY_START = date(1990, 1, 1)
+_MINIMUM_EVENT_WARMUP_DAYS = 730
 _DEFAULT_OUTPUT = (
     Path(__file__).resolve().parent
     / "historical"
@@ -46,38 +47,37 @@ def run_recent_event_history(
     end: date,
     capital: float,
     annual_cash_rate: float,
-    event_api_key: str | None = None,
+    fetch_events: bool = False,
+    market_api_key: str | None = None,
 ) -> dict[str, Any]:
-    """Replay cached causal events daily through ``CashMergerShadow``.
+    """Replay SEC-derived causal events daily through ``CashMergerShadow``.
 
-    Cache contents never establish membership.  ``MassiveTargetEventSource``
-    reconstructs lifecycles from filing observations, ``ShadowLedger`` reduces
-    them to the active set at each date, and the unmodified active selector makes
+    SEC EDGAR master indexes establish the historical event population.
+    ``ShadowLedger`` reduces those observations to the active set at each date,
+    Massive supplies only recent OHLCV, and the unmodified active selector makes
     the monthly decision.
     """
 
-    if event_start > _LATEST_EVENT_DISCOVERY_START:
+    if event_start > start - timedelta(days=_MINIMUM_EVENT_WARMUP_DAYS):
         raise HistoricalReplayInputError(
-            "event discovery must begin by 1990-01-01"
+            "event discovery must include at least 730 days of warmup"
         )
     if event_start > start:
         raise HistoricalReplayInputError("event discovery start exceeds evaluation start")
     if start > end:
         raise HistoricalReplayInputError("evaluation start exceeds evaluation end")
 
-    event_client = (
-        MassiveClient(event_api_key, cache_dir=cache_dir)
-        if event_api_key is not None
-        else MassiveOfflineEvidenceClient(cache_dir)
+    event_source = SecCashMergerEventSource(cache_dir / "edgar-events")
+    if fetch_events:
+        event_source.sync(event_start, end)
+    tape = event_source.load(event_start, end)
+    observations, reviews = adapt_events(
+        tape.events,
+        source_label="SEC EDGAR event tape",
     )
-    tape = MassiveTargetEventSource(event_client).load(event_start, end)
-    evidence_bounds = (
-        MassiveOfflineEvidenceClient(cache_dir).event_disclosure_date_bounds
-    )
-    observations, reviews = adapt_events(tape.events, filing_rows=tape.filing_rows)
     bars = MassiveHistoricalBars(
-        MassiveClient("offline-cache-only", cache_dir=cache_dir),
-        allow_fetch=False,
+        MassiveClient(market_api_key or "offline-cache-only", cache_dir=cache_dir),
+        allow_fetch=market_api_key is not None,
     )
     market = bars.bars("SPY", start, end)
     trading_days = tuple(timestamp.date() for timestamp in market.index)
@@ -147,24 +147,26 @@ def run_recent_event_history(
             "canonical_instrument_identity_resolved": False,
             "selection": "CashMergerSelector via CashMergerShadow",
             "cache_role": "immutable source evidence and OHLCV only",
-            "event_source_mode": (
-                "live_paginated_api_with_immutable_cache"
-                if event_api_key is not None
-                else "offline_cache_scan"
+            "event_source_mode": "sec_edgar_master_index",
+            "live_event_query_completed": fetch_events,
+            "market_source_mode": (
+                "massive_recent_ohlcv_with_immutable_cache"
+                if market_api_key is not None
+                else "massive_offline_cache"
             ),
-            "live_event_query_completed": event_api_key is not None,
             "configured_or_current_symbol_cohort_used": False,
-            "source_completeness": "not provable from URL-addressed cache alone",
+            "source_completeness": "validated SEC snapshot coverage",
         },
         "window": {
+            "warmup_policy": "two_year_continuous_event_history",
+            "warmup_calendar_days": (start - event_start).days,
             "event_discovery_start": event_start.isoformat(),
-            "source_evidence_start": (
-                evidence_bounds[0].isoformat() if evidence_bounds is not None else None
+            "source_evidence_start": tape.covered_start,
+            "source_evidence_end": tape.covered_end,
+            "warmup_coverage_satisfied": (
+                date.fromisoformat(tape.covered_start) <= event_start
+                and date.fromisoformat(tape.covered_end) >= end
             ),
-            "source_evidence_end": (
-                evidence_bounds[1].isoformat() if evidence_bounds is not None else None
-            ),
-            "warmup_coverage_satisfied": False,
             "start": start.isoformat(),
             "end": end.isoformat(),
             "trading_days": len(trading_days),
@@ -179,12 +181,9 @@ def run_recent_event_history(
             "lifecycles": len({item.event_id for item in observations}),
             "event_time_tickers": len({item.ticker for item in observations}),
             "unlinked_terminal_reviews": len(reviews),
-            "unresolved_announcement_identities": len(
-                tape.unresolved_identity_accessions
-            ),
-            "unresolved_identity_accession_sample": (
-                tape.unresolved_identity_accessions[:50]
-            ),
+            "unresolved_announcement_identities": None,
+            "unresolved_identity_accession_sample": [],
+            "identity_resolution_audit_available": False,
         },
         "selection_audit": {
             "capital": capital,
@@ -209,7 +208,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--event-start",
         type=date.fromisoformat,
-        default=date(1990, 1, 1),
+        default=date(2022, 7, 16),
     )
     parser.add_argument("--start", type=date.fromisoformat, default=date(2024, 7, 16))
     parser.add_argument("--end", type=date.fromisoformat, default=date(2026, 7, 16))
@@ -218,16 +217,21 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--fetch-events",
         action="store_true",
-        help="Fetch the complete requested filing range using MASSIVE_API_KEY.",
+        help="Backfill the complete requested event range from SEC EDGAR.",
+    )
+    parser.add_argument(
+        "--fetch-market",
+        action="store_true",
+        help="Fetch missing recent OHLCV using MASSIVE_API_KEY.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     arguments = _arguments()
-    event_api_key = os.environ.get("MASSIVE_API_KEY") if arguments.fetch_events else None
-    if arguments.fetch_events and event_api_key is None:
-        raise SystemExit("--fetch-events requires MASSIVE_API_KEY in the process environment")
+    market_api_key = os.environ.get("MASSIVE_API_KEY") if arguments.fetch_market else None
+    if arguments.fetch_market and market_api_key is None:
+        raise SystemExit("--fetch-market requires MASSIVE_API_KEY in the process environment")
     report = run_recent_event_history(
         cache_dir=arguments.cache_dir,
         event_start=arguments.event_start,
@@ -235,7 +239,8 @@ def main() -> None:
         end=arguments.end,
         capital=arguments.capital,
         annual_cash_rate=arguments.annual_cash_rate,
-        event_api_key=event_api_key,
+        fetch_events=arguments.fetch_events,
+        market_api_key=market_api_key,
     )
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

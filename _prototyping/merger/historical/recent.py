@@ -23,6 +23,7 @@ from _prototyping.merger.shadow.market import (
     MarketUnavailable,
     _mark,
 )
+from _prototyping.merger.shadow.timeline import CloseGuidance, DealTimelineEvidence
 from cash_merger.events import CashMergerEvent
 
 
@@ -253,6 +254,7 @@ def adapt_events(
     events: Iterable[CashMergerEvent],
     *,
     filing_rows: Iterable[dict[str, Any]] = (),
+    source_label: str = "event tape",
 ) -> tuple[tuple[EventObservation, ...], tuple[SourceReview, ...]]:
     """Convert the market-wide event tape without consulting a configured universe."""
 
@@ -316,8 +318,11 @@ def adapt_events(
                 offer_price=event.offer_price,
                 source_accession=event.accession,
                 source_url=event.source_url,
-                evidence=f"Massive event tape {event.source_form} {event.status}",
-                timeline=_timeline_evidence(filing_text.get(event.accession, "")),
+                evidence=f"{source_label} {event.source_form} {event.status}",
+                timeline=_event_timeline(
+                    event,
+                    filing_text.get(event.accession, ""),
+                ),
             )
         )
         if event.status != "pending":
@@ -326,6 +331,21 @@ def adapt_events(
     return (
         tuple(observations),
         tuple(sorted(reviews, key=lambda item: (item.accession, item.reason))),
+    )
+
+
+def _event_timeline(
+    event: CashMergerEvent,
+    filing_text: str,
+) -> DealTimelineEvidence | None:
+    parsed = _timeline_evidence(filing_text)
+    if parsed is not None:
+        return parsed
+    expected_close = getattr(event, "expected_close", None)
+    if expected_close is None:
+        return None
+    return DealTimelineEvidence(
+        guidance=CloseGuidance(earliest=expected_close, latest=expected_close)
     )
 
 

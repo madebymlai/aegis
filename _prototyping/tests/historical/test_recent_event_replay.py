@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
+import requests
 
 from _prototyping.merger.historical.recent import (
     MassiveEventTapeSource,
@@ -17,6 +20,17 @@ from _prototyping.merger.shadow.ledger import EventStatus
 from _prototyping.merger.run_recent_event_history import (
     HistoricalReplayInputError,
     run_recent_event_history,
+)
+from _prototyping.merger.legacy_aegis_rd.external_data.sec_cash_mergers import (
+    CashMergerEvent as SecCashMergerEvent,
+    CashMergerSnapshot,
+    SecCashMergerEventSource,
+    SecFiling,
+    EdgarMasterIndexClient,
+    _EdgarArchive,
+    _MasterIndexRow,
+    _preceding_symbol,
+    _snapshot_payload,
 )
 from cash_merger.events import CashMergerEvent
 from cash_merger.target_events import MassiveTargetEventSource
@@ -217,6 +231,29 @@ def _cache_payload(tmp_path, name: str, rows: list[dict]) -> None:
     (tmp_path / name).write_text(__import__("json").dumps({"results": rows}))
 
 
+def _write_sec_snapshot(
+    tmp_path,
+    events: tuple[SecCashMergerEvent, ...],
+    *,
+    covered_start: str = "2022-07-16",
+    covered_end: str = "2026-07-16",
+) -> None:
+    snapshot = CashMergerSnapshot(
+        events=events,
+        source_sha256="fixture",
+        retrieved_at="2026-07-20T00:00:00+00:00",
+        covered_start=covered_start,
+        covered_end=covered_end,
+    )
+    payload = _snapshot_payload(snapshot)
+    event_cache = tmp_path / "edgar-events"
+    event_cache.mkdir()
+    identity = str(payload["snapshot_sha256"])
+    (event_cache / f"cash-merger-events-{identity[:16]}.json").write_text(
+        __import__("json").dumps(payload)
+    )
+
+
 def test_offline_evidence_filters_cached_rows_by_causal_fields_and_deduplicates(
     tmp_path,
 ) -> None:
@@ -282,60 +319,22 @@ def test_offline_evidence_filters_filing_text_and_index_rows(tmp_path) -> None:
 def test_recent_history_seeds_pre_window_announcements_into_the_active_ledger(
     tmp_path,
 ) -> None:
-    _cache_payload(
+    _write_sec_snapshot(
         tmp_path,
-        "massive-agreement.json",
-        [
-            {
-                "accession_number": "warmup-agreement",
-                "cik": "0000004001",
-                "company_name": "Example Target Inc.",
-                "filing_date": "2023-06-01",
-                "filing_url": "https://example.test/warmup-agreement",
-                "primary_category": "strategic_transactions",
-                "secondary_category": "deal_agreements",
-                "tertiary_category": "merger_agreement",
-                "supporting_text": (
-                    "The Company entered into a merger agreement with Parent and Merger "
-                    "Sub. Merger Sub will merge with and into the Company, with the "
-                    "Company surviving as a wholly-owned subsidiary of Parent."
-                ),
-                "tickers": ["TGT"],
-            }
-        ],
-    )
-    _cache_payload(
-        tmp_path,
-        "massive-text.json",
-        [
-            {
-                "accession_number": "warmup-agreement",
-                "cik": "0000004001",
-                "filing_date": "2023-06-01",
-                "filing_url": "https://example.test/warmup-agreement",
-                "form_type": "8-K",
-                "items_text": (
-                    "Each share will receive $100.00 per share in cash under the merger. "
-                    "The transaction is expected to close in the fourth quarter of 2024."
-                ),
-                "ticker": "TGT",
-            }
-        ],
-    )
-    _cache_payload(
-        tmp_path,
-        "massive-unrelated-index.json",
-        [
-            {
-                "accession_number": "old-10k",
-                "cik": "0000009999",
-                "filing_date": "1999-01-01",
-                "filing_url": "https://example.test/old-10k",
-                "form_type": "10-K",
-                "issuer_name": "Unrelated Issuer",
-                "ticker": "OTHER",
-            }
-        ],
+        (
+            SecCashMergerEvent(
+                target_cik="0000004001",
+                target_name="Example Target Inc.",
+                target_symbol="TGT",
+                status="pending",
+                available_at="2023-06-01T23:59:59+00:00",
+                offer_price=100.0,
+                expected_close="2024-12-15",
+                source_form="8-K",
+                source_url="https://example.test/warmup-agreement",
+                accession="warmup-agreement",
+            ),
+        ),
     )
     market_payload = {
         "ticker": "SPY",
@@ -356,20 +355,165 @@ def test_recent_history_seeds_pre_window_announcements_into_the_active_ledger(
 
     report = run_recent_event_history(
         cache_dir=tmp_path,
-        event_start=date(1990, 1, 1),
+        event_start=date(2022, 7, 16),
         start=date(2024, 7, 16),
         end=date(2024, 7, 16),
         capital=100_000.0,
         annual_cash_rate=0.04,
     )
 
-    assert report["window"]["event_discovery_start"] == "1990-01-01"
-    assert report["window"]["source_evidence_start"] == "2023-06-01"
-    assert report["window"]["warmup_coverage_satisfied"] is False
+    assert report["window"]["event_discovery_start"] == "2022-07-16"
+    assert report["window"]["source_evidence_start"] == "2022-07-16"
+    assert report["window"]["warmup_policy"] == "two_year_continuous_event_history"
+    assert report["window"]["warmup_coverage_satisfied"] is True
     assert report["event_tape"]["lifecycles"] == 1
     assert report["selection_audit"]["selection_exclusions"] == {
         "missing_offer_or_mark": 1
     }
+
+
+def test_fetch_events_uses_sec_edgar_not_massive_disclosures(tmp_path) -> None:
+    _cache_payload(
+        tmp_path,
+        "massive-market.json",
+        [
+            {
+                "t": int(datetime(2024, 7, 16, tzinfo=UTC).timestamp() * 1_000),
+                "o": 550.0,
+                "h": 551.0,
+                "l": 549.0,
+                "c": 550.5,
+                "v": 10_000_000,
+            }
+        ],
+    )
+    payload = __import__("json").loads((tmp_path / "massive-market.json").read_text())
+    payload["ticker"] = "SPY"
+    (tmp_path / "massive-market.json").write_text(__import__("json").dumps(payload))
+    calls: list[tuple[date, date]] = []
+
+    class _SecSource:
+        def __init__(self, cache_dir) -> None:
+            assert cache_dir == tmp_path / "edgar-events"
+
+        def sync(self, start: date, end: date) -> None:
+            calls.append((start, end))
+
+        def load(self, start: date, end: date):
+            return SimpleNamespace(
+                events=(),
+                covered_start=start.isoformat(),
+                covered_end=end.isoformat(),
+            )
+
+    with patch(
+        "_prototyping.merger.run_recent_event_history.SecCashMergerEventSource",
+        _SecSource,
+    ):
+        report = run_recent_event_history(
+            cache_dir=tmp_path,
+            event_start=date(2022, 7, 16),
+            start=date(2024, 7, 16),
+            end=date(2024, 7, 16),
+            capital=100_000.0,
+            annual_cash_rate=0.04,
+            fetch_events=True,
+        )
+
+    assert calls == [(date(2022, 7, 16), date(2024, 7, 16))]
+    assert report["architecture"]["event_source_mode"] == "sec_edgar_master_index"
+    assert report["architecture"]["market_source_mode"] == "massive_offline_cache"
+
+
+def test_sec_backfill_replays_cross_year_state_as_one_continuous_history(tmp_path) -> None:
+    calls: list[tuple[date, date]] = []
+
+    class _Filings:
+        def filings(self, start: date, end: date):
+            calls.append((start, end))
+            return (
+                SecFiling(
+                    accession="1994-agreement",
+                    cik="1001",
+                    company_name="Example Target Inc.",
+                    symbol="TGT",
+                    form="8-K",
+                    filed_at="1994-06-01T16:00:00+00:00",
+                    source_url="https://example.test/1994-agreement",
+                    text=(
+                        "The company entered into a definitive merger agreement. "
+                        "Holders will receive $25.00 in cash per share."
+                    ),
+                ),
+            )
+
+    source = SecCashMergerEventSource(tmp_path / "events", client=_Filings())
+    source.sync(date(1993, 1, 1), date(1995, 12, 31))
+    snapshot = source.load(date(1993, 1, 1), date(1995, 12, 31))
+
+    assert calls == [(date(1993, 1, 1), date(1995, 12, 31))]
+    assert snapshot.covered_start == "1993-01-01"
+    assert snapshot.covered_end == "1995-12-31"
+    assert [event.accession for event in snapshot.events] == ["1994-agreement"]
+    assert len(tuple((tmp_path / "events").glob("cash-merger-events-*.json"))) == 1
+
+
+def test_sec_archive_retries_a_truncated_response() -> None:
+    response = SimpleNamespace(status_code=200, headers={})
+
+    class _Session:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, url: str, *, timeout: int):
+            del url, timeout
+            self.calls += 1
+            if self.calls == 1:
+                raise requests.exceptions.ChunkedEncodingError("truncated")
+            return response
+
+    session = _Session()
+    archive = _EdgarArchive(
+        session,
+        EdgarMasterIndexClient(
+            minimum_request_interval_seconds=0.0,
+            max_retries=1,
+        ),
+    )
+
+    assert archive._get("https://example.test/filing") is response
+    assert session.calls == 2
+
+
+def test_preceding_symbol_stops_after_the_latest_causal_symbol_filing() -> None:
+    rows = (
+        _MasterIndexRow("1001", "Target", "10-Q", date(2023, 8, 1), "old.txt"),
+        _MasterIndexRow("1001", "Target", "8-K", date(2024, 1, 2), "latest.txt"),
+    )
+
+    class _Archive:
+        def __init__(self) -> None:
+            self.requested: list[str] = []
+
+        def document(self, path: str) -> str:
+            self.requested.append(path)
+            return (
+                "<ACCEPTANCE-DATETIME>20240102120000"
+                '<ix:nonNumeric name="dei:TradingSymbol">TGT</ix:nonNumeric>'
+            )
+
+    archive = _Archive()
+
+    assert (
+        _preceding_symbol(
+            "1001",
+            "2024-01-03T00:00:00+00:00",
+            {"1001": rows},
+            archive,
+        )
+        == "TGT"
+    )
+    assert archive.requested == ["latest.txt"]
 
 
 class _FutureProxyOnlyTarget:
@@ -422,14 +566,14 @@ def test_future_proxy_cannot_supply_an_announcement_time_target_identity() -> No
     assert tape.unresolved_identity_accessions == ("ambiguous-announcement",)
 
 
-def test_recent_history_rejects_a_discovery_start_after_1990(tmp_path) -> None:
+def test_recent_history_requires_two_years_of_event_warmup(tmp_path) -> None:
     with pytest.raises(
         HistoricalReplayInputError,
-        match="event discovery must begin by 1990-01-01",
+        match="event discovery must include at least 730 days of warmup",
     ):
         run_recent_event_history(
             cache_dir=tmp_path,
-            event_start=date(1991, 1, 1),
+            event_start=date(2024, 1, 1),
             start=date(2024, 7, 16),
             end=date(2024, 7, 16),
             capital=100_000.0,
