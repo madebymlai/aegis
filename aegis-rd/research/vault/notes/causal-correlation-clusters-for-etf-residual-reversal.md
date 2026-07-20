@@ -2,7 +2,7 @@
 title: Causal Correlation Clusters for ETF Residual Reversal
 date: 2026-07-20
 topic: convergent-strategy-design
-status: prototype-candidate
+status: falsified-current-rule
 aliases:
   - ETF correlation-bucket reversal
   - ETF cluster residual reversal
@@ -17,13 +17,13 @@ tags:
   - reversal
   - clustering
   - statistical-arbitrage
-  - prototype-candidate
+  - negative-result
 ---
 
 # Causal Correlation Clusters for ETF Residual Reversal
 
 > [!abstract] Research verdict
-> **There is enough evidence to justify a throwaway OHLCV prototype, but not enough to call the proposed ETF rule established alpha.** Published work separately supports correlation-based economic groupings, residual mean-reversion portfolios, ETF price deviations, and non-fundamental ETF demand. No source found establishes the exact composition: *causally learned ETF correlation clusters plus short-horizon leave-one-out residual reversal after retail execution costs*. That composition is the hypothesis the prototype must answer.
+> **The exact UCITS ETF OHLCV rule failed its five-year implementation test.** It earned only +1.02% gross and became negative above roughly 1.2 basis points of one-way execution cost. Published work still supports the broader research architecture—correlation-based economic groupings, residual mean reversion, ETF price deviations, and non-fundamental demand—but this particular composition is not buildable alpha and should not receive live capital.
 
 ## The proposed behaviour
 
@@ -177,6 +177,46 @@ predeclared $|z| \ge 3$ entry boundary on 2026-07-17, so the correct prototype o
 no entry. This is evidence that the state model behaves coherently on one live snapshot;
 it is not evidence of after-cost alpha.
 
+## Five-year causal backtest
+
+> [!failure] The exact rule does not survive plausible execution costs
+> The current UCITS implementation produced a small gross return but required too much
+> turnover. It should not be promoted as a standalone alpha.
+
+The walk-forward run requested IB daily history from 2020-12-07 through 2026-07-17 so the
+146-session formation and snapshot warm-up did not consume the requested evaluation
+horizon. The five-year signal window contains 1,236 sessions from 2021-07-08 through
+2026-07-14. Every 21 sessions, the rule selects complete peer families using trailing
+60-session dollar volume known at the formation date and freezes their peer map. Each
+target is formed at a close, executed at the next session's open, and earns the following
+open-to-open total return. The accounting charges all target changes, a fixed short-borrow
+haircut and terminal liquidation.
+
+| Result | Value |
+| --- | ---: |
+| Gross total return | +1.02% |
+| Net total return at 10 bps one-way cost and 100 bps annual borrow | -5.87% |
+| Annualized net return | -1.22% |
+| Annualized volatility | 0.79% |
+| Net Sharpe, zero cash rate | -1.56 |
+| Maximum drawdown | -6.08% |
+| Entries / exits | 52 / 52 |
+| Exposed sessions | 104 |
+| Total one-way turnover | 68.50× |
+
+The failure is not confined to an unusually harsh 10-basis-point assumption. Holding the
+borrow haircut at 100 basis points annually, net total return was only +0.12% at one basis
+point and -0.56% at two basis points. The implied break-even is about 1.2 basis points per
+one-way turnover. That is below a defensible all-in spread, slippage and commission
+allowance for the less-liquid London lines in this universe.
+
+This remains an optimistic research result. The candidate list is today's curated survivor
+set rather than a point-in-time historical UCITS master, although liquidity and complete
+family membership are now evaluated point-in-time inside that set. OHLCV also does not
+reveal historical spreads, depth, locates or borrow fees. Those limitations cannot rescue
+a rule whose measured break-even cost is already close to one basis point; they make the
+negative deployment conclusion stronger.
+
 ## Failure conditions
 
 Reject the hypothesis if residual losers do not outperform residual winners after next-session entry; the sign vanishes under a modest cost haircut; results come primarily from illiquid or duplicate wrappers; raw clusters perform only because they load on common market moves; clusters change too quickly to provide a stable anchor; the effect is concentrated in international stale-close mismatches; or an equal-weight/manual peer baseline matches the complicated learner.
@@ -194,7 +234,7 @@ $$
 \rightarrow \text{test for reversal}.
 $$
 
-This is a better prototype target than generic ETF dip-buying. It offers room for proprietary alpha because the peer map and residual construction are learned rather than announced as a public event. The trade-off is that the causal payer is weaker: with OHLCV alone, success would prove a price regularity, not that ETF flows caused it.
+This was a better falsification target than generic ETF dip-buying because the peer map and residual construction were causal and explicit. The test nevertheless rejects the exact fixed rule: its gross return is too small relative to turnover. Further parameter search on the same sample would be data mining, not evidence. Any future reversal candidate should introduce a materially different information source or lower-turnover mechanism and receive a new untouched evaluation.
 
 ## Sources
 

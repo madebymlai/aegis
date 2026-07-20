@@ -13,11 +13,9 @@ import numpy as np
 import pandas as pd
 
 from .model import (
-    FORMATION_DAYS,
     MIN_CLUSTER_SIZE,
-    MONTHLY_SNAPSHOT_DAYS,
+    MINIMUM_HISTORY_SESSIONS,
     PrototypeState,
-    SIGNAL_DAYS,
     state_from_history,
 )
 from .universe import BENCHMARK, UCITS_UNIVERSE, UcitsCandidate
@@ -74,6 +72,8 @@ class ExcludedAsset:
 @dataclass(frozen=True)
 class UniverseLoad:
     state: PrototypeState
+    execution_returns: pd.DataFrame
+    dollar_volumes: pd.DataFrame
     included: tuple[IncludedAsset, ...]
     excluded: tuple[ExcludedAsset, ...]
     benchmark: str
@@ -87,6 +87,7 @@ def load_ucits_universe(
     catalog_path: Path | None = None,
     gateway_port: int = 4002,
     client_id: int = 43,
+    history_calendar_days: int = HISTORY_CALENDAR_DAYS,
     minimum_median_dollar_volume: float = MINIMUM_DOLLAR_VOLUME,
     progress: Callable[[str], None] | None = None,
 ) -> UniverseLoad:
@@ -98,7 +99,7 @@ def load_ucits_universe(
     report = progress or (lambda _message: None)
     end = as_of or latest_completed_london_session().date().isoformat()
     start = (
-        (pd.Timestamp(end) - pd.Timedelta(days=HISTORY_CALENDAR_DAYS))
+        (pd.Timestamp(end) - pd.Timedelta(days=history_calendar_days))
         .date()
         .isoformat()
     )
@@ -140,6 +141,8 @@ def load_ucits_universe(
     )
     return UniverseLoad(
         state=loaded.state,
+        execution_returns=loaded.execution_returns,
+        dollar_volumes=loaded.dollar_volumes,
         included=loaded.included,
         excluded=tuple(
             sorted((*exclusions, *loaded.excluded), key=lambda item: item.ticker)
@@ -225,8 +228,16 @@ def history_to_state(
     volumes = volumes.drop(columns=benchmark)
     gaps = gaps.drop(columns=benchmark)
     state = state_from_history(returns, market, volumes, gaps)
+    execution_returns = _next_session_execution_returns(
+        accepted, state.returns.index
+    ).drop(columns=benchmark)
+    dollar_volumes = _dollar_volume_panel(accepted, state.returns.index).drop(
+        columns=benchmark
+    )
     return UniverseLoad(
         state=state,
+        execution_returns=execution_returns,
+        dollar_volumes=dollar_volumes,
         included=tuple(sorted(included, key=lambda item: item.ticker)),
         excluded=tuple(sorted(excluded, key=lambda item: item.ticker)),
         benchmark=benchmark,
@@ -241,7 +252,7 @@ def _screen_histories(
     benchmark: str,
     minimum_median_dollar_volume: float,
 ) -> tuple[dict[str, AssetHistory], list[IncludedAsset], list[ExcludedAsset]]:
-    required_observations = FORMATION_DAYS + MONTHLY_SNAPSHOT_DAYS + SIGNAL_DAYS
+    required_observations = MINIMUM_HISTORY_SESSIONS
     accepted: dict[str, AssetHistory] = {}
     included: list[IncludedAsset] = []
     excluded: list[ExcludedAsset] = []
@@ -369,16 +380,7 @@ def _aligned_arrays(
     gaps: dict[str, pd.Series] = {}
     for ticker, history in histories.items():
         frame = history.frame
-        cash = pd.Series(0.0, index=frame.index)
-        for ex_date, amount in history.distributions.items():
-            date = pd.Timestamp(ex_date)
-            if date.tzinfo is None:
-                date = date.tz_localize("UTC")
-            else:
-                date = date.tz_convert("UTC")
-            date = date.normalize()
-            if date in cash.index:
-                cash.loc[date] += float(amount)
+        cash = _distribution_series(history)
         previous_close = frame["Close"].shift(1)
         returns[ticker] = np.log((frame["Close"] + cash) / previous_close)
         gaps[ticker] = np.log((frame["Open"] + cash) / previous_close)
@@ -390,3 +392,42 @@ def _aligned_arrays(
         gap_panel.index
     )
     return return_panel.loc[common], volume_panel.loc[common], gap_panel.loc[common]
+
+
+def _next_session_execution_returns(
+    histories: Mapping[str, AssetHistory], state_index: pd.Index
+) -> pd.DataFrame:
+    returns: dict[str, pd.Series] = {}
+    for ticker, history in histories.items():
+        frame = history.frame
+        cash = _distribution_series(history)
+        open_to_next_open = np.log(
+            (frame["Open"].shift(-1) + cash.shift(-1)) / frame["Open"]
+        )
+        returns[ticker] = open_to_next_open.shift(-1)
+    return pd.DataFrame(returns).reindex(state_index)
+
+
+def _dollar_volume_panel(
+    histories: Mapping[str, AssetHistory], state_index: pd.Index
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            ticker: history.frame["Close"] * history.frame["Volume"]
+            for ticker, history in histories.items()
+        }
+    ).reindex(state_index)
+
+
+def _distribution_series(history: AssetHistory) -> pd.Series:
+    cash = pd.Series(0.0, index=history.frame.index)
+    for ex_date, amount in history.distributions.items():
+        date = pd.Timestamp(ex_date)
+        if date.tzinfo is None:
+            date = date.tz_localize("UTC")
+        else:
+            date = date.tz_convert("UTC")
+        date = date.normalize()
+        if date in cash.index:
+            cash.loc[date] += float(amount)
+    return cash

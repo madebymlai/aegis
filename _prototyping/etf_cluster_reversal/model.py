@@ -13,6 +13,7 @@ from scipy.spatial.distance import squareform
 FORMATION_DAYS = 120
 SIGNAL_DAYS = 5
 MONTHLY_SNAPSHOT_DAYS = 21
+MINIMUM_HISTORY_SESSIONS = FORMATION_DAYS + MONTHLY_SNAPSHOT_DAYS + SIGNAL_DAYS
 ENTRY_Z = 3.0
 EXIT_Z = 0.5
 MAX_HOLD_DAYS = 5
@@ -112,10 +113,43 @@ def state_from_history(
     market: pd.Series,
     volumes: pd.DataFrame,
     gaps: pd.DataFrame,
+    frozen_snapshot: ClusterSnapshot | None = None,
 ) -> PrototypeState:
     """Create a state whose current clusters are compared with last month's freeze."""
 
     _validate_history(returns, market, volumes, gaps)
+    decision_snapshot = frozen_snapshot or _prior_snapshot(
+        returns, market, volumes, gaps
+    )
+    current = PrototypeState(
+        day=len(returns),
+        returns=returns,
+        market=market,
+        volumes=volumes,
+        gaps=gaps,
+        clusters=decision_snapshot,
+        positions={},
+        targets={},
+        last_action="loaded causal IBKR UCITS history",
+    )
+    diagnostic = _freeze_clusters(current)
+    decision_snapshot = replace(
+        decision_snapshot,
+        stability=diagnostic.clusters.stability,
+    )
+    return replace(
+        current,
+        clusters=decision_snapshot,
+        last_action="loaded current history against prior frozen clusters",
+    )
+
+
+def _prior_snapshot(
+    returns: pd.DataFrame,
+    market: pd.Series,
+    volumes: pd.DataFrame,
+    gaps: pd.DataFrame,
+) -> ClusterSnapshot:
     empty = ClusterSnapshot("", {}, {}, {}, {})
     prior = PrototypeState(
         day=len(returns) - MONTHLY_SNAPSHOT_DAYS,
@@ -128,28 +162,7 @@ def state_from_history(
         targets={},
         last_action="loaded prior causal history",
     )
-    prior = _freeze_clusters(prior)
-    current = PrototypeState(
-        day=len(returns),
-        returns=returns,
-        market=market,
-        volumes=volumes,
-        gaps=gaps,
-        clusters=prior.clusters,
-        positions={},
-        targets={},
-        last_action="loaded causal IBKR UCITS history",
-    )
-    diagnostic = _freeze_clusters(current)
-    decision_snapshot = replace(
-        prior.clusters,
-        stability=diagnostic.clusters.stability,
-    )
-    return replace(
-        current,
-        clusters=decision_snapshot,
-        last_action="loaded current history against prior frozen clusters",
-    )
+    return _freeze_clusters(prior).clusters
 
 
 def transition(state: PrototypeState, action: Action) -> PrototypeState:
@@ -164,6 +177,18 @@ def transition(state: PrototypeState, action: Action) -> PrototypeState:
     if action is Action.REVERT:
         return _append_day(state, action, _reversion_returns(state))
     return _append_day(state, action, _scenario_returns(state, action))
+
+
+def rebalance_historical_state(
+    state: PrototypeState, prior_positions: dict[str, Position]
+) -> PrototypeState:
+    """Age an existing live-like book once and apply today's deterministic rule."""
+
+    aged = {
+        ticker: replace(position, age=position.age + 1)
+        for ticker, position in prior_positions.items()
+    }
+    return _rebalance(replace(state, positions=aged))
 
 
 def assessments(state: PrototypeState) -> tuple[Assessment, ...]:
@@ -494,20 +519,29 @@ def _rebalance(state: PrototypeState) -> PrototypeState:
     latest = {item.ticker: item for item in assessments(state)}
     positions: dict[str, Position] = {}
     exit_reasons: list[str] = []
+    exited_tickers: set[str] = set()
     for ticker, position in state.positions.items():
         item = latest[ticker]
-        if item.residual_z is None or item.stability < CLUSTER_STABILITY_FLOOR:
+        if (
+            item.residual_z is None
+            or item.cluster != position.cluster
+            or item.stability < CLUSTER_STABILITY_FLOOR
+        ):
             exit_reasons.append(f"{ticker}: invalid anchor")
+            exited_tickers.add(ticker)
         elif abs(item.residual_z) <= EXIT_Z:
             exit_reasons.append(f"{ticker}: normalized")
+            exited_tickers.add(ticker)
         elif position.age >= MAX_HOLD_DAYS:
             exit_reasons.append(f"{ticker}: horizon expired")
+            exited_tickers.add(ticker)
         else:
             positions[ticker] = position
     for item in latest.values():
         if (
             not item.eligible
             or item.ticker in positions
+            or item.ticker in exited_tickers
             or item.residual_z is None
             or item.cluster is None
         ):
