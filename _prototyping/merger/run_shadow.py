@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from dataclasses import asdict
-from datetime import UTC, date, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
-from typing import Any
 
-import yaml
-
+from _prototyping.merger.cli import default_state_dir, iso_date, utc_timestamp
+from _prototyping.merger.config import load_prototype_config
 from _prototyping.merger.shadow import (
     AegisCatalogMarkSource,
     CashMergerShadow,
@@ -20,24 +18,20 @@ from _prototyping.merger.shadow import (
 )
 
 
-class ShadowConfigError(ValueError):
-    """The prototype YAML cannot define an executable shadow observation."""
-
-
 def main() -> None:
     args = _arguments()
-    as_of = _timestamp(args.as_of)
-    config = _load_config(args.config)
+    as_of = utc_timestamp(args.as_of)
+    config = load_prototype_config(args.config)
     root = args.state_dir.expanduser().resolve()
     shadow = CashMergerShadow(root)
     cash_rate = FredDtb3RateSource(root / "sources" / "fred-dtb3").latest(as_of=as_of.date())
     end = as_of.date() - timedelta(days=1)
     evidence = shadow.run(
-        source=EdgarEventSource(config["instrument_ids"]),
+        source=EdgarEventSource(tuple(str(item) for item in config.instrument_ids)),
         marks=AegisCatalogMarkSource(
             cash_rate.annual_rate,
-            catalog_path=config["catalog_path"],
-            market_instrument_id=config["market_instrument_id"],
+            catalog_path=config.catalog_path,
+            market_instrument_id=str(config.market_instrument_id),
         ),
         start=shadow.next_refresh_start(
             end=end,
@@ -45,7 +39,7 @@ def main() -> None:
         ),
         end=end,
         as_of=as_of,
-        capital=config["shadow_capital"],
+        capital=config.capital.value,
     )
     print(
         json.dumps(
@@ -84,12 +78,11 @@ def main() -> None:
 
 
 def _arguments() -> argparse.Namespace:
-    default_cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument(
         "--bootstrap-start",
-        type=_date,
+        type=iso_date,
         required=True,
         help=(
             "First SEC filing date to replay when the state directory is empty; "
@@ -99,60 +92,13 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--state-dir",
         type=Path,
-        default=default_cache / "aegis" / "cash-merger-shadow",
+        default=default_state_dir("cash-merger-shadow"),
     )
     parser.add_argument(
         "--as-of",
         help="Timezone-aware ISO timestamp; defaults to the current UTC time.",
     )
     return parser.parse_args()
-
-
-def _date(value: str) -> date:
-    try:
-        return date.fromisoformat(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError(
-            "--bootstrap-start must be an ISO date (YYYY-MM-DD)"
-        ) from error
-
-
-def _timestamp(value: str | None) -> datetime:
-    if value is None:
-        return datetime.now(UTC)
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        raise ShadowConfigError("--as-of must include a timezone")
-    return parsed.astimezone(UTC)
-
-
-def _load_config(path: Path) -> dict[str, Any]:
-    payload = yaml.safe_load(path.read_text())
-    if not isinstance(payload, dict):
-        raise ShadowConfigError("shadow config must be a YAML mapping")
-    unknown = set(payload) - {
-        "shadow_capital",
-        "instrument_ids",
-        "market_instrument_id",
-        "catalog_path",
-    }
-    if unknown:
-        raise ShadowConfigError(f"unknown shadow config fields: {sorted(unknown)}")
-    capital = float(payload.get("shadow_capital", 0.0))
-    if capital <= 0.0:
-        raise ShadowConfigError("shadow_capital must be positive")
-    raw_ids = payload.get("instrument_ids")
-    if not isinstance(raw_ids, list) or not raw_ids or not all(
-        isinstance(instrument_id, str) for instrument_id in raw_ids
-    ):
-        raise ShadowConfigError("instrument_ids must be a non-empty list of InstrumentId strings")
-    catalog = payload.get("catalog_path")
-    return {
-        "shadow_capital": capital,
-        "instrument_ids": tuple(dict.fromkeys(raw_ids)),
-        "market_instrument_id": str(payload.get("market_instrument_id", "SPY.ARCA")),
-        "catalog_path": Path(catalog).expanduser() if catalog is not None else None,
-    }
 
 
 if __name__ == "__main__":

@@ -192,11 +192,22 @@ class EdgarEventSource:
         instrument_ids: Iterable[str],
         *,
         gateway: EdgarGateway | None = None,
+        frozen_identities: Iterable[IssuerIdentity] = (),
     ) -> None:
         self._instrument_ids = tuple(dict.fromkeys(instrument_ids))
         if not self._instrument_ids:
             raise EdgarSourceError("cash-merger universe must contain at least one InstrumentId")
         self._gateway = gateway or EdgarToolsGateway()
+        self._frozen_identities = tuple(frozen_identities)
+        unknown_frozen = sorted(
+            identity.instrument_id
+            for identity in self._frozen_identities
+            if identity.instrument_id not in self._instrument_ids
+        )
+        if unknown_frozen:
+            raise EdgarSourceError(
+                f"frozen issuer identities are outside the configured universe: {unknown_frozen}"
+            )
         self._resolved: tuple[IssuerIdentity, ...] | None = None
 
     def refresh(
@@ -284,9 +295,29 @@ class EdgarEventSource:
 
     def _identities(self) -> tuple[IssuerIdentity, ...]:
         if self._resolved is None:
-            resolved = self._gateway.resolve(self._instrument_ids)
+            frozen_ids = {
+                identity.instrument_id for identity in self._frozen_identities
+            }
+            unresolved_ids = tuple(
+                instrument_id
+                for instrument_id in self._instrument_ids
+                if instrument_id not in frozen_ids
+            )
+            resolved = (
+                *self._frozen_identities,
+                *self._gateway.resolve(unresolved_ids),
+            )
             if {identity.instrument_id for identity in resolved} != set(self._instrument_ids):
                 raise EdgarSourceError("EDGAR identity resolution did not cover the configured universe")
+            by_instrument: dict[str, IssuerIdentity] = {}
+            for identity in resolved:
+                previous = by_instrument.get(identity.instrument_id)
+                if previous is not None and previous != identity:
+                    raise EdgarSourceError(
+                        f"conflicting frozen issuer identities for {identity.instrument_id}"
+                    )
+                by_instrument[identity.instrument_id] = identity
+            resolved = tuple(by_instrument.values())
             by_cik: dict[str, IssuerIdentity] = {}
             for identity in resolved:
                 previous = by_cik.get(identity.cik)

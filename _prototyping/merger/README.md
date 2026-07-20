@@ -3,12 +3,16 @@
 This directory contains all cash-merger experimental work. It is deliberately outside
 `aegis-rd`, `aegis-trader`, and their normal test suites.
 
-`historical/` retains the successive Massive-backed experiments and their reports.
 `legacy_aegis_rd/` retains the earlier retired Aegis RD component/config attempt and its
 generated runs; its old checks are under `_prototyping/tests/legacy_aegis_rd` and are evidence,
 not an active suite. `shadow/` is the forward evidence collector for the surviving market-implied
 `q70` control. The control is **not promoted alpha**: the gate remains closed until the prospective ledger has
 at least 100 resolved events and 10 adverse resolutions.
+
+There is one active strategy implementation: `CashMergerSelector.select(...)`. Prospective
+collection and historical replay call that same interface. EdgarTools supplies SEC filings in
+both modes; Aegis's standard catalog-backed IBKR path supplies market data. The prototype has no
+secondary market-data provider and no provider-specific strategy logic.
 
 ## Prospective run
 
@@ -50,6 +54,32 @@ engine is the no-alpha `market-implied-q70` benchmark. Any challenger must carry
 artifact identity and training cutoff for the forecast batch, plus a causal feature timestamp for
 every deal. Injected challengers remain shadow-only while the market baseline controls positions;
 qualified-challenger authority must be granted explicitly after out-of-sample evidence exists.
+
+## Historical replay
+
+Replay the configured cohort one calendar month at a time with the same event parser, selector,
+cost model and whole-share sizing used by the prospective runner:
+
+```bash
+aegis-rd/.venv/bin/python -m _prototyping.merger.run_history \
+  --config /path/to/local-shadow.yaml \
+  --start 2025-07-01 \
+  --end 2026-07-01 \
+  --source-state-dir ~/.cache/aegis/cash-merger-shadow
+```
+
+The replay reconstructs filings through EdgarTools using SEC acceptance timestamps and loads
+every mark through the Aegis catalog. Missing catalog intervals are lazily requested from IBKR.
+Bars already stored in the catalog remain replayable after a target delists.
+`--source-state-dir` copies only immutable event observations into the dedicated replay ledger;
+this preserves the event-time CIK and listing identity without asking a current ticker map to
+resolve a delisted target. Replay decisions and prospective evidence remain isolated.
+
+IBKR does not provide historical data for securities which are no longer trading. Consequently,
+this runner deliberately reports unavailable market history for an uncached delisted target. It
+does not omit the event, guess a price, or fall back to another provider. The replay becomes
+survivorship-free prospectively as Aegis persists each observed target's bars before delisting;
+it is not a complete pre-collection historical alpha test.
 
 The execution estimate assumes IBKR Pro Tiered pricing for U.S. equities: `$0.0035` per share,
 with a `$0.35` order minimum and a `1%` trade-value cap, plus a `0.03%` AutoFX adjustment on USD

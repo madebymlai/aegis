@@ -11,6 +11,10 @@ from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
+from aegis_data.catalog import (
+    CatalogCoverageGapError,
+    GapFillProviderError,
+)
 from nautilus_trader.model.identifiers import InstrumentId
 
 from .ledger import EventObservation, EventStatus
@@ -76,19 +80,50 @@ class AegisCatalogMarkSource:
         start = (earliest - timedelta(days=100)).date().isoformat()
         end = as_of.date().isoformat()
         port = self._port or _catalog_port(self._catalog_path)
-        frames = _window_frames(
-            port,
-            tuple(dict.fromkeys((*ids.values(), market_id))),
-            start=start,
-            end=end,
-        )
-        market = frames[market_id]
+        try:
+            market = _window_frames(
+                port,
+                (market_id,),
+                start=start,
+                end=end,
+            )[market_id]
+        except (
+            CatalogCoverageGapError,
+            GapFillProviderError,
+        ) as error:
+            reason = _unavailable_reason(error)
+            return MarketMarkBatch(
+                (),
+                tuple(
+                    MarketUnavailable(event.event_id, event.ticker, reason)
+                    for event in sorted(pending, key=lambda item: item.event_id)
+                ),
+            )
         marks: list[MarketMark] = []
         unavailable: list[MarketUnavailable] = []
         for event in pending:
+            try:
+                target = _window_frames(
+                    port,
+                    (ids[event.event_id],),
+                    start=start,
+                    end=end,
+                )[ids[event.event_id]]
+            except (
+                CatalogCoverageGapError,
+                GapFillProviderError,
+            ) as error:
+                unavailable.append(
+                    MarketUnavailable(
+                        event.event_id,
+                        event.ticker,
+                        _unavailable_reason(error),
+                    )
+                )
+                continue
             mark, reason = _mark(
                 event,
-                frames[ids[event.event_id]],
+                target,
                 market,
                 as_of=as_of,
                 annual_cash_rate=self._annual_cash_rate,
@@ -101,6 +136,13 @@ class AegisCatalogMarkSource:
             marks=tuple(sorted(marks, key=lambda item: item.ticker)),
             unavailable=tuple(sorted(unavailable, key=lambda item: (item.event_id, item.reason))),
         )
+
+
+def _unavailable_reason(error: Exception) -> str:
+    detail = str(error).strip()
+    if detail:
+        return f"catalog history unavailable: {type(error).__name__}: {detail}"
+    return f"catalog history unavailable: {type(error).__name__}"
 
 
 def _mark(
