@@ -69,6 +69,8 @@ module = [
   "numba",
   "numba.*",
   "nautilus_trader.*",
+  "scipy",
+  "scipy.*",
 ]
 ignore_missing_imports = true
 

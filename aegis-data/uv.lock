@@ -39,7 +39,7 @@ dev = [{ name = "pytest", specifier = ">=9.1.0" }]
 
 [[package]]
 name = "aegis-runtime"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "../aegis-runtime" }
 dependencies = [
     { name = "nautilus-trader" },

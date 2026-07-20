@@ -263,10 +263,12 @@ def _average_ranks(values: list[float | None]) -> list[float]:
     or Nones) share the average of the ranks they span.
     """
     n = len(values)
-    order = sorted(
-        range(n),
-        key=lambda i: (values[i] is None, -values[i] if values[i] is not None else 0.0),
-    )
+
+    def _order_key(i: int) -> tuple[bool, float]:
+        value = values[i]
+        return (value is None, -value if value is not None else 0.0)
+
+    order = sorted(range(n), key=_order_key)
     ranks = [0.0] * n
     i = 0
     while i < n:

@@ -100,9 +100,23 @@ class _AdjustedLastProvider:
         self.adjusted_last = adjusted_last
         self.requests: list[dict[str, Any]] = []
 
-    def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
-        self.requests.append(kwargs)
-        return self.adjusted_last[kwargs["instrument_id"]]
+    def request_adjusted_last(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        currency: str = "USD",
+    ) -> pd.Series:
+        self.requests.append(
+            {
+                "instrument_id": instrument_id,
+                "start": start,
+                "end": end,
+                "currency": currency,
+            }
+        )
+        return self.adjusted_last[instrument_id]
 
 
 def _seed_fx_pair(catalog: ParquetDataCatalog, fx_pair: InstrumentId) -> None:
@@ -739,7 +753,15 @@ def test_catalog_port_translates_a_distribution_fetch_failure_into_a_port_error(
     _write_definition(catalog, instrument_id)
 
     class _BrokenAdjustedLast:
-        def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
+        def request_adjusted_last(
+            self,
+            instrument_id: InstrumentId,
+            *,
+            start: pd.Timestamp,
+            end: pd.Timestamp,
+            currency: str = "USD",
+        ) -> pd.Series:
+            del instrument_id, start, end, currency
             raise IbkrRequestError("IBKR could not fetch ADJUSTED_LAST closes: ib down")
 
     port = CatalogBackedDataPort(
@@ -1282,7 +1304,7 @@ def test_catalog_port_rejects_uncovered_distributions_with_bar_only_provider(
     with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
         CatalogBackedDataPort(
             catalog,
-            distribution_provider=_ProviderPort([]),
+            provider=_ProviderPort([]),
         ).load_window(CatalogWindowRequest(
             (instrument_id,),
             start="2024-01-01",

@@ -242,6 +242,7 @@ def test_request_bars_preserves_vendor_connection_failure() -> None:
         )
 
     completion_error = excinfo.value.__cause__
+    assert isinstance(completion_error, RuntimeError)
     assert isinstance(completion_error.__cause__, ConnectionError)
 
 
@@ -357,7 +358,9 @@ def test_catalog_port_preserves_vendor_connection_failure(tmp_path: Path) -> Non
 
     provider_error = excinfo.value.__cause__
     assert isinstance(provider_error, IbkrRequestError)
-    assert isinstance(provider_error.__cause__.__cause__, ConnectionError)
+    completion_error = provider_error.__cause__
+    assert isinstance(completion_error, RuntimeError)
+    assert isinstance(completion_error.__cause__, ConnectionError)
 
 
 def test_catalog_port_translates_request_deadline_to_provider_failure(
