@@ -86,10 +86,25 @@ def test_metric_registry_for_registers_only_requested_custom_metrics() -> None:
     assert tuple(frozen.extractors) == (
         *PORTFOLIO_METRIC_VALUE_KEYS, "ulcer_performance_index"
     )
+    assert frozen.extractors["ulcer_performance_index"].range_factory is not None
     assert frozen.fingerprint != make_default_metric_registry().fingerprint
     assert (
         make_metric_registry_for(()).fingerprint
         == make_default_metric_registry().fingerprint
+    )
+
+
+def test_every_optional_custom_metric_registers_a_bounds_aware_extractor() -> None:
+    from research.aegis_research.metrics import make_metric_registry_for
+    from research.aegis_research.metrics.custom import optional_custom_metrics
+
+    optional = optional_custom_metrics()
+    frozen = make_metric_registry_for(tuple(optional))
+
+    assert all(frozen.extractors[metric_id].range_factory is not None for metric_id in optional)
+    assert all(
+        frozen.get(metric_id).boundary_semantics in {"inherited_path", "block_local"}
+        for metric_id in optional
     )
 
 
@@ -165,7 +180,7 @@ def test_default_registry_fingerprint_is_byte_stable() -> None:
     """
     assert (
         make_default_metric_registry().fingerprint
-        == "25995c4bdb5f6c98e4bf62fc60bc38a534e927d2ff469e02102e075d3bdaa3ae"
+        == "af5741041fac9bac11ba5663c3fe45a11b7b772950c3a322f0bca80ecd4aa603"
     )
 
 

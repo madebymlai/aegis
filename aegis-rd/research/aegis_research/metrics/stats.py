@@ -16,6 +16,7 @@ VBT_PORTFOLIO_TARGET = "portfolio"
 
 SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
     "total_return": {
+        "direction": "maximize",
         "unit": "percent",
         "value_semantics": "percentage_return",
         "source_method": "stats",
@@ -23,6 +24,7 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
         "required_gate_input": False,
     },
     "max_dd": {
+        "direction": "minimize",
         "unit": "percent_loss_magnitude",
         "value_semantics": "drawdown_loss_magnitude_percent",
         "source_method": "stats",
@@ -30,6 +32,7 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
         "required_gate_input": True,
     },
     "total_trades": {
+        "direction": "maximize",
         "unit": "count",
         "value_semantics": "trade_count",
         "source_method": "stats",
@@ -37,6 +40,7 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
         "required_gate_input": True,
     },
     "win_rate": {
+        "direction": "maximize",
         "unit": "percent",
         "value_semantics": "winning_trade_rate_percent",
         "source_method": "stats",
@@ -44,6 +48,7 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
         "required_gate_input": False,
     },
     "total_fees_paid": {
+        "direction": "minimize",
         "unit": "cash",
         "value_semantics": "fee_cost_cash",
         "source_method": "stats",
@@ -51,6 +56,7 @@ SUPPORTED_PORTFOLIO_STATS: dict[str, dict[str, Any]] = {
         "required_gate_input": False,
     },
     "sharpe_ratio": {
+        "direction": "maximize",
         "unit": "ratio",
         "value_semantics": "risk_adjusted_return_ratio",
         "source_method": "get_sharpe_ratio",
@@ -85,9 +91,14 @@ def register_vbt_stats_metrics(
 ) -> None:
     metrics = portfolio_metrics if portfolio_metrics is not None else _portfolio_metrics()
     for metric_id, overlay in SUPPORTED_PORTFOLIO_STATS.items():
+        extractor = BUILTIN_EXTRACTORS[metric_id]
+        if extractor.range_factory is None:
+            raise MetricRegistryError(
+                f"VectorBT Portfolio Metric {metric_id!r} has no bounds-aware extractor"
+            )
         registry.register(
             _portfolio_metric_definition(metric_id, overlay, metrics),
-            BUILTIN_EXTRACTORS[metric_id],
+            extractor,
         )
 
 
@@ -117,6 +128,8 @@ def _portfolio_metric_definition(
         source_type=SOURCE_TYPE_VBT_STATS,
         unit=str(overlay["unit"]),
         value_semantics=str(overlay["value_semantics"]),
+        direction=overlay["direction"],
+        boundary_semantics="native_continuous",
         required_inputs=tuple(overlay.get("required_inputs", ())),
         provider=VBT_STATS_PROVIDER,
         target=VBT_PORTFOLIO_TARGET,

@@ -99,6 +99,16 @@ def _validate_definition(definition: MetricDefinition) -> None:
         raise MetricRegistryError(f"metric {definition.id} unit must be non-empty")
     if not definition.value_semantics:
         raise MetricRegistryError(f"metric {definition.id} value semantics must be non-empty")
+    if definition.direction not in ("maximize", "minimize"):
+        raise MetricRegistryError(f"metric {definition.id} direction is unsupported")
+    if definition.missing_value_policy != "worst":
+        raise MetricRegistryError(f"metric {definition.id} missing-value policy is unsupported")
+    if definition.boundary_semantics not in (
+        "native_continuous",
+        "inherited_path",
+        "block_local",
+    ):
+        raise MetricRegistryError(f"metric {definition.id} boundary semantics are unsupported")
 
 
 def _registry_fingerprint(definitions: Mapping[str, MetricDefinition]) -> str:

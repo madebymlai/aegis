@@ -30,6 +30,9 @@ class EquityCurve:
 
     value: pd.DataFrame
     close: pd.DataFrame
+    canonical_returns: pd.DataFrame | None = None
+    sim_start: int | None = None
+    sim_end: int | None = None
 
     @classmethod
     def from_portfolio(cls, pf: Any) -> EquityCurve:
@@ -37,20 +40,37 @@ class EquityCurve:
         value = pf.get_value()
         if isinstance(value, pd.Series):
             value = value.to_frame()
-        return cls(value=value, close=pf.close)
+        return cls(
+            value=value,
+            close=pf.close,
+            canonical_returns=getattr(pf, "canonical_returns", None),
+            sim_start=getattr(pf, "sim_start", None),
+            sim_end=getattr(pf, "sim_end", None),
+        )
 
     def drawdown_curve(self) -> pd.DataFrame:
         """Per-Candidate drawdown from the running peak: ``value / cummax - 1`` (<= 0)."""
-        return self.value / self.value.cummax() - 1.0
+        if self.canonical_returns is None:
+            drawdown = self.value / self.value.cummax() - 1.0
+        else:
+            cumulative = (1.0 + self.canonical_returns.fillna(0.0)).cumprod()
+            drawdown = cumulative / cumulative.cummax() - 1.0
+        return self._range(drawdown)
 
     def annualized_return(self, periods_per_year: int) -> pd.Series:
         """Per-Candidate geometric annualized return over the window."""
-        growth = self.value.iloc[-1] / self.value.iloc[0]
-        return growth ** (periods_per_year / len(self.value)) - 1.0
+        returns = self.returns()
+        growth = (1.0 + returns.fillna(0.0)).prod()
+        return growth ** (periods_per_year / len(returns)) - 1.0
 
     def returns(self) -> pd.DataFrame:
         """Per-Candidate daily simple returns of the value frame."""
-        return self.value.pct_change()
+        returns = (
+            self.canonical_returns
+            if self.canonical_returns is not None
+            else self.value.pct_change(fill_method=None)
+        )
+        return self._range(returns)
 
     def has_symbol(self, symbol: str) -> bool:
         """Whether ``symbol`` is a traded column of the close panel."""
@@ -65,7 +85,7 @@ class EquityCurve:
         """
         benchmark_close = self.close.xs(symbol, level=SYMBOL_LEVEL, axis=1)
         benchmark_close.columns = self.value.columns
-        return benchmark_close.pct_change()
+        return self._range(benchmark_close.pct_change(fill_method=None))
 
     def aligned_benchmark_returns(self, close: pd.Series) -> pd.DataFrame:
         """Returns of an externally-supplied benchmark close, aligned per Candidate.
@@ -79,4 +99,11 @@ class EquityCurve:
             {col: aligned.to_numpy() for col in self.value.columns},
             index=self.value.index,
         )
-        return broadcast.pct_change(fill_method=None)  # already ffilled; avoid redundant pad
+        return self._range(
+            broadcast.pct_change(fill_method=None)
+        )  # already ffilled; avoid redundant pad
+
+    def _range(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if self.sim_start is None and self.sim_end is None:
+            return frame
+        return frame.iloc[self.sim_start : self.sim_end]

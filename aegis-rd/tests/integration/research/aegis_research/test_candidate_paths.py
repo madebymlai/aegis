@@ -14,6 +14,10 @@ from research.aegis_research.optimization.candidate_paths import (
     build_development_paths,
     materialize_candidates,
 )
+from research.aegis_research.optimization.observation_blocks import (
+    ObservationBlocks,
+    analyze_development_paths,
+)
 from research.aegis_research.optimization.precompute import (
     IndicatorPrecompute,
     build_candidate_index,
@@ -247,3 +251,41 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
             sequential.full_period_metrics.iloc[0],
             check_names=False,
         )
+
+
+def test_development_paths_flow_unchanged_into_observation_analysis() -> None:
+    index = pd.date_range("2024-01-01", periods=8)
+    close = pd.DataFrame({"A": np.arange(10.0, 18.0)}, index=index)
+    report = make_report_config()
+    registry = make_metric_registry_for(())
+    paths = build_development_paths(
+        arrays=make_run_arrays(close=close, open_=close),
+        source=_source(lambda params: {"source": 2}),
+        optimization=make_optimization_config(),
+        book=ResolvedBook(
+            make_portfolio_config(
+                direction="longonly", fees=0.0, slippage=0.0, fill_timing="next_close"
+            )
+        ),
+        report=report,
+        metric_registry=registry,
+        min_trades=0,
+        ranking_metric="total_return",
+    )
+    portfolio = paths.replay.portfolio
+
+    analysis = analyze_development_paths(
+        paths,
+        ObservationBlocks.from_bounds(index, [(2, 5), (5, 8)]),
+        report=report,
+        metric_registry=registry,
+        ranking_metric="total_return",
+    )
+
+    assert set(analysis.metric_matrices) == set(registry.ids())
+    assert analysis.ranking_ranks.shape == (paths.candidates.count, 2)
+    assert analysis.result.best.params == {
+        "indicator.window": 1,
+        "strategy.threshold": 0.25,
+    }
+    assert paths.replay.portfolio is portfolio

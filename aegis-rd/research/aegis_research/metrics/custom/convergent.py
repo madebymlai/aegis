@@ -370,6 +370,7 @@ CONVERGENT_INCOME_UTILITY_DEFINITION = MetricDefinition(
         "annualized certainty-equivalent excess growth for a crash-averse (CRRA) evaluator; "
         "manipulation-proof (higher = more income net of the tail it hides)"
     ),
+    boundary_semantics="block_local",
     provider="aegis",
     target="portfolio",
     source_method="get_value",
@@ -388,6 +389,7 @@ CONVERGENT_TAIL_BUDGET_DEFINITION = MetricDefinition(
         "actual mean loss in the worst decile of overlapping 2-6 month own returns; "
         "the sleeve's budgeted bleed (closer to zero = shallower tail)"
     ),
+    boundary_semantics="block_local",
     provider="aegis",
     target="portfolio",
     source_method="get_value",
@@ -406,6 +408,7 @@ CONVERGENT_DOWNSIDE_LSKEW_DEFINITION = MetricDefinition(
         "robust L-moment skewness (tau_3) of overlapping 2-6 month own returns; "
         "the realized sample shape report (negative = observed left asymmetry)"
     ),
+    boundary_semantics="block_local",
     provider="aegis",
     target="portfolio",
     source_method="get_value",

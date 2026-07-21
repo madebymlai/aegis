@@ -96,7 +96,10 @@ def test_register_custom_metrics_records_definition_and_extractor() -> None:
     frozen = _registry_with_custom([(definition, spec)])
 
     assert frozen.get("my_custom_metric").title == "My Custom Metric"
-    assert frozen.extractors["my_custom_metric"] is spec
+    registered = frozen.extractors["my_custom_metric"]
+    assert registered.read is spec.read
+    assert registered.scale == spec.scale
+    assert registered.range_factory is not None
     assert set(frozen.extractors) == set(frozen.definitions)
 
 
@@ -205,7 +208,8 @@ def test_custom_metric_does_not_perturb_existing_metrics() -> None:
     )
 
     for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
-        assert (
-            with_custom.loc[("candidate-a",), metric_id]
-            == baseline.loc[("candidate-a",), metric_id]
+        with_value = with_custom.loc[("candidate-a",), metric_id]
+        baseline_value = baseline.loc[("candidate-a",), metric_id]
+        assert (pd.isna(with_value) and pd.isna(baseline_value)) or (
+            with_value == baseline_value
         ), f"{metric_id} value changed after adding custom metric"

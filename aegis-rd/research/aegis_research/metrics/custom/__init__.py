@@ -11,8 +11,10 @@ state).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 
 from research.aegis_research.metrics.contracts import ExtractorSpec, MetricDefinition
+from research.aegis_research.metrics.range_extractors import custom_range_factory
 from research.aegis_research.metrics.registry import MetricRegistry
 
 
@@ -34,7 +36,12 @@ def register_custom_metrics(
     if metrics is None:
         return
     for definition, spec in metrics:
-        registry.register(definition, spec)
+        range_spec = (
+            spec
+            if spec.range_factory is not None
+            else replace(spec, range_factory=custom_range_factory(spec.read))
+        )
+        registry.register(definition, range_spec)
 
 
 def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec]]:

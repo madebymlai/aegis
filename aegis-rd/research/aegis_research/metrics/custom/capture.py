@@ -92,6 +92,7 @@ def _definition(metric_id: str, title: str, benchmark: str) -> MetricDefinition:
         source_type=SOURCE_TYPE_CUSTOM,
         unit="ratio",
         value_semantics="benchmark_capture_ratio",
+        boundary_semantics="block_local",
         provider="aegis",
         target="portfolio",
         source_method="get_value",

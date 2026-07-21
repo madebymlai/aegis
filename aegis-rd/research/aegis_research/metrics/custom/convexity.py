@@ -366,6 +366,7 @@ TREND_CONVEXITY_PAYOFF_DEFINITION = MetricDefinition(
         "right-tail gain net of left-tail loss over overlapping 2-6 month windows; "
         "benchmark-free convexity (higher = lose-small / pay-big)"
     ),
+    boundary_semantics="block_local",
     provider="aegis",
     target="portfolio",
     source_method="get_value",
@@ -428,6 +429,7 @@ def _definition(metric_id: str, title: str, unit: str, semantics: str, benchmark
         source_type=SOURCE_TYPE_CUSTOM,
         unit=unit,
         value_semantics=semantics,
+        boundary_semantics="block_local",
         provider="aegis",
         target="portfolio",
         source_method="get_value",

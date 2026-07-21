@@ -30,6 +30,7 @@ class ExtractorSpec:
     read: Callable[..., Any]
     scale: Literal["percent", "identity"] = "identity"
     abs_: bool = False
+    range_factory: Callable[[Any], Callable[..., Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,11 @@ class MetricDefinition:
     source_type: str
     unit: str
     value_semantics: str
+    direction: Literal["maximize", "minimize"] = "maximize"
+    missing_value_policy: Literal["worst"] = "worst"
+    boundary_semantics: Literal[
+        "native_continuous", "inherited_path", "block_local"
+    ] = "inherited_path"
     required_inputs: Sequence[str] = ()
     provider: str = "aegis"
     target: str | None = None
@@ -59,6 +65,9 @@ class MetricDefinition:
             "source_type": self.source_type,
             "unit": self.unit,
             "value_semantics": self.value_semantics,
+            "direction": self.direction,
+            "missing_value_policy": self.missing_value_policy,
+            "boundary_semantics": self.boundary_semantics,
             "required_inputs": list(self.required_inputs),
             "provider": self.provider,
             "target": self.target,
