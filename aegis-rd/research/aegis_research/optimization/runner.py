@@ -1,24 +1,4 @@
-"""Optimization runner: two-phase ``Splitter.apply`` + ``vbt.parameterized``.
-
-The selection phase runs in two stages so indicator warmup can use the full
-available history. The candidate set is materialised once up front (seeded
-``combine_params``); each indicator's callable runs once over the **full**
-series into a candidate-major store (stage 1, ``precompute``); candidates with an
-entirely non-finite full-history block for any indicator output are marked invalid;
-then Phase 1 sweeps every split's *selection* set running only stage 2
-(``simulate``), slicing the precomputed store to each window via the splitter's
-``range_`` template — producing a Candidate Grid (one row per candidate per split, one
-column per metric). Phase 2 ranks candidates globally and returns three
-representative candidates (best / median / worst). Phase 3 re-runs those three on
-every split's *held-out* set and attaches the held-out metrics, again slicing the
-full-series indicator store instead of recomputing indicators on bare held-out
-slices.
-
-The runner constructs no ``Splitter`` of its own: it consumes the single one
-built by run_splits from ``RunSplitsResult.splitter`` (ADR-0018) and reuses it
-for both phases, so selection and held-out share identical split boundaries and
-``set_=`` resolves by the role labels run_splits imposed at construction.
-"""
+"""Execute continuous Candidate paths and rank their observation-block evidence."""
 
 from __future__ import annotations
 
@@ -37,14 +17,17 @@ from research.aegis_research.configuration import (
 from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
-from research.aegis_research.optimization.candidate_paths import materialize_candidates
-from research.aegis_research.optimization.candidate_validity import (
-    classify_candidates,
+from research.aegis_research.optimization.candidate_paths import (
+    CandidatePathError,
+    build_development_paths,
 )
+from research.aegis_research.optimization.observation_blocks import (
+    analyze_development_paths,
+)
+from research.aegis_research.optimization.preflight import OptimizationPreflight
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
-    select_representative_candidates,
 )
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
@@ -56,8 +39,6 @@ from research.aegis_research.optimization.window_evaluation import (
 )
 from research.aegis_research.run_splits import (
     HELD_OUT_SET,
-    SELECTION_SET,
-    RunSplitsResult,
 )
 
 
@@ -74,8 +55,9 @@ def execute_optimization(
     report: ReportConfig,
     ranking: RankingConfig,
     metric_registry: FrozenMetricRegistry,
-    split_result: RunSplitsResult,
+    preflight: OptimizationPreflight,
 ) -> OptimizationResult:
+    """Execute the preflighted continuous replay and observational analysis."""
     _validate_source_param_names(source.params)
     if ranking.metric not in metric_registry:
         raise OptimizationRunnerError(
@@ -83,79 +65,27 @@ def execute_optimization(
             f"metric registry: {sorted(metric_registry.ids())}"
         )
 
-    # The registry record is the single home for each Metric's definition and its
-    # extractor; the sweep is handed a plain extractor mapping (catalog order) so
-    # the dill-serialised Phase-1 closure carries no registry/proxy machinery.
-    extractors = dict(metric_registry.extractors)
-    splitter = split_result.splitter
-
-    # Stage 0: materialise the sampled candidate set once, deterministically, and
-    # feed the same set to BOTH the precompute and the selection sweep.
-    candidates = materialize_candidates(source.params, optimization)
-    sampled_lists = {name: list(values) for name, values in candidates.param_lists.items()}
-    n_candidates = candidates.count
-    sampled_params = {
-        name: vbt.Param(values, level=0) for name, values in sampled_lists.items()
-    }
-
-    # Stage 1: run each indicator's callable once over the full SIGNAL series.
-    store = source.precompute(arrays.signal.array("Close"), n_candidates, **sampled_lists)
-    # Touch the store's Invalid-Candidate set once here — before the parallel sweep
-    # dill-ships the store to workers — so the cached_property scan runs a single
-    # time and the warm cache travels to every worker instead of being re-scanned.
-    invalid_candidate_keys = store.invalid_keys
-
-    # One evaluator drives both sweeps — the per-window slicing, the all-Invalid
-    # short-circuit, and the metric extraction. Selection and held-out share this
-    # same object, so they cannot drift in the Invalid-Candidate set or any other
-    # captured input.
-    evaluator = WindowEvaluator(
-        source=source,
-        book=book,
+    try:
+        paths = build_development_paths(
+            arrays=arrays,
+            source=source,
+            optimization=optimization,
+            book=book,
+            report=report,
+            metric_registry=metric_registry,
+            min_trades=ranking.min_trades,
+            ranking_metric=ranking.metric,
+            plan=preflight.plan,
+        )
+    except CandidatePathError as error:
+        raise OptimizationRunnerError(str(error)) from error
+    return analyze_development_paths(
+        paths,
+        preflight.blocks,
         report=report,
-        arrays=arrays,
-        store=store,
-        extractors=extractors,
-    )
-
-    # Phase 1: stage-2 sweep slicing the precomputed store to each selection window.
-    selection_grid = _sweep(
-        splitter=splitter,
-        candidate_metrics=evaluator.evaluate,
-        apply_input=vbt.Rep("range_"),
-        params=sampled_params,
-        set_=SELECTION_SET,
-        parallel=True,
-    )
-    verdicts = classify_candidates(
-        selection_grid,
-        invalid_keys=invalid_candidate_keys,
-        min_trades=ranking.min_trades,
-        metric=ranking.metric,
-    )
-    result = select_representative_candidates(
-        selection_grid,
-        verdicts,
-        metric=ranking.metric,
-    )
-
-    param_names = selection_grid.param_levels
-    # The seam cost of the Split structure: a pure function of window geometry
-    # and the loaded-data calendar, independent of which candidates ran and of
-    # how the sweep was chunked. Which calendar governs is the evaluator's
-    # knowledge; the runner contributes only the run's window structure.
-    non_executable_rows = sum(
-        evaluator.non_executable_rows(window_index)
-        for split in split_result.splits
-        for window_index in (split.selection_index, split.held_out_index)
-    )
-    return _attach_held_out(
-        result,
-        splitter=splitter,
-        evaluator=evaluator,
-        param_names=param_names,
-        non_executable_rows=non_executable_rows,
-    )
+        metric_registry=metric_registry,
+        ranking_metric=ranking.metric,
+    ).result
 
 
 def _sweep(

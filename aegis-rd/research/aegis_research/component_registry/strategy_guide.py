@@ -469,7 +469,7 @@ def _extend_ownership_boundaries(lines: list[str]) -> None:
         "| VBT kwargs (engine, chunking) | Run Config | `optimization.execute` |"
     )
     lines.append(
-        "| Split method | Run Config | `optimization.split.method` |"
+        "| Observation Block duration | Run Config | `optimization.observation_block_bars` |"
     )
     lines.append(
         "| `owns_portfolio` in manifest | Manifest literal | Must be `false` — "

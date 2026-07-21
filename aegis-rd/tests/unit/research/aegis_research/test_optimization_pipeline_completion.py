@@ -108,7 +108,11 @@ def test_completion_returns_result_and_marks_completed(
         data_arrays={},
         optimization={
             "schema_version": OPTIMIZATION_ROUTE_SCHEMA_VERSION,
-            "preflight": {},
+            "preflight": {
+                "observation_block_bars": 20,
+                "observation_block_count": 2,
+                "observation_block_bounds": [[0, 20], [20, 40]],
+            },
             "execution": {
                 "total": 30,
                 "excluded_invalid": 2,
@@ -158,20 +162,16 @@ def test_completion_returns_result_and_marks_completed(
 
     opt = result["optimization"]
     assert opt["ranking_metric"] == "total_return"
-    assert opt["split_count"] == 2
+    assert opt["protocol"] == "continuous_future_in_past"
+    assert opt["observation_block_bars"] == 20
+    assert opt["observation_block_count"] == 2
     assert opt["candidate_count"] == 3
     assert opt["total"] == 30
     assert opt["excluded_invalid"] == 2
     assert opt["excluded_degenerate"] == 3
-    # held-out gap 0.01 < threshold 0.10, so no warning
-    assert opt["held_out_warning"] is None
-    # the omnibus field is indistinguishable, so the separability warning fires
-    assert opt["separability_warning"] is not None
-    assert "statistically indistinguishable" in opt["separability_warning"]
-    # non_executable_rows defaults to 0 when absent from execution evidence
-    assert opt["non_executable_rows"] == 0
-    # split method flows from config into the report's optimization summary
-    assert opt["split_method"] == config.optimization.split.method
+    assert "held_out_warning" not in opt
+    assert "separability_warning" not in opt
+    assert "split_method" not in opt
 
     candidates = result["candidates"]
     assert [c["role"] for c in candidates] == ["best", "median", "worst"]
@@ -180,11 +180,7 @@ def test_completion_returns_result_and_marks_completed(
     assert candidates[1]["score"] == pytest.approx(0.20)
     assert candidates[2]["score"] == pytest.approx(0.10)
 
-    best = candidates[0]
-    assert best["held_out_headline"]["metric"] == "total_return"
-    assert best["held_out_headline"]["selection"] == pytest.approx(0.30)
-    assert best["held_out_headline"]["held_out"] == pytest.approx(0.29)
-    assert best["held_out_headline"]["gap"] == pytest.approx(0.01)
+    assert "held_out_headline" not in candidates[0]
 
     # aegis-rd-gg3.2: lock handles are payload data
     assert candidates[0]["lock"] == run_id  # best = bare run_id

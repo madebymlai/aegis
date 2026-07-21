@@ -25,8 +25,6 @@ from tests.support.research.aegis_research.market_data_fixtures import (
     native_data_config_payload,
 )
 
-_SPLIT = {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10}
-
 
 def _raw(name: str, portfolio: dict[str, object]) -> dict[str, object]:
     return {
@@ -37,7 +35,7 @@ def _raw(name: str, portfolio: dict[str, object]) -> dict[str, object]:
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},
-        "optimization": {"search": "grid", "split": _SPLIT},
+        "optimization": {"search": "grid", "observation_block_bars": 10},
     }
 
 
@@ -62,9 +60,11 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 # Re-pinned 2026-07-17 for the unit-gross sleeve contract (aegis-rd-ui1m):
 # portfolio.gross_cap/net_cap left the schema (schema_version 11), so the
 # resolved document shrank; the int-coercion case now rides init_cash.
+# Re-pinned 2026-07-21 for continuous Future-in-Past selection (aegis-rd-fuc9.5):
+# arbitrary Split configuration was replaced by required observation_block_bars.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "16d4d6ef68271db53b41ba949af63a23313467177f283418145c9a07e27aadaf",
-    "int_valued_cash": "ff743a3ccfb3b6e32c4369bfa2fa8441db666439d8e12fe3ca92fc865beca3de",
+    "canonical_grid": "d25b1a0ed51e276ebd3ee7ee8bb0de6b18c4876cfe1de22fe38ba90181934827",
+    "int_valued_cash": "8025de147021d748ce696fb17e4f021ff821196baaadc023e671f05b3b5f5684",
 }
 
 

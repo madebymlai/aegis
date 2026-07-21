@@ -15,11 +15,6 @@ from research.aegis_research.configuration import (
     lock_handle,
     to_builtin,
 )
-from research.aegis_research.optimization.candidate_evidence import (
-    candidate_held_out_headline,
-    held_out_warning,
-    separability_warning,
-)
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.candidate_store_identity import (
     candidate_store_namespace,
@@ -36,7 +31,6 @@ from research.aegis_research.optimization.run_artifacts import (
 )
 from research.aegis_research.optimization.run_data_contract import RunDataFacts
 from research.aegis_research.provenance.recorder import RunRecorder
-from research.aegis_research.run_splits import RunSplitsResult
 
 
 def run_pipeline_completion(
@@ -57,6 +51,7 @@ def run_pipeline_completion(
     try:
         optimization_evidence = run_evidence.optimization()
         execution = dict(optimization_evidence.get("execution", {}))
+        preflight = dict(optimization_evidence["preflight"])
         store_namespace = candidate_store_namespace()
         artifact_payload = build_strategy_artifact_payload(
             strategy_evidence=setup.strategy_evidence,
@@ -66,8 +61,12 @@ def run_pipeline_completion(
             },
             portfolio=to_builtin(config.portfolio),
             optimization=to_builtin(config.optimization),
-            split_metadata=setup.split_result.metadata,
-            preflight=optimization_evidence["preflight"],
+            split_metadata={
+                "protocol": "continuous_future_in_past",
+                "observation_block_bars": preflight["observation_block_bars"],
+                "observation_block_bounds": preflight["observation_block_bounds"],
+            },
+            preflight=preflight,
             execution=execution,
             candidates=[to_builtin(record) for record in publishing.candidate_rows],
             candidate_store_path=store_namespace["path"],
@@ -80,7 +79,7 @@ def run_pipeline_completion(
         return _completion_result(
             config=config,
             recorder=recorder,
-            split_result=setup.split_result,
+            preflight=preflight,
             candidate_rows=publishing.candidate_rows,
             store_path=setup.store_path,
             execution=execution,
@@ -94,13 +93,12 @@ def _completion_result(
     *,
     config: RunConfig,
     recorder: RunRecorder,
-    split_result: RunSplitsResult,
+    preflight: Mapping[str, Any],
     candidate_rows: Sequence[dict[str, Any]],
     store_path: Path,
     execution: Mapping[str, Any],
 ) -> dict[str, Any]:
     ranking_metric = config.ranking.metric
-    best_row = next(row for row in candidate_rows if row["role"] == "best")
     return {
         **recorder.run_refs(),
         "strategy_artifact_id": "strategy.run",
@@ -108,17 +106,13 @@ def _completion_result(
         "candidate_store_path": str(store_path),
         "optimization": {
             "ranking_metric": ranking_metric,
-            "split_count": split_result.metadata["n_splits"],
+            "protocol": "continuous_future_in_past",
+            "observation_block_bars": preflight["observation_block_bars"],
+            "observation_block_count": preflight["observation_block_count"],
             "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
             "total": execution.get("total", 0),
             "excluded_invalid": execution.get("excluded_invalid", 0),
             "excluded_degenerate": execution.get("excluded_degenerate", 0),
-            "held_out_warning": held_out_warning(
-                candidate_held_out_headline(best_row, metric=ranking_metric)
-            ),
-            "separability_warning": separability_warning(execution.get("omnibus")),
-            "non_executable_rows": execution.get("non_executable_rows", 0),
-            "split_method": config.optimization.split.method if config.optimization else None,
         },
         "candidates": [
             _candidate_summary(row, ranking_metric=ranking_metric, run_id=recorder.manifest.run_id)
@@ -138,9 +132,5 @@ def _candidate_summary(
         "score": row["score"],
         "metrics": row["metrics"],
         "selection_metrics": row["selection_metrics"],
-        "held_out_metrics": row["held_out_metrics"],
-        "held_out_metrics_mean": row["held_out_metrics_mean"],
-        "held_out_headline": candidate_held_out_headline(row, metric=ranking_metric),
         "lock": lock_handle(run_id, row["role"]),
     }
-

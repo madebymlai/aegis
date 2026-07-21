@@ -64,6 +64,14 @@ class CandidateLookbacks:
 
 
 @dataclass(frozen=True)
+class DevelopmentPlan:
+    """Materialized Candidate identity and lookbacks resolved before VBT execution."""
+
+    candidates: MaterializedCandidates
+    lookbacks: CandidateLookbacks
+
+
+@dataclass(frozen=True)
 class DevelopmentPaths:
     """Canonical continuous outputs handed to observational block analysis."""
 
@@ -114,15 +122,25 @@ def build_development_paths(
     metric_registry: FrozenMetricRegistry,
     min_trades: int,
     ranking_metric: str,
+    plan: DevelopmentPlan | None = None,
 ) -> DevelopmentPaths:
     """Build every fixed Candidate path before any observational analysis."""
     if ranking_metric not in metric_registry:
         raise CandidatePathError(
             f"ranking metric {ranking_metric!r} is not in the metric registry"
         )
-    candidates = materialize_candidates(source.params, optimization)
     signal_close = arrays.signal.array("Close")
-    lookbacks = _resolve_lookbacks(candidates, source, len(signal_close.index))
+    resolved_plan = (
+        plan
+        if plan is not None
+        else plan_development(
+            source=source,
+            optimization=optimization,
+            row_count=len(signal_close.index),
+        )
+    )
+    candidates = resolved_plan.candidates
+    lookbacks = resolved_plan.lookbacks
 
     param_lists = {name: list(values) for name, values in candidates.param_lists.items()}
     store = source.precompute(signal_close, candidates.count, **param_lists)
@@ -172,6 +190,20 @@ def build_development_paths(
     )
 
 
+def plan_development(
+    *,
+    source: OptimizationSource,
+    optimization: OptimizationConfig,
+    row_count: int,
+) -> DevelopmentPlan:
+    """Materialize the sampled grid and resolve its common start without execution."""
+    candidates = materialize_candidates(source.params, optimization)
+    return DevelopmentPlan(
+        candidates=candidates,
+        lookbacks=_resolve_lookbacks(candidates, source, row_count),
+    )
+
+
 def _resolve_lookbacks(
     candidates: MaterializedCandidates,
     source: OptimizationSource,
@@ -212,7 +244,9 @@ __all__ = [
     "CandidateLookbacks",
     "CandidatePathError",
     "DevelopmentPaths",
+    "DevelopmentPlan",
     "MaterializedCandidates",
     "build_development_paths",
     "materialize_candidates",
+    "plan_development",
 ]

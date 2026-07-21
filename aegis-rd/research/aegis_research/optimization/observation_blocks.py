@@ -41,6 +41,42 @@ class ObservationBlocks:
     labels: tuple[str, ...]
 
     @classmethod
+    def resolve_scored_interval(
+        cls,
+        index: pd.Index,
+        *,
+        scored_start: int,
+        block_bars: int,
+    ) -> ObservationBlocks:
+        """Resolve fixed blocks and merge any final remainder into the last block."""
+        if (
+            not isinstance(scored_start, int)
+            or isinstance(scored_start, bool)
+            or scored_start < 0
+            or scored_start >= len(index)
+        ):
+            raise ObservationBlockError(
+                "scored_start must select an integer position in the path index"
+            )
+        if (
+            not isinstance(block_bars, int)
+            or isinstance(block_bars, bool)
+            or block_bars <= 0
+        ):
+            raise ObservationBlockError("Observation Block bars must be a positive integer")
+        complete_blocks = (len(index) - scored_start) // block_bars
+        if complete_blocks < 2:
+            raise ObservationBlockError(
+                "scored Development history must contain at least two Observation Blocks"
+            )
+        bounds = [
+            (scored_start + position * block_bars, scored_start + (position + 1) * block_bars)
+            for position in range(complete_blocks)
+        ]
+        bounds[-1] = (bounds[-1][0], len(index))
+        return cls.from_bounds(index, bounds)
+
+    @classmethod
     def from_bounds(
         cls,
         index: pd.Index,
@@ -160,12 +196,7 @@ def apply_registered_metric_to_blocks(
             raise ObservationBlockError(
                 "registered extractor must return one value per canonical Candidate"
             )
-        raw_keys = [_as_key(value) for value in raw.index.tolist()]
-        candidate_keys = [_as_key(value) for value in candidate_index.tolist()]
-        if raw_keys != candidate_keys:
-            raise ObservationBlockError(
-                "registered extractor result does not match canonical Candidate order"
-            )
+        raw = _align_registered_candidates(raw, candidate_index)
         result = pd.Series(raw.to_numpy(), index=candidate_index, dtype="float64")
         if spec.abs_:
             result = result.abs()
@@ -174,6 +205,55 @@ def apply_registered_metric_to_blocks(
         return result
 
     return apply_metric_to_blocks(blocks, metric_input, extractor, candidate_index)
+
+
+def _align_registered_candidates(
+    raw: pd.Series, candidate_index: pd.Index
+) -> pd.Series:
+    """Align VBT's authored parameter-level order to canonical Candidate identity."""
+    if (
+        isinstance(raw.index, pd.MultiIndex)
+        and isinstance(candidate_index, pd.MultiIndex)
+        and list(raw.index.names) != list(candidate_index.names)
+        and None not in raw.index.names
+        and len(set(raw.index.names)) == len(raw.index.names)
+        and set(raw.index.names) == set(candidate_index.names)
+    ):
+        raw = raw.reorder_levels(candidate_index.names)
+    names_match = list(raw.index.names) == list(candidate_index.names)
+    vbt_dropped_single_level_name = (
+        raw.index.nlevels == candidate_index.nlevels == 1
+        and raw.index.name is None
+    )
+    vbt_collapsed_candidate_key = (
+        not isinstance(raw.index, pd.MultiIndex)
+        and isinstance(candidate_index, pd.MultiIndex)
+        and all(
+            isinstance(value, tuple) and len(value) == candidate_index.nlevels
+            for value in raw.index.tolist()
+        )
+    )
+    if (
+        not names_match
+        and not vbt_dropped_single_level_name
+        and not vbt_collapsed_candidate_key
+    ):
+        raise ObservationBlockError(
+            "registered extractor Candidate parameter levels do not match canonical identity"
+        )
+    if not raw.index.is_unique or not candidate_index.is_unique:
+        raise ObservationBlockError("registered extractor Candidate identity must be unique")
+    raw_keys = [_as_key(value) for value in raw.index.tolist()]
+    candidate_keys = [_as_key(value) for value in candidate_index.tolist()]
+    if set(raw_keys) != set(candidate_keys):
+        raise ObservationBlockError(
+            "registered extractor Candidate identities do not match the canonical grid"
+        )
+    values_by_key = dict(zip(raw_keys, raw.to_numpy(), strict=True))
+    return pd.Series(
+        [values_by_key[key] for key in candidate_keys],
+        index=candidate_index,
+    )
 
 
 def _candidate_metric_vector(value: Any, candidate_index: pd.Index) -> pd.Series:

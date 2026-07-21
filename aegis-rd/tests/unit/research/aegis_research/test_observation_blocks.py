@@ -8,14 +8,18 @@ from vectorbtpro import vbt
 
 from research.aegis_research.metrics.contracts import (
     SOURCE_TYPE_CUSTOM,
+    SOURCE_TYPE_VBT_STATS,
+    ExtractorSpec,
     MetricDefinition,
 )
 from research.aegis_research.optimization.candidate_validity import Verdicts
 from research.aegis_research.optimization.observation_blocks import (
     ObservationBlocks,
     apply_metric_to_blocks,
+    apply_registered_metric_to_blocks,
     select_observation_block_representatives,
 )
+from tests.support.research.aegis_research.factories import make_report_config
 
 
 def _candidate_index(*values: int) -> pd.MultiIndex:
@@ -40,6 +44,43 @@ def test_observation_blocks_reject_mismatched_or_duplicate_labels() -> None:
         ObservationBlocks.from_bounds(index, [(0, 2), (2, 4)], labels=["only-one"])
     with pytest.raises(ValueError, match="labels"):
         ObservationBlocks.from_bounds(index, [(0, 2), (2, 4)], labels=["same", "same"])
+
+
+def test_resolve_scored_interval_covers_rows_and_merges_final_remainder() -> None:
+    index = pd.RangeIndex(13)
+
+    blocks = ObservationBlocks.resolve_scored_interval(
+        index,
+        scored_start=3,
+        block_bars=4,
+    )
+
+    assert blocks.bounds == ((3, 7), (7, 13))
+    assert blocks.labels == ("block-000", "block-001")
+
+
+def test_resolve_scored_interval_keeps_exact_complete_blocks() -> None:
+    blocks = ObservationBlocks.resolve_scored_interval(
+        pd.RangeIndex(11),
+        scored_start=3,
+        block_bars=4,
+    )
+
+    assert blocks.bounds == ((3, 7), (7, 11))
+
+
+@pytest.mark.parametrize(("row_count", "scored_start", "block_bars"), [(7, 0, 4), (5, 4, 1)])
+def test_resolve_scored_interval_requires_two_blocks(
+    row_count: int,
+    scored_start: int,
+    block_bars: int,
+) -> None:
+    with pytest.raises(ValueError, match="at least two"):
+        ObservationBlocks.resolve_scored_interval(
+            pd.RangeIndex(row_count),
+            scored_start=scored_start,
+            block_bars=block_bars,
+        )
 
 
 def test_vbt_constructor_and_apply_contract_are_pinned(
@@ -160,6 +201,116 @@ def test_one_candidate_remains_a_vector_and_two_dimensional_matrix() -> None:
 
     assert selected.best == selected.median == selected.worst
     assert selected.best.score == 1.0
+
+
+def test_registered_metric_aligns_authored_levels_to_canonical_candidate_identity() -> None:
+    blocks = ObservationBlocks.from_bounds(pd.RangeIndex(4), [(0, 2), (2, 4)])
+    candidate_index = pd.MultiIndex.from_tuples(
+        [(1, 2), (3, 4)], names=["a", "b"]
+    )
+    authored_index = pd.MultiIndex.from_tuples(
+        [(2, 1), (4, 3)], names=["b", "a"]
+    )
+    definition = MetricDefinition(
+        id="score",
+        title="Score",
+        source_type=SOURCE_TYPE_VBT_STATS,
+        unit="ratio",
+        value_semantics="test score",
+    )
+    spec = ExtractorSpec(
+        read=lambda portfolio, report: None,
+        range_factory=lambda report: (
+            lambda portfolio, *, sim_start, sim_end: pd.Series(
+                [sim_start + 1.0, sim_end + 1.0], index=authored_index
+            )
+        ),
+    )
+
+    result = apply_registered_metric_to_blocks(
+        blocks,
+        object(),
+        object(),
+        definition,
+        spec,
+        make_report_config(),
+        candidate_index,
+    )
+
+    assert result.index.equals(candidate_index)
+    assert result.iloc[:, 0].tolist() == [1.0, 3.0]
+    assert result.iloc[:, 1].tolist() == [3.0, 5.0]
+
+
+def test_registered_metric_restores_single_candidate_level_name_dropped_by_vbt() -> None:
+    blocks = ObservationBlocks.from_bounds(pd.RangeIndex(4), [(0, 2), (2, 4)])
+    candidate_index = pd.MultiIndex.from_tuples([(0,)], names=["candidate"])
+    definition = MetricDefinition(
+        id="score",
+        title="Score",
+        source_type=SOURCE_TYPE_VBT_STATS,
+        unit="ratio",
+        value_semantics="test score",
+    )
+    spec = ExtractorSpec(
+        read=lambda portfolio, report: None,
+        range_factory=lambda report: (
+            lambda portfolio, *, sim_start, sim_end: pd.Series(
+                [sim_end - sim_start], index=pd.RangeIndex(1), dtype=float
+            )
+        ),
+    )
+
+    result = apply_registered_metric_to_blocks(
+        blocks,
+        object(),
+        object(),
+        definition,
+        spec,
+        make_report_config(),
+        candidate_index,
+    )
+
+    assert result.index.equals(candidate_index)
+    assert result.to_numpy().tolist() == [[2.0, 2.0]]
+
+
+def test_registered_metric_expands_vbt_candidate_key_index_to_canonical_levels() -> None:
+    blocks = ObservationBlocks.from_bounds(pd.RangeIndex(4), [(0, 2), (2, 4)])
+    candidate_index = pd.MultiIndex.from_tuples(
+        [(1, 0.25), (3, 0.75)], names=["window", "threshold"]
+    )
+    collapsed_index = pd.Index(
+        [(1, 0.25), (3, 0.75)], tupleize_cols=False, name="candidate_id"
+    )
+    definition = MetricDefinition(
+        id="score",
+        title="Score",
+        source_type=SOURCE_TYPE_VBT_STATS,
+        unit="ratio",
+        value_semantics="test score",
+    )
+    spec = ExtractorSpec(
+        read=lambda portfolio, report: None,
+        range_factory=lambda report: (
+            lambda portfolio, *, sim_start, sim_end: pd.Series(
+                [sim_start + 1.0, sim_end + 1.0], index=collapsed_index
+            )
+        ),
+    )
+
+    result = apply_registered_metric_to_blocks(
+        blocks,
+        object(),
+        object(),
+        definition,
+        spec,
+        make_report_config(),
+        candidate_index,
+    )
+
+    assert result.index.equals(candidate_index)
+    assert result.iloc[:, 0].tolist() == [1.0, 3.0]
 
 
 def test_mean_rank_beats_one_arbitrarily_large_block_win_and_ignores_full_metric() -> None:

@@ -65,11 +65,7 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
                 "ranking": {"metric": "total_return"},
                 "optimization": {
                     "search": "grid",
-                    "split": {
-                        "method": "from_rolling",
-                        "params": {"length": 150, "offset": 0, "split": 0.5},
-                        "max_splits": 3,
-                    },
+                    "observation_block_bars": 84,
                 },
             },
             sort_keys=False,

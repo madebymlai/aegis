@@ -148,7 +148,7 @@ def _run_config(
             "direction": "longonly",
             "short_borrow_rate": 0.0,
             "short_rebate_rate": 0.0,
-            "fill_timing": "same_close",
+            "fill_timing": "next_open",
         },
         "strategy": {"id": "demo.always_long"},
         "indicators": [],
@@ -156,11 +156,7 @@ def _run_config(
         "report": {"min_oos_trades": 0},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_n_expanding",
-                "params": {"n": 3, "min_length": 6, "split": 0.5},
-                "max_splits": 3,
-            },
+            "observation_block_bars": 6,
         },
     }
 
@@ -183,6 +179,10 @@ def _write_always_long_strategy(path: Path) -> None:
         "    \"\"\"Return a fully invested long-only allocation frame.\"\"\"\n"
         "    close = bundle.data.array('Close')\n"
         "    return pd.DataFrame(1.0, index=close.index, columns=close.columns)\n"
+        "\n# %% lookback\n"
+        "def lookback(**params):\n"
+        "    \"\"\"Use the complete path without a warmup.\"\"\"\n"
+        "    return 0\n"
         "\n# %% wide compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
         "    \"\"\"Return a wide fully invested long-only allocation matrix.\"\"\"\n"

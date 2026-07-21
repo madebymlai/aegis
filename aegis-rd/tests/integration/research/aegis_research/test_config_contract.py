@@ -333,7 +333,7 @@ def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
     assert "fixed/non-optimized strategy runs are removed" in str(error.value)
 
 
-def test_run_accepts_grid_optimization_with_nested_split(tmp_path: Path) -> None:
+def test_run_accepts_grid_optimization_with_observation_blocks(tmp_path: Path) -> None:
     raw = _run_config()
     raw["optimization"] = _optimization_block(search="grid")
 
@@ -347,8 +347,7 @@ def test_run_accepts_grid_optimization_with_nested_split(tmp_path: Path) -> None
     assert resolved.config.optimization.random_subset is None
     assert resolved.config.optimization.seed is None
     assert resolved.config.optimization.execute == {}
-    assert resolved.config.optimization.split.method == "from_rolling"
-    assert "set_labels" not in resolved.config.optimization.split.params
+    assert resolved.config.optimization.observation_block_bars == 20
 
 
 def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
@@ -415,13 +414,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         (
             {
                 "search": "grid",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
                 "engine": "custom",
             },
             "optimization.engine",
@@ -430,13 +423,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         (
             {
                 "search": "grid",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
                 "mode": "native",
             },
             "optimization.mode",
@@ -445,13 +432,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         (
             {
                 "search": "random",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
             },
             "optimization",
             "Value error, random_subset is required when optimization.search is 'random'",
@@ -459,13 +440,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         (
             {
                 "search": "random",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
                 "random_subset": 5,
             },
             "optimization",
@@ -474,13 +449,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         (
             {
                 "search": "grid",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
                 "random_subset": 5,
             },
             "optimization",
@@ -488,7 +457,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         ),
         (
             {"search": "grid"},
-            "optimization.split",
+            "optimization.observation_block_bars",
             "Field required",
         ),
     ],
@@ -512,10 +481,11 @@ def test_run_rejects_invalid_optimization_policy(
     assert expected_message in str(error.value)
 
 
-def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> None:
+def test_run_rejects_removed_split_configuration(tmp_path: Path) -> None:
     raw = _run_config()
     raw["optimization"] = {
         "search": "grid",
+        "observation_block_bars": 20,
         "split": {
             "method": "from_rolling",
             "params": {
@@ -534,12 +504,12 @@ def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> 
         )
 
     assert "optimization.split" in str(error.value)
-    assert "owned by Aegis" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_rejects_top_level_split_as_unknown_field(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["optimization"] = {"search": "grid"}
+    raw["optimization"] = {"search": "grid", "observation_block_bars": 20}
     raw["split"] = _optimization_split()
 
     with pytest.raises(ConfigValidationError) as error:
@@ -619,7 +589,7 @@ def _run_config() -> dict[str, object]:
 
 
 def _optimization_block(search: str, **overrides: object) -> dict[str, object]:
-    return {"search": search, "split": _optimization_split(), **overrides}
+    return {"search": search, "observation_block_bars": 20, **overrides}
 
 
 def _optimization_split() -> dict[str, object]:

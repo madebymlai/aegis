@@ -191,7 +191,7 @@ def make_optimization_config(**overrides: Any) -> OptimizationConfig:
     """Return an OptimizationConfig with valid defaults, overridden by any kwargs."""
     defaults: dict[str, Any] = {
         "search": "grid",
-        "split": make_run_split_config(),
+        "observation_block_bars": 20,
         "random_subset": None,
         "seed": None,
         "execute": {},
@@ -429,7 +429,6 @@ def make_setup_result(**overrides: Any) -> SetupResult:
         "store_path": Path("candidates.sqlite3"),
         "optimization_source": _fake_optimization_source(),
         "arrays": make_run_arrays(),
-        "split_result": _fake_split_result(),
     }
     defaults.update(overrides)
     return SetupResult(**defaults)
@@ -443,16 +442,6 @@ class _FakeOptimizationSource:
 
 def _fake_optimization_source() -> Any:
     return _FakeOptimizationSource()
-
-
-class _FakeSplitResult:
-    def __init__(self) -> None:
-        self.metadata: dict[str, int] = {"n_splits": 2}
-        self.splits: list[Any] = []
-
-
-def _fake_split_result() -> Any:
-    return _FakeSplitResult()
 
 
 def make_candidate_portfolio(

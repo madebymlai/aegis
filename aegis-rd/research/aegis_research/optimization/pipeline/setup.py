@@ -44,26 +44,21 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_CONTRACT,
     OptimizationSource,
 )
-from research.aegis_research.run_splits import RunSplitsResult, build_run_splits_result
 
 
 @dataclass(frozen=True)
 class SetupResult:
     """Typed hand-off from the pipeline setup stage.
 
-    Carries four identity/product fields per ADR-0015 step 2:
-    thread identities, recompute values. The store path (an identity all
-    stages must agree on), the optimization source and split result (genuine
-    products of Lock resolution and source construction), and the Run's
-    prepared Arrays (the coherent two-view value the sweep consumes, threaded
-    whole). Strategy evidence is a derived property over the optimization
-    source — no separate stored copy.
+    The store path is an identity all stages must agree on; the optimization
+    source is the product of Lock resolution and Component construction; and
+    Arrays are the coherent two-view market value consumed by replay. Strategy
+    evidence is derived from the source, so divergence is unrepresentable.
     """
 
     store_path: Path
     optimization_source: OptimizationSource
     arrays: RunArrays
-    split_result: RunSplitsResult
 
     @property
     def strategy_evidence(self) -> Mapping[str, Any]:
@@ -106,16 +101,15 @@ def run_pipeline_setup(
         resolved_component_params=resolved_component_params,
         force_locked=force_locked,
     )
-    # Splits are built on the signal calendar — the same view Indicators run on.
-    split_result = build_run_splits_result(
-        arrays.signal.array("Close").index, config.optimization.split
-    )
     optimization_builtin = to_builtin(config.optimization)
     run_evidence.initialize_optimization(
         _optimization_evidence_baseline(
             optimization_source=optimization_source,
             optimization_builtin=optimization_builtin,
-            split_metadata=split_result.metadata,
+            split_metadata={
+                "protocol": "continuous_future_in_past",
+                "observation_block_bars": config.optimization.observation_block_bars,
+            },
             facts=facts,
             lock_evidence=lock_evidence,
         )
@@ -124,7 +118,6 @@ def run_pipeline_setup(
         store_path=store_path,
         optimization_source=optimization_source,
         arrays=arrays,
-        split_result=split_result,
     )
 
 

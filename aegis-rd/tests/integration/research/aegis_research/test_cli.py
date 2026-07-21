@@ -232,13 +232,9 @@ def test_run_success_payload_is_the_emitted_json_contract(
                 "strategy": {"id": "demo.strategy"},
                 "indicators": [],
                 "ranking": {"metric": "total_return"},
-                "optimization": {
-                    "search": "grid",
-                    "split": {
-                        "method": "from_rolling",
-                        "params": {"length": 40, "offset": 40, "split": 0.5},
-                        "max_splits": 2,
-                    },
+                    "optimization": {
+                        "search": "grid",
+                        "observation_block_bars": 20,
                 },
             },
             sort_keys=False,
@@ -345,11 +341,7 @@ def _signed_book_run_config(
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 40, "offset": 40, "split": 0.5},
-                "max_splits": 2,
-            },
+            "observation_block_bars": 20,
         },
     }
 
@@ -593,7 +585,7 @@ def test_show_config_schema_exits_zero_and_prints_markdown(
     assert "## Forward-Contract Overrides" in guide
     assert "## Top-Level Fields" in guide
     assert "## Literal Catalogs" in guide
-    assert "## Split Parameters" in guide
+    assert "observation_block_bars" in guide
     assert "## Component IDs" in guide
     assert "## Example Run Config" in guide
 
@@ -602,7 +594,6 @@ def test_show_config_schema_exits_zero_and_prints_markdown(
     assert "schema_version`** — must be present and exactly `11`" in guide
 
     # Pointers to other show subcommands
-    assert "`aerd show splitters <method>`" in guide
     assert "`aerd show components`" in guide
 
 
@@ -682,16 +673,16 @@ def test_show_config_schema_literal_catalogs_interpolated(
     assert "Reserved `optimization.execute` Keys" in guide
 
 
-def test_show_config_schema_points_at_splitters_and_components(
+def test_show_config_schema_points_at_components_and_internal_block_policy(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The guide points at aerd show splitters and aerd show components."""
+    """The guide points at Components while keeping Splitter policy internal."""
     assert cli.main(["show", "config-schema"]) == 0
 
     guide = capsys.readouterr().out
 
-    assert "`aerd show splitters <method>`" in guide
     assert "`aerd show components`" in guide
+    assert "Splitter construction and application are internal policy" in guide
 
 
 def test_show_config_schema_documents_native_data_contract(
@@ -795,13 +786,9 @@ def test_show_config_schema_embedded_example_validates(
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "sharpe_ratio"},
-        "optimization": {
-            "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 126, "split": 0.5},
-                "max_splits": 2,
-            },
+            "optimization": {
+                "search": "grid",
+                "observation_block_bars": 63,
         },
     }
 
@@ -1287,13 +1274,9 @@ def test_authoring_story_round_trip(
         "strategy": {"id": "example.ma_cross"},
         "indicators": [{"id": "example.ma"}],
         "ranking": {"metric": "sharpe_ratio"},
-        "optimization": {
-            "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 126, "split": 0.5},
-                "max_splits": 2,
-            },
+            "optimization": {
+                "search": "grid",
+                "observation_block_bars": 63,
         },
     }
 
@@ -1447,18 +1430,18 @@ def test_config_schema_guide_documents_lock_syntax() -> None:
     assert "candidate_id:" in guide
 
 
-def test_config_schema_guide_points_at_other_show_commands() -> None:
-    """Drift: the guide points at aerd show splitters and aerd show components."""
+def test_config_schema_guide_points_at_component_command_only() -> None:
+    """Drift: public config does not expose the internal Splitter catalog."""
     guide = _render_guide("config-schema")
-    assert "`aerd show splitters <method>`" in guide
     assert "`aerd show components`" in guide
+    assert "`aerd show splitters <method>`" not in guide
 
 
-def test_config_schema_guide_sets_not_configurable() -> None:
-    """Drift: set_labels is called out as forbidden/not configurable."""
+def test_config_schema_guide_contains_no_splitter_kwargs() -> None:
+    """Drift: VBT Splitter kwargs never appear as Run Config choices."""
     guide = _render_guide("config-schema")
-    assert "set_labels" in guide
-    assert "forbidden" in guide.lower() or "not configurable" in guide.lower()
+    assert "set_labels" not in guide
+    assert "observation_block_bars" in guide
 
 
 # ── indicator-schema drift assertions ─────────────────────────────────────

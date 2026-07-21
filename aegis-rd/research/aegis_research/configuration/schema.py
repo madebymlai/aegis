@@ -56,7 +56,7 @@ Degradation = Literal[
 DATA_QUALITY_DEGRADATIONS = set(get_args(Degradation))
 FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
     "is required; fixed/non-optimized strategy runs are removed from the forward "
-    "run contract; use optimization.search and optimization.split"
+    "run contract; use optimization.search and optimization.observation_block_bars"
 )
 
 # ── Forward-contract prepass overlay ──────────────────────────────────────────
@@ -424,7 +424,7 @@ OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class OptimizationConfig:
     search: Literal["grid", "random"]
-    split: RunSplitConfig
+    observation_block_bars: PositiveInt
     random_subset: PositiveInt | None = None
     seed: NonNegativeInt | None = None
     execute: dict[str, Any] = field(default_factory=dict)

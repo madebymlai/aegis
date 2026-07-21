@@ -73,7 +73,7 @@ def test_pipeline_setup_returns_setup_result(
     assert result.optimization_source is not None
     assert isinstance(result.strategy_evidence, dict)
     assert result.arrays is not None
-    assert result.split_result is not None
+    assert not hasattr(result, "split_result")
 
 
 def test_pipeline_setup_evidence_baseline_shape(

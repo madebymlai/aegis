@@ -39,10 +39,4 @@ report:
 optimization:
   search: grid
   seed: 42
-  split:
-    method: from_n_expanding
-    params:
-      n: 4
-      min_length: 756
-      split: -252
-    max_splits: 10
+  observation_block_bars: 252

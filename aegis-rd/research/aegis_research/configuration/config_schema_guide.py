@@ -47,7 +47,6 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
-    RunSplitConfig,
     SignalConfig,
 )
 
@@ -71,13 +70,11 @@ _SECTION_TYPES: dict[str, type[object] | list[type[object]]] = {
     "ranking": RankingConfig,
     "report": ReportConfig,
     "optimization": OptimizationConfig,
-    "optimization.split": RunSplitConfig,
     "signal": SignalConfig,
     "lock": Lock,
 }
 
 # Text anchors for curated prose that reference CLI subcommands.
-_SHOW_SPLITTERS = "`aerd show splitters <method>`"
 _SHOW_COMPONENTS = "`aerd show components`"
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -99,7 +96,6 @@ def render_config_schema_guide() -> str:
         _render_signal_section(),
         _render_lock_section(),
         _render_literal_catalogs(),
-        _render_split_params_pointer(),
         _render_component_ids_pointer(),
         _render_example(),
         _render_futures_example(),
@@ -288,20 +284,11 @@ def _render_optimization_section() -> str:
     lines.append(_render_field_table(OptimizationConfig))
     lines.append("")
 
-    # optimization.split
-    lines.append("#### `optimization.split`")
-    lines.append("")
-    lines.append(_render_field_table(RunSplitConfig))
-    lines.append("")
     lines.append(
-        f"Split parameters depend on the `method`. Use {_SHOW_SPLITTERS} "
-        "to see the parameter catalog for each method."
-    )
-    lines.append("")
-    lines.append(
-        "**`split.params.set_labels`** — forbidden. Set roles (`selection`, "
-        "`held_out`) are assigned positionally by Aegis (set 0 = selection, "
-        "set 1 = held_out) and are not configurable."
+        "**`observation_block_bars`** fixes the predeclared analysis duration. "
+        "Aegis derives one common warmup from the sampled Component grid, uses "
+        "all remaining Development rows, and merges a final remainder into the "
+        "preceding block. Splitter construction and application are internal policy."
     )
     lines.append("")
     lines.append(
@@ -423,18 +410,6 @@ def _render_literal_catalogs() -> str:
     return "\n".join(lines)
 
 
-def _render_split_params_pointer() -> str:
-    return textwrap.dedent(f"""\
-    ## Split Parameters
-
-    The `optimization.split.method` field selects a VBT Splitter factory
-    (`from_rolling`, `from_purged_kfold`, `from_purged_walkforward`, etc.),
-    and `optimization.split.params` carries the keyword arguments for that factory.
-
-    Use **{_SHOW_SPLITTERS}** to see the parameter catalog for a given method:
-    which params are required, which have defaults, and which are denied.""")
-
-
 def _render_component_ids_pointer() -> str:
     return textwrap.dedent(f"""\
     ## Component IDs
@@ -486,17 +461,12 @@ def _render_example() -> str:
 
     optimization:
       search: grid
-      split:
-        method: from_rolling
-        params:
-          length: 126
-          split: 0.5
-        max_splits: 2
+      observation_block_bars: 63
     ```
 
     This example reads native Nautilus bars from the configured catalog/port, uses
-    the `demo.strategy` and `demo.returns` Component fixtures, and a tiny 2-split
-    rolling window. The `demo.*` Components must exist under
+    the `demo.strategy` and `demo.returns` Component fixtures, and fixed 63-bar
+    Observation Blocks. The `demo.*` Components must exist under
     `research/components/strategies/` and `research/components/indicators/`
     relative to the working directory.""")
 
@@ -544,12 +514,7 @@ def _render_futures_example() -> str:
 
     optimization:
       search: grid
-      split:
-        method: from_rolling
-        params:
-          length: 252
-          split: 0.5
-        max_splits: 2
+      observation_block_bars: 126
     ```
 
     `ESZ6.XCME` is a native Nautilus `InstrumentId` read as raw bars. `ES` is a bare

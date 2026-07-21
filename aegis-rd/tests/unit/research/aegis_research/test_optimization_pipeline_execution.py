@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from vectorbtpro import vbt
 
 from research.aegis_research.metrics.registry import empty_metric_registry
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
-from research.aegis_research.optimization.source import OptimizationSourceError
+from research.aegis_research.optimization.source import OptimizationSource, OptimizationSourceError
 from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from tests.support.research.aegis_research.factories import make_setup_result
 from tests.support.research.aegis_research.run_config_fixtures import (
@@ -21,17 +22,23 @@ from tests.support.research.aegis_research.run_config_fixtures import (
 def test_pipeline_execution_persists_and_raises_on_preflight_failure(
     tmp_path: Path,
 ) -> None:
-    """A genuine over-budget preflight persists its evidence and raises
-    OptimizationSourceError."""
-    # The three-candidate public artifact needs ~3 KiB, so a 1-byte budget fails
-    # the real preflight gate — no patched seam required.
-    resolved = build_resolved_run_config(
-        tmp_path,
-        optimization={"split": {"max_public_artifact_bytes": 1}},
-    )
+    """Insufficient post-warmup history persists evidence and fails before execution."""
+    resolved = build_resolved_run_config(tmp_path)
     config = resolved.config
-
-    setup = make_setup_result(store_path=tmp_path / "store.sqlite3")
+    source = OptimizationSource(
+        precompute=lambda *args, **kwargs: pytest.fail("precompute must not run"),
+        simulate=lambda *args, **kwargs: pytest.fail("Portfolio must not run"),
+        resolve_lookbacks=lambda params: {"component": 0},
+        params={"window": vbt.Param([1])},
+        output_name="allocation",
+        evidence={"strategy": {}},
+        diagnostics={},
+        metadata={},
+    )
+    setup = make_setup_result(
+        store_path=tmp_path / "store.sqlite3",
+        optimization_source=source,
+    )
 
     persisted = []
     manifest_evidence: dict[str, Any] = {}
@@ -43,7 +50,7 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
         persist=lambda: persisted.append(True),
     )
 
-    with pytest.raises(OptimizationSourceError, match="max_public_artifact_bytes"):
+    with pytest.raises(OptimizationSourceError, match="at least two"):
         run_pipeline_execution(
             config=config,
             setup=setup,
@@ -54,8 +61,9 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
 
     assert len(persisted) == 1
     preflight = manifest_evidence["optimization"]["preflight"]
-    assert preflight["limits"]["max_public_artifact_bytes"] == 1
-    assert preflight["estimated_public_artifact_bytes"] > 1
+    assert preflight["loaded_rows"] == 2
+    assert preflight["scored_rows"] == 2
+    assert preflight["observation_block_bars"] == 20
     assert manifest_evidence["optimization"]["preflight_failure"]["error_type"] == (
         "PreflightError"
     )

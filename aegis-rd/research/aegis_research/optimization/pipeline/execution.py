@@ -1,8 +1,4 @@
-"""Pipeline execution stage.
-
-Runs the preflight gate, executes the two-phase optimization, and records the
-three-candidate result evidence for downstream stages.
-"""
+"""Preflight and execute continuous Candidate replay plus block analysis."""
 
 from __future__ import annotations
 
@@ -46,19 +42,20 @@ def run_pipeline_execution(
     metric_registry: FrozenMetricRegistry,
     run_evidence: RunEvidence,
 ) -> ExecutionResult:
-    """Execute the preflight gate and two-phase optimization sweep."""
+    """Validate exact geometry, replay Candidates, and rank Observation Blocks."""
     # The public entry point rejects runs without an optimization block, so by the
     # time execution runs the optimization config is guaranteed present.
     assert config.optimization is not None
     try:
         preflight = build_preflight(
-            params=setup.optimization_source.params,
+            source=setup.optimization_source,
             optimization=config.optimization,
-            splits=setup.split_result.splits,
+            index=setup.arrays.signal.array("Close").index,
             symbol_count=len(setup.arrays.signal.array("Close").columns),
+            metric_count=len(metric_registry.ids()),
             has_open_prices=True,
         )
-        run_evidence.record(EvidenceSection.PREFLIGHT, preflight)
+        run_evidence.record(EvidenceSection.PREFLIGHT, preflight.diagnostics)
     except PreflightError as error:
         run_evidence.record(EvidenceSection.PREFLIGHT, error.diagnostics)
         run_evidence.fail(EvidenceFailureStage.PREFLIGHT, error)
@@ -73,7 +70,7 @@ def run_pipeline_execution(
             report=config.report,
             ranking=config.ranking,
             metric_registry=metric_registry,
-            split_result=setup.split_result,
+            preflight=preflight,
         )
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)

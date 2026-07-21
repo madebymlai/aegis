@@ -57,7 +57,7 @@ def validate_run_config(
 
     issues: list[ConfigValidationIssue] = []
 
-    # ── Prepass: tombstones, schema_version, removed fields, split method ──
+    # ── Prepass: tombstones, schema_version, and removed fields ──
     _prepass_raw_config(raw, issues)
 
     # ── Whole-tree pydantic validation ────────────────────────────────────
@@ -107,15 +107,6 @@ def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]
     for field_name, required_message in PREPASS_REQUIRED_FIELDS.items():
         if field_name not in raw:
             issues.append(ConfigValidationIssue(field_name, required_message))
-
-    # Split-method prepass (VBT introspection, produces dotted paths)
-    optimization_raw = raw.get("optimization")
-    if isinstance(optimization_raw, dict):
-        split_raw = optimization_raw.get("split")
-        if isinstance(split_raw, dict):
-            from research.aegis_research.run_splits import validate_run_split_config
-            validate_run_split_config(split_raw, issues, path="optimization.split")
-
 
 # ── error adapter ────────────────────────────────────────────────────────────
 

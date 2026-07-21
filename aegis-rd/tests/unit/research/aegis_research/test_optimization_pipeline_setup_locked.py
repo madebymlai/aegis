@@ -86,11 +86,7 @@ def _locked_raw_config(candidate_key: str) -> dict[str, Any]:
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 40, "offset": 40, "split": 0.5},
-                "max_splits": 2,
-            },
+            "observation_block_bars": 20,
         },
         "lock": {"run_id": "run-a", "candidate_id": candidate_key},
     }

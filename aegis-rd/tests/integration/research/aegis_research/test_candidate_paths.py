@@ -23,11 +23,14 @@ from research.aegis_research.optimization.precompute import (
     build_candidate_index,
     candidate_keys,
 )
+from research.aegis_research.optimization.preflight import build_preflight
+from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
 from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
+    make_ranking_config,
     make_report_config,
     make_run_arrays,
 )
@@ -289,3 +292,52 @@ def test_development_paths_flow_unchanged_into_observation_analysis() -> None:
         "strategy.threshold": 0.25,
     }
     assert paths.replay.portfolio is portfolio
+
+
+def test_preflighted_runner_executes_continuous_replay_without_public_split() -> None:
+    index = pd.date_range("2024-01-01", periods=8)
+    close = pd.DataFrame({"A": np.arange(10.0, 18.0)}, index=index)
+    arrays = make_run_arrays(close=close, open_=close)
+    seen: list[dict[str, Any]] = []
+
+    def lookbacks(params: Mapping[str, Any]) -> Mapping[str, int]:
+        seen.append(dict(params))
+        return {"source": 2}
+
+    source = _source(lookbacks)
+    optimization = make_optimization_config(observation_block_bars=3)
+    report = make_report_config()
+    registry = make_metric_registry_for(())
+    preflight = build_preflight(
+        source=source,
+        optimization=optimization,
+        index=index,
+        symbol_count=1,
+        metric_count=len(registry.ids()),
+        has_open_prices=True,
+    )
+
+    result = execute_optimization(
+        arrays=arrays,
+        source=source,
+        optimization=optimization,
+        book=ResolvedBook(
+            make_portfolio_config(
+                direction="longonly",
+                fees=0.0,
+                slippage=0.0,
+                fill_timing="next_close",
+            )
+        ),
+        report=report,
+        ranking=make_ranking_config(metric="total_return"),
+        metric_registry=registry,
+        preflight=preflight,
+    )
+
+    assert preflight.blocks.bounds == ((2, 5), (5, 8))
+    assert result.best.params == {
+        "indicator.window": 1,
+        "strategy.threshold": 0.25,
+    }
+    assert len(seen) == preflight.plan.candidates.count

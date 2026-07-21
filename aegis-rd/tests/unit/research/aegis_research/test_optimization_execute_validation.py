@@ -25,7 +25,7 @@ def _base_config(execute: dict[str, object] | None = None) -> dict:
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}},
+            "observation_block_bars": 20,
             **({"execute": execute} if execute is not None else {}),
         },
     }

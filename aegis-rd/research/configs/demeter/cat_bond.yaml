@@ -61,12 +61,4 @@ report:
 optimization:
   search: grid
   seed: 42
-  split:
-    # Three anchored rolling windows guarantee an explicit split level on this short
-    # forward-only history; ordinary from_rolling produced only one range and squeezed it.
-    method: from_n_rolling
-    params:
-      n: 3
-      length: 84
-      split: 0.5
-    max_splits: 3
+  observation_block_bars: 42

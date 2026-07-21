@@ -51,11 +51,7 @@ def _config(*, catalog_path: Path, fx_conversion_cost: float) -> dict:
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 150, "offset": 0, "split": 0.5},
-                "max_splits": 3,
-            },
+            "observation_block_bars": 84,
         },
     }
 

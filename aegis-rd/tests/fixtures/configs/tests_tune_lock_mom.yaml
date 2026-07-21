@@ -39,12 +39,4 @@ ranking:
 optimization:
   search: grid
   seed: 23
-  split:
-    method: from_rolling
-    params:
-      length: 504
-      offset: 0
-      split: 0.5
-    max_splits: 10
-    max_estimated_output_cells: 1000000000
-    max_public_artifact_bytes: 20000000
+  observation_block_bars: 252
