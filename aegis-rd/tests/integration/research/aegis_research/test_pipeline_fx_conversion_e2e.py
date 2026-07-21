@@ -102,6 +102,6 @@ def test_foreign_currency_book_converts_and_charges_the_fx_surcharge_e2e(
     assert [c["role"] for c in foreign["candidates"]] == ["best", "median", "worst"]
     # And it had a real effect: converting the USD legs and charging the surcharge
     # moves the candidate metrics off the all-EUR no-op baseline.
-    assert [c["metrics"] for c in foreign["candidates"]] != [
-        c["metrics"] for c in baseline["candidates"]
+    assert [c["complete_period_metrics"] for c in foreign["candidates"]] != [
+        c["complete_period_metrics"] for c in baseline["candidates"]
     ]

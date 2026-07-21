@@ -101,9 +101,8 @@ def _seed_candidate_store(config: Any) -> str:
     candidate = EvaluatedCandidate(
         params={},
         score=0.25,
-        selection_metrics={0: {"total_return": 0.25}},
+        observation_block_metrics={"block-000": {"total_return": 0.25}},
         metrics={"total_return": 0.25},
-        held_out_metrics={0: {"total_return": 0.25}},
     )
     selection_identity = make_selection_identity()
     rows = candidate_rows_from_result(
@@ -312,9 +311,8 @@ def _seed_parameterized_candidate(config: Any) -> str:
     candidate = EvaluatedCandidate(
         params={},
         score=0.25,
-        selection_metrics={0: {"total_return": 0.25}},
+        observation_block_metrics={"block-000": {"total_return": 0.25}},
         metrics={"total_return": 0.25},
-        held_out_metrics={0: {"total_return": 0.25}},
     )
     selection_identity = make_selection_identity()
     rows = candidate_rows_from_result(

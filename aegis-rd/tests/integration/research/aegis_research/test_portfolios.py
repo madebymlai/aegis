@@ -546,33 +546,6 @@ def test_default_longonly_run_holds_only_long_positions() -> None:
     assert (assets.iloc[1] >= 0).all()
 
 
-def test_split_gap_row_is_masked_before_pfo_and_no_orders_land_on_gap_affected_row() -> None:
-    market_index = pd.date_range("2024-01-01", periods=5)
-    split_index = market_index[[0, 1, 3, 4]]
-    close = pd.DataFrame(
-        {"A": [10.0, 11.0, 13.0, 14.0], "B": [20.0, 21.0, 23.0, 24.0]},
-        index=split_index,
-    )
-    allocations = pd.DataFrame(
-        {"A": [0.5, 0.5, 0.5, np.nan], "B": [0.5, 0.5, 0.5, np.nan]},
-        index=split_index,
-    )
-
-    pf = make_single_book_portfolio(
-        close,
-        allocations,
-        make_portfolio_config(fees=0, slippage=0, direction="longonly"),
-        market_index=market_index,
-    )
-
-    # The allocation at split_index[2] (2024-01-04) sits after a market_index gap
-    # (2024-01-03) and is masked as non-executable — no orders land on that date.
-    orders = pf.orders.records_readable
-    order_dates = _order_dates(orders)
-    assert "2024-01-04" not in order_dates
-    assert "2024-01-05" not in order_dates
-
-
 def test_expand_market_frame_to_candidate_columns_preserves_candidate_symbol_order() -> None:
     close = pd.DataFrame(
         {"SYN": [10.0, 11.0, 12.0, 13.0]},
@@ -1127,28 +1100,6 @@ def test_batch_of_one_candidate_equals_single_group_by_true() -> None:
     )
 
     pd.testing.assert_series_equal(pf_single.value, pf_batch.value, check_names=False)
-
-
-def test_single_book_market_index_missing_row_raises() -> None:
-    """When the market index does not contain a simulation row, an error propagates."""
-    index = pd.date_range("2024-01-01", periods=3)
-    market_index = index[[0, 2]]
-    close = pd.DataFrame(
-        {"A": [10.0] * 3, "B": [20.0] * 3},
-        index=index,
-    )
-    allocations = pd.DataFrame(
-        {"A": [0.5, 0.5, 0.5], "B": [0.5, 0.5, 0.5]},
-        index=index,
-    )
-
-    with pytest.raises(ValueError, match="market_index"):
-        make_single_book_portfolio(
-            close,
-            allocations,
-            make_portfolio_config(fees=0, slippage=0, direction="longonly"),
-            market_index=market_index,
-        )
 
 
 def _two_symbol_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:

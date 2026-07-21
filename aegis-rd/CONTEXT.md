@@ -25,7 +25,7 @@ A named market-data input series a **Run** loads — the OHLCV set (Open, High, 
 _Avoid_: feature, panel, column, field
 
 **Candidate**:
-A scored parameter combination produced by an optimization **Run**. Each Candidate carries its fixed parameters, per-split metrics on both **Selection** and **Held-out** sets, and provenance. Every Run produces exactly three representative Candidates: best, median, and worst, selected by a min-aware ranking score across **Splits**.
+A scored parameter combination produced by an optimization **Run**. Each Candidate carries fixed parameters, complete-period **Metrics**, per-**Observation Block** Metrics, mean within-block rank, and provenance. Every Run publishes exactly three representative Candidates: best, median, and worst. These roles are chosen by regime-balanced mean rank over one continuous Development replay.
 _Avoid_: trial, result, entry
 
 **Invalid Candidate**:
@@ -36,25 +36,25 @@ _Avoid_: broken candidate, bad candidate, error
 A **Candidate** that cannot represent the **Candidate Grid**, excluded for one of three reasons: it is misconfigured (an **Invalid Candidate**), it earned no finite ranking score (non-trading), or it traded too few times to be trusted (under-traded). Non-trading is the absence of a finite ranking score — not merely zero trades: an Invalid cash-holder takes zero trades yet scores a finite 0.0 and is reported as **Invalid**, its more specific cause. Invalid is decided before scoring, the other two from results after; **Invalid Candidates** are the misconfigured subset.
 _Avoid_: failed candidate, junk candidate, outlier
 
-**Split**:
-A partition of the data index into exactly two sets: a **Selection** set and a **Held-out** set. The Selection set is used for parameter scoring and global ranking during optimization; the Held-out set is used for unbiased validation of the selected **Candidates**.
-_Avoid_: fold, in-sample/out-of-sample, train/test
+**Development Period**:
+The single scored interval shared by every materialized **Candidate**, beginning after the common **Warmup** and ending at the Run's final data row. Candidate allocations and portfolio state evolve continuously across this interval; there is no terminal held-out phase or fresh validation Portfolio.
+_Avoid_: train set, selection set, in-sample split
 
-**Window**:
-The contiguous row range one **Split** set occupies — a single **Selection** or **Held-out** slice the optimization sweep scores in isolation. A **Run's** full-series price frames and precomputed **Indicator** outputs are sliced to a Window by the splitter's range template; the indicators keep all warmup history before the Window because they were computed over the whole series first.
-_Avoid_: slice, range, period, fold
+**Warmup**:
+The unscored history needed to compute every selected **Component** for every materialized **Candidate**. A **Run** derives one common Warmup from the maximum resolved Component lookback, records its drivers in **Evidence**, and begins every Candidate's Development Period at the same row.
+_Avoid_: burn-in config, training period
 
-**Window Evaluation**:
-Scoring one chunk of **Candidates** over one **Window**: slice the price and indicator Windows, short-circuit a chunk whose every Candidate is **Invalid**, run the **Strategy** allocation, and reduce the result to one row of **Metrics** per Candidate. The sweep performs a Window Evaluation per (**Split**, set); their rows stack into the **Candidate Grid**.
-_Avoid_: window callback, sweep step, apply function
+**Continuous Future-in-Past Replay**:
+The causal simulation of each fixed **Candidate** exactly once across its entire **Development Period**. Decisions use only information available at that historical point, while positions, cash, costs, and portfolio state persist across later observational boundaries.
+_Avoid_: walk-forward split, window backtest, fold replay
+
+**Observation Block**:
+A fixed, labeled, half-open row range used only to observe **Metrics** on an already-built continuous Portfolio. Blocks never create, truncate, mask, or reset a Portfolio. Internally Aegis represents these ranges with `vbt.Splitter.from_splits` and applies bounds-aware Metric extractors to the unchanged full Portfolio; this internal Splitter is not public Run configuration.
+_Avoid_: execution split, held-out window, fold
 
 **ResolvedBook**:
 The run-constant terms a **Run's** portfolio simulation trades every **Candidate's** book under: the declared portfolio config together with the per-instrument facts resolved from it — the FX-adjusted trade-fee series, the instrument → drift-band map (the same one the bundle carries), and the continuous-future roots. Resolved once from the Run Config and the Run's currency conversion, so an incoherent config/facts pairing cannot exist as a value (ADR-0026). It is not the book of positions — that is the simulated portfolio.
 _Avoid_: book facts, portfolio policy, simulation config
-
-**Candidate Grid**:
-The scored table an optimization **Run** produces: every registered **Metric**, per **Split**, for every sampled **Candidate**. Built once from the **Selection** sets — the data validity verdicts and global ranking read — and again from the **Held-out** sets for the three representatives. Internal to the Run; never part of **Evidence**.
-_Avoid_: tidy grid, metrics frame, results table, parameter grid
 
 **Candidate Store**:
 The durable, cross-**Run** store of published **Candidates** and their **Provenance**. Publishing a **Run's** three representative Candidates into it is what makes them referenceable by later Runs: a **Lock** resolves against the Candidate Store. It is the boundary between results internal to one Run and results visible to all Runs.
@@ -135,8 +135,8 @@ on the `store` path, the RD Symbol Name is the bare continuous-future root
 _Avoid_: InstrumentId, provider locator, store identity, execution identity
 
 **Preflight**:
-A fail-closed budget gate that runs before optimization begins. Estimates parameter combinations, output cell counts, and memory cost, and rejects the **Run** if any limit is exceeded.
-_Avoid_: dry run, validation, sanity check
+A fail-closed geometry step before optimization execution. It materializes the exact Candidate sample, resolves the common **Warmup** and scored interval, constructs fixed **Observation Block** bounds, and records expected replay and Metric shapes before any Portfolio is built.
+_Avoid_: dry run, split budget, estimate-only validation
 
 **InstrumentId**:
 The cross-boundary instrument identity — a Nautilus `InstrumentId` (`{symbol}.{venue}`, e.g. `IDTL.LSEETF`). It is what an **Execution Bundle** carries (`DataContract.instrument_ids`) and what crosses the RD→Trader boundary; the data-provider **ticker** is RD-internal — used only to fetch market data — and never crosses into an Execution Bundle. `aerd export` bakes each declared instrument's `InstrumentId` into the bundle's data contract, and live resolution hands those ids to IBKR's `InstrumentProvider` (root ADR-0007). There is no FIGI hub, no `InstrumentRef` variant, and no bespoke Security Master — FIGI is retired as an identity term. Currency and venue detail are carried by the `{symbol}.{venue}` id and resolved IBKR-native, not carried alongside it.
@@ -146,11 +146,11 @@ _Avoid_: FIGI, InstrumentRef, ListedRef, FuturesRef, Security Master, ISIN, CUSI
 
 > **Dev**: I want to test a moving-average crossover idea on ETFs.
 >
-> **Expert**: Write an **Indicator** for the moving average and a **Strategy** that consumes it. Define a parameter space in each, then create a **Run Config** that wires them together with a rolling **Split** and ranks **Candidates** by Sharpe on the **Held-out** set.
+> **Expert**: Write an **Indicator** for the moving average and a **Strategy** that consumes it. Define a parameter space in each, then create a **Run Config** that chooses Observation Block length and ranks Candidates by mean within-block Sharpe rank over one continuous Development replay.
 >
 > **Dev**: What if the best **Candidate** looks good?
 >
-> **Expert**: The **Run** produces three representative **Candidates** — best, median, and worst — each with per-split **Metrics** on both **Selection** and **Held-out** sets. If the best **Candidate** holds up on **Held-out**, **Lock** it and reference the **Lock** in a new **Run Config** to reuse those exact parameters.
+> **Expert**: The **Run** produces three representative **Candidates** — best, median, and worst — with complete-period Metrics, per-Observation-Block Metrics, and a mean rank. Review the evidence across regimes, then **Lock** a representative and reference that Lock in a new Run Config to reuse its exact parameters.
 >
 > **Dev**: How do I know the **Run** was honest?
 >

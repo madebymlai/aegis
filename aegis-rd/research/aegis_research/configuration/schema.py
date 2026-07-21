@@ -243,24 +243,6 @@ def has_data_array_token_shape(value: str) -> bool:
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class RunSplitConfig:
-    method: str
-    params: dict[str, Any] = field(default_factory=dict)
-    max_splits: PositiveInt = 100
-    max_estimated_output_cells: PositiveInt = 25_000_000
-    max_public_artifact_bytes: PositiveInt = 10_000_000
-
-    @model_validator(mode="after")
-    def _no_set_labels(self):
-        if "set_labels" in self.params:
-            raise ValueError(
-                "set roles are owned by Aegis and assigned positionally "
-                "(set 0 selection, set 1 held_out); set_labels is not configurable"
-            )
-        return self
-
-
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class SignalConfig:
     policy: SignalPolicy = "long_only_hysteresis"
     long_entry_threshold: float = 0.55

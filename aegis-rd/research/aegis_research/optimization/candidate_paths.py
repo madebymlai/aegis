@@ -162,7 +162,6 @@ def build_development_paths(
         book,
         scored_start=lookbacks.scored_start,
         open_=arrays.pnl_open,
-        market_index=signal_close.index,
         periods_per_year=report.periods_per_year,
         distributions=arrays.distributions,
         currency_conversion=arrays.currency_conversion,

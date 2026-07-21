@@ -29,69 +29,6 @@ def test_strategy_run_cli_rejects_component_strategy_without_optimization(
     _assert_missing_optimization_config_error(capsys, tmp_path, "strategy-run")
 
 
-def test_strategy_run_cli_rejects_component_strategy_with_top_level_rolling_split(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
-    config_path = _write_run_config(tmp_path, split=_rolling_split_config())
-
-    assert cli.main(["run", str(config_path), "--run-id", "component-rolling"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "component-rolling")
-
-
-def test_strategy_run_cli_rejects_component_strategy_with_top_level_purged_split(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
-    config_path = _write_run_config(tmp_path, split=_purged_kfold_split_config())
-
-    assert cli.main(["run", str(config_path), "--run-id", "component-purged"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "component-purged")
-
-
-def test_strategy_run_rejects_candidate_grid_before_split_execution_budget_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
-
-    config_path = _write_run_config(
-        tmp_path,
-        split=_rolling_split_config(),
-        candidate_grid={"max_estimated_cells": 1},
-    )
-
-    assert cli.main(["run", str(config_path), "--run-id", "split-over-budget"]) == 6
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    assert payload["error"]["category"] == "config_validation"
-    assert "candidate_grid" in payload["error"]["message"]
-    assert "Unexpected keyword argument" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "split-over-budget").exists()
-
-
-def test_strategy_run_rejects_component_split_failure_side_path_without_optimization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
-
-    config_path = _write_run_config(tmp_path, split=_rolling_split_config())
-
-    assert cli.main(["run", str(config_path), "--run-id", "component-split-fails"]) == 6
-    _assert_missing_optimization_config_error(capsys, tmp_path, "component-split-fails")
-
-
 def test_strategy_run_rejects_component_indicator_side_path_without_optimization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -154,7 +91,7 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(
         tmp_path,
-        optimization={"search": "grid", "split": _rolling_split_config()},
+        optimization={"search": "grid", "observation_block_bars": 20},
     )
 
     assert cli.main(["run", str(config_path), "--run-id", "component-opt"]) == 0
@@ -165,7 +102,7 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert payload["status"] == "success"
     assert artifact["strategy"]["family"] == "strategies"
     assert artifact["strategy"]["id"] == "demo.cross"
-    assert [shape["name"] for shape in artifact["preflight"]["param_shapes"]] == [
+    assert artifact["preflight"]["candidate_param_names"] == [
         FIXED_CANDIDATE_PARAM
     ]
     assert [candidate["role"] for candidate in artifact["candidates"]] == [
@@ -173,32 +110,23 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
         "median",
         "worst",
     ]
-    ranking_metric = artifact["ranking"]["metric"]
-    assert "held_out_warning" in payload["optimization"]
+    assert payload["optimization"]["protocol"] == "continuous_future_in_past"
+    assert payload["optimization"]["observation_block_bars"] == 20
     # Completion threads the *exact* exclusion accounting from the execution
     # Evidence (never a preflight estimate) into the optimization summary, so the
     # terminal can render the researched/total ratio.
-    execution = artifact["execution"]
-    assert payload["optimization"]["total"] == execution["total"]
-    assert payload["optimization"]["excluded_invalid"] == execution["excluded_invalid"]
-    assert payload["optimization"]["excluded_degenerate"] == execution["excluded_degenerate"]
+    accounting = artifact["execution"]["candidate_accounting"]
+    assert payload["optimization"]["total"] == accounting["total"]
+    assert payload["optimization"]["excluded_invalid"] == accounting["excluded_invalid"]
+    assert payload["optimization"]["excluded_degenerate"] == accounting["excluded_degenerate"]
     for summary, candidate in zip(payload["candidates"], artifact["candidates"], strict=True):
         assert summary["role"] == candidate["role"]
-        assert summary["rank"] == candidate["rank"]
+        assert summary["ordinal_rank"] == candidate["ordinal_rank"]
         assert summary["candidate_key"] == candidate["candidate_key"]
         assert summary["params"] == candidate["params"]
-        assert summary["score"] == candidate["score"]
-        assert summary["metrics"] == candidate["metrics"]
-        assert summary["selection_metrics"] == candidate["selection_metrics"]
-        assert summary["held_out_metrics"] == candidate["held_out_metrics"]
-        # held-out aggregate is serialized in the artifact, as prominent as `metrics`.
-        assert summary["held_out_metrics_mean"] == candidate["held_out_metrics_mean"]
-        headline = summary["held_out_headline"]
-        assert headline["metric"] == ranking_metric
-        assert headline["held_out"] == candidate["held_out_metrics_mean"].get(ranking_metric)
-        assert headline["selection"] == candidate["metrics"].get(ranking_metric)
-        if headline["held_out"] is not None and headline["selection"] is not None:
-            assert headline["gap"] == pytest.approx(headline["selection"] - headline["held_out"])
+        assert summary["mean_rank"] == candidate["mean_rank"]
+        assert summary["complete_period_metrics"] == candidate["complete_period_metrics"]
+        assert summary["observation_block_metrics"] == candidate["observation_block_metrics"]
     assert len(artifact["candidates"]) == 3
     assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
 
@@ -214,7 +142,7 @@ def test_strategy_run_always_emits_json_with_lock_handles(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(
         tmp_path,
-        optimization={"search": "grid", "split": _rolling_split_config()},
+        optimization={"search": "grid", "observation_block_bars": 20},
     )
 
     assert cli.main(["run", str(config_path), "--run-id", "lock-handle-run"]) == 0
@@ -263,7 +191,7 @@ def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
         tmp_path,
         strategy_id="demo.uses_ma",
         indicators=[{"id": "demo.ma", "params": {"window": 2}}],
-        optimization={"search": "grid", "split": _rolling_split_config()},
+        optimization={"search": "grid", "observation_block_bars": 20},
     )
 
     assert cli.main(["run", str(config_path), "--run-id", "component-locks"]) == 0
@@ -414,7 +342,7 @@ def test_run_rejects_removed_model_training_config_without_train_guidance(
     assert not (tmp_path / "runs" / "should-not-exist").exists()
 
 
-def test_run_rejects_optimization_without_nested_split_before_run_creation(
+def test_run_rejects_optimization_without_observation_block_bars_before_run_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -423,13 +351,13 @@ def test_run_rejects_optimization_without_nested_split_before_run_creation(
     _write_strategy_component(tmp_path / "research/components/strategies/cross.py")
     config_path = _write_run_config(tmp_path, optimization={"search": "grid"})
 
-    assert cli.main(["run", str(config_path), "--run-id", "no-optimization-split"]) == 6
+    assert cli.main(["run", str(config_path), "--run-id", "no-observation-blocks"]) == 6
 
     output = capsys.readouterr()
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
-    assert "optimization.split" in payload["error"]["message"]
-    assert not (tmp_path / "runs" / "no-optimization-split").exists()
+    assert "optimization.observation_block_bars" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "no-observation-blocks").exists()
 
 
 def test_run_missing_config_is_config_error(
@@ -467,8 +395,6 @@ def _write_run_config(
     indicators: list[dict[str, object]] | None = None,
     arrays: list[str] | None = None,
     data: dict[str, object] | None = None,
-    split: dict[str, object] | None = None,
-    candidate_grid: dict[str, object] | None = None,
     optimization: dict[str, object] | None = None,
 ) -> Path:
     seed_catalog_ohlcv(
@@ -494,34 +420,12 @@ def _write_run_config(
                 "strategy": {"id": strategy_id},
                 "indicators": indicators or [],
                 "ranking": {"metric": "total_return"},
-                **({"split": split} if split is not None else {}),
-                **({"candidate_grid": candidate_grid} if candidate_grid is not None else {}),
                 **({"optimization": optimization} if optimization is not None else {}),
             },
             sort_keys=False,
         )
     )
     return path
-
-
-def _rolling_split_config() -> dict[str, object]:
-    return {
-        "method": "from_rolling",
-        "params": {
-            "length": 20,
-            "offset": 20,
-            "split": 0.5,
-        },
-        "max_splits": 5,
-    }
-
-
-def _purged_kfold_split_config() -> dict[str, object]:
-    return {
-        "method": "from_purged_kfold",
-        "params": {"n_folds": 3, "n_test_folds": 1},
-        "max_splits": 5,
-    }
 
 
 def _write_strategy_component(path: Path) -> None:
@@ -560,6 +464,10 @@ def _write_strategy_component(path: Path) -> None:
         "        n_sel = selected.sum(axis=1, keepdims=True).clip(min=1)\n"
         "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
         "    return alloc\n"
+        "\n# %% causal lookback\n"
+        "def lookback():\n"
+        '    """Warm up the fixed three-bar moving average."""\n'
+        "    return 3\n"
     )
 
 
@@ -592,6 +500,10 @@ def _write_indicator_component(path: Path) -> None:
         "        cols = slice(i * S, (i + 1) * S)\n"
         "        result[:, cols] = pd.DataFrame(close.values).rolling(int(w)).mean().bfill().values\n"
         "    return {'ma': result}\n"
+        "\n# %% causal lookback\n"
+        "def lookback(window=2):\n"
+        '    """Warm up the configured moving average."""\n'
+        "    return int(window)\n"
     )
 
 
@@ -692,6 +604,10 @@ def _write_indicator_strategy_component(path: Path) -> None:
         "        n_sel = selected.sum(axis=1, keepdims=True).clip(min=1)\n"
         "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
         "    return alloc\n"
+        "\n# %% causal lookback\n"
+        "def lookback():\n"
+        '    """The consumed Indicator owns the moving-average warmup."""\n'
+        "    return 0\n"
     )
 
 

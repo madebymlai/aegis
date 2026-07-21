@@ -40,10 +40,9 @@ def canonical_param_order(names: Iterable[str]) -> list[str]:
 
     A ``CandidateKey`` is a positional tuple, so its meaning depends entirely on the
     order its elements are placed in. Every path that builds or reads a key orders it
-    through this function — the precompute/store-addressing path (``candidate_keys``)
-    and the scored-grid path (``CandidateGrid.param_levels``) — so a key built by one
-    path compares equal to the same candidate's key built by the other. Owning the
-    order in one place is what stops those paths from silently drifting (aegis-rd-948).
+    through this function — precompute/store addressing and continuous replay — so a
+    key built by one path compares equal to the same Candidate's key built by the
+    other. Owning the order here prevents those paths from silently drifting.
     """
     return sorted(names)
 
@@ -52,7 +51,7 @@ def candidate_keys(param_lists: Mapping[str, Sequence]) -> list[CandidateKey]:
     """Canonical per-candidate identity tuples for a materialised candidate set.
 
     Tuple elements follow :func:`canonical_param_order` (sorted param name) so every
-    stage — the precompute store, the simulate-stage lookup, and the scored grid —
+    stage — the precompute store, simulation lookup, and continuous analysis —
     addresses a candidate by the same key, regardless of the kwargs order the framework
     hands each stage.
     """

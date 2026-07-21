@@ -40,41 +40,6 @@ def test_run_help_does_not_list_train_flag(capsys: pytest.CaptureFixture[str]) -
     assert "Run the config's train section" not in output.out
 
 
-def test_show_splitters_from_rolling_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters", "from_rolling"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["method"] == "from_rolling"
-    assert payload["run_scoring_set_policy"] == "exactly_two_sets_first_selection_second_held_out"
-    param_names = {param["name"] for param in payload["params"]}
-    assert {"length", "split", "offset"}.issubset(param_names)
-
-
-def test_show_splitters_marks_runtime_object_methods_unsupported(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    assert cli.main(["show", "splitters", "from_split_func"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["supported"] is False
-    assert "split_func" in payload["required_internal_params"]
-
-
-def test_show_splitters_lists_catalog_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["schema_version"] == "splitter_catalog.v1"
-    assert payload["run_scoring_set_policy"] == "exactly_two_sets_first_selection_second_held_out"
-    assert any(method["method"] == "from_rolling" for method in payload["methods"])
-
-
 def test_show_components_lists_registry_json(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -95,28 +60,6 @@ def test_show_components_lists_registry_json(
     assert strategy["output_name"] == "active"
     assert strategy["params"]["param_space"]["available"] is False
     assert indicator["outputs"] == ["returns"]
-
-
-def test_show_splitters_unknown_method_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters", "missing_method"]) == 6
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    assert payload["status"] == "error"
-    assert payload["error"]["category"] == "config_validation"
-    assert "missing_method" in payload["error"]["message"]
-
-
-def test_show_error_is_json_without_flag(capsys: pytest.CaptureFixture[str]) -> None:
-    """A failing show invocation emits JSON error envelope on stderr regardless of --json."""
-    assert cli.main(["show", "splitters", "missing_method"]) == 6
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    assert payload["status"] == "error"
-    assert payload["command"] == "show"
-    assert payload["error"]["category"] == "config_validation"
-    assert "missing_method" in payload["error"]["message"]
 
 
 def test_preparse_error_is_json_without_flag(capsys: pytest.CaptureFixture[str]) -> None:
@@ -255,7 +198,7 @@ def test_run_success_payload_is_the_emitted_json_contract(
             "strategy_artifact_id": "strategy.run",
             "strategy_artifact_path": str(artifact_path),
             "candidate_store_path": str(store_path),
-            "optimization": {"total": 4, "held_out_warning": None},
+            "optimization": {"total": 4, "protocol": "continuous_future_in_past"},
             "candidates": [{"role": "best", "lock": kwargs["run_id"]}],
         }
 
@@ -285,7 +228,10 @@ def test_run_success_payload_is_the_emitted_json_contract(
     assert payload["candidate_store"] == {
         "path": str(store_path.resolve(strict=False)),
     }
-    assert payload["optimization"] == {"total": 4, "held_out_warning": None}
+    assert payload["optimization"] == {
+        "total": 4,
+        "protocol": "continuous_future_in_past",
+    }
     assert payload["candidates"] == [{"role": "best", "lock": "stubbed-success"}]
 
 
@@ -419,7 +365,10 @@ def _run_candidate_returns(
     artifact = json.loads(
         (tmp_path / "runs" / run_id / "strategy_run.json").read_text()
     )
-    return [candidate["metrics"]["total_return"] for candidate in artifact["candidates"]]
+    return [
+        candidate["complete_period_metrics"]["total_return"]
+        for candidate in artifact["candidates"]
+    ]
 
 
 def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
@@ -1012,19 +961,6 @@ def test_show_components_unchanged_after_indicator_schema(
     assert "families" in payload
 
 
-def test_show_splitters_catalog_unchanged_after_indicator_schema(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`aerd show splitters` behavior is unchanged."""
-    assert cli.main(["show", "splitters"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["schema_version"] == "splitter_catalog.v1"
-    assert any(method["method"] == "from_rolling" for method in payload["methods"])
-
-
 # ── strategy-schema ─────────────────────────────────────────────────────────
 
 
@@ -1216,19 +1152,6 @@ def test_show_components_unchanged_after_strategy_schema(
     assert payload["schema_version"] == "component_registry_snapshot.v1"
     assert "fingerprint" in payload
     assert "families" in payload
-
-
-def test_show_splitters_catalog_unchanged_after_strategy_schema(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`aerd show splitters` behavior is unchanged."""
-    assert cli.main(["show", "splitters"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["schema_version"] == "splitter_catalog.v1"
-    assert any(method["method"] == "from_rolling" for method in payload["methods"])
 
 
 def test_authoring_story_round_trip(

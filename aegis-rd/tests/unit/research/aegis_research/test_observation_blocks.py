@@ -344,7 +344,6 @@ def test_mean_rank_beats_one_arbitrarily_large_block_win_and_ignores_full_metric
     assert result.median.params == {"window": 1}
     assert result.worst.params == {"window": 3}
     assert result.best.score == pytest.approx(4 / 3)
-    assert result.omnibus is None
 
 
 @pytest.mark.parametrize("direction", ["maximize", "minimize"])

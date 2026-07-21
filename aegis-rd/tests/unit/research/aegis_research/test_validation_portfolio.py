@@ -71,10 +71,7 @@ def _resolve(portfolio: dict[str, Any], *, tmp_path: Path):
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},
-        "optimization": {
-            "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
-        },
+        "optimization": {"search": "grid", "observation_block_bars": 20},
     }
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
@@ -307,14 +304,10 @@ def test_portfolio_band_override_key_accepts_configured_future_root(tmp_path: Pa
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},
-        "optimization": {
-            "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 20, "split": 0.5},
-                "max_splits": 10,
+            "optimization": {
+                "search": "grid",
+                "observation_block_bars": 20,
             },
-        },
     }
 
     resolved = resolve_run_config(raw, component_registry=_component_registry(tmp_path))

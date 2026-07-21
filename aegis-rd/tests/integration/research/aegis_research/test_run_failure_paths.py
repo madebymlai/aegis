@@ -61,9 +61,9 @@ def test_component_optimization_uses_component_native_candidate_grid(
         tmp_path / "runs" / "component-boundary" / "strategy_run.json"
     )
     assert payload["candidate_store"]["path"] == str(store_path)
-    assert artifact["schema_version"] == "optimization_artifact.v1"
+    assert artifact["schema_version"] == "optimization_artifact.v2"
     assert artifact_record["role"] == "optimization_evidence"
-    assert artifact_record["schema_version"] == "optimization_artifact.v1"
+    assert artifact_record["schema_version"] == "optimization_artifact.v2"
     assert artifact["strategy"]["family"] == "strategies"
     assert artifact["strategy"]["id"] == "demo.ma_opt"
     assert [candidate["role"] for candidate in artifact["candidates"]] == [
@@ -71,7 +71,7 @@ def test_component_optimization_uses_component_native_candidate_grid(
         "median",
         "worst",
     ]
-    assert [shape["name"] for shape in artifact["preflight"]["param_shapes"]] == [
+    assert artifact["preflight"]["candidate_param_names"] == [
         fast_key,
         slow_key,
     ]
@@ -254,38 +254,6 @@ def test_component_optimization_runtime_error_records_failure_diagnostics(
     )
 
 
-def test_component_optimization_preflight_failure_records_manifest_without_pipeline_execution(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_parameterized_strategy_component(
-        tmp_path / "research/components/strategies/ma_opt.py",
-        windows=range(1_000),
-        slow_windows=range(1_000, 2_000),
-        fail_if_executed=True,
-    )
-    split = _rolling_split_config()
-    split["max_estimated_output_cells"] = 100
-    config_path = _write_run_config(tmp_path, optimization={"search": "grid", "split": split})
-
-    assert cli.main(["run", str(config_path), "--run-id", "preflight-failure"]) == 10
-
-    manifest = json.loads((tmp_path / "runs" / "preflight-failure" / "manifest.json").read_text())
-    payload = json.loads(capsys.readouterr().err)
-
-    assert payload["error"]["category"] == "execution_failure"
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert (
-        manifest["evidence"]["optimization"]["preflight_failure"]["error_type"] == "PreflightError"
-    )
-    assert (
-        "exceed optimization.split.max_estimated_output_cells"
-        in manifest["stages"][-1]["diagnostic"]["message"]
-    )
-
-
 def _write_run_config(
     tmp_path: Path,
     *,
@@ -304,7 +272,8 @@ def _write_run_config(
             _run_config_payload(
                 strategy=strategy or {"id": strategy_id},
                 indicators=[],
-                optimization=optimization or {"search": "grid", "split": _rolling_split_config()},
+                optimization=optimization
+                or {"search": "grid", "observation_block_bars": 20},
                 catalog_path=tmp_path / "catalog",
             ),
             sort_keys=False,
@@ -344,18 +313,6 @@ def _run_config_payload(
     }
 
 
-def _rolling_split_config() -> dict[str, object]:
-    return {
-        "method": "from_rolling",
-        "params": {
-            "length": 20,
-            "offset": 20,
-            "split": 0.5,
-        },
-        "max_splits": 5,
-    }
-
-
 def _write_parameterized_strategy_component(
     path: Path,
     *,
@@ -386,6 +343,10 @@ def _write_parameterized_strategy_component(
         "def param_space():\n"
         f"    return {{'fast_window': vbt.Param({fast_values!r}), "
         f"'slow_window': vbt.Param({slow_values!r})}}\n"
+        "\n# %% causal lookback\n"
+        "def lookback(fast_window, slow_window):\n"
+        '    """Warm up through the slower moving-average window."""\n'
+        "    return max(int(fast_window), int(slow_window))\n"
         "\n# %% main compute\n"
         "def run(inputs, fast_window, slow_window):\n"
         '    """Emit an active allocation frame from fixed MA crossover params."""\n'
@@ -440,6 +401,10 @@ def _write_runtime_error_strategy_component(path: Path) -> None:
         "\n# %% parameter space\n"
         "def param_space():\n"
         "    return {'window': vbt.Param([2])}\n"
+        "\n# %% causal lookback\n"
+        "def lookback(window):\n"
+        '    """Resolve warmup before the intentional execution failure."""\n'
+        "    return int(window)\n"
         "\n# %% main compute\n"
         "def run(inputs, window):\n"
         '    """Raise a deterministic execution failure."""\n'

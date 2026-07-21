@@ -14,7 +14,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, InstrumentId, MarketDataBundle
@@ -45,14 +44,9 @@ from research.aegis_research.configuration import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
-    RunSplitConfig,
     SignalConfig,
 )
 from research.aegis_research.market_data.run_arrays import RunArrays
-from research.aegis_research.optimization.candidate_grid import (
-    SPLIT_LEVEL,
-    CandidateGrid,
-)
 from research.aegis_research.optimization.continuous_evidence import (
     CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
     METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
@@ -61,7 +55,6 @@ from research.aegis_research.optimization.observation_blocks import (
     OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
 )
 from research.aegis_research.optimization.pipeline.setup import SetupResult
-from research.aegis_research.optimization.precompute import CandidateKey
 from research.aegis_research.optimization.run_data_contract import (
     DataArrayContract,
     RunDataFacts,
@@ -182,19 +175,6 @@ def make_ranking_config(**overrides: Any) -> RankingConfig:
     return RankingConfig(**defaults)
 
 
-def make_run_split_config(**overrides: Any) -> RunSplitConfig:
-    """Return a RunSplitConfig with valid defaults, overridden by any kwargs."""
-    defaults: dict[str, Any] = {
-        "method": "from_rolling",
-        "params": {"length": 20, "split": 0.5},
-        "max_splits": 100,
-        "max_estimated_output_cells": 25_000_000,
-        "max_public_artifact_bytes": 10_000_000,
-    }
-    defaults.update(overrides)
-    return RunSplitConfig(**defaults)
-
-
 def make_optimization_config(**overrides: Any) -> OptimizationConfig:
     """Return an OptimizationConfig with valid defaults, overridden by any kwargs."""
     defaults: dict[str, Any] = {
@@ -262,70 +242,6 @@ def make_run_config(**overrides: Any) -> RunConfig:
     }
     defaults.update(overrides)
     return RunConfig(**defaults)
-
-
-def make_candidate_grid(
-    spec: Mapping[CandidateKey, Mapping[Any, Mapping[str, float | None]]],
-    *,
-    param_names: list[str] | None = None,
-) -> CandidateGrid:
-    """Build a CandidateGrid from a boundary-vocabulary spec.
-
-    ``spec`` maps each CandidateKey to its per-Split per-Metric values. Scalar
-    candidate keys are wrapped as 1-tuples automatically. ``None`` values are
-    converted to NaN for the DataFrame spine so the grid's read surface can
-    normalize them back to None.
-
-    The factory constructs through ``from_sweep`` so every test grid exercises
-    the production construction path.
-    """
-    if not spec:
-        # Empty grid — still valid by construction; carries the default
-        # param level and metric column the non-empty path would produce.
-        if param_names is None:
-            param_names = ["param"]
-        index = pd.MultiIndex.from_tuples(
-            [], names=[*param_names, SPLIT_LEVEL]
-        )
-        return CandidateGrid.from_sweep(
-            pd.DataFrame({"sharpe": []}, index=index, dtype="float64")
-        )
-
-    # Collect all metric ids across all candidates and splits.
-    metric_ids_set: set[str] = set()
-    for per_split in spec.values():
-        for per_metric in per_split.values():
-            metric_ids_set.update(per_metric.keys())
-    metric_ids = sorted(metric_ids_set)
-
-    # Derive param names from the first candidate key if not provided.
-    if param_names is None:
-        first_key = next(iter(spec))
-        if isinstance(first_key, tuple):
-            n = len(first_key)
-            param_names = [f"param_{i}" for i in range(n)] if n > 1 else ["param"]
-        else:
-            param_names = ["param"]
-
-    # Build MultiIndex rows.
-    tuples: list[tuple] = []
-    rows: list[dict[str, float]] = []
-    for key, per_split in spec.items():
-        key_tuple = (key,) if not isinstance(key, tuple) else key
-        for split_label, per_metric in per_split.items():
-            tuples.append((*key_tuple, split_label))
-            rows.append({
-                mid: (np.nan if v is None else float(v))
-                for mid, v in per_metric.items()
-            })
-    index = pd.MultiIndex.from_tuples(tuples, names=[*param_names, SPLIT_LEVEL])
-    # Fill missing metric columns with NaN.
-    frame = pd.DataFrame(rows, index=index)
-    for mid in metric_ids:
-        if mid not in frame.columns:
-            frame[mid] = np.nan
-    frame = frame[metric_ids]
-    return CandidateGrid.from_sweep(frame)
 
 
 def make_component_registry(
@@ -513,7 +429,6 @@ def make_single_book_portfolio(
     config: PortfolioConfig,
     *,
     open_: pd.DataFrame | None = None,
-    market_index: pd.Index | None = None,
     periods_per_year: int = 252,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
@@ -540,7 +455,6 @@ def make_single_book_portfolio(
             futures_roots=futures_roots,
         ),
         open_=open_,
-        market_index=market_index,
         periods_per_year=periods_per_year,
         distributions=distributions,
         currency_conversion=currency_conversion,
@@ -574,7 +488,6 @@ def make_engine_mechanics_portfolio(
         alloc_mi,
         ResolvedBook(config=config, futures_roots=futures_roots),
         open_frame=None,
-        market_index=None,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
         scored_start=0,
         periods_per_year=periods_per_year,

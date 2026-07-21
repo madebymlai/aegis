@@ -85,11 +85,7 @@ def _raw_config(**overrides: Any) -> dict[str, Any]:
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 40, "offset": 40, "split": 0.5},
-                "max_splits": 2,
-            },
+            "observation_block_bars": 20,
         },
     }
     raw.update(overrides)

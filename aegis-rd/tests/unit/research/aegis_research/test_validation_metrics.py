@@ -63,10 +63,7 @@ def _resolve(ranking: dict[str, Any], *, tmp_path: Path):
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": ranking,
-        "optimization": {
-            "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
-        },
+        "optimization": {"search": "grid", "observation_block_bars": 20},
     }
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
@@ -135,10 +132,7 @@ def test_ranking_not_a_dict_fails(tmp_path: Path) -> None:
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": "not_a_dict",
-        "optimization": {
-            "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
-        },
+        "optimization": {"search": "grid", "observation_block_bars": 20},
     }
     with pytest.raises(ConfigValidationError) as e:
         resolve_run_config(raw, component_registry=_component_registry(tmp_path))
@@ -189,10 +183,7 @@ def _resolve_with_report(ranking: dict[str, Any], report: dict[str, Any], *, tmp
         "indicators": [{"id": "demo.returns"}],
         "ranking": ranking,
         "report": report,
-        "optimization": {
-            "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
-        },
+        "optimization": {"search": "grid", "observation_block_bars": 20},
     }
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 

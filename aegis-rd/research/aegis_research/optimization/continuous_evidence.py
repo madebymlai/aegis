@@ -316,7 +316,9 @@ def _representative_evidence(analysis: ObservationBlockAnalysis) -> list[dict[st
             "ordinal_rank": ordinal,
             "params": _canonical_mapping(candidate.params),
             "mean_rank": _optional_float(candidate.score),
-            "observation_block_metrics": _block_metrics(candidate.selection_metrics),
+            "observation_block_metrics": _block_metrics(
+                candidate.observation_block_metrics
+            ),
             "complete_period_metrics": _metric_map(candidate.metrics),
         }
         for ordinal, (role, candidate) in enumerate(

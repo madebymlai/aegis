@@ -293,9 +293,8 @@ def _candidate(params: dict[str, Any], score: float, *, total_return: float) -> 
     return EvaluatedCandidate(
         params=params,
         score=score,
-        selection_metrics={0: {"total_return": total_return}},
+        observation_block_metrics={"block-000": {"total_return": total_return}},
         metrics={"total_return": total_return},
-        held_out_metrics={0: {"total_return": total_return}},
     )
 
 

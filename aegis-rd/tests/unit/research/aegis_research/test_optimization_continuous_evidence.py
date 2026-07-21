@@ -100,7 +100,7 @@ def _case(candidate_count: int = 2, *, resolved_warmup_bars: int | None = None):
         EvaluatedCandidate(
             params={"window": key[0]},
             score=float(ranks.iloc[position].mean()),
-            selection_metrics={
+            observation_block_metrics={
                 "block-000": {"total_return": float(raw.iloc[position, 0])},
                 "block-001": {"total_return": float(raw.iloc[position, 1])},
             },

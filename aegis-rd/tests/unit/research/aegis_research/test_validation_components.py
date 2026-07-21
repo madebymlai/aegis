@@ -76,11 +76,7 @@ def _resolve(
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 20, "split": 0.5},
-                "max_splits": 10,
-            },
+            "observation_block_bars": 20,
         },
     }
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))

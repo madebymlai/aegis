@@ -77,23 +77,20 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
         best=EvaluatedCandidate(
             params={fast_key: 2, slow_key: 10, window_key: 20},
             score=0.30,
-            selection_metrics={0: {"total_return": 0.30}},
+            observation_block_metrics={"block-000": {"total_return": 0.30}},
             metrics={"total_return": 0.30},
-            held_out_metrics={0: {"total_return": 0.25}},
         ),
         median=EvaluatedCandidate(
             params={fast_key: 3, slow_key: 12, window_key: 22},
             score=0.20,
-            selection_metrics={0: {"total_return": 0.20}},
+            observation_block_metrics={"block-000": {"total_return": 0.20}},
             metrics={"total_return": 0.20},
-            held_out_metrics={0: {"total_return": 0.15}},
         ),
         worst=EvaluatedCandidate(
             params={fast_key: 5, slow_key: 15, window_key: 25},
             score=0.10,
-            selection_metrics={0: {"total_return": 0.10}},
+            observation_block_metrics={"block-000": {"total_return": 0.10}},
             metrics={"total_return": 0.10},
-            held_out_metrics={0: {"total_return": 0.05}},
         ),
     )
     selection_identity = make_selection_identity()

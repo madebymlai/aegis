@@ -1,6 +1,6 @@
 # VectorBT PRO Research Scaffold
 
-This scaffold follows the VectorBT PRO docs around data classes, indicator pipelines, splitters, and the `PFO.from_filled_allocations` + `Portfolio.from_optimizer` substrate. Market data enters the research loop as native VectorBT `Data`; run evidence records the derived strategy, portfolio, metric, and leaderboard artifacts needed to review a strategy idea. The single multi-asset contract is cross-sectional target allocation; legacy `entries`/`exits` signal flow is no longer a supported authoring path.
+This scaffold follows the VectorBT PRO docs around data classes, indicator pipelines, continuous portfolio replay, and bounds-aware analysis. Market data enters the research loop as native VectorBT `Data`; run evidence records the derived strategy, portfolio, Metric, and Candidate artifacts needed to review a strategy idea. The single multi-asset contract is cross-sectional target allocation; legacy `entries`/`exits` signal flow is no longer a supported authoring path.
 
 ## Flow
 
@@ -19,7 +19,8 @@ data fetch/load
 - `portfolios.py`: owns `vbt.PFO.from_filled_allocations` + `vbt.Portfolio.from_optimizer` execution, terminal liquidation, and resolved VBT settings.
 - `reports.py`: computes portfolio metrics and metric evidence.
 - `strategy_runs.py`: component-native optimization orchestration and strategy evidence.
-- `run_splits.py`: validates and materializes supported VBT splitter configs for run scoring.
+- `optimization/continuous_replay.py`: builds each Candidate's single causal full-period Portfolio.
+- `optimization/observation_blocks.py`: applies fixed analysis-only ranges to unchanged Portfolios.
 - `cli.py`: `aerd` dispatcher.
 
 ## CLI Contract
@@ -139,35 +140,25 @@ For the contract's full historical motivation, see `docs/brainstorms/2026-05-22-
 
 ## Native Optimization
 
-For runs that need parameter search, configs declare an `optimization` block and components expose `param_space()` callables whose values are `vbt.Param`. Aegis composes configured strategy and indicator components into one pipeline, wraps it in `vbt.cv_split`, and lets VBT enumerate, select, and evaluate parameter combinations. Aegis does not feed VBT-generated params back into a Python candidate grid.
+For runs that need parameter search, configs declare an `optimization` block and components expose `param_space()` callables whose values are `vbt.Param`. Aegis composes configured Strategy and Indicator Components, materializes the exact grid or deterministic random sample, derives one common Warmup from all sampled lookbacks, and replays every Candidate continuously over the same Development Period.
 
 ```yaml
 optimization:
   search: random       # or "grid" for exhaustive
   random_subset: 16
   seed: 42
-  evidence:
-    return_grid: first  # off | first | all
-  split:
-    method: from_rolling
-    params:
-      length: 252
-      offset: 252
-      split: 0.8
-    max_splits: 10
+  observation_block_bars: 252
 ```
 
-`optimization.split.method` maps to `vbt.cv_split(splitter=...)` and `optimization.split.params` to `splitter_kwargs`. Set roles are positional: VBT set index 0 is Aegis `selection`, VBT set index 1 is Aegis `held_out`. The selection function maps the configured `ranking.metric` and `ranking.direction` into VBT `selection`, with multi-metric selection handled via `grid_results.xs(metric_name).idxmax()`/`idxmin()`. Tied parameters use `vbt.Param(level=...)`; conditional parameters use `vbt.Param(condition=...)`; `vbt.Param(random_subset=...)` and the top-level `random_subset` interoperate with VBT's lazy-grid behavior. Random optimization requires `optimization.seed` so precomputed sampled-row evidence and VBT execution use the same deterministic sample. Resource gates (theoretical combinations, sampled combinations, expected result cells, artifact bytes) live on `optimization.preflight` and `optimization.split.max_*` knobs and fail closed before VBT execution. Partial failures (`vbt.NoResult`-only grids, missing metrics, runtime errors) surface as `evidence.optimization.execution_failure` rather than silently shrinking the leaderboard.
+`optimization.observation_block_bars` partitions only the scored Development interval into labeled, half-open observational ranges. Aegis creates every Portfolio before block analysis and never slices allocations or constructs a Portfolio per range. Internally, the fixed `vbt.Splitter.from_splits` + `Splitter.apply` path carries resolved bounds to Metric extractors over the unchanged full Portfolio. The Portfolio itself is never `vbt.Takeable`.
+
+The ranking Metric is ranked within each Observation Block using its registered direction. A Candidate's selection score is its mean within-block rank; equal scores break by materialized Candidate position. Complete-period Metrics remain descriptive Evidence. Random optimization requires a seed so the materialized sample and Evidence are deterministic. Partial failures (`vbt.NoResult`, missing Metrics, runtime errors) surface as execution failure Evidence rather than silently shrinking the comparison.
 
 `candidate_grid` is unknown to the forward schema. New work must use component `param_space()` callables plus the `optimization` contract; `vbt.Param` jointly searches indicator and strategy parameters inside the composed pipeline.
 
-## Removed Run Split Scoring
+## Retired Public Split Scoring
 
-The top-level `split` block is no longer a run contract field. Forward configs must use `optimization.split` on the optimization contract.
-
-Set roles are positional (set 0 = selection, set 1 = held_out); `set_labels` is rejected by config validation under `optimization.split.params`.
-
-`optimization.split.method` must be an exact `vbt.Splitter` constructor method. Use `aerd show splitters from_rolling --json` or another discovered method to inspect signature-derived params and defaults. Compatible methods such as `from_rolling` and `from_purged_kfold` share the same scoring path when VBT returns exactly two non-overlapping sets per split. The first set is used for selection, the second set is used for held-out scoring, and native VBT set labels are preserved in evidence.
+The top-level `split` block, `optimization.split`, arbitrary Splitter method selection, `aerd show splitters`, Selection/Held-out sweeps, and terminal Held-out replay are retired contract surface. Forward configs use only continuous replay plus `optimization.observation_block_bars`. The remaining internal VBT Splitter represents already-resolved Observation Block bounds for analysis; it cannot alter execution or Portfolio state.
 
 ## Run Manifest And Artifacts
 

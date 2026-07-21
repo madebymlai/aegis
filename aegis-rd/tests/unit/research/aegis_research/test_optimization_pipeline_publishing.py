@@ -71,9 +71,8 @@ def _candidate(fast: int, slow: int, score: float) -> EvaluatedCandidate:
     return EvaluatedCandidate(
         params={_FAST_KEY: fast, _SLOW_KEY: slow},
         score=score,
-        selection_metrics={0: {"total_return": score}},
+        observation_block_metrics={"block-000": {"total_return": score}},
         metrics={"total_return": score},
-        held_out_metrics={0: {"total_return": score - 0.01}},
     )
 
 

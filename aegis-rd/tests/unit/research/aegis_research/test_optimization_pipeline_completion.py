@@ -49,7 +49,7 @@ def _candidate_rows() -> list[dict[str, Any]]:
         return EvaluatedCandidate(
             params={"fast": fast, "slow": slow},
             score=score,
-            selection_metrics={0: {"total_return": score}},
+            observation_block_metrics={"block-000": {"total_return": score}},
             metrics={"total_return": score},
         )
 

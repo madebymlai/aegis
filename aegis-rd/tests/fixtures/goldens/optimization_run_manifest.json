@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "cbb1708d41b3d2537b4d38c5364ab6bb74d0a9e8e6fcb892c9a2e3b2267a89c4",
+      "hash": "9f36b11bbacbd6b1ec3da1357bc4ee0dd8b949b0b27045f618d4afa84b723959",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -172,7 +172,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_20c9377972fe68d7928a60ac22cf62cd",
+          "candidate_key": "cand_e533e2c1b25a12647e15b989cd552bcd",
           "complete_period_metrics": {
             "max_dd": 27.043452145100744,
             "sharpe_ratio": -0.17267188338676512,
@@ -509,7 +509,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "ec10b3bb60ce8dc0edfa41c0b042a302893cd492e470e9925ce80b7b8e64b885",
+                "implementation_fingerprint": "fc8112814cf0c62279bc6c5587ab2faa39453b4763fa4dd26e5c795c456765d9",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -1617,7 +1617,7 @@
           }
         },
         {
-          "candidate_key": "cand_dc85cb82029fe4aa469b9aa330311591",
+          "candidate_key": "cand_ee2940ac40f2dec1d3e43be08b9acd62",
           "complete_period_metrics": {
             "max_dd": 23.779896871973637,
             "sharpe_ratio": -0.11453647945898061,
@@ -1954,7 +1954,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "ec10b3bb60ce8dc0edfa41c0b042a302893cd492e470e9925ce80b7b8e64b885",
+                "implementation_fingerprint": "fc8112814cf0c62279bc6c5587ab2faa39453b4763fa4dd26e5c795c456765d9",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -3062,7 +3062,7 @@
           }
         },
         {
-          "candidate_key": "cand_e92fb83a7736a908c80323f0e7fdbf2e",
+          "candidate_key": "cand_372de0a53755c44bca00a8b1fd1b1787",
           "complete_period_metrics": {
             "max_dd": 35.84222833612172,
             "sharpe_ratio": -0.5146992551247971,
@@ -3399,7 +3399,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "ec10b3bb60ce8dc0edfa41c0b042a302893cd492e470e9925ce80b7b8e64b885",
+                "implementation_fingerprint": "fc8112814cf0c62279bc6c5587ab2faa39453b4763fa4dd26e5c795c456765d9",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -7432,7 +7432,7 @@
               "vbt_effective_delay_bars": 1,
               "vbt_price": "nextclose"
             },
-            "implementation_fingerprint": "ec10b3bb60ce8dc0edfa41c0b042a302893cd492e470e9925ce80b7b8e64b885",
+            "implementation_fingerprint": "fc8112814cf0c62279bc6c5587ab2faa39453b4763fa4dd26e5c795c456765d9",
             "portfolio": {
               "call_seq": "auto",
               "cash_sharing": true,

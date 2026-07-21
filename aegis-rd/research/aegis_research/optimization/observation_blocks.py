@@ -338,7 +338,7 @@ def select_observation_block_representatives(
             EvaluatedCandidate(
                 params=dict(zip(param_names, key, strict=True)),
                 score=float(mean_ranks.iloc[local]),
-                selection_metrics=_selection_metrics(
+                observation_block_metrics=_observation_block_metrics(
                     block_values, definition.id
                 ),
                 metrics=_full_metrics(full_period_metrics.iloc[source_position]),
@@ -352,7 +352,6 @@ def select_observation_block_representatives(
         excluded_degenerate=verdicts.excluded_degenerate,
         excluded_invalid=verdicts.excluded_invalid,
         total_candidates=verdicts.total,
-        omnibus=None,
     )
 
 
@@ -427,7 +426,7 @@ def _as_key(value: Any) -> tuple[Any, ...]:
     return value if isinstance(value, tuple) else (value,)
 
 
-def _selection_metrics(
+def _observation_block_metrics(
     row: pd.Series, metric_id: str
 ) -> Mapping[Any, Mapping[str, float | None]]:
     return {

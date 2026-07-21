@@ -131,7 +131,7 @@ def _seed_candidate_store(store_path: Path) -> None:
     candidate = EvaluatedCandidate(
         params={},
         score=1.0,
-        selection_metrics={0: {"sharpe_ratio": 1.0}},
+        observation_block_metrics={"block-000": {"sharpe_ratio": 1.0}},
         metrics={"sharpe_ratio": 1.0},
     )
     result = OptimizationResult(best=candidate, median=candidate, worst=candidate)

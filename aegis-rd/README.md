@@ -8,16 +8,16 @@ Aegis RD is a research operating system for turning market hypotheses into
 reproducible evidence.
 
 It gives every idea the same audit trail: source data, indicator construction,
-strategy signals, split scoring, execution assumptions, costs, metrics, and
+strategy allocations, continuous replay, execution assumptions, costs, metrics, and
 promotion evidence. The result is a research process you can rerun, inspect,
 reject, or promote without relying on memory, notebooks, or hand-waved
 assumptions.
 
 Each valid run writes a local `manifest.json`. It records lifecycle status,
 config evidence, environment and Git evidence, artifact hashes, schema versions,
-and lineage. Failed runs stay inspectable. Split-based validation keeps
-per-split artifacts separate from aggregate reports, and optimization writes
-immutable candidate, leaderboard, and lock evidence.
+and lineage. Failed runs stay inspectable. Optimization replays each Candidate
+once, observes fixed chronological blocks without resetting portfolio state, and
+writes immutable Candidate and lock Evidence.
 
 ## What it does
 
@@ -27,8 +27,9 @@ Each research loop follows one clear contract:
   with explicit arrays, timeframe, timezone, missing-data, and quality behavior.
 - **Build** indicator outputs with preserved parameter metadata.
 - **Generate** strategy signals from reviewed components.
-- **Split** run scoring into selection and held-out windows (optional), with
-  native VBT splitter labels preserved as evidence.
+- **Replay** each fixed Candidate continuously after a common derived warmup.
+- **Observe** fixed chronological blocks on the unchanged full Portfolio and
+  rank Candidates by their mean within-block rank.
 - **Simulate** shared-cash portfolios with explicit entry budgets, costs,
   direction, metric scope, and benchmark assumptions. Fill timing is
   configurable (`portfolio.fill_timing`: `next_open`, `next_close`, or
@@ -40,12 +41,12 @@ Each research loop follows one clear contract:
 
 - **`aerd run <config>`** scores a strategy or research sweep over direct
   component references, then persists candidate rows and lock refs. A component's
-  `param_space_callable` produces a native VBT parameter grid.
-  `optimization.split` names the exact VBT `Splitter` method (for example
-  `from_rolling` or `from_purged_kfold`). A later run can reuse a result by
+  `param_space_callable` produces a native VBT parameter grid, while
+  `optimization.observation_block_bars` fixes the observational regime length.
+  A later run can reuse a result by
   `lock_id`, or by `candidate_id` plus its source `run_id`.
 - **`aerd show <topic>`** renders the authoring contracts and catalogs
-  (`config-schema`, `components`, `splitters`, `indicator-schema`,
+  (`config-schema`, `components`, `indicator-schema`,
   `strategy-schema`) from the validating models, so the docs never drift from the
   code.
 - **`aerd export <config>`** bakes a locked config into an **Execution Bundle**
