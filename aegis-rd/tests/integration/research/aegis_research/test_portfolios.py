@@ -688,7 +688,7 @@ def test_levered_long_book_pays_margin_interest_on_negative_group_cash() -> None
     """Guards VBT's leveraged-buy cash semantics: cash drops by full notional."""
     rate = 0.36
     index = pd.DatetimeIndex(
-        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
+        np.array(["2024-01-05", "2024-01-08"], dtype="datetime64[us]")
     )
     close = pd.DataFrame({"A": [100.0, 100.0]}, index=index)
     allocations = pd.DataFrame({"A": [1.5, np.nan]}, index=index)

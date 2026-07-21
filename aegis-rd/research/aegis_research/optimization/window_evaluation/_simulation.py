@@ -472,7 +472,9 @@ def _margin_day_offsets(index: pd.Index) -> np.ndarray:
     """Cumulative elapsed calendar days from the first row for margin accrual."""
     if isinstance(index, pd.DatetimeIndex):
         normalized = index.normalize()
-        days = normalized.asi8 // (24 * 60 * 60 * 1_000_000_000)
+        if normalized.tz is not None:
+            normalized = normalized.tz_localize(None)
+        days = normalized.to_numpy(dtype="datetime64[D]").astype(np.int64)
         return (days - days[0]).astype(np.float64)
     return np.arange(len(index), dtype=np.float64)
 

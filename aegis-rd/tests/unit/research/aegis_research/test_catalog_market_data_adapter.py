@@ -327,7 +327,7 @@ def test_catalog_adapter_preserves_custom_panels_through_vbt(
     first = _id("AAPL.NASDAQ")
     second = _id("MSFT.NASDAQ")
     instrument_ids = (first, second)
-    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"], dtype="datetime64[ns]")
     catalog_path = tmp_path / "catalog"
     start = pd.Timestamp("2024-01-01", tz="UTC")
     end = pd.Timestamp("2024-01-02", tz="UTC")
