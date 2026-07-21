@@ -188,10 +188,26 @@ class _ComposedSource:
         )
         return _build_frame(alloc_arr, close_window, n_candidates, param_lists, self.params)
 
+    def resolve_lookbacks(self, candidate_params: Mapping[str, Any]) -> Mapping[str, int]:
+        """Resolve every configured Component's lookback for one Candidate."""
+        resolved: dict[str, int] = {}
+        for runtime in (*self.indicators, self.strategy):
+            params = dict(runtime.fixed_params)
+            params.update(
+                {
+                    param_name: candidate_params[param_key]
+                    for param_name, param_key in runtime.param_keys.items()
+                }
+            )
+            component_key = f"{runtime.family}/{runtime.definition.id}@{runtime.slot}"
+            resolved[component_key] = runtime.definition.warmup_bars(params)
+        return resolved
+
     def to_optimization_source(self) -> OptimizationSource:
         return OptimizationSource(
             precompute=self.precompute,
             simulate=self.simulate,
+            resolve_lookbacks=self.resolve_lookbacks,
             params=self.params,
             output_name=self.strategy.definition.allocation_output_name(),
             evidence=_source_evidence(self.strategy, self.indicators, self.params),

@@ -37,6 +37,7 @@ from research.aegis_research.configuration import (
 from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_grid import CandidateGrid
+from research.aegis_research.optimization.candidate_paths import materialize_candidates
 from research.aegis_research.optimization.candidate_validity import (
     classify_candidates,
 )
@@ -90,8 +91,9 @@ def execute_optimization(
 
     # Stage 0: materialise the sampled candidate set once, deterministically, and
     # feed the same set to BOTH the precompute and the selection sweep.
-    sampled_lists = _materialize_candidates(source.params, optimization)
-    n_candidates = len(next(iter(sampled_lists.values()))) if sampled_lists else 0
+    candidates = materialize_candidates(source.params, optimization)
+    sampled_lists = {name: list(values) for name, values in candidates.param_lists.items()}
+    n_candidates = candidates.count
     sampled_params = {
         name: vbt.Param(values, level=0) for name, values in sampled_lists.items()
     }
@@ -248,31 +250,6 @@ def _with_held_out(
     key = tuple(candidate.params[name] for name in held_out_grid.param_levels)
     held_out = held_out_grid.split_metrics(key)
     return dataclasses.replace(candidate, held_out_metrics=held_out)
-
-
-def _materialize_candidates(
-    params: Mapping[str, vbt.Param], optimization: OptimizationConfig
-) -> dict[str, list[Any]]:
-    """Build the sampled candidate set once, up front, via the framework sampler.
-
-    ``combine_params`` is the same machinery ``vbt.parameterized`` uses internally;
-    materialising it here lets the precompute and the selection sweep share one
-    candidate set by construction. The result maps each param name to its list of
-    per-combo values (aligned across params). For a fixed seed it is deterministic.
-    """
-    options: dict[str, Any] = {}
-    if optimization.search == "random":
-        if optimization.random_subset is None:
-            raise OptimizationRunnerError(
-                "optimization.random_subset is required when optimization.search is 'random'"
-            )
-        if optimization.seed is None:
-            raise OptimizationRunnerError(
-                "optimization.seed is required when optimization.search is 'random' so the "
-                "sampled selection grid is deterministic"
-            )
-        options = {"random_subset": optimization.random_subset, "seed": optimization.seed}
-    return vbt.combine_params(dict(params), build_index=False, **options)
 
 
 def _validate_source_param_names(params: Mapping[str, vbt.Param]) -> None:

@@ -56,6 +56,7 @@ def _source(simulate: Any) -> OptimizationSource:
     return OptimizationSource(
         precompute=empty_precompute,
         simulate=simulate,
+        resolve_lookbacks=lambda params: {"source": 0},
         params={"alpha": vbt.Param([0.5, 1.0])},
         output_name="target_weights",
         evidence={},

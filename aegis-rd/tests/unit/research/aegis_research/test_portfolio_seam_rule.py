@@ -37,6 +37,7 @@ def _evaluator(market_index: pd.Index) -> WindowEvaluator:
         source=OptimizationSource(
             precompute=empty_precompute,
             simulate=_never_simulate,
+            resolve_lookbacks=lambda params: {"source": 0},
             params={"alpha": vbt.Param([1.0])},
             output_name="target_weights",
             evidence={},

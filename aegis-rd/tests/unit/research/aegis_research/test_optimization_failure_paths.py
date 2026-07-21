@@ -48,6 +48,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     source = OptimizationSource(
         precompute=empty_precompute,
         simulate=always_skip,
+        resolve_lookbacks=lambda params: {"source": 0},
         params={"fast_window": vbt.Param([2, 5])},
         output_name="active",
         evidence={"source": "always_skip"},
@@ -78,6 +79,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     source = OptimizationSource(
         precompute=empty_precompute,
         simulate=exploding_pipeline,
+        resolve_lookbacks=lambda params: {"source": 0},
         params={"fast_window": vbt.Param([2, 5])},
         output_name="active",
         evidence={"source": "exploding"},
@@ -111,6 +113,7 @@ def test_runner_rejects_param_names_reserved_for_result_coordinates(
     source = OptimizationSource(
         precompute=empty_precompute,
         simulate=passthrough,
+        resolve_lookbacks=lambda params: {"source": 0},
         params={reserved_name: vbt.Param([1, 2])},
         output_name="active",
         evidence={"source": "reserved_name"},

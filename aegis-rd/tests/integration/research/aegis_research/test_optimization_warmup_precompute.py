@@ -102,6 +102,7 @@ def _source(windows: list[int]) -> OptimizationSource:
     return OptimizationSource(
         precompute=_warmup_precompute,
         simulate=_gated_simulate,
+        resolve_lookbacks=lambda params: {"source": int(params["window"])},
         params={"window": vbt.Param(windows)},
         output_name="target_weights",
         evidence={"source": "synthetic_warmup"},

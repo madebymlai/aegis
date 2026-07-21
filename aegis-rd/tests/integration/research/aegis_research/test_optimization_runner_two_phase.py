@@ -74,6 +74,7 @@ def _source(alphas: list[float]) -> OptimizationSource:
     return OptimizationSource(
         precompute=empty_precompute,
         simulate=_exposure_simulate,
+        resolve_lookbacks=lambda params: {"source": 0},
         params={"alpha": vbt.Param(alphas)},
         output_name="target_weights",
         evidence={"source": "synthetic_exposure"},
@@ -305,6 +306,7 @@ def _warmup_source(windows: list[int]) -> OptimizationSource:
     return OptimizationSource(
         precompute=_warmup_precompute,
         simulate=_gated_simulate,
+        resolve_lookbacks=lambda params: {"source": int(params["window"])},
         params={"window": vbt.Param(windows)},
         output_name="target_weights",
         evidence={"source": "synthetic_warmup"},

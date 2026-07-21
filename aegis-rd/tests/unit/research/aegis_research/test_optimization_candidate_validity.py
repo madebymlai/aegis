@@ -11,14 +11,45 @@ Prior art: test_optimization_precompute.py, test_optimization_ranking.py.
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from research.aegis_research.optimization.candidate_validity import (
     Verdicts,
     classify_candidates,
+    classify_continuous_candidates,
 )
 from research.aegis_research.optimization.precompute import candidate_keys
 from tests.support.research.aegis_research.factories import make_candidate_grid
+
+# ---------------------------------------------------------------------------
+# classify_continuous_candidates — complete-path classification
+# ---------------------------------------------------------------------------
+
+
+def test_continuous_classification_uses_complete_path_records_with_precedence() -> None:
+    metrics = pd.DataFrame(
+        {
+            "total_return": [9.0, 0.0, 0.2, 0.8],
+            "total_trades": [9.0, 0.0, 1.0, 5.0],
+        },
+        index=pd.MultiIndex.from_tuples(
+            [("invalid",), ("flat",), ("thin",), ("live",)], names=["candidate"]
+        ),
+    )
+
+    verdict = classify_continuous_candidates(
+        metrics,
+        invalid_keys={("invalid",)},
+        min_trades=2,
+        metric="total_return",
+    )
+
+    assert verdict.invalid == {("invalid",)}
+    assert verdict.non_trading == {("flat",)}
+    assert verdict.under_traded == {("thin",)}
+    assert verdict.valid == {("live",)}
+
 
 # ---------------------------------------------------------------------------
 # classify_candidates — basic classification

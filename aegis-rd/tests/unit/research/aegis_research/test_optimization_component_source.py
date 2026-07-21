@@ -98,6 +98,40 @@ def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path)
     assert source.evidence["indicators"][0]["param_mode"] == "fixed"
 
 
+def test_component_source_resolves_lookbacks_from_swept_and_fixed_params(
+    tmp_path: Path,
+) -> None:
+    registry = _registry(tmp_path)
+    swept = build_component_optimization_source(
+        _config(), component_registry=registry, data=_data_bundle()
+    )
+
+    assert swept.resolve_lookbacks(
+        {_INDICATOR_WINDOW_KEY: 3, _STRATEGY_THRESHOLD_KEY: 0.95}
+    ) == {
+        "indicators/demo.trend@demo.trend": 3,
+        "strategies/demo.strategy@strategy": 9,
+    }
+
+    fixed = build_component_optimization_source(
+        _config(
+            strategy=make_run_source_ref_config(
+                id="demo.strategy", params={"threshold": 1.0}
+            ),
+            indicators=[
+                make_run_indicator_source_config(id="demo.trend", params={"window": 2})
+            ],
+        ),
+        component_registry=registry,
+        data=_data_bundle(),
+    )
+
+    assert fixed.resolve_lookbacks({FIXED_CANDIDATE_PARAM: 0}) == {
+        "indicators/demo.trend@demo.trend": 2,
+        "strategies/demo.strategy@strategy": 10,
+    }
+
+
 def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Path) -> None:
     # ADR-0006: a top-level Lock drives force_locked, fixing every Component's params from
     # the reproduced Candidate. There is no per-Component lock reference any more.
@@ -382,6 +416,8 @@ def _write_indicator(path: Path, *, component_id: str) -> None:
         "# %% parameter space\n"
         "def param_space():\n"
         "    return {'window': vbt.Param([2, 3])}\n"
+        "def lookback(window):\n"
+        "    return int(window)\n"
         "# %% main compute\n"
         "def run(data, window):\n"
         "    '''Return a rolling trend frame.'''\n"
@@ -419,6 +455,8 @@ def _write_strategy(path: Path) -> None:
         "# %% parameter space\n"
         "def param_space():\n"
         "    return {'threshold': vbt.Param([0.95, 1.0])}\n"
+        "def lookback(threshold):\n"
+        "    return int(float(threshold) * 10)\n"
         "# %% main compute\n"
         "def run(inputs, threshold):\n"
         "    '''Return active allocation derived from thresholded trend signals.'''\n"
