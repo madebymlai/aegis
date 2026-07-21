@@ -307,8 +307,8 @@ def _execution_settings(
             raise ValueError(
                 "next_open fill_timing requires Open prices, but none were provided"
             )
-        return {"price": price, "open": open_}
-    return {"price": price}
+        return {"price": price, "open": open_, "from_ago": None}
+    return {"price": price, "from_ago": None}
 
 
 def _resolve_fees(
@@ -359,21 +359,18 @@ def _build_portfolio(
     open_frame: pd.DataFrame | None,
     market_index: pd.Index | None,
     group_by: Any,
+    scored_start: int,
     periods_per_year: int,
     distributions: Sequence[Distribution] | None = None,
     currency_conversion: CurrencyConversion | None = None,
 ) -> vbt.Portfolio:
     """Build a simulated portfolio from allocations.
 
-    Masks gap rows as non-executable, force-liquidates the terminal row to
-    cash, builds the PFO, runs ``from_optimizer``, and asserts no NoCash
-    rejection occurred.
+    Masks gap rows as non-executable, builds the PFO, runs ``from_optimizer``,
+    and asserts no NoCash rejection occurred.
     """
     config = book.config
     masked = _apply_non_executable_mask(allocations, market_index=market_index)
-    # Terminal liquidation: zero the final row so runs end in realized cash.
-    if not masked.empty:
-        masked.iloc[-1, :] = 0.0
     pfo = vbt.PFO.from_filled_allocations(
         masked,
         valid_only=True,
@@ -424,6 +421,8 @@ def _build_portfolio(
         cash_sharing=True,
         call_seq="auto",
         group_by=group_by,
+        sim_start=scored_start,
+        sim_end=len(price_frame.index),
         fees=_resolve_fees(price_frame, config, book.fees_by_symbol),
         fixed_fees=config.fixed_fee,
         size_granularity=_size_granularity(masked.columns, book),
@@ -435,6 +434,12 @@ def _build_portfolio(
         arg_config={"cash_earnings": {"full_shape": True}},
         cash_dividends=cash_dividends,
         log=True,
+        save_returns=False,
+        # Margin financing accrues through the final simulated row even when no
+        # allocation changes there. VBT otherwise skips the pre-order callback
+        # on empty segments, which used to be masked by the removed terminal
+        # liquidation order.
+        skip_empty=False,
         **exec_kwargs,
     )
     _assert_no_nocash_rejection(pf)
@@ -630,6 +635,7 @@ def simulate_portfolio_batch(
     allocations: pd.DataFrame,
     book: ResolvedBook,
     *,
+    scored_start: int = 0,
     open_: pd.DataFrame | None = None,
     market_index: pd.Index | None = None,
     periods_per_year: int,
@@ -667,6 +673,7 @@ def simulate_portfolio_batch(
         open_frame=expanded_open,
         market_index=market_index,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
+        scored_start=scored_start,
         periods_per_year=periods_per_year,
         distributions=distributions,
         currency_conversion=currency_conversion,

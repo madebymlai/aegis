@@ -10,7 +10,7 @@ from tests.support.research.aegis_research.factories import make_single_book_por
 def test_per_symbol_fees_charge_each_leg_its_own_rate_in_simulation() -> None:
     index = pd.date_range("2020-01-01", periods=4, freq="D")
     close = pd.DataFrame({"A": 100.0, "B": 100.0}, index=index)
-    # Enter both legs at bar 1; the terminal row is liquidated, so both trade.
+    # Enter both legs at bar 1 and keep them open through the replay end.
     allocations = pd.DataFrame(
         {"A": [0.0, 0.5, 0.5, 0.5], "B": [0.0, 0.5, 0.5, 0.5]}, index=index
     )
@@ -30,9 +30,8 @@ def test_per_symbol_fees_charge_each_leg_its_own_rate_in_simulation() -> None:
 def test_fixed_fee_charges_a_flat_amount_on_every_order() -> None:
     index = pd.date_range("2020-01-01", periods=4, freq="D")
     close = pd.DataFrame({"A": 100.0}, index=index)
-    # Enter A at bar 1; the terminal row is liquidated, so exactly two orders fill
-    # (the entry and the close). same_close fills each target on its own bar so the
-    # order count is deterministic.
+    # Enter A at bar 1. same_close fills the target on its own bar, so the order
+    # count is deterministic without an artificial terminal close.
     allocations = pd.DataFrame({"A": [0.0, 1.0, 1.0, 1.0]}, index=index)
     free = PortfolioConfig(
         direction="longonly", fees=0.0, slippage=0.0, fill_timing="same_close"

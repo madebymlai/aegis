@@ -557,5 +557,6 @@ def make_engine_mechanics_portfolio(
         open_frame=None,
         market_index=None,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
+        scored_start=0,
         periods_per_year=periods_per_year,
     )
