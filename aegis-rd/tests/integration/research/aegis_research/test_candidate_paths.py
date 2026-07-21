@@ -8,15 +8,21 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
+from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.metrics import make_metric_registry_for
 from research.aegis_research.optimization.candidate_paths import (
     CandidatePathError,
     build_development_paths,
     materialize_candidates,
 )
+from research.aegis_research.optimization.continuous_evidence import (
+    build_continuous_evidence,
+)
 from research.aegis_research.optimization.observation_blocks import (
+    ObservationBlockAnalysis,
     ObservationBlocks,
     analyze_development_paths,
+    select_observation_block_representatives,
 )
 from research.aegis_research.optimization.precompute import (
     IndicatorPrecompute,
@@ -223,10 +229,19 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
     report = make_report_config()
     registry = make_metric_registry_for(())
     source = _source(lambda params: {"source": 1})
+    optimization = make_optimization_config(observation_block_bars=3)
+    preflight = build_preflight(
+        source=source,
+        optimization=optimization,
+        index=close.index,
+        symbol_count=1,
+        metric_count=len(registry.ids()),
+        has_open_prices=True,
+    )
     batch = build_development_paths(
         arrays=make_run_arrays(close=close, open_=close),
         source=source,
-        optimization=make_optimization_config(),
+        optimization=optimization,
         book=book,
         report=report,
         metric_registry=registry,
@@ -234,6 +249,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         ranking_metric="total_return",
     )
 
+    sequential_analyses = []
     for position, key in enumerate(batch.candidates.keys):
         scalar_params = {
             name: vbt.Param([key[level]])
@@ -242,7 +258,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         sequential = build_development_paths(
             arrays=make_run_arrays(close=close, open_=close),
             source=_source(lambda params: {"source": 1}, params=scalar_params),
-            optimization=make_optimization_config(),
+            optimization=optimization,
             book=book,
             report=report,
             metric_registry=registry,
@@ -254,6 +270,65 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
             sequential.full_period_metrics.iloc[0],
             check_names=False,
         )
+        sequential_analyses.append(
+            analyze_development_paths(
+                sequential,
+                preflight.blocks,
+                report=report,
+                metric_registry=registry,
+                ranking_metric="total_return",
+            )
+        )
+
+    batch_analysis = analyze_development_paths(
+        batch,
+        preflight.blocks,
+        report=report,
+        metric_registry=registry,
+        ranking_metric="total_return",
+    )
+    sequential_metric_matrices = {
+        metric_id: pd.concat(
+            [analysis.metric_matrices[metric_id] for analysis in sequential_analyses]
+        )
+        for metric_id in registry.ids()
+    }
+    sequential_full_period = pd.concat(
+        [analysis.full_period_metrics for analysis in sequential_analyses]
+    )
+    ranking_matrix = sequential_metric_matrices["total_return"]
+    sequential_analysis = ObservationBlockAnalysis(
+        blocks=preflight.blocks,
+        metric_matrices=sequential_metric_matrices,
+        ranking_ranks=ranking_matrix.rank(axis="index", ascending=False, method="average"),
+        full_period_metrics=sequential_full_period,
+        result=select_observation_block_representatives(
+            ranking_matrix,
+            param_names=batch.candidates.param_names,
+            verdicts=batch.verdicts,
+            full_period_metrics=sequential_full_period,
+            definition=registry.get("total_return"),
+        ),
+    )
+    evidence_kwargs = {
+        "preflight": preflight,
+        "optimization": optimization,
+        "metric_registry": registry,
+        "ranking_metric": "total_return",
+        "direction": "longonly",
+        "fill_timing": "next_close",
+        "data_start": "2024-01-01",
+    }
+    batched_evidence = build_continuous_evidence(
+        analysis=batch_analysis, **evidence_kwargs
+    )
+    sequential_evidence = build_continuous_evidence(
+        analysis=sequential_analysis, **evidence_kwargs
+    )
+
+    assert canonical_json_bytes(batched_evidence.execution) == canonical_json_bytes(
+        sequential_evidence.execution
+    )
 
 
 def test_development_paths_flow_unchanged_into_observation_analysis() -> None:
@@ -317,7 +392,7 @@ def test_preflighted_runner_executes_continuous_replay_without_public_split() ->
         has_open_prices=True,
     )
 
-    result = execute_optimization(
+    analysis = execute_optimization(
         arrays=arrays,
         source=source,
         optimization=optimization,
@@ -336,7 +411,7 @@ def test_preflighted_runner_executes_continuous_replay_without_public_split() ->
     )
 
     assert preflight.blocks.bounds == ((2, 5), (5, 8))
-    assert result.best.params == {
+    assert analysis.result.best.params == {
         "indicator.window": 1,
         "strategy.threshold": 0.25,
     }

@@ -7,9 +7,15 @@ from typing import Any
 
 import pytest
 
+from research.aegis_research.optimization.candidate_evidence import (
+    candidate_rows_from_result,
+)
 from research.aegis_research.optimization.candidate_store import (
     PUBLICATION_PENDING,
     CandidateStore,
+)
+from research.aegis_research.optimization.candidate_store_identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
 )
 from research.aegis_research.optimization.evidence_ledger import (
     OPTIMIZATION_ROUTE_SCHEMA_VERSION,
@@ -19,10 +25,15 @@ from research.aegis_research.optimization.pipeline.completion import (
     run_pipeline_completion,
 )
 from research.aegis_research.optimization.pipeline.publishing import PublishingResult
+from research.aegis_research.optimization.ranking import (
+    EvaluatedCandidate,
+    OptimizationResult,
+)
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_run_config,
     make_run_data_facts,
+    make_selection_identity,
     make_setup_result,
 )
 from tests.support.research.aegis_research.test_doubles import (
@@ -34,44 +45,25 @@ from tests.support.research.aegis_research.test_doubles import (
 
 def _candidate_rows() -> list[dict[str, Any]]:
     """Build three role-tagged candidate rows matching the publishing-stage output."""
-    return [
-        {
-            "role": "best",
-            "rank": 1,
-            "candidate_key": "fast=5:slow=10",
-            "params": {"fast": 5, "slow": 10},
-            "score": 0.30,
-            "metrics": {"total_return": 0.30},
-            "selection_metrics": {0: {"total_return": 0.30}},
-            "held_out_metrics": {0: {"total_return": 0.29}},
-            "held_out_metrics_mean": {"total_return": 0.29},
-            "identity": {"params": {"fast": 5, "slow": 10}},
-        },
-        {
-            "role": "median",
-            "rank": 2,
-            "candidate_key": "fast=2:slow=10",
-            "params": {"fast": 2, "slow": 10},
-            "score": 0.20,
-            "metrics": {"total_return": 0.20},
-            "selection_metrics": {0: {"total_return": 0.20}},
-            "held_out_metrics": {0: {"total_return": 0.19}},
-            "held_out_metrics_mean": {"total_return": 0.19},
-            "identity": {"params": {"fast": 2, "slow": 10}},
-        },
-        {
-            "role": "worst",
-            "rank": 3,
-            "candidate_key": "fast=8:slow=20",
-            "params": {"fast": 8, "slow": 20},
-            "score": 0.10,
-            "metrics": {"total_return": 0.10},
-            "selection_metrics": {0: {"total_return": 0.10}},
-            "held_out_metrics": {0: {"total_return": 0.09}},
-            "held_out_metrics_mean": {"total_return": 0.09},
-            "identity": {"params": {"fast": 8, "slow": 20}},
-        },
-    ]
+    def candidate(fast: int, slow: int, score: float) -> EvaluatedCandidate:
+        return EvaluatedCandidate(
+            params={"fast": fast, "slow": slow},
+            score=score,
+            selection_metrics={0: {"total_return": score}},
+            metrics={"total_return": score},
+        )
+
+    result = OptimizationResult(
+        best=candidate(5, 10, 0.30),
+        median=candidate(2, 10, 0.20),
+        worst=candidate(8, 20, 0.10),
+    )
+    return candidate_rows_from_result(
+        result,
+        source_identity={},
+        data_identity={},
+        selection_identity=make_selection_identity(),
+    )
 
 
 def test_completion_returns_result_and_marks_completed(
@@ -89,7 +81,10 @@ def test_completion_returns_result_and_marks_completed(
     candidate_rows = _candidate_rows()
     publishing = PublishingResult(
         candidate_rows=tuple(candidate_rows),
-        candidate_store_provenance={"schema_version": "candidate_store_provenance.v1"},
+        candidate_store_provenance={
+            "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+            "selection_identity": make_selection_identity(),
+        },
     )
 
     # Pre-populate the candidate store in pending state (mimics publishing output).
@@ -114,11 +109,11 @@ def test_completion_returns_result_and_marks_completed(
                 "observation_block_bounds": [[0, 20], [20, 40]],
             },
             "execution": {
-                "total": 30,
-                "excluded_invalid": 2,
-                "excluded_degenerate": 3,
-                # tiny chi-square over a wide grid -> field not separable -> warns
-                "omnibus": {"chi_square": 0.5, "n_candidates": 30, "n_splits": 2},
+                "candidate_accounting": {
+                    "total": 30,
+                    "excluded_invalid": 2,
+                    "excluded_degenerate": 3,
+                },
             },
         },
         persist=lambda: None,
@@ -175,10 +170,10 @@ def test_completion_returns_result_and_marks_completed(
 
     candidates = result["candidates"]
     assert [c["role"] for c in candidates] == ["best", "median", "worst"]
-    assert [c["rank"] for c in candidates] == [1, 2, 3]
-    assert candidates[0]["score"] == pytest.approx(0.30)
-    assert candidates[1]["score"] == pytest.approx(0.20)
-    assert candidates[2]["score"] == pytest.approx(0.10)
+    assert [c["ordinal_rank"] for c in candidates] == [1, 2, 3]
+    assert candidates[0]["mean_rank"] == pytest.approx(0.30)
+    assert candidates[1]["mean_rank"] == pytest.approx(0.20)
+    assert candidates[2]["mean_rank"] == pytest.approx(0.10)
 
     assert "held_out_headline" not in candidates[0]
 
@@ -200,7 +195,7 @@ def test_completion_returns_result_and_marks_completed(
             )
             for role in ("best", "median", "worst")
         ]
-    scores = [row["candidate"]["score"] for row in stored]
+    scores = [row["candidate"]["mean_rank"] for row in stored]
     assert scores == pytest.approx([0.30, 0.20, 0.10])
 
     # Assert artifact payload structure

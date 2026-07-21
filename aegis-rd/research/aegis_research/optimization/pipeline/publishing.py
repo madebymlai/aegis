@@ -60,6 +60,7 @@ def run_pipeline_publishing(
             execution.optimization_result,
             source_identity=optimization_source.evidence,
             data_identity=facts.candidate_data_identity(),
+            selection_identity=execution.selection_identity,
             book_settings=to_builtin(config.portfolio),
             store_namespace=store_namespace,
         )
@@ -69,6 +70,7 @@ def run_pipeline_publishing(
             optimization_source=optimization_source.evidence,
             facts=facts,
             config=config,
+            selection_identity=dict(execution.selection_identity),
         )
         with CandidateStore(store_path) as candidate_store:
             candidate_store.insert_completed_run(

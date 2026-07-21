@@ -17,8 +17,8 @@ from research.aegis_research.optimization.ranking import (
     OptimizationResult,
 )
 
-CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v4"
-CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v2"
+CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v5"
+CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v3"
 OPTIMIZATION_RESULT_SCHEMA_VERSION = "optimization_result.v4"
 CANDIDATE_ROLES = ("best", "median", "worst")
 _CANDIDATE_KEY_DIGEST_CHARS = 32
@@ -39,6 +39,7 @@ def candidate_rows_from_result(
     *,
     source_identity: Mapping[str, Any],
     data_identity: Mapping[str, Any],
+    selection_identity: Mapping[str, Any],
     hidden_params: Mapping[str, Any] | None = None,
     book_settings: Mapping[str, Any] | None = None,
     store_namespace: Mapping[str, Any] | None = None,
@@ -47,23 +48,27 @@ def candidate_rows_from_result(
 
     Emits exactly three rows — ``best``, ``median``, ``worst`` — carrying the
     candidate identity (and the ``candidate_key`` derived from it) alongside the
-    run-specific ranking attributes ``role``, ``rank``, and ``score`` plus the
-    per-split selection/held-out metrics. The same candidate may fill several
+    run-specific ranking attributes ``role``, ``ordinal_rank``, and ``mean_rank`` plus the
+    Observation-Block and complete-period Metrics. The same candidate may fill several
     roles (e.g. a single-candidate sweep); rows then share a ``candidate_key``.
     """
     source_identity = _canonical_mapping(source_identity)
     data_identity = _canonical_mapping(data_identity)
+    selection_identity = _canonical_mapping(selection_identity)
     hidden_params = _canonical_mapping(hidden_params or {})
     book_settings = _canonical_mapping(book_settings or {})
     store_namespace = _canonical_mapping(store_namespace or {})
     candidates = (result.best, result.median, result.worst)
     rows = []
-    for rank, (role, candidate) in enumerate(zip(CANDIDATE_ROLES, candidates, strict=True), start=1):
+    for rank, (role, candidate) in enumerate(
+        zip(CANDIDATE_ROLES, candidates, strict=True), start=1
+    ):
         params = _canonical_mapping(candidate.params)
         identity = _candidate_identity(
             params,
             source_identity=source_identity,
             data_identity=data_identity,
+            selection_identity=selection_identity,
             hidden_params=hidden_params,
             book_settings=book_settings,
         )
@@ -71,15 +76,13 @@ def candidate_rows_from_result(
             {
                 "schema_version": CANDIDATE_EVAL_ROW_SCHEMA_VERSION,
                 "role": role,
-                "rank": rank,
-                "candidate_key": _candidate_key(identity),
+                "ordinal_rank": rank,
+                "candidate_key": candidate_key_for_identity(identity),
                 "store_namespace": store_namespace,
                 "params": params,
-                "score": _optional_float(candidate.score),
-                "selection_metrics": _canonical_split_metrics(candidate.selection_metrics),
-                "held_out_metrics": _canonical_split_metrics(candidate.held_out_metrics),
-                "metrics": _canonical_metric_map(candidate.metrics),
-                "held_out_metrics_mean": _aggregate_split_metrics(candidate.held_out_metrics),
+                "mean_rank": _optional_float(candidate.score),
+                "observation_block_metrics": _canonical_split_metrics(candidate.selection_metrics),
+                "complete_period_metrics": _canonical_metric_map(candidate.metrics),
                 "identity": identity,
             }
         )
@@ -258,6 +261,7 @@ def _candidate_identity(
     *,
     source_identity: Mapping[str, Any],
     data_identity: Mapping[str, Any],
+    selection_identity: Mapping[str, Any],
     hidden_params: Mapping[str, Any],
     book_settings: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -265,6 +269,7 @@ def _candidate_identity(
         "schema_version": CANDIDATE_IDENTITY_SCHEMA_VERSION,
         "source_identity": dict(source_identity),
         "data_identity": dict(data_identity),
+        "selection_identity": dict(selection_identity),
         "params": dict(params),
         "hidden_params": dict(hidden_params),
         "book_settings": dict(book_settings),
@@ -334,6 +339,7 @@ def canonical_value(value: Any) -> Any:
     }
 
 
-def _candidate_key(identity: Mapping[str, Any]) -> str:
+def candidate_key_for_identity(identity: Mapping[str, Any]) -> str:
+    """Return the canonical Candidate key for a complete versioned identity."""
     digest = hashlib.sha256(_canonical_json_bytes(identity)).hexdigest()
     return f"cand_{digest[:_CANDIDATE_KEY_DIGEST_CHARS]}"

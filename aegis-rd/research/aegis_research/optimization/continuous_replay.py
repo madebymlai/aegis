@@ -17,6 +17,13 @@ from aegis_runtime.currency import CurrencyConversion
 from vectorbtpro import vbt
 
 from research.aegis_research.optimization.window_evaluation._simulation import (
+    PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
+    VBT_LEVERAGE_MODE,
+    VBT_NEXT_CLOSE_PRICE,
+    VBT_NEXT_OPEN_PRICE,
+    VBT_PF_METHOD,
+    VBT_RESOLVED_SIZE_TYPE,
+    portfolio_replay_implementation_fingerprint,
     simulate_portfolio_batch,
 )
 from research.aegis_research.optimization.window_evaluation.resolved_book import (
@@ -62,6 +69,54 @@ class ContinuousReplayResult:
         return self.portfolio.trades.records_readable
 
 
+def continuous_replay_protocol(
+    *,
+    fill_timing: str,
+    direction: str,
+    scored_start: int,
+    sim_end: int,
+) -> dict[str, object]:
+    """Publish the pinned causal VBT replay protocol from its implementation owner."""
+    if fill_timing not in ("next_open", "next_close"):
+        raise ValueError("continuous replay evidence requires next_open or next_close")
+    price = VBT_NEXT_OPEN_PRICE if fill_timing == "next_open" else VBT_NEXT_CLOSE_PRICE
+    return {
+        "schema_version": PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
+        "implementation_fingerprint": portfolio_replay_implementation_fingerprint(),
+        "portfolio_optimizer": {
+            "valid_only": True,
+            "nonzero_only": False,
+            "unique_only": False,
+        },
+        "portfolio": {
+            "pf_method": VBT_PF_METHOD,
+            "size_type": VBT_RESOLVED_SIZE_TYPE,
+            "direction": direction,
+            "cash_sharing": True,
+            "call_seq": "auto",
+            "group_by": "ExceptLevel(Symbol)",
+            "sim_start": scored_start,
+            "sim_start_inclusive": True,
+            "sim_end": sim_end,
+            "sim_end_exclusive": True,
+            "leverage_mode": VBT_LEVERAGE_MODE,
+            "log": True,
+            "save_returns": False,
+        },
+        "fill_timing": {
+            "aegis": fill_timing,
+            "vbt_price": price,
+            "input_from_ago": None,
+            "vbt_effective_delay_bars": 1,
+        },
+        "preserved_contracts": {
+            "callback_staticization": "drift_band_callback_staticization.v1",
+            "costs_leverage_dividends": "resolved_book_portfolio_terms.v1",
+            "no_cash_rejection": "fail_closed.v1",
+        },
+    }
+
+
 def replay_candidates(
     close: pd.DataFrame,
     allocations: pd.DataFrame,
@@ -102,4 +157,4 @@ def replay_candidates(
     )
 
 
-__all__ = ["ContinuousReplayResult", "replay_candidates"]
+__all__ = ["ContinuousReplayResult", "continuous_replay_protocol", "replay_candidates"]

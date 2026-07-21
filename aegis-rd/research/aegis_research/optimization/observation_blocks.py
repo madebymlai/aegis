@@ -27,6 +27,17 @@ from research.aegis_research.optimization.ranking import (
 type CandidateMetricVector = pd.Series
 BoundsMetricExtractor = Callable[..., CandidateMetricVector]
 
+OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION = "observation_block_protocol.v1"
+OBSERVATION_BLOCK_CONSTRUCTOR = "Splitter.from_splits"
+OBSERVATION_BLOCK_REMAINDER_POLICY = "merge_final_remainder_into_preceding_block"
+OBSERVATION_BLOCK_APPLICATION = {
+    "attach_bounds": True,
+    "right_inclusive": False,
+    "iteration": "split_wise",
+    "merge_func": "column_stack",
+    "wrap_results": True,
+}
+
 
 class ObservationBlockError(ValueError):
     """The Observation Block or bounds-aware Metric contract is invalid."""
@@ -135,7 +146,30 @@ class ObservationBlockAnalysis:
     blocks: ObservationBlocks
     metric_matrices: Mapping[str, pd.DataFrame]
     ranking_ranks: pd.DataFrame
+    full_period_metrics: pd.DataFrame
     result: OptimizationResult
+
+
+def observation_block_protocol(blocks: ObservationBlocks) -> dict[str, Any]:
+    """Return the one versioned protocol used by execution and Evidence identity."""
+    return {
+        "schema_version": OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
+        "remainder_policy": OBSERVATION_BLOCK_REMAINDER_POLICY,
+        "minimum_block_count": 2,
+        "bounds": [
+            {"label": label, "start": start, "end": end}
+            for label, (start, end) in zip(blocks.labels, blocks.bounds, strict=True)
+        ],
+        "constructor": OBSERVATION_BLOCK_CONSTRUCTOR,
+        "range_representation": "one_set_half_open_slices",
+        "squeeze": False,
+        "fix_ranges": True,
+        "split_label_name": "observation_block",
+        "set_labels": {"name": "set", "values": ["observation"]},
+        "application": dict(OBSERVATION_BLOCK_APPLICATION),
+        "native_rec_sim_range": False,
+        "matrix_orientation": "candidate_by_observation_block",
+    }
 
 
 def apply_metric_to_blocks(
@@ -155,11 +189,7 @@ def apply_metric_to_blocks(
         metric_for_bounds,
         vbt.Rep("bounds"),
         full_portfolio,
-        attach_bounds=True,
-        right_inclusive=False,
-        iteration="split_wise",
-        merge_func="column_stack",
-        wrap_results=True,
+        **OBSERVATION_BLOCK_APPLICATION,
     )
     if not isinstance(result, pd.DataFrame) or result.ndim != 2:
         raise ObservationBlockError(
@@ -221,9 +251,9 @@ def _align_registered_candidates(
     ):
         raw = raw.reorder_levels(candidate_index.names)
     names_match = list(raw.index.names) == list(candidate_index.names)
-    vbt_dropped_single_level_name = (
-        raw.index.nlevels == candidate_index.nlevels == 1
-        and raw.index.name is None
+    vbt_dropped_level_names = (
+        raw.index.nlevels == candidate_index.nlevels
+        and all(name is None for name in raw.index.names)
     )
     vbt_collapsed_candidate_key = (
         not isinstance(raw.index, pd.MultiIndex)
@@ -233,18 +263,24 @@ def _align_registered_candidates(
             for value in raw.index.tolist()
         )
     )
+    vbt_collapsed_single_candidate = len(raw.index) == len(candidate_index) == 1
     if (
         not names_match
-        and not vbt_dropped_single_level_name
+        and not vbt_dropped_level_names
         and not vbt_collapsed_candidate_key
+        and not vbt_collapsed_single_candidate
     ):
         raise ObservationBlockError(
             "registered extractor Candidate parameter levels do not match canonical identity"
         )
     if not raw.index.is_unique or not candidate_index.is_unique:
         raise ObservationBlockError("registered extractor Candidate identity must be unique")
-    raw_keys = [_as_key(value) for value in raw.index.tolist()]
     candidate_keys = [_as_key(value) for value in candidate_index.tolist()]
+    raw_keys = (
+        candidate_keys
+        if vbt_collapsed_single_candidate
+        else [_as_key(value) for value in raw.index.tolist()]
+    )
     if set(raw_keys) != set(candidate_keys):
         raise ObservationBlockError(
             "registered extractor Candidate identities do not match the canonical grid"
@@ -373,6 +409,7 @@ def analyze_development_paths(
         blocks=blocks,
         metric_matrices=matrices,
         ranking_ranks=_rank_matrix(matrices[ranking_metric], definition),
+        full_period_metrics=paths.full_period_metrics,
         result=result,
     )
 
@@ -422,5 +459,6 @@ __all__ = [
     "analyze_development_paths",
     "apply_metric_to_blocks",
     "apply_registered_metric_to_blocks",
+    "observation_block_protocol",
     "select_observation_block_representatives",
 ]

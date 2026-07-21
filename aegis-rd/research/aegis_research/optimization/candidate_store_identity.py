@@ -9,6 +9,7 @@ from research.aegis_research.configuration import to_builtin
 from research.aegis_research.optimization.run_data_contract import RunDataFacts
 
 CANDIDATE_STORE_RELATIVE_PATH = Path(".candidate_store") / "candidates.sqlite3"
+CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION = "candidate_store_provenance.v2"
 
 
 def candidate_store_path(config: Any) -> Path:
@@ -28,9 +29,10 @@ def build_candidate_store_provenance(
     optimization_source: dict[str, Any],
     facts: RunDataFacts,
     config: Any,
+    selection_identity: dict[str, Any],
 ) -> dict[str, Any]:
     return {
-        "schema_version": "candidate_store_provenance.v1",
+        "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
         "run_id": recorder.manifest.run_id,
         "strategy_artifact_id": "strategy.run",
         "source": optimization_source,
@@ -40,4 +42,5 @@ def build_candidate_store_provenance(
             "metric": config.ranking.metric,
         },
         "metric_registry_fingerprint": facts.metric_registry_fingerprint,
+        "selection_identity": selection_identity,
     }

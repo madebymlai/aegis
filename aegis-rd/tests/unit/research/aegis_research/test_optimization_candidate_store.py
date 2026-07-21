@@ -18,6 +18,7 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from tests.support.research.aegis_research.factories import make_selection_identity
 
 
 def _data_identity(instrument_id: str = "SYN.XNAS") -> dict[str, object]:
@@ -29,10 +30,18 @@ def _data_identity(instrument_id: str = "SYN.XNAS") -> dict[str, object]:
     }
 
 
+def _provenance(run_id: str = "run-a") -> dict[str, object]:
+    return {
+        "schema_version": "candidate_store_provenance.v2",
+        "run_id": run_id,
+        "selection_identity": make_selection_identity(),
+    }
+
+
 def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: Path) -> None:
     store_path = tmp_path / "candidate-store" / "candidates.sqlite3"
     candidates = _candidate_rows(values=(0.30, 0.20, 0.10))
-    provenance = {"run_id": "run-a", "artifact_schema": "optimization_artifact.v1"}
+    provenance = _provenance()
 
     with CandidateStore(store_path) as store:
         store.insert_completed_run(
@@ -49,7 +58,7 @@ def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: 
 
     assert resolved == {row["role"]: row["candidate_key"] for row in candidates}
     assert stored["params"] == {"fast_window": 5, "slow_window": 10}
-    assert stored["candidate"]["metrics"]["total_return"] == 0.30
+    assert stored["candidate"]["complete_period_metrics"]["total_return"] == 0.30
     assert stored["provenance"] == provenance
     if os.name == "posix":
         assert store_path.stat().st_mode & 0o077 == 0
@@ -66,7 +75,7 @@ def test_candidate_key_for_role_resolves_each_representative(tmp_path: Path) -> 
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            provenance={"run_id": "run-a"},
+            provenance=_provenance(),
         )
         by_role = {row["role"]: row["candidate_key"] for row in candidates}
 
@@ -83,13 +92,14 @@ def test_candidate_store_deduplicates_single_candidate_into_three_roles(tmp_path
         OptimizationResult(best=only, median=only, worst=only),
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity=_data_identity(),
+        selection_identity=make_selection_identity(),
     )
 
     with CandidateStore(store_path) as store:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            provenance={"run_id": "run-a"},
+            provenance=_provenance(),
         )
 
         distinct_keys = {
@@ -119,7 +129,7 @@ def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            provenance={"run_id": "run-a"},
+            provenance=_provenance(),
             publication_state=PUBLICATION_PENDING,
         )
 
@@ -162,13 +172,14 @@ def test_candidate_store_persists_json_columns_in_canonical_form(tmp_path: Path)
         OptimizationResult(best=only, median=only, worst=only),
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity=_data_identity(),
+        selection_identity=make_selection_identity(),
     )
 
     with CandidateStore(store_path) as store:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            provenance={"run_id": "run-a"},
+            provenance=_provenance(),
         )
 
     connection = sqlite3.connect(store_path)
@@ -209,35 +220,35 @@ def test_candidate_store_rejects_superseded_schema_version(tmp_path: Path) -> No
         "CREATE TABLE candidate_store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
     )
     connection.execute(
-        "INSERT INTO candidate_store_meta (key, value) VALUES ('schema_version', '5')"
+        "INSERT INTO candidate_store_meta (key, value) VALUES ('schema_version', '6')"
     )
     connection.commit()
     connection.close()
     if os.name == "posix":
         store_path.chmod(0o600)
 
-    assert SCHEMA_VERSION == 6
-    with pytest.raises(CandidateStoreError, match="schema version 5"):
+    assert SCHEMA_VERSION == 7
+    with pytest.raises(CandidateStoreError, match="schema version 6"):
         CandidateStore(store_path)
 
 
 def test_candidate_store_rejects_conflicting_duplicate_candidate_payload(tmp_path: Path) -> None:
     candidates = _candidate_rows()
     # Same candidate_key (identity unchanged) but a different evidence payload.
-    changed = [dict(candidates[0], score=99.0), *candidates[1:]]
+    changed = [dict(candidates[0], mean_rank=99.0), *candidates[1:]]
 
     with CandidateStore(tmp_path / "candidates.sqlite3") as store:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=candidates,
-            provenance={"run_id": "run-a"},
+            provenance=_provenance(),
         )
 
         with pytest.raises(CandidateStoreError, match="different payload"):
             store.insert_completed_run(
                 run_id="run-a",
                 candidate_rows=changed,
-                provenance={"run_id": "run-a"},
+                provenance=_provenance(),
             )
 
 
@@ -303,6 +314,7 @@ def _candidate_rows(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity=_data_identity(data_instrument_id),
+        selection_identity=make_selection_identity(),
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

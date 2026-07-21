@@ -106,7 +106,7 @@ def run_pipeline_setup(
         _optimization_evidence_baseline(
             optimization_source=optimization_source,
             optimization_builtin=optimization_builtin,
-            split_metadata={
+            selection_metadata={
                 "protocol": "continuous_future_in_past",
                 "observation_block_bars": config.optimization.observation_block_bars,
             },
@@ -147,7 +147,7 @@ def _optimization_evidence_baseline(
     *,
     optimization_source: Any,
     optimization_builtin: Mapping[str, Any],
-    split_metadata: Mapping[str, Any],
+    selection_metadata: Mapping[str, Any],
     facts: RunDataFacts,
     lock_evidence: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
@@ -157,7 +157,7 @@ def _optimization_evidence_baseline(
         "source": optimization_source.evidence,
         "param_names": list(optimization_source.params),
         "optimization": optimization_builtin,
-        "split": split_metadata,
+        "selection": selection_metadata,
         "data": facts.evidence_payload(),
         "metric_registry_fingerprint": facts.metric_registry_fingerprint,
         "open_prices_available": True,

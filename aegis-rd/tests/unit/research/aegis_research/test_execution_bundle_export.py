@@ -11,10 +11,14 @@ from research.aegis_research.optimization.candidate_evidence import (
     candidate_rows_from_result,
 )
 from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.candidate_store_identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+)
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from tests.support.research.aegis_research.factories import make_selection_identity
 
 _RUN_ID = "export-fixture-run"
 
@@ -40,7 +44,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
         ComponentSpec(
             family="indicators",
             component_id="tests.export_indicator",
-            module="aegis_exec_tests_export_strategy_cand_605.indicator_0",
+            module="aegis_exec_tests_export_strategy_cand_9aa.indicator_0",
             input_names=("Close",),
             output_names=("signal",),
             params={"window": 5},
@@ -49,7 +53,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
     assert artifact.plan.strategy == ComponentSpec(
         family="strategies",
         component_id="tests.export_strategy",
-        module="aegis_exec_tests_export_strategy_cand_605.strategy",
+        module="aegis_exec_tests_export_strategy_cand_9aa.strategy",
         input_names=("Close",),
         output_names=(),
         params={"holding_period": 2},
@@ -131,6 +135,7 @@ def _seed_candidate_store(store_path: Path) -> None:
         metrics={"sharpe_ratio": 1.0},
     )
     result = OptimizationResult(best=candidate, median=candidate, worst=candidate)
+    selection_identity = make_selection_identity()
     candidate_rows = candidate_rows_from_result(
         result,
         source_identity={
@@ -139,6 +144,7 @@ def _seed_candidate_store(store_path: Path) -> None:
             "source_hash": "fixture-source",
         },
         data_identity={"schema_version": "candidate_data_identity.fixture"},
+        selection_identity=selection_identity,
         book_settings={"net_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
@@ -146,7 +152,12 @@ def _seed_candidate_store(store_path: Path) -> None:
         store.insert_completed_run(
             run_id=_RUN_ID,
             candidate_rows=candidate_rows,
-            provenance={"run_id": _RUN_ID, "source": _source_evidence()},
+            provenance={
+                "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                "run_id": _RUN_ID,
+                "source": _source_evidence(),
+                "selection_identity": selection_identity,
+            },
         )
 
 

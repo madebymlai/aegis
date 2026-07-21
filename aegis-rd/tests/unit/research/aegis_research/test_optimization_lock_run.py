@@ -26,7 +26,10 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
-from tests.support.research.aegis_research.factories import make_lock
+from tests.support.research.aegis_research.factories import (
+    make_lock,
+    make_selection_identity,
+)
 
 _DATA_IDENTITY = {
     "schema_version": "candidate_data_identity.v3",
@@ -176,9 +179,11 @@ def _store_with_candidate(
         run_id="run-a",
         candidate_rows=candidates,
         provenance={
+            "schema_version": "candidate_store_provenance.v2",
             "run_id": "run-a",
             "source": _source_evidence(drop_indicator_runtime=drop_indicator_runtime),
             "data": identity,
+            "selection_identity": make_selection_identity(),
         },
     )
     return store
@@ -198,13 +203,19 @@ def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity=_DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     store.insert_completed_run(
         run_id="run-a",
         candidate_rows=rows,
-        provenance={"run_id": "run-a", "source": _source_evidence()},
+        provenance={
+            "schema_version": "candidate_store_provenance.v2",
+            "run_id": "run-a",
+            "source": _source_evidence(),
+            "selection_identity": make_selection_identity(),
+        },
     )
     return store
 
@@ -229,6 +240,7 @@ def _candidate_rows(data_identity: dict[str, object]) -> list[dict[str, object]]
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity=data_identity,
+        selection_identity=make_selection_identity(),
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )

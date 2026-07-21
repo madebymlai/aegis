@@ -9,7 +9,10 @@ import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.metrics.registry import empty_metric_registry
-from research.aegis_research.optimization.evidence_ledger import RunEvidence
+from research.aegis_research.optimization.evidence_ledger import (
+    OPTIMIZATION_ROUTE_SCHEMA_VERSION,
+    RunEvidence,
+)
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
 from research.aegis_research.optimization.source import OptimizationSource, OptimizationSourceError
 from research.aegis_research.optimization.window_evaluation import ResolvedBook
@@ -46,7 +49,7 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
         manifest_evidence,
         component_registry_fingerprint="registry-fp",
         data_arrays={},
-        optimization={"schema_version": "optimization_route.v1"},
+        optimization={"schema_version": OPTIMIZATION_ROUTE_SCHEMA_VERSION},
         persist=lambda: persisted.append(True),
     )
 

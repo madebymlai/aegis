@@ -61,7 +61,7 @@ def run_pipeline_completion(
             },
             portfolio=to_builtin(config.portfolio),
             optimization=to_builtin(config.optimization),
-            split_metadata={
+            selection_metadata={
                 "protocol": "continuous_future_in_past",
                 "observation_block_bars": preflight["observation_block_bars"],
                 "observation_block_bounds": preflight["observation_block_bounds"],
@@ -110,27 +110,28 @@ def _completion_result(
             "observation_block_bars": preflight["observation_block_bars"],
             "observation_block_count": preflight["observation_block_count"],
             "candidate_count": len({row["candidate_key"] for row in candidate_rows}),
-            "total": execution.get("total", 0),
-            "excluded_invalid": execution.get("excluded_invalid", 0),
-            "excluded_degenerate": execution.get("excluded_degenerate", 0),
+            "total": execution.get("candidate_accounting", {}).get("total", 0),
+            "excluded_invalid": execution.get("candidate_accounting", {}).get(
+                "excluded_invalid", 0
+            ),
+            "excluded_degenerate": execution.get("candidate_accounting", {}).get(
+                "excluded_degenerate", 0
+            ),
         },
         "candidates": [
-            _candidate_summary(row, ranking_metric=ranking_metric, run_id=recorder.manifest.run_id)
-            for row in candidate_rows
+            _candidate_summary(row, run_id=recorder.manifest.run_id) for row in candidate_rows
         ],
     }
 
 
-def _candidate_summary(
-    row: Mapping[str, Any], *, ranking_metric: str, run_id: str
-) -> dict[str, Any]:
+def _candidate_summary(row: Mapping[str, Any], *, run_id: str) -> dict[str, Any]:
     return {
         "role": row["role"],
-        "rank": row["rank"],
+        "ordinal_rank": row["ordinal_rank"],
         "candidate_key": row["candidate_key"],
         "params": row["params"],
-        "score": row["score"],
-        "metrics": row["metrics"],
-        "selection_metrics": row["selection_metrics"],
+        "mean_rank": row["mean_rank"],
+        "complete_period_metrics": row["complete_period_metrics"],
+        "observation_block_metrics": row["observation_block_metrics"],
         "lock": lock_handle(run_id, row["role"]),
     }

@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
+
+import pandas as pd
 
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.evidence_ledger import RunEvidence
+from research.aegis_research.optimization.evidence_ledger import (
+    OPTIMIZATION_ROUTE_SCHEMA_VERSION,
+    RunEvidence,
+)
+from research.aegis_research.optimization.observation_blocks import (
+    ObservationBlockAnalysis,
+    ObservationBlocks,
+)
 from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     encode,
@@ -16,11 +25,15 @@ from research.aegis_research.optimization.pipeline.publishing import (
     PublishingResult,
     run_pipeline_publishing,
 )
+from research.aegis_research.optimization.preflight import OptimizationPreflight
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
-from tests.support.research.aegis_research.factories import make_run_data_facts
+from tests.support.research.aegis_research.factories import (
+    make_run_data_facts,
+    make_selection_identity,
+)
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
@@ -72,12 +85,30 @@ def _result() -> OptimizationResult:
     )
 
 
+def _execution() -> ExecutionResult:
+    result = _result()
+    blocks = ObservationBlocks.from_bounds(pd.RangeIndex(2), ((0, 1), (1, 2)))
+    analysis = ObservationBlockAnalysis(
+        blocks=blocks,
+        metric_matrices={},
+        ranking_ranks=pd.DataFrame(),
+        full_period_metrics=pd.DataFrame(),
+        result=result,
+    )
+    return ExecutionResult(
+        analysis=analysis,
+        preflight=cast(OptimizationPreflight, None),
+        evidence={},
+        selection_identity=make_selection_identity(),
+    )
+
+
 def _run_evidence(recorder: FakeRecorder) -> RunEvidence:
     return RunEvidence(
         recorder.manifest.evidence,
         component_registry_fingerprint="registry-fp",
         data_arrays={},
-        optimization={"schema_version": "optimization_route.v1"},
+        optimization={"schema_version": OPTIMIZATION_ROUTE_SCHEMA_VERSION},
         persist=lambda: None,
     )
 
@@ -97,7 +128,7 @@ def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) ->
             metric_registry_fingerprint="fp-test",
         ),
         optimization_source=_FakeSource(),
-        execution=ExecutionResult(optimization_result=_result()),
+        execution=_execution(),
         run_evidence=run_evidence,
         store_path=store_path,
     )
@@ -105,7 +136,7 @@ def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) ->
     assert isinstance(out, PublishingResult)
     candidate_rows = out.candidate_rows
     assert [row["role"] for row in candidate_rows] == ["best", "median", "worst"]
-    assert [row["rank"] for row in candidate_rows] == [1, 2, 3]
+    assert [row["ordinal_rank"] for row in candidate_rows] == [1, 2, 3]
 
     manifest_optimization = recorder.manifest.evidence["optimization"]
     assert [row["role"] for row in manifest_optimization["candidates"]] == [
@@ -130,7 +161,7 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
             array_contract=FakeArrayContract(),
         ),
         optimization_source=_FakeSource(),
-        execution=ExecutionResult(optimization_result=_result()),
+        execution=_execution(),
         run_evidence=run_evidence,
         store_path=store_path,
     )
@@ -145,4 +176,6 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
             for role in ("best", "median", "worst")
         ]
 
-    assert [row["candidate"]["metrics"]["total_return"] for row in stored] == [0.30, 0.20, 0.10]
+    assert [
+        row["candidate"]["complete_period_metrics"]["total_return"] for row in stored
+    ] == [0.30, 0.20, 0.10]

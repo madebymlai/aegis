@@ -6,7 +6,7 @@ from typing import Any
 
 from research.aegis_research.canonical_json import to_builtin
 
-OPTIMIZATION_ROUTE_SCHEMA_VERSION = "optimization_route.v1"
+OPTIMIZATION_ROUTE_SCHEMA_VERSION = "optimization_route.v2"
 _FAILURE_MESSAGE_LIMIT = 1000
 _SUPPORTED_OPTIMIZATION_SCHEMA_VERSIONS = {None, OPTIMIZATION_ROUTE_SCHEMA_VERSION}
 

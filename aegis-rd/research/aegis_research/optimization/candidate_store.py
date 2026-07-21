@@ -8,8 +8,19 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.canonical_json import canonical_json_bytes
+from research.aegis_research.optimization.candidate_evidence import (
+    CANDIDATE_EVAL_ROW_SCHEMA_VERSION,
+    CANDIDATE_IDENTITY_SCHEMA_VERSION,
+    candidate_key_for_identity,
+)
+from research.aegis_research.optimization.candidate_store_identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+)
+from research.aegis_research.optimization.continuous_evidence import (
+    validate_selection_identity,
+)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 PUBLICATION_PENDING = "pending"
 PUBLICATION_ACTIVE = "active"
 PUBLICATION_STATES = frozenset({PUBLICATION_PENDING, PUBLICATION_ACTIVE})
@@ -58,6 +69,7 @@ class CandidateStore:
         _validate_publication_state(publication_state)
         if not candidate_rows:
             raise CandidateStoreError("completed optimization run has no candidate rows to persist")
+        _validate_continuous_protocol(candidate_rows, provenance)
         candidate_values = [
             _candidate_insert_values(
                 run_id=run_id,
@@ -321,7 +333,53 @@ def _stable_candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
     so a candidate that fills several roles must persist an identical payload to
     pass the duplicate-payload guard.
     """
-    return {key: value for key, value in row.items() if key not in ("role", "rank")}
+    return {
+        key: value for key, value in row.items() if key not in ("role", "ordinal_rank")
+    }
+
+
+def _validate_continuous_protocol(
+    candidate_rows: Sequence[Mapping[str, Any]],
+    provenance: Mapping[str, Any],
+) -> None:
+    if provenance.get("schema_version") != CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION:
+        raise CandidateStoreError("unsupported candidate store provenance schema_version")
+    provenance_identity = provenance.get("selection_identity")
+    if not isinstance(provenance_identity, Mapping):
+        raise CandidateStoreError("candidate store provenance requires a selection identity")
+    try:
+        validate_selection_identity(provenance_identity)
+    except (TypeError, ValueError) as error:
+        raise CandidateStoreError(str(error)) from error
+    provenance_identity_bytes = canonical_json_bytes(provenance_identity)
+    for row in candidate_rows:
+        if row.get("schema_version") != CANDIDATE_EVAL_ROW_SCHEMA_VERSION:
+            raise CandidateStoreError("unsupported candidate row schema_version")
+        identity = row.get("identity")
+        if not isinstance(identity, Mapping):
+            raise CandidateStoreError("candidate row requires a versioned identity")
+        if identity.get("schema_version") != CANDIDATE_IDENTITY_SCHEMA_VERSION:
+            raise CandidateStoreError("unsupported Candidate identity schema_version")
+        candidate_key = row.get("candidate_key")
+        if candidate_key != candidate_key_for_identity(identity):
+            raise CandidateStoreError("candidate_key does not match Candidate identity")
+        row_selection_identity = identity.get("selection_identity")
+        if (
+            not isinstance(row_selection_identity, Mapping)
+            or canonical_json_bytes(row_selection_identity) != provenance_identity_bytes
+        ):
+            raise CandidateStoreError(
+                "candidate and store provenance selection identity do not match"
+            )
+        retired = {
+            "selection_metrics",
+            "held_out_metrics",
+            "held_out_metrics_mean",
+        } & set(row)
+        if retired:
+            raise CandidateStoreError(
+                f"candidate row contains retired Split evidence fields: {sorted(retired)}"
+            )
 
 
 def _validate_publication_state(value: str) -> None:

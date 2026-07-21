@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from research.aegis_research.configuration import (
     RunConfig,
 )
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
-from research.aegis_research.optimization.candidate_evidence import result_evidence
+from research.aegis_research.optimization.continuous_evidence import (
+    build_continuous_evidence,
+)
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
     EvidenceSection,
     RunEvidence,
 )
+from research.aegis_research.optimization.observation_blocks import ObservationBlockAnalysis
 from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.preflight import (
+    OptimizationPreflight,
     PreflightError,
     build_preflight,
 )
@@ -31,7 +37,14 @@ from research.aegis_research.optimization.window_evaluation import ResolvedBook
 class ExecutionResult:
     """Typed hand-off from the pipeline execution stage."""
 
-    optimization_result: OptimizationResult
+    analysis: ObservationBlockAnalysis
+    preflight: OptimizationPreflight
+    evidence: Mapping[str, Any]
+    selection_identity: Mapping[str, Any]
+
+    @property
+    def optimization_result(self) -> OptimizationResult:
+        return self.analysis.result
 
 
 def run_pipeline_execution(
@@ -62,7 +75,7 @@ def run_pipeline_execution(
         raise OptimizationSourceError(str(error)) from error
 
     try:
-        optimization_result = execute_optimization(
+        analysis = execute_optimization(
             arrays=setup.arrays,
             source=setup.optimization_source,
             optimization=config.optimization,
@@ -72,10 +85,24 @@ def run_pipeline_execution(
             metric_registry=metric_registry,
             preflight=preflight,
         )
+        continuous_evidence = build_continuous_evidence(
+            analysis=analysis,
+            preflight=preflight,
+            optimization=config.optimization,
+            metric_registry=metric_registry,
+            ranking_metric=config.ranking.metric,
+            direction=config.portfolio.direction,
+            fill_timing=config.portfolio.fill_timing,
+            data_start=config.data.start,
+        )
+        run_evidence.record(EvidenceSection.EXECUTION, continuous_evidence.execution)
     except Exception as error:
         run_evidence.fail(EvidenceFailureStage.EXECUTION, error)
         raise
 
-    run_evidence.record(EvidenceSection.EXECUTION, result_evidence(optimization_result))
-
-    return ExecutionResult(optimization_result=optimization_result)
+    return ExecutionResult(
+        analysis=analysis,
+        preflight=preflight,
+        evidence=continuous_evidence.execution,
+        selection_identity=continuous_evidence.selection_identity,
+    )

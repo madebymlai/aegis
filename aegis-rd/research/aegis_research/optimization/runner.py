@@ -22,6 +22,7 @@ from research.aegis_research.optimization.candidate_paths import (
     build_development_paths,
 )
 from research.aegis_research.optimization.observation_blocks import (
+    ObservationBlockAnalysis,
     analyze_development_paths,
 )
 from research.aegis_research.optimization.preflight import OptimizationPreflight
@@ -56,7 +57,7 @@ def execute_optimization(
     ranking: RankingConfig,
     metric_registry: FrozenMetricRegistry,
     preflight: OptimizationPreflight,
-) -> OptimizationResult:
+) -> ObservationBlockAnalysis:
     """Execute the preflighted continuous replay and observational analysis."""
     _validate_source_param_names(source.params)
     if ranking.metric not in metric_registry:
@@ -85,7 +86,7 @@ def execute_optimization(
         report=report,
         metric_registry=metric_registry,
         ranking_metric=ranking.metric,
-    ).result
+    )
 
 
 def _sweep(

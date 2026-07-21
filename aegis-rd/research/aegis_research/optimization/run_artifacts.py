@@ -13,7 +13,7 @@ from typing import Any
 from research.aegis_research.atomic_write import hash_file, write_json
 from research.aegis_research.optimization.run_data_contract import RunDataFacts
 
-OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v1"
+OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v2"
 
 
 def build_strategy_artifact_payload(
@@ -23,7 +23,7 @@ def build_strategy_artifact_payload(
     ranking: Mapping[str, Any],
     portfolio: Mapping[str, Any],
     optimization: Mapping[str, Any],
-    split_metadata: Mapping[str, Any],
+    selection_metadata: Mapping[str, Any],
     preflight: Mapping[str, Any],
     execution: Mapping[str, Any],
     candidates: list[Mapping[str, Any]],
@@ -37,7 +37,7 @@ def build_strategy_artifact_payload(
         "ranking": dict(ranking),
         "portfolio": dict(portfolio),
         "optimization": dict(optimization),
-        "split": dict(split_metadata),
+        "selection": dict(selection_metadata),
         "preflight": dict(preflight),
         "execution": dict(execution),
         "candidates": [dict(record) for record in candidates],
@@ -85,9 +85,9 @@ def find_strategy_artifact_record(recorder: Any) -> dict[str, Any] | None:
 
 
 def strategy_artifact_shape(payload: dict[str, Any]) -> dict[str, int]:
-    shape: dict[str, int] = {
+    return {
         "candidate_count": len(payload.get("candidates", [])),
+        "observation_block_count": len(
+            payload.get("selection", {}).get("observation_block_bounds", [])
+        ),
     }
-    if "split" in payload:
-        shape["split_count"] = int(payload["split"].get("n_splits", 0))
-    return shape

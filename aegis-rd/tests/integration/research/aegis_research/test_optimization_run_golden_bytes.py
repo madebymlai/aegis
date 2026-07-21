@@ -72,8 +72,8 @@ def _write_oracle_config(tmp_path: Path) -> Path:
     Both Indicators are frozen via ``params`` (values taken from their declared
     param spaces, momentum values verbatim from the lock fixture config), so the
     Strategy's 30-combo space is the entire grid. The temp Nautilus catalog is
-    seeded with 1008 rows = two rolling 504-row Splits at the momentum
-    Indicator's 200-bar maximum lookback.
+    seeded with 1008 rows, leaving three 252-bar Observation Blocks after the
+    momentum Indicator's 200-bar maximum lookback (with the remainder merged).
     """
     path = tmp_path / "golden_oracle.yaml"
     path.write_text(
@@ -112,13 +112,7 @@ def _write_oracle_config(tmp_path: Path) -> Path:
                 "ranking": {"metric": "sharpe_ratio"},
                 "optimization": {
                     "search": "grid",
-                    "split": {
-                        "method": "from_rolling",
-                        "params": {"length": 504, "offset": 0, "split": 0.5},
-                        "max_splits": 10,
-                        "max_estimated_output_cells": 1_000_000_000,
-                        "max_public_artifact_bytes": 20_000_000,
-                    },
+                    "observation_block_bars": 252,
                 },
             },
             sort_keys=False,

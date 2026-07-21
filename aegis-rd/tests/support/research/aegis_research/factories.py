@@ -53,6 +53,13 @@ from research.aegis_research.optimization.candidate_grid import (
     SPLIT_LEVEL,
     CandidateGrid,
 )
+from research.aegis_research.optimization.continuous_evidence import (
+    CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
+    METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
+)
+from research.aegis_research.optimization.observation_blocks import (
+    OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
+)
 from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.precompute import CandidateKey
 from research.aegis_research.optimization.run_data_contract import (
@@ -61,6 +68,7 @@ from research.aegis_research.optimization.run_data_contract import (
 )
 from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.optimization.window_evaluation._simulation import (
+    PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
     _build_portfolio,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
@@ -198,6 +206,28 @@ def make_optimization_config(**overrides: Any) -> OptimizationConfig:
     }
     defaults.update(overrides)
     return OptimizationConfig(**defaults)
+
+
+def make_selection_identity(**overrides: Any) -> dict[str, Any]:
+    """Return a structurally current continuous-selection identity for tests."""
+    defaults: dict[str, Any] = {
+        "schema_version": CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
+        "trial_lineage": {"search": "grid", "candidate_grid": []},
+        "warmup": {"resolved_warmup_bars": 0, "scored_start": 0},
+        "scored_interval": {"start": 0, "end": 20, "end_exclusive": True},
+        "replay_protocol": {
+            "schema_version": PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
+        },
+        "observation_block_protocol": {
+            "schema_version": OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
+        },
+        "metric_protocol": {
+            "schema_version": METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
+        },
+        "ranking": {"metric": "total_return", "direction": "maximize"},
+    }
+    defaults.update(overrides)
+    return defaults
 
 
 def make_lock(**overrides: Any) -> Lock:

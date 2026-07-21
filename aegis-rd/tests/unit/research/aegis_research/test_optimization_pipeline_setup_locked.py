@@ -16,7 +16,10 @@ import pytest
 from research.aegis_research.configuration import resolve_run_config
 from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
+from research.aegis_research.optimization.candidate_store_identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+    candidate_store_path,
+)
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
@@ -33,6 +36,7 @@ from tests.support.research.aegis_research.component_fixtures import (
 from tests.support.research.aegis_research.factories import (
     make_run_arrays,
     make_run_data_facts,
+    make_selection_identity,
 )
 from tests.support.research.aegis_research.market_data_fixtures import (
     native_data_config_payload,
@@ -101,10 +105,12 @@ def _seed_candidate_store(config: Any) -> str:
         metrics={"total_return": 0.25},
         held_out_metrics={0: {"total_return": 0.25}},
     )
+    selection_identity = make_selection_identity()
     rows = candidate_rows_from_result(
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
         source_identity=_source_evidence(),
         data_identity=_DATA_IDENTITY,
+        selection_identity=selection_identity,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
@@ -113,7 +119,12 @@ def _seed_candidate_store(config: Any) -> str:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=rows,
-            provenance={"run_id": "run-a", "source": _source_evidence()},
+            provenance={
+                "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                "run_id": "run-a",
+                "source": _source_evidence(),
+                "selection_identity": selection_identity,
+            },
         )
     return candidate_key
 
@@ -305,10 +316,12 @@ def _seed_parameterized_candidate(config: Any) -> str:
         metrics={"total_return": 0.25},
         held_out_metrics={0: {"total_return": 0.25}},
     )
+    selection_identity = make_selection_identity()
     rows = candidate_rows_from_result(
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
         source_identity=_parameterized_source_evidence(),
         data_identity=_DATA_IDENTITY,
+        selection_identity=selection_identity,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
@@ -317,7 +330,12 @@ def _seed_parameterized_candidate(config: Any) -> str:
         store.insert_completed_run(
             run_id="run-a",
             candidate_rows=rows,
-            provenance={"run_id": "run-a", "source": _parameterized_source_evidence()},
+            provenance={
+                "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                "run_id": "run-a",
+                "source": _parameterized_source_evidence(),
+                "selection_identity": selection_identity,
+            },
         )
     return candidate_key
 

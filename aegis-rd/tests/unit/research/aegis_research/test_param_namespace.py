@@ -4,6 +4,9 @@ from pathlib import Path
 
 from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
 from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.candidate_store_identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+)
 from research.aegis_research.optimization.param_namespace import (
     FIXED_CANDIDATE_PARAM,
     ComponentRef,
@@ -15,6 +18,7 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from tests.support.research.aegis_research.factories import make_selection_identity
 
 _DATA_IDENTITY = {
     "schema_version": "candidate_data_identity.v3",
@@ -92,10 +96,12 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
             held_out_metrics={0: {"total_return": 0.05}},
         ),
     )
+    selection_identity = make_selection_identity()
     rows = candidate_rows_from_result(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity=_DATA_IDENTITY,
+        selection_identity=selection_identity,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
@@ -104,7 +110,9 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
             run_id="stored-decode-run",
             candidate_rows=rows,
             provenance={
+                "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
                 "run_id": "stored-decode-run",
+                "selection_identity": selection_identity,
                 "source": {
                     "schema_version": "component_optimization_source.v2",
                     "source": "component",

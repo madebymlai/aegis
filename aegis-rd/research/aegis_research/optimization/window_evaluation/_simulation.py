@@ -69,6 +69,7 @@ _SLEEVE_GROSS_LEVERAGE_MULTIPLIER = 5
 # bar -> no same-bar look-ahead); they differ only in which price of bar t+1 they fill at.
 VBT_NEXT_OPEN_PRICE = "nextopen"
 VBT_NEXT_CLOSE_PRICE = "nextclose"
+PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION = "portfolio_replay_contract.v1"
 # Fill-timing -> VBT ``price``. ``same_close`` maps to None: no ``price`` override, so the
 # engine fills at the current bar's close (from_ago=0, look-ahead — mechanics tests only).
 _VBT_PRICE_BY_FILL_TIMING: dict[str, str | None] = {
@@ -102,6 +103,17 @@ def _vbt_staticized_cache_key() -> str:
         fingerprint.update(path.read_bytes())
         fingerprint.update(b"\0")
     return fingerprint.hexdigest()[:12]
+
+
+def portfolio_replay_implementation_fingerprint() -> str:
+    """Hash replay implementation sources without environment-specific paths."""
+    fingerprint = hashlib.sha256()
+    for path in _vbt_staticized_source_paths():
+        fingerprint.update(path.name.encode("utf-8"))
+        fingerprint.update(b"\0")
+        fingerprint.update(path.read_bytes())
+        fingerprint.update(b"\0")
+    return fingerprint.hexdigest()
 
 
 def _vbt_staticized_cache_dir() -> Path:

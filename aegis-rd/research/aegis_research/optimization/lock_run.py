@@ -28,12 +28,15 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
+from research.aegis_research.optimization.candidate_store_identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+)
 from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     slice_by_component,
 )
 
-LOCK_RUN_PROVENANCE_SCHEMA_VERSION = "lock_run_provenance.v1"
+LOCK_RUN_PROVENANCE_SCHEMA_VERSION = "lock_run_provenance.v2"
 
 # ComponentRef -> param-name -> value
 ResolvedComponentParams = dict[ComponentRef, dict[str, Any]]
@@ -73,6 +76,10 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
             f"candidate_id={lock.candidate_id!r}: {error}"
         ) from error
 
+    if row["provenance"].get("schema_version") != CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION:
+        raise LockRunResolutionError(
+            f"candidate {row['candidate_key']} uses unsupported store provenance"
+        )
     runtimes = _candidate_component_runtimes(lock, row["provenance"])
     # Lock-run reads the runtime-provenance shape that component_source writes —
     # the one accepted coupling cost (ADR-0006).

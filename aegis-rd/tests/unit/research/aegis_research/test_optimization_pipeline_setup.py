@@ -97,7 +97,7 @@ def test_pipeline_setup_evidence_baseline_shape(
     )
 
     evidence = run_evidence.optimization()
-    assert evidence["schema_version"] == "optimization_route.v1"
+    assert evidence["schema_version"] == "optimization_route.v2"
     assert "contract" in evidence
     assert "source" in evidence
     assert "param_names" in evidence

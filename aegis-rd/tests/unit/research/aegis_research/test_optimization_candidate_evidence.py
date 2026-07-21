@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from enum import Enum
 from typing import Any
 
@@ -18,6 +19,7 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from tests.support.research.aegis_research.factories import make_selection_identity
 
 DATA_IDENTITY = {
     "schema_version": "candidate_data_identity.v3",
@@ -35,6 +37,7 @@ class StopKind(Enum):
 
 def _single_candidate_row(params: dict[str, Any], **identity_kwargs: Any) -> dict[str, Any]:
     only = _evaluated(params, 0.7)
+    identity_kwargs.setdefault("selection_identity", make_selection_identity())
     return candidate_rows_from_result(
         OptimizationResult(best=only, median=only, worst=only),
         **identity_kwargs,
@@ -51,6 +54,7 @@ def test_candidate_values_are_serialized_deterministically() -> None:
         },
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
         hidden_params={"no_stop_value": None},
     )
 
@@ -75,6 +79,7 @@ def test_candidate_key_includes_hidden_source_and_allocation_identity() -> None:
         params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
         hidden_params={"hidden_threshold": 1},
         book_settings={"fees": 0.001},
     )
@@ -82,6 +87,7 @@ def test_candidate_key_includes_hidden_source_and_allocation_identity() -> None:
         params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
         hidden_params={"hidden_threshold": 2},
         book_settings={"fees": 0.001},
     )
@@ -96,6 +102,7 @@ def test_candidate_key_includes_hidden_source_and_allocation_identity() -> None:
         params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
         hidden_params={"hidden_threshold": 1},
         book_settings={"fees": 0.002},
     )
@@ -134,22 +141,10 @@ def test_candidate_identity_golden_bytes_pin() -> None:
         book_settings={"fees": 0.001, "target_exposure_cap": 1.0},
     )
 
-    assert canonical_json_bytes(row["identity"]) == (
-        b'{"book_settings":{"fees":0.001,"target_exposure_cap":1.0},'
-        b'"data_identity":{"adjustment_mode":"backward_ratio",'
-        b'"array_contract":{"component_required_arrays":[],'
-        b'"configured_arrays":["Close"],"contract_required_arrays":["Close","Open"],'
-        b'"missing_required_arrays":["Open"],"pipeline_required_arrays":["Close","Open"]},'
-        b'"effective_arrays":["Close","Open"],"index_end":"2026-01-31",'
-        b'"index_evidence":{},"index_start":"2026-01-01",'
-        b'"instrument_ids":["SYN.XNAS","ALT.XNAS"],"loaded_arrays":["Close"],'
-        b'"requested_instrument_ids":["SYN.XNAS","ALT.XNAS"],"rows":31,'
-        b'"schema_version":"candidate_data_identity.v3","source_metadata":{},'
-        b'"timeframe":"1D"},"hidden_params":{"execution":"next_open"},"params":{"entry":40.0,'
-        b'"ma_window":100,"rsi_window":14},"schema_version":"candidate_identity.v4",'
-        b'"source_identity":{"id":"demo.rsi","source":"component","source_hash":"abc123"}}'
+    assert hashlib.sha256(canonical_json_bytes(row["identity"])).hexdigest() == (
+        "bad193abbd687a40afdedfdbd3dd0c6e0db66b9b0c74d8898db9ddb015c19136"
     )
-    assert row["candidate_key"] == "cand_c6baa6ff4ce9660e482fe7db1add8d58"
+    assert row["candidate_key"] == "cand_bad193abbd687a40afdedfdbd3dd0c6e"
 
 
 def test_otherwise_identical_ratio_and_spread_runs_have_different_candidate_keys() -> None:
@@ -176,6 +171,7 @@ def test_candidate_key_includes_data_identity_and_carries_store_namespace() -> N
         params,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     different_data = _single_candidate_row(
@@ -222,26 +218,24 @@ def test_candidate_rows_from_result_emits_three_role_tagged_rows() -> None:
         result,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
         book_settings={"fees": 0.001},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
 
     assert [row["role"] for row in rows] == ["best", "median", "worst"]
-    assert [row["rank"] for row in rows] == [1, 2, 3]
+    assert [row["ordinal_rank"] for row in rows] == [1, 2, 3]
     assert {row["candidate_key"] for row in rows} == {row["candidate_key"] for row in rows}
     assert len({row["candidate_key"] for row in rows}) == 3
     best = rows[0]
     assert best["params"] == {"rsi_window": 14}
-    assert best["score"] == 0.9
-    assert best["selection_metrics"] == {
+    assert best["mean_rank"] == 0.9
+    assert best["observation_block_metrics"] == {
         "0": {"total_return": 0.9},
         "1": {"total_return": 1.0},
     }
-    assert best["held_out_metrics"]["0"]["total_return"] == pytest.approx(0.88)
-    assert best["metrics"] == pytest.approx({"total_return": 0.95})
-    # held-out aggregate is as prominent as the in-sample aggregate (`metrics`),
-    # and uses the same mean-across-splits aggregation (here (0.88 + 0.89) / 2).
-    assert best["held_out_metrics_mean"] == pytest.approx({"total_return": 0.885})
+    assert best["complete_period_metrics"] == pytest.approx({"total_return": 0.95})
+    assert "held_out_metrics" not in best
     assert best["store_namespace"] == {"kind": "local_sqlite", "name": "default"}
 
 
@@ -253,6 +247,7 @@ def test_candidate_rows_from_result_shares_key_when_one_candidate_fills_all_role
         result,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
     )
 
     assert [row["role"] for row in rows] == ["best", "median", "worst"]
@@ -277,10 +272,11 @@ def test_candidate_rows_from_result_nan_score_becomes_none() -> None:
         result,
         source_identity={"source_hash": "abc"},
         data_identity=DATA_IDENTITY,
+        selection_identity=make_selection_identity(),
     )
 
-    assert rows[2]["score"] is None
-    assert rows[2]["metrics"] == {"total_return": None}
+    assert rows[2]["mean_rank"] is None
+    assert rows[2]["complete_period_metrics"] == {"total_return": None}
 
 
 def test_result_evidence_serializes_three_candidates() -> None:
@@ -321,17 +317,13 @@ def test_result_evidence_serializes_three_candidates() -> None:
 
 
 def test_candidate_held_out_headline_leads_with_held_out_and_gap() -> None:
-    rows = candidate_rows_from_result(
-        OptimizationResult(
-            best=_evaluated({"rsi_window": 14}, 0.9),
-            median=_evaluated({"rsi_window": 20}, 0.5),
-            worst=_evaluated({"rsi_window": 5}, 0.1),
-        ),
-        source_identity={"source_hash": "abc"},
-        data_identity=DATA_IDENTITY,
+    headline = candidate_held_out_headline(
+        {
+            "metrics": {"total_return": 0.95},
+            "held_out_metrics_mean": {"total_return": 0.885},
+        },
+        metric="total_return",
     )
-
-    headline = candidate_held_out_headline(rows[0], metric="total_return")
 
     assert headline["metric"] == "total_return"
     # held-out is the unbiased headline; selection is the in-sample (optimistic) value.
@@ -341,17 +333,7 @@ def test_candidate_held_out_headline_leads_with_held_out_and_gap() -> None:
 
 
 def test_candidate_held_out_headline_missing_metric_is_none() -> None:
-    rows = candidate_rows_from_result(
-        OptimizationResult(
-            best=_evaluated({"rsi_window": 14}, 0.9),
-            median=_evaluated({"rsi_window": 20}, 0.5),
-            worst=_evaluated({"rsi_window": 5}, 0.1),
-        ),
-        source_identity={"source_hash": "abc"},
-        data_identity=DATA_IDENTITY,
-    )
-
-    headline = candidate_held_out_headline(rows[0], metric="sharpe_ratio")
+    headline = candidate_held_out_headline({}, metric="sharpe_ratio")
 
     assert headline == {
         "metric": "sharpe_ratio",
