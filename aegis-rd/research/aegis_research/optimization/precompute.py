@@ -3,13 +3,13 @@
 Indicator outputs computed **once over the full series** for a fixed set of
 sampled candidates, held candidate-major (each candidate owns a contiguous
 ``n_symbols`` column block) and aligned to the full-series index. The simulate
-stage slices this store to a split window by row range and gathers the columns
-for the candidates in the current chunk.
+stage gathers the complete aligned rows and the columns for the candidates in
+the current batch.
 
 Causality contract
 ------------------
-Because the simulate stage reads only the values inside a window while the
-indicator was computed over the whole series, this design is leak-free **only
+Because simulation consumes values computed over the whole series, this design
+is leak-free **only
 while every indicator is strictly causal** (the value at bar ``t`` depends only
 on bars ``<= t``). A non-causal transform (centered window, ``shift(-k)``,
 full-series z-score) would inject future bars into the window.
@@ -79,7 +79,7 @@ def validate_precompute_no_lookahead(
 ) -> None:
     """Validate the prefix-equivalence no-look-ahead contract for ``precompute``.
 
-    The full-series precompute store is safe to slice into split windows only if
+    The full-series precompute store is safe to consume or slice by row only if
     each row is unchanged when the source series is truncated immediately after
     that row. This check allows causal warmup history before the row and detects
     outputs that use future rows (for example ``shift(-1)``, centered windows, or

@@ -110,7 +110,7 @@ indicators:
 
 Strategy components emit exactly one declared allocation-native frame from `{active, scores, ranks, target_weights}` (the registered `STRATEGY_ALLOCATION_OUTPUTS`). Manifests declare the shape via a singular `output_name: str`. Selection convention: non-NaN cells = selected this rebalance row; NaN = excluded. Top-N filtering is owned by the component.
 
-Portfolio policy (`research/aegis_research/portfolio_policy/`) owns the conversion from the declared shape to a validated allocations frame: it applies the executable mask, normalizes against `portfolio.target_exposure_cap`, and writes the terminal-liquidation row. Costs, direction, and timing remain config-owned. The runnable v1 portfolio contract is long-only with one shared cash pool across all configured symbols.
+Portfolio policy (`research/aegis_research/portfolio_policy/`) owns the conversion from the declared shape to a validated allocations frame: it applies the executable mask, normalizes against `portfolio.target_exposure_cap`, and writes the terminal-liquidation row. Costs, direction, and timing remain config-owned. Each Candidate uses one shared cash pool across all configured symbols.
 
 ```yaml
 portfolio:
@@ -124,17 +124,17 @@ The portfolio substrate is fixed for v1:
 
 - Construction: `vbt.PFO.from_filled_allocations(allocations)` followed by `vbt.Portfolio.from_optimizer(pfo, close=close, ...)`.
 - `size_type="targetpercent"` — cells are interpreted as target weights of group value.
-- `pf_method="from_orders"` — sized targets flow through the order engine.
-- `direction="longonly"` — forced; shorting is out of scope for v1.
+- `pf_method="from_signals"` — target allocations flow through the pinned signal engine.
+- `direction` — supplied by validated portfolio config and shared by every Candidate.
 - `call_seq="auto"` — frozen for v1; sell-before-buy within the shared-cash group.
 - `cash_sharing=True` with `group_by={True | vbt.ExceptLevel(SYMBOL_LEVEL)}` — single-candidate runs group across all symbols; multi-candidate sweeps group across symbols within each candidate.
-- `price="close"` (default) — close-decision, close-execution on bar `t`.
+- `price="nextopen" | "nextclose"` — configured fills are delayed by one bar.
 
-`target_weights[t] = 0` closes any existing position at the close of bar `t`. Open-price feeds and next-open execution are not part of this contract; runs require Close only.
+`target_weights[t] = 0` requests closure using the configured next-bar fill timing. `next_open` requires Open data; `next_close` fills from Close data.
 
 Terminal liquidation is the single forward path: the policy explicitly sets `allocations.iloc[-1] = 0.0` so any position held into the terminal bar closes at the terminal bar's close, producing a cash-realized terminal (no mark-to-market phantom). This mirrors the maintainer's blessed pattern for `Portfolio.from_optimizer` — see `docs/solutions/best-practices/vectorbt-close-optimizer-positions-at-end-2026-05-17.md`.
 
-On potential close-execution lookahead, the VBT maintainer's stance is recorded for future readers: "Using today's close doesn't introduce lookahead bias; it just lets you trade signals immediately, as in live trading where reaction times can be milliseconds." Aegis adopts close-execution as the single v1 timing choice on that basis.
+Both supported fill modes apply an effective one-bar delay, so the continuous replay never executes a decision on the same bar that produced it.
 
 For the contract's full historical motivation, see `docs/brainstorms/2026-05-22-portfolio-target-allocation-pfo-contract-requirements.md` and the implementation plan at `docs/plans/2026-05-22-003-feat-portfolio-target-allocation-pfo-contract-plan.md`.
 
@@ -205,8 +205,8 @@ Leaderboards rank complete composed strategy candidates, not raw indicators. Com
 ## VectorBT PRO Notes
 
 - Use approved `YFData`, `BinanceData`, or `CCXTData` adapters for real fetches once a run needs external data.
-- Public portfolio sizing is `portfolio.target_exposure_cap` (gross cap, units of portfolio value); the substrate is `vbt.PFO.from_filled_allocations` + `vbt.Portfolio.from_optimizer` with `size_type="targetpercent"` and `pf_method="from_orders"`.
-- Portfolio direction is fixed to `longonly`. Strategies emit one allocation-native frame; the policy layer produces the validated `targetpercent` allocations.
-- Keep high-cardinality parameter sweeps inside VectorBT indicator/portfolio/splitter objects instead of Python loops where possible.
+- Public portfolio sizing is `portfolio.target_exposure_cap` (gross cap, units of portfolio value); the substrate is `vbt.PFO.from_filled_allocations` + `vbt.Portfolio.from_optimizer` with `size_type="targetpercent"` and `pf_method="from_signals"`.
+- Portfolio direction and next-bar fill timing are validated config. Strategies emit one allocation-native frame; the policy layer produces the validated `targetpercent` allocations.
+- Materialize high-cardinality Candidate batches once, replay each path continuously, and use VBT Splitter only to apply analysis-only Observation Block bounds.
 - Stay on the `PFO.from_filled_allocations` + `Portfolio.from_optimizer` path for the first loop; reach for `from_order_func` only when target allocations cannot express the execution model.
 - Save only public, non-sensitive run artifacts in git. The `runs/` directory remains ignored except for `.gitkeep`.

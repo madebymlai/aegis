@@ -147,6 +147,15 @@ class ObservationBlockAnalysis:
     metric_matrices: Mapping[str, pd.DataFrame]
     ranking_ranks: pd.DataFrame
     full_period_metrics: pd.DataFrame
+    verdicts: Verdicts
+    result: OptimizationResult
+
+
+@dataclass(frozen=True)
+class ObservationBlockRanking:
+    """The one admissible rank matrix and representatives selected from it."""
+
+    ranks: pd.DataFrame
     result: OptimizationResult
 
 
@@ -312,7 +321,25 @@ def select_observation_block_representatives(
     full_period_metrics: pd.DataFrame,
     definition: MetricDefinition,
 ) -> OptimizationResult:
-    """Select best/median/worst solely by deterministic mean within-block rank."""
+    """Return representatives from the authoritative admissible rank matrix."""
+    return rank_observation_block_candidates(
+        metric_matrix,
+        param_names=param_names,
+        verdicts=verdicts,
+        full_period_metrics=full_period_metrics,
+        definition=definition,
+    ).result
+
+
+def rank_observation_block_candidates(
+    metric_matrix: pd.DataFrame,
+    *,
+    param_names: Sequence[str],
+    verdicts: Verdicts,
+    full_period_metrics: pd.DataFrame,
+    definition: MetricDefinition,
+) -> ObservationBlockRanking:
+    """Rank admissible Candidates once and select representatives from those ranks."""
     candidate_keys = [_as_key(value) for value in metric_matrix.index.tolist()]
     positions = [
         position
@@ -345,13 +372,16 @@ def select_observation_block_representatives(
             )
         )
     count = len(evaluated)
-    return OptimizationResult(
-        best=evaluated[0],
-        median=evaluated[ceil(count / 2) - 1],
-        worst=evaluated[-1],
-        excluded_degenerate=verdicts.excluded_degenerate,
-        excluded_invalid=verdicts.excluded_invalid,
-        total_candidates=verdicts.total,
+    return ObservationBlockRanking(
+        ranks=ranks,
+        result=OptimizationResult(
+            best=evaluated[0],
+            median=evaluated[ceil(count / 2) - 1],
+            worst=evaluated[-1],
+            excluded_degenerate=verdicts.excluded_degenerate,
+            excluded_invalid=verdicts.excluded_invalid,
+            total_candidates=verdicts.total,
+        ),
     )
 
 
@@ -397,7 +427,7 @@ def analyze_development_paths(
         for metric_id, spec in metric_registry.extractors.items()
     }
     definition = metric_registry.get(ranking_metric)
-    result = select_observation_block_representatives(
+    ranking = rank_observation_block_candidates(
         matrices[ranking_metric],
         param_names=paths.candidates.param_names,
         verdicts=paths.verdicts,
@@ -407,9 +437,10 @@ def analyze_development_paths(
     return ObservationBlockAnalysis(
         blocks=blocks,
         metric_matrices=matrices,
-        ranking_ranks=_rank_matrix(matrices[ranking_metric], definition),
+        ranking_ranks=ranking.ranks,
         full_period_metrics=paths.full_period_metrics,
-        result=result,
+        verdicts=paths.verdicts,
+        result=ranking.result,
     )
 
 

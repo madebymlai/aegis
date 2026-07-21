@@ -100,8 +100,10 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     serialized_public_evidence = json.dumps(
         {"execution": execution, "candidates": artifact["candidates"]}
     ).lower()
-    for retired_term in ("held_out", "optimism_gap", "friedman", "omnibus"):
-        assert retired_term not in serialized_public_evidence
+    assert "held_out" not in serialized_public_evidence
+    assert "optimism_gap" not in serialized_public_evidence
+    assert "friedman" not in serialized_public_evidence
+    assert "omnibus" not in serialized_public_evidence
     for matrix in execution["raw_metric_matrices"].values():
         assert matrix["orientation"] == "candidate_by_observation_block"
         assert len(matrix["values"]) == len(matrix["candidate_index"]["values"])

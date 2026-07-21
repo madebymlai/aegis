@@ -160,8 +160,8 @@ class _ComposedSource:
         n_candidates: int,
         **param_lists: Any,
     ) -> pd.DataFrame:
-        # Run the strategy allocation for one window given indicator outputs already
-        # sliced to that window; the central-metrics step prices the allocations.
+        # Run the strategy allocation for the supplied continuous batch using its
+        # aligned indicator outputs; replay then prices the allocations once.
         data_slice = _slice_data(self.data, close_window, self.input_names)
         n_symbols = len(close_window.columns)
         strategy_inputs = ComponentStrategyInputs(

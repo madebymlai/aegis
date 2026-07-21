@@ -17,6 +17,7 @@ from research.aegis_research.optimization.observation_blocks import (
     ObservationBlocks,
     apply_metric_to_blocks,
     apply_registered_metric_to_blocks,
+    rank_observation_block_candidates,
     select_observation_block_representatives,
 )
 from tests.support.research.aegis_research.factories import make_report_config
@@ -344,6 +345,40 @@ def test_mean_rank_beats_one_arbitrarily_large_block_win_and_ignores_full_metric
     assert result.median.params == {"window": 1}
     assert result.worst.params == {"window": 3}
     assert result.best.score == pytest.approx(4 / 3)
+
+
+def test_published_ranks_are_the_exact_admissible_ranks_used_for_selection() -> None:
+    candidate_index = _candidate_index(1, 2, 3)
+    metric_matrix = pd.DataFrame(
+        [[100.0, 100.0], [10.0, 20.0], [5.0, 15.0]],
+        index=candidate_index,
+        columns=["b0", "b1"],
+    )
+    definition = MetricDefinition(
+        id="score",
+        title="Score",
+        source_type=SOURCE_TYPE_CUSTOM,
+        unit="ratio",
+        value_semantics="test score",
+        direction="maximize",
+    )
+
+    ranking = rank_observation_block_candidates(
+        metric_matrix,
+        param_names=("window",),
+        verdicts=Verdicts(invalid={(1,)}, valid={(2,), (3,)}),
+        full_period_metrics=pd.DataFrame(
+            {"score": [100.0, 15.0, 10.0]}, index=candidate_index
+        ),
+        definition=definition,
+    )
+
+    assert ranking.ranks.index.tolist() == [(2,), (3,)]
+    assert ranking.ranks.to_numpy().tolist() == [[1.0, 1.0], [2.0, 2.0]]
+    assert ranking.result.best.params == {"window": 2}
+    assert ranking.result.best.score == 1.0
+    assert ranking.result.worst.params == {"window": 3}
+    assert ranking.result.worst.score == 2.0
 
 
 @pytest.mark.parametrize("direction", ["maximize", "minimize"])

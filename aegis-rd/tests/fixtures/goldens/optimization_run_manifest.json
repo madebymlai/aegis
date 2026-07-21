@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "9f36b11bbacbd6b1ec3da1357bc4ee0dd8b949b0b27045f618d4afa84b723959",
+      "hash": "0406279392764e261c5da4234d198365d52f7c5befaaed9144f5597a45f837d4",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "observation_block_count": 3
       },
-      "size": 488470,
+      "size": 504855,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -172,7 +172,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_e533e2c1b25a12647e15b989cd552bcd",
+          "candidate_key": "cand_38ee3e12f2370998fc50330984efe7b8",
           "complete_period_metrics": {
             "max_dd": 27.043452145100744,
             "sharpe_ratio": -0.17267188338676512,
@@ -404,48 +404,53 @@
             },
             "schema_version": "candidate_identity.v5",
             "selection_identity": {
+              "metric_inputs": {
+                "freq": "1D",
+                "periods_per_year": 252,
+                "year_freq": "252D"
+              },
               "metric_protocol": {
                 "candidate_vector_contract": "non_scalar_canonical_candidate_series.v1",
                 "extractors": {
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_full_path_drawdown",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_full_path_returns",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
@@ -499,6 +504,7 @@
                 "direction": "maximize",
                 "equal_score_tie_break": "materialized_candidate_position",
                 "metric": "sharpe_ratio",
+                "min_trades": 0,
                 "score": "mean_within_observation_block_rank",
                 "tie_method": "average"
               },
@@ -1617,7 +1623,7 @@
           }
         },
         {
-          "candidate_key": "cand_ee2940ac40f2dec1d3e43be08b9acd62",
+          "candidate_key": "cand_b4c5eed7a33c212b9dceea488b22e4d6",
           "complete_period_metrics": {
             "max_dd": 23.779896871973637,
             "sharpe_ratio": -0.11453647945898061,
@@ -1849,48 +1855,53 @@
             },
             "schema_version": "candidate_identity.v5",
             "selection_identity": {
+              "metric_inputs": {
+                "freq": "1D",
+                "periods_per_year": 252,
+                "year_freq": "252D"
+              },
               "metric_protocol": {
                 "candidate_vector_contract": "non_scalar_canonical_candidate_series.v1",
                 "extractors": {
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_full_path_drawdown",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_full_path_returns",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
@@ -1944,6 +1955,7 @@
                 "direction": "maximize",
                 "equal_score_tie_break": "materialized_candidate_position",
                 "metric": "sharpe_ratio",
+                "min_trades": 0,
                 "score": "mean_within_observation_block_rank",
                 "tie_method": "average"
               },
@@ -3062,7 +3074,7 @@
           }
         },
         {
-          "candidate_key": "cand_372de0a53755c44bca00a8b1fd1b1787",
+          "candidate_key": "cand_d437016d1727c1e865223c76d339709d",
           "complete_period_metrics": {
             "max_dd": 35.84222833612172,
             "sharpe_ratio": -0.5146992551247971,
@@ -3294,48 +3306,53 @@
             },
             "schema_version": "candidate_identity.v5",
             "selection_identity": {
+              "metric_inputs": {
+                "freq": "1D",
+                "periods_per_year": 252,
+                "year_freq": "252D"
+              },
               "metric_protocol": {
                 "candidate_vector_contract": "non_scalar_canonical_candidate_series.v1",
                 "extractors": {
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_full_path_drawdown",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_full_path_returns",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_portfolio",
+                    "kind": "native_portfolio_metric",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
@@ -3389,6 +3406,7 @@
                 "direction": "maximize",
                 "equal_score_tie_break": "materialized_candidate_position",
                 "metric": "sharpe_ratio",
+                "min_trades": 0,
                 "score": "mean_within_observation_block_rank",
                 "tie_method": "average"
               },
@@ -4554,7 +4572,279 @@
         "candidate_accounting": {
           "excluded_degenerate": 0,
           "excluded_invalid": 0,
-          "total": 30
+          "total": 30,
+          "verdicts": [
+            {
+              "candidate_position": 0,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 1,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 2,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 3,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 4,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 5,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 6,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 7,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 8,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 9,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 2
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 10,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 11,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 12,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 13,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 14,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 15,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 16,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 17,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 18,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 19,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 3
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 20,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 21,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 22,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 23,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 24,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 25,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.05,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 26,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.08,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 27,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.1,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 28,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.15,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            },
+            {
+              "candidate_position": 29,
+              "params": {
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746175": 0.2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6b5f646566656e73697665": 2,
+                "component__73747261746567696573__74657374732e6d6f6d656e74756d5f726f7461746f72__7374726174656779__746f705f6e": 4
+              },
+              "verdict": "valid"
+            }
+          ]
         },
         "complete_period_metrics": {
           "candidate_index": {
@@ -7327,48 +7617,53 @@
         ],
         "schema_version": "continuous_selection_evidence.v1",
         "selection_identity": {
+          "metric_inputs": {
+            "freq": "1D",
+            "periods_per_year": 252,
+            "year_freq": "252D"
+          },
           "metric_protocol": {
             "candidate_vector_contract": "non_scalar_canonical_candidate_series.v1",
             "extractors": {
               "max_dd": {
                 "absolute": true,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_full_portfolio",
+                "kind": "native_full_path_drawdown",
                 "scale": "percent",
                 "source_type": "vbt_stats"
               },
               "sharpe_ratio": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_full_portfolio",
+                "kind": "native_portfolio_metric",
                 "scale": "identity",
                 "source_type": "vbt_stats"
               },
               "total_fees_paid": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_full_portfolio",
+                "kind": "native_portfolio_metric",
                 "scale": "identity",
                 "source_type": "vbt_stats"
               },
               "total_return": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_full_portfolio",
+                "kind": "native_full_path_returns",
                 "scale": "percent",
                 "source_type": "vbt_stats"
               },
               "total_trades": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_full_portfolio",
+                "kind": "native_portfolio_metric",
                 "scale": "identity",
                 "source_type": "vbt_stats"
               },
               "win_rate": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_full_portfolio",
+                "kind": "native_portfolio_metric",
                 "scale": "percent",
                 "source_type": "vbt_stats"
               }
@@ -7422,6 +7717,7 @@
             "direction": "maximize",
             "equal_score_tie_break": "materialized_candidate_position",
             "metric": "sharpe_ratio",
+            "min_trades": 0,
             "score": "mean_within_observation_block_rank",
             "tie_method": "average"
           },

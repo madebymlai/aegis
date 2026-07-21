@@ -496,9 +496,9 @@ def _extend_batch_invariance(lines: list[str]) -> None:
     lines.append("")
     lines.append(
         "In production the same Candidate is recomputed under different batch "
-        "compositions — the full grid in the selection phase, three "
-        "representatives in the held-out phase, a single Candidate under a Lock "
-        "re-execution — so any batch-dependent float drift would make equal "
+        "compositions — the full grid in continuous selection, sequential "
+        "equivalence checks, and a single Candidate under Lock re-execution — "
+        "so any batch-dependent float drift would make equal "
         "parameters yield different values across phases and break Candidate "
         "reproducibility (ADR-0006)."
     )

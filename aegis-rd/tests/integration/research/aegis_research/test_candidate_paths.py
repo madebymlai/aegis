@@ -302,6 +302,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         metric_matrices=sequential_metric_matrices,
         ranking_ranks=ranking_matrix.rank(axis="index", ascending=False, method="average"),
         full_period_metrics=sequential_full_period,
+        verdicts=batch.verdicts,
         result=select_observation_block_representatives(
             ranking_matrix,
             param_names=batch.candidates.param_names,
@@ -314,7 +315,8 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         "preflight": preflight,
         "optimization": optimization,
         "metric_registry": registry,
-        "ranking_metric": "total_return",
+        "ranking": make_ranking_config(metric="total_return"),
+        "report": make_report_config(),
         "direction": "longonly",
         "fill_timing": "next_close",
         "data_start": "2024-01-01",

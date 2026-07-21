@@ -5,23 +5,24 @@ a lookback query, and a ``params`` mapping of ``vbt.Param`` axes:
 
 - ``precompute(close, n_candidates, **param_lists) -> IndicatorPrecompute``
   runs each indicator's callable once over the given series, returning a
-  candidate-major store sliceable by split range. Run over the **full** series,
+  candidate-major store sliceable by row range. Run over the **full** series,
   it preserves all available warmup history; candidates whose lookback still
   exceeds that history are invalidated before ranking. Outputs must satisfy the
   ``validate_precompute_no_lookahead`` prefix-equivalence contract: truncating the
   input immediately after a row must not change that row's output values.
 - ``simulate(close_window, indicator_window, n_candidates, **param_lists)``
-  runs the strategy allocation for one window given the precomputed indicator
-  outputs already sliced to that window (the central-metrics step then computes
-  portfolio metrics from the returned allocations).
+  runs the strategy allocation for the continuous batch given the aligned
+  precomputed indicator outputs (the replay step then constructs one unchanged
+  Portfolio per Candidate path).
 - ``resolve_lookbacks(candidate_params)`` resolves every configured Indicator
   and Strategy lookback from one materialized Candidate's complete scalar
   parameter mapping. Continuous replay queries the complete sampled grid before
   deriving its one common scoring boundary.
 
-The runner's selection sweep precomputes once over the full series and slices per
-window so no candidate loses warmup to a short slice. The held-out sweep uses the
-same full-series store for the representative candidates.
+The runner precomputes and simulates the complete sampled grid once over the full
+Development series. A common Component-derived warmup boundary determines where
+every Candidate begins scoring; Observation Blocks are analysis-only views of the
+unchanged continuous paths.
 
 Limitations carried by this contract:
 

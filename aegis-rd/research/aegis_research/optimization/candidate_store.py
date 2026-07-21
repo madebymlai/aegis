@@ -363,6 +363,14 @@ def _validate_continuous_protocol(
         candidate_key = row.get("candidate_key")
         if candidate_key != candidate_key_for_identity(identity):
             raise CandidateStoreError("candidate_key does not match Candidate identity")
+        row_params = row.get("params")
+        identity_params = identity.get("params")
+        if (
+            not isinstance(row_params, Mapping)
+            or not isinstance(identity_params, Mapping)
+            or canonical_json_bytes(row_params) != canonical_json_bytes(identity_params)
+        ):
+            raise CandidateStoreError("candidate row params do not match Candidate identity")
         row_selection_identity = identity.get("selection_identity")
         if (
             not isinstance(row_selection_identity, Mapping)

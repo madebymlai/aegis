@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 
 import pandas as pd
 import pytest
@@ -19,6 +20,7 @@ from research.aegis_research.optimization.candidate_store import (
     CandidateStore,
     CandidateStoreError,
 )
+from research.aegis_research.optimization.candidate_validity import Verdicts
 from research.aegis_research.optimization.continuous_evidence import (
     CONTINUOUS_SELECTION_EVIDENCE_SCHEMA_VERSION,
     build_continuous_evidence,
@@ -35,7 +37,11 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
-from tests.support.research.aegis_research.factories import make_optimization_config
+from tests.support.research.aegis_research.factories import (
+    make_optimization_config,
+    make_ranking_config,
+    make_report_config,
+)
 
 
 def _registry():
@@ -53,6 +59,7 @@ def _registry():
             read=lambda portfolio, report: None,
             scale="percent",
             range_factory=lambda report: lambda portfolio, **bounds: None,
+            range_kind="native_full_path_returns",
         ),
     )
     return registry.freeze()
@@ -126,6 +133,7 @@ def _case(candidate_count: int = 2, *, resolved_warmup_bars: int | None = None):
         full_period_metrics=pd.DataFrame(
             {"total_return": raw.mean(axis="columns")}, index=candidate_index
         ),
+        verdicts=Verdicts(valid=set(keys)),
         result=result,
     )
     return index, preflight, analysis
@@ -139,7 +147,8 @@ def test_continuous_evidence_round_trips_protocol_and_matrix(candidate_count: in
         preflight=preflight,
         optimization=make_optimization_config(observation_block_bars=4),
         metric_registry=_registry(),
-        ranking_metric="total_return",
+        ranking=make_ranking_config(metric="total_return"),
+        report=make_report_config(),
         direction="longonly",
         fill_timing="next_close",
         data_start="2024-01-01",
@@ -170,6 +179,9 @@ def test_continuous_evidence_round_trips_protocol_and_matrix(candidate_count: in
     assert replay["fill_timing"]["vbt_effective_delay_bars"] == 1
     assert evidence["warmup"]["resolved_warmup_bars"] == candidate_count
     assert evidence["warmup"]["maximum_drivers"][0]["candidate_position"] == candidate_count - 1
+    assert evidence["selection_identity"]["metric_protocol"]["extractors"][
+        "total_return"
+    ]["kind"] == "native_full_path_returns"
 
     restored_blocks = observation_blocks_from_evidence(index, evidence)
     restored_matrix = matrix_from_evidence(
@@ -189,7 +201,8 @@ def test_candidate_identity_and_key_change_with_selection_protocol() -> None:
         preflight=preflight,
         optimization=make_optimization_config(observation_block_bars=4),
         metric_registry=_registry(),
-        ranking_metric="total_return",
+        ranking=make_ranking_config(metric="total_return"),
+        report=make_report_config(),
         direction="longonly",
         fill_timing="next_close",
         data_start="2024-01-01",
@@ -218,6 +231,86 @@ def test_candidate_identity_and_key_change_with_selection_protocol() -> None:
     assert rows[0]["observation_block_metrics"]["block-000"]["total_return"] == 10.0
 
 
+def test_selection_identity_changes_with_admissibility_and_metric_calendar() -> None:
+    _, preflight, analysis = _case()
+    common = {
+        "analysis": analysis,
+        "preflight": preflight,
+        "optimization": make_optimization_config(observation_block_bars=4),
+        "metric_registry": _registry(),
+        "direction": "longonly",
+        "fill_timing": "next_close",
+        "data_start": "2024-01-01",
+    }
+
+    original = build_continuous_evidence(
+        ranking=make_ranking_config(min_trades=0),
+        report=make_report_config(freq="1D", year_freq="252D"),
+        **common,
+    )
+    changed_admissibility = build_continuous_evidence(
+        ranking=make_ranking_config(min_trades=5),
+        report=make_report_config(freq="1D", year_freq="252D"),
+        **common,
+    )
+    changed_calendar = build_continuous_evidence(
+        ranking=make_ranking_config(min_trades=0),
+        report=make_report_config(freq="2D", year_freq="252D"),
+        **common,
+    )
+
+    assert original.selection_identity != changed_admissibility.selection_identity
+    assert original.selection_identity != changed_calendar.selection_identity
+    assert original.selection_identity["ranking"]["min_trades"] == 0
+    assert original.selection_identity["metric_inputs"] == {
+        "freq": "1D",
+        "periods_per_year": 252,
+        "year_freq": "252D",
+    }
+
+
+def test_evidence_publishes_only_authoritative_admissible_ranks() -> None:
+    _, preflight, analysis = _case(3)
+    admissible_ranks = pd.DataFrame(
+        [[1.0, 1.0], [2.0, 2.0]],
+        index=analysis.ranking_ranks.index[1:],
+        columns=analysis.ranking_ranks.columns,
+    )
+    analysis = replace(
+        analysis,
+        ranking_ranks=admissible_ranks,
+        verdicts=Verdicts(invalid={(1,)}, valid={(2,), (3,)}),
+        result=replace(
+            analysis.result,
+            excluded_invalid=1,
+            excluded_degenerate=1,
+            total_candidates=3,
+        ),
+    )
+
+    evidence = build_continuous_evidence(
+        analysis=analysis,
+        preflight=preflight,
+        optimization=make_optimization_config(observation_block_bars=4),
+        metric_registry=_registry(),
+        ranking=make_ranking_config(metric="total_return"),
+        report=make_report_config(),
+        direction="longonly",
+        fill_timing="next_close",
+        data_start="2024-01-01",
+    ).execution
+
+    assert evidence["mean_ranks"] == [
+        {"candidate_position": 1, "params": {"window": 2}, "value": 1.0},
+        {"candidate_position": 2, "params": {"window": 3}, "value": 2.0},
+    ]
+    assert evidence["candidate_accounting"]["verdicts"] == [
+        {"candidate_position": 0, "params": {"window": 1}, "verdict": "invalid"},
+        {"candidate_position": 1, "params": {"window": 2}, "verdict": "valid"},
+        {"candidate_position": 2, "params": {"window": 3}, "verdict": "valid"},
+    ]
+
+
 @pytest.mark.parametrize(
     ("path", "changed_value"),
     [
@@ -240,7 +333,8 @@ def test_candidate_key_changes_for_each_pinned_execution_contract(
         preflight=preflight,
         optimization=make_optimization_config(observation_block_bars=4),
         metric_registry=_registry(),
-        ranking_metric="total_return",
+        ranking=make_ranking_config(metric="total_return"),
+        report=make_report_config(),
         direction="longonly",
         fill_timing="next_close",
         data_start="2024-01-01",
@@ -292,7 +386,8 @@ def test_maximum_lookback_change_moves_scored_interval_and_replay_identity() -> 
     common = {
         "optimization": make_optimization_config(observation_block_bars=4),
         "metric_registry": _registry(),
-        "ranking_metric": "total_return",
+        "ranking": make_ranking_config(metric="total_return"),
+        "report": make_report_config(),
         "direction": "longonly",
         "fill_timing": "next_close",
         "data_start": "2024-01-01",
@@ -322,7 +417,8 @@ def test_candidate_store_rejects_stale_and_mismatched_selection_evidence(tmp_pat
         preflight=preflight,
         optimization=make_optimization_config(observation_block_bars=4),
         metric_registry=_registry(),
-        ranking_metric="total_return",
+        ranking=make_ranking_config(metric="total_return"),
+        report=make_report_config(),
         direction="longonly",
         fill_timing="next_close",
         data_start="2024-01-01",
@@ -358,4 +454,100 @@ def test_candidate_store_rejects_stale_and_mismatched_selection_evidence(tmp_pat
     ):
         store.insert_completed_run(
             run_id="run-mismatch", candidate_rows=rows, provenance=mismatched
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "changed_value"),
+    [
+        (("replay_protocol", "implementation_fingerprint"), "altered"),
+        (("replay_protocol", "portfolio", "pf_method"), "from_orders"),
+        (
+            (
+                "observation_block_protocol",
+                "application",
+                "right_inclusive",
+            ),
+            True,
+        ),
+        (
+            ("metric_protocol", "candidate_vector_contract"),
+            "scalar_candidate.v1",
+        ),
+        (("metric_protocol", "extractors", "total_return", "kind"), "other"),
+        (("ranking", "score"), "raw_metric"),
+        (("trial_lineage", "search"), "other"),
+    ],
+)
+def test_candidate_store_rejects_altered_selection_semantics(
+    tmp_path, path: tuple[str, ...], changed_value: object
+) -> None:
+    _, preflight, analysis = _case()
+    published = build_continuous_evidence(
+        analysis=analysis,
+        preflight=preflight,
+        optimization=make_optimization_config(observation_block_bars=4),
+        metric_registry=_registry(),
+        ranking=make_ranking_config(metric="total_return"),
+        report=make_report_config(),
+        direction="longonly",
+        fill_timing="next_close",
+        data_start="2024-01-01",
+    )
+    altered_identity = deepcopy(published.selection_identity)
+    cursor = altered_identity
+    for part in path[:-1]:
+        cursor = cursor[part]
+    cursor[path[-1]] = changed_value
+    rows = candidate_rows_from_result(
+        analysis.result,
+        source_identity={"strategy": {"id": "demo"}},
+        data_identity={"instruments": ["SYN.XNAS"]},
+        selection_identity=altered_identity,
+    )
+    provenance = {
+        "schema_version": "candidate_store_provenance.v2",
+        "selection_identity": altered_identity,
+    }
+
+    with (
+        CandidateStore(tmp_path / "altered" / "candidates.sqlite3") as store,
+        pytest.raises(CandidateStoreError, match="invalid"),
+    ):
+        store.insert_completed_run(
+            run_id="run-altered", candidate_rows=rows, provenance=provenance
+        )
+
+
+def test_candidate_store_rejects_row_params_that_disagree_with_identity(tmp_path) -> None:
+    _, preflight, analysis = _case()
+    published = build_continuous_evidence(
+        analysis=analysis,
+        preflight=preflight,
+        optimization=make_optimization_config(observation_block_bars=4),
+        metric_registry=_registry(),
+        ranking=make_ranking_config(metric="total_return"),
+        report=make_report_config(),
+        direction="longonly",
+        fill_timing="next_close",
+        data_start="2024-01-01",
+    )
+    rows = candidate_rows_from_result(
+        analysis.result,
+        source_identity={"strategy": {"id": "demo"}},
+        data_identity={"instruments": ["SYN.XNAS"]},
+        selection_identity=published.selection_identity,
+    )
+    rows[0]["params"] = {"window": 999}
+    provenance = {
+        "schema_version": "candidate_store_provenance.v2",
+        "selection_identity": published.selection_identity,
+    }
+
+    with (
+        CandidateStore(tmp_path / "params" / "candidates.sqlite3") as store,
+        pytest.raises(CandidateStoreError, match=r"params.*identity"),
+    ):
+        store.insert_completed_run(
+            run_id="run-params", candidate_rows=rows, provenance=provenance
         )

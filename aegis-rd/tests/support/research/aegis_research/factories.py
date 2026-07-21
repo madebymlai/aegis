@@ -51,8 +51,12 @@ from research.aegis_research.optimization.continuous_evidence import (
     CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
     METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
 )
+from research.aegis_research.optimization.continuous_replay import (
+    continuous_replay_protocol,
+)
 from research.aegis_research.optimization.observation_blocks import (
-    OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
+    ObservationBlocks,
+    observation_block_protocol,
 )
 from research.aegis_research.optimization.pipeline.setup import SetupResult
 from research.aegis_research.optimization.run_data_contract import (
@@ -61,7 +65,6 @@ from research.aegis_research.optimization.run_data_contract import (
 )
 from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.optimization.window_evaluation._simulation import (
-    PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
     _build_portfolio,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
@@ -190,21 +193,53 @@ def make_optimization_config(**overrides: Any) -> OptimizationConfig:
 
 def make_selection_identity(**overrides: Any) -> dict[str, Any]:
     """Return a structurally current continuous-selection identity for tests."""
+    blocks = ObservationBlocks.from_bounds(
+        pd.RangeIndex(20), ((0, 10), (10, 20))
+    )
     defaults: dict[str, Any] = {
         "schema_version": CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
-        "trial_lineage": {"search": "grid", "candidate_grid": []},
+        "trial_lineage": {
+            "search": "grid",
+            "random_subset": None,
+            "seed": None,
+            "candidate_grid": [{"position": 0, "params": {}}],
+        },
         "warmup": {"resolved_warmup_bars": 0, "scored_start": 0},
         "scored_interval": {"start": 0, "end": 20, "end_exclusive": True},
-        "replay_protocol": {
-            "schema_version": PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
-        },
-        "observation_block_protocol": {
-            "schema_version": OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
-        },
+        "replay_protocol": continuous_replay_protocol(
+            fill_timing="next_close",
+            direction="longonly",
+            scored_start=0,
+            sim_end=20,
+        ),
+        "observation_block_protocol": observation_block_protocol(blocks),
         "metric_protocol": {
             "schema_version": METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
+            "registry_fingerprint": "0" * 64,
+            "candidate_vector_contract": "non_scalar_canonical_candidate_series.v1",
+            "extractors": {
+                "total_return": {
+                    "kind": "native_full_path_returns",
+                    "source_type": "vbt_stats",
+                    "boundary_semantics": "native_continuous",
+                    "scale": "percent",
+                    "absolute": False,
+                }
+            },
         },
-        "ranking": {"metric": "total_return", "direction": "maximize"},
+        "metric_inputs": {
+            "freq": "1D",
+            "year_freq": "252D",
+            "periods_per_year": 252,
+        },
+        "ranking": {
+            "metric": "total_return",
+            "direction": "maximize",
+            "min_trades": 0,
+            "score": "mean_within_observation_block_rank",
+            "tie_method": "average",
+            "equal_score_tie_break": "materialized_candidate_position",
+        },
     }
     defaults.update(overrides)
     return defaults

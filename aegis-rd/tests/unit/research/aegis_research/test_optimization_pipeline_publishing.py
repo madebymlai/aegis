@@ -8,6 +8,7 @@ from typing import Any, ClassVar, cast
 import pandas as pd
 
 from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.optimization.candidate_validity import Verdicts
 from research.aegis_research.optimization.evidence_ledger import (
     OPTIMIZATION_ROUTE_SCHEMA_VERSION,
     RunEvidence,
@@ -92,6 +93,7 @@ def _execution() -> ExecutionResult:
         metric_matrices={},
         ranking_ranks=pd.DataFrame(),
         full_period_metrics=pd.DataFrame(),
+        verdicts=Verdicts(),
         result=result,
     )
     return ExecutionResult(

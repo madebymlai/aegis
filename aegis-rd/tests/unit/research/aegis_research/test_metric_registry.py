@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from unittest.mock import Mock
+
+import pandas as pd
 import pytest
 
 from research.aegis_research.metrics import (
@@ -15,6 +18,7 @@ from research.aegis_research.metrics.stats import (
     PORTFOLIO_METRIC_VALUE_KEYS,
     register_vbt_stats_metrics,
 )
+from tests.support.research.aegis_research.factories import make_report_config
 
 _SPEC = ExtractorSpec(lambda pf, config: None)
 _STATS_TITLES = {m: {"title": m} for m in PORTFOLIO_METRIC_VALUE_KEYS}
@@ -70,6 +74,22 @@ def test_default_registry_extractors_preserve_catalog_order() -> None:
     frozen = make_default_metric_registry()
 
     assert tuple(frozen.extractors) == PORTFOLIO_METRIC_VALUE_KEYS
+
+
+def test_max_drawdown_range_preserves_the_full_path_high_water_mark() -> None:
+    assert BUILTIN_EXTRACTORS["max_dd"].range_kind == "native_full_path_drawdown"
+    portfolio = Mock()
+    portfolio.get_drawdown.return_value = pd.DataFrame(
+        {"candidate": [0.0, -0.3, -0.2, -0.1]}
+    )
+    factory = BUILTIN_EXTRACTORS["max_dd"].range_factory
+    assert factory is not None
+
+    result = factory(make_report_config())(portfolio, sim_start=1, sim_end=3)
+
+    pd.testing.assert_series_equal(result, pd.Series({"candidate": -0.3}))
+    portfolio.get_drawdown.assert_called_once_with(rec_sim_range=False)
+    portfolio.get_max_drawdown.assert_not_called()
 
 
 def test_metric_registry_for_registers_only_requested_custom_metrics() -> None:
