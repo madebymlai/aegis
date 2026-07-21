@@ -77,7 +77,6 @@ def test_default_registry_extractors_preserve_catalog_order() -> None:
 
 
 def test_max_drawdown_range_preserves_the_full_path_high_water_mark() -> None:
-    assert BUILTIN_EXTRACTORS["max_dd"].range_kind == "native_full_path_drawdown"
     portfolio = Mock()
     portfolio.get_drawdown.return_value = pd.DataFrame(
         {"candidate": [0.0, -0.3, -0.2, -0.1]}

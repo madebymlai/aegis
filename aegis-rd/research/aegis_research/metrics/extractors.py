@@ -104,34 +104,28 @@ BUILTIN_EXTRACTORS: dict[str, ExtractorSpec] = {
         _read_total_return,
         scale="percent",
         range_factory=_native_range_factory("total_return"),
-        range_kind="native_full_path_returns",
     ),
     "max_dd": ExtractorSpec(
         _read_max_dd,
         scale="percent",
         abs_=True,
         range_factory=_native_range_factory("max_dd"),
-        range_kind="native_full_path_drawdown",
     ),
     "total_trades": ExtractorSpec(
         _read_total_trades,
         range_factory=_native_range_factory("total_trades"),
-        range_kind="native_portfolio_metric",
     ),
     "win_rate": ExtractorSpec(
         _read_win_rate,
         scale="percent",
         range_factory=_native_range_factory("win_rate"),
-        range_kind="native_portfolio_metric",
     ),
     "total_fees_paid": ExtractorSpec(
         _read_total_fees_paid,
         range_factory=_native_range_factory("total_fees_paid"),
-        range_kind="native_portfolio_metric",
     ),
     "sharpe_ratio": ExtractorSpec(
         _read_sharpe_ratio,
         range_factory=_native_range_factory("sharpe_ratio"),
-        range_kind="native_portfolio_metric",
     ),
 }

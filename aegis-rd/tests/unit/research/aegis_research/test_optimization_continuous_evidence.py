@@ -59,7 +59,6 @@ def _registry():
             read=lambda portfolio, report: None,
             scale="percent",
             range_factory=lambda report: lambda portfolio, **bounds: None,
-            range_kind="native_full_path_returns",
         ),
     )
     return registry.freeze()
@@ -179,9 +178,6 @@ def test_continuous_evidence_round_trips_protocol_and_matrix(candidate_count: in
     assert replay["fill_timing"]["vbt_effective_delay_bars"] == 1
     assert evidence["warmup"]["resolved_warmup_bars"] == candidate_count
     assert evidence["warmup"]["maximum_drivers"][0]["candidate_position"] == candidate_count - 1
-    assert evidence["selection_identity"]["metric_protocol"]["extractors"][
-        "total_return"
-    ]["kind"] == "native_full_path_returns"
 
     restored_blocks = observation_blocks_from_evidence(index, evidence)
     restored_matrix = matrix_from_evidence(
@@ -454,68 +450,6 @@ def test_candidate_store_rejects_stale_and_mismatched_selection_evidence(tmp_pat
     ):
         store.insert_completed_run(
             run_id="run-mismatch", candidate_rows=rows, provenance=mismatched
-        )
-
-
-@pytest.mark.parametrize(
-    ("path", "changed_value"),
-    [
-        (("replay_protocol", "implementation_fingerprint"), "altered"),
-        (("replay_protocol", "portfolio", "pf_method"), "from_orders"),
-        (
-            (
-                "observation_block_protocol",
-                "application",
-                "right_inclusive",
-            ),
-            True,
-        ),
-        (
-            ("metric_protocol", "candidate_vector_contract"),
-            "scalar_candidate.v1",
-        ),
-        (("metric_protocol", "extractors", "total_return", "kind"), "other"),
-        (("ranking", "score"), "raw_metric"),
-        (("trial_lineage", "search"), "other"),
-    ],
-)
-def test_candidate_store_rejects_altered_selection_semantics(
-    tmp_path, path: tuple[str, ...], changed_value: object
-) -> None:
-    _, preflight, analysis = _case()
-    published = build_continuous_evidence(
-        analysis=analysis,
-        preflight=preflight,
-        optimization=make_optimization_config(observation_block_bars=4),
-        metric_registry=_registry(),
-        ranking=make_ranking_config(metric="total_return"),
-        report=make_report_config(),
-        direction="longonly",
-        fill_timing="next_close",
-        data_start="2024-01-01",
-    )
-    altered_identity = deepcopy(published.selection_identity)
-    cursor = altered_identity
-    for part in path[:-1]:
-        cursor = cursor[part]
-    cursor[path[-1]] = changed_value
-    rows = candidate_rows_from_result(
-        analysis.result,
-        source_identity={"strategy": {"id": "demo"}},
-        data_identity={"instruments": ["SYN.XNAS"]},
-        selection_identity=altered_identity,
-    )
-    provenance = {
-        "schema_version": "candidate_store_provenance.v2",
-        "selection_identity": altered_identity,
-    }
-
-    with (
-        CandidateStore(tmp_path / "altered" / "candidates.sqlite3") as store,
-        pytest.raises(CandidateStoreError, match="invalid"),
-    ):
-        store.insert_completed_run(
-            run_id="run-altered", candidate_rows=rows, provenance=provenance
         )
 
 

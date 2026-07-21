@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "0406279392764e261c5da4234d198365d52f7c5befaaed9144f5597a45f837d4",
+      "hash": "cde6d3dabde6f912d6c7731bdd370cedcd75f5d2fd870e1df451d1c787028ade",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "observation_block_count": 3
       },
-      "size": 504855,
+      "size": 504780,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -172,7 +172,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_38ee3e12f2370998fc50330984efe7b8",
+          "candidate_key": "cand_25d236be4ebaae32292a1026c78e62ef",
           "complete_period_metrics": {
             "max_dd": 27.043452145100744,
             "sharpe_ratio": -0.17267188338676512,
@@ -415,42 +415,42 @@
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_path_drawdown",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_path_returns",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
@@ -1623,7 +1623,7 @@
           }
         },
         {
-          "candidate_key": "cand_b4c5eed7a33c212b9dceea488b22e4d6",
+          "candidate_key": "cand_ceb1f6f376ce7539658f14001bc358c7",
           "complete_period_metrics": {
             "max_dd": 23.779896871973637,
             "sharpe_ratio": -0.11453647945898061,
@@ -1866,42 +1866,42 @@
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_path_drawdown",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_path_returns",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
@@ -3074,7 +3074,7 @@
           }
         },
         {
-          "candidate_key": "cand_d437016d1727c1e865223c76d339709d",
+          "candidate_key": "cand_f1e3876a3275b73f2b9398e458ddfa29",
           "complete_period_metrics": {
             "max_dd": 35.84222833612172,
             "sharpe_ratio": -0.5146992551247971,
@@ -3317,42 +3317,42 @@
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_path_drawdown",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_full_path_returns",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   },
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
                   },
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
-                    "kind": "native_portfolio_metric",
+                    "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
@@ -7628,42 +7628,42 @@
               "max_dd": {
                 "absolute": true,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_full_path_drawdown",
+                "kind": "native_full_portfolio",
                 "scale": "percent",
                 "source_type": "vbt_stats"
               },
               "sharpe_ratio": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_portfolio_metric",
+                "kind": "native_full_portfolio",
                 "scale": "identity",
                 "source_type": "vbt_stats"
               },
               "total_fees_paid": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_portfolio_metric",
+                "kind": "native_full_portfolio",
                 "scale": "identity",
                 "source_type": "vbt_stats"
               },
               "total_return": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_full_path_returns",
+                "kind": "native_full_portfolio",
                 "scale": "percent",
                 "source_type": "vbt_stats"
               },
               "total_trades": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_portfolio_metric",
+                "kind": "native_full_portfolio",
                 "scale": "identity",
                 "source_type": "vbt_stats"
               },
               "win_rate": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
-                "kind": "native_portfolio_metric",
+                "kind": "native_full_portfolio",
                 "scale": "percent",
                 "source_type": "vbt_stats"
               }

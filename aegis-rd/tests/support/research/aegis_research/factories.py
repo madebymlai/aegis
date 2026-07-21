@@ -219,7 +219,7 @@ def make_selection_identity(**overrides: Any) -> dict[str, Any]:
             "candidate_vector_contract": "non_scalar_canonical_candidate_series.v1",
             "extractors": {
                 "total_return": {
-                    "kind": "native_full_path_returns",
+                    "kind": "native_full_portfolio",
                     "source_type": "vbt_stats",
                     "boundary_semantics": "native_continuous",
                     "scale": "percent",

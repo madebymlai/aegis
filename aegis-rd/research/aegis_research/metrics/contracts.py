@@ -25,19 +25,12 @@ class ExtractorSpec:
     deliberately NOT baked into the read. An ``ExtractorSpec`` is the value half
     of a Metric's registry record (``MetricDefinition`` is the identity half);
     it carries a callable and so is never part of the fingerprint payload.
-    ``range_kind`` records the actual bounded-analysis seam for Evidence.
     """
 
     read: Callable[..., Any]
     scale: Literal["percent", "identity"] = "identity"
     abs_: bool = False
     range_factory: Callable[[Any], Callable[..., Any]] | None = None
-    range_kind: Literal[
-        "native_portfolio_metric",
-        "native_full_path_returns",
-        "native_full_path_drawdown",
-        "canonical_full_path_primitives",
-    ] | None = None
 
 
 @dataclass(frozen=True)
