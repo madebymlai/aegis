@@ -22,7 +22,7 @@ from research.aegis_research.optimization.observation_blocks import (
     ObservationBlockAnalysis,
     ObservationBlocks,
     analyze_development_paths,
-    select_observation_block_representatives,
+    rank_observation_block_candidates,
 )
 from research.aegis_research.optimization.precompute import (
     IndicatorPrecompute,
@@ -199,9 +199,7 @@ def test_random_sample_changes_common_start_only_through_sampled_candidates() ->
                 lambda candidate: {"indicators/demo": candidate["indicator.window"]},
                 params=params,
             ),
-            optimization=make_optimization_config(
-                search="random", random_subset=1, seed=seed
-            ),
+            optimization=make_optimization_config(search="random", random_subset=1, seed=seed),
             book=ResolvedBook(make_portfolio_config(fill_timing="next_close")),
             report=make_report_config(),
             metric_registry=make_metric_registry_for(()),
@@ -252,8 +250,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
     sequential_analyses = []
     for position, key in enumerate(batch.candidates.keys):
         scalar_params = {
-            name: vbt.Param([key[level]])
-            for level, name in enumerate(batch.candidates.param_names)
+            name: vbt.Param([key[level]]) for level, name in enumerate(batch.candidates.param_names)
         }
         sequential = build_development_paths(
             arrays=make_run_arrays(close=close, open_=close),
@@ -303,13 +300,13 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         ranking_ranks=ranking_matrix.rank(axis="index", ascending=False, method="average"),
         full_period_metrics=sequential_full_period,
         verdicts=batch.verdicts,
-        result=select_observation_block_representatives(
+        result=rank_observation_block_candidates(
             ranking_matrix,
             param_names=batch.candidates.param_names,
             verdicts=batch.verdicts,
             full_period_metrics=sequential_full_period,
             definition=registry.get("total_return"),
-        ),
+        ).result,
     )
     evidence_kwargs = {
         "preflight": preflight,
@@ -321,12 +318,8 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         "fill_timing": "next_close",
         "data_start": "2024-01-01",
     }
-    batched_evidence = build_continuous_evidence(
-        analysis=batch_analysis, **evidence_kwargs
-    )
-    sequential_evidence = build_continuous_evidence(
-        analysis=sequential_analysis, **evidence_kwargs
-    )
+    batched_evidence = build_continuous_evidence(analysis=batch_analysis, **evidence_kwargs)
+    sequential_evidence = build_continuous_evidence(analysis=sequential_analysis, **evidence_kwargs)
 
     assert canonical_json_bytes(batched_evidence.execution) == canonical_json_bytes(
         sequential_evidence.execution

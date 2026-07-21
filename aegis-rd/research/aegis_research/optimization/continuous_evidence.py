@@ -24,6 +24,7 @@ from research.aegis_research.optimization.observation_blocks import (
     ObservationBlockAnalysis,
     ObservationBlocks,
     observation_block_protocol,
+    observation_block_ranking_protocol,
 )
 from research.aegis_research.optimization.preflight import OptimizationPreflight
 from research.aegis_research.optimization.window_evaluation._simulation import (
@@ -70,6 +71,7 @@ def build_continuous_evidence(
         }
         for position in range(candidates.count)
     ]
+    candidate_positions = {key: position for position, key in enumerate(candidates.keys)}
     warmup = _warmup_evidence(preflight, data_start=data_start)
     block_protocol = observation_block_protocol(analysis.blocks)
     replay_protocol = continuous_replay_protocol(
@@ -103,14 +105,9 @@ def build_continuous_evidence(
                 "periods_per_year": report.periods_per_year,
                 "year_freq": report.year_freq,
             },
-            "ranking": {
-                "metric": ranking.metric,
-                "direction": ranking_definition.direction,
-                "min_trades": ranking.min_trades,
-                "score": "mean_within_observation_block_rank",
-                "tie_method": "average",
-                "equal_score_tie_break": "materialized_candidate_position",
-            },
+            "ranking": observation_block_ranking_protocol(
+                ranking_definition, min_trades=ranking.min_trades
+            ),
         }
     )
     execution = _canonical_mapping(
@@ -124,23 +121,12 @@ def build_continuous_evidence(
                 for metric_id, matrix in sorted(analysis.metric_matrices.items())
             },
             "within_block_rank_matrix": matrix_to_evidence(analysis.ranking_ranks),
-            "mean_ranks": [
-                {
-                    "candidate_position": _candidate_position(candidates.keys, key),
-                    "params": candidate_grid[
-                        _candidate_position(candidates.keys, key)
-                    ]["params"],
-                    "value": _optional_float(value),
-                }
-                for key, value in zip(
-                    analysis.ranking_ranks.index.tolist(),
-                    analysis.ranking_ranks.mean(axis="columns").tolist(),
-                    strict=True,
-                )
-            ],
-            "complete_period_metrics": table_to_evidence(
-                analysis.full_period_metrics
+            "mean_ranks": _mean_rank_evidence(
+                analysis.ranking_ranks,
+                candidate_positions=candidate_positions,
+                candidate_grid=candidate_grid,
             ),
+            "complete_period_metrics": table_to_evidence(analysis.full_period_metrics),
             "representatives": _representative_evidence(analysis),
             "candidate_accounting": {
                 "total": analysis.result.total_candidates,
@@ -180,10 +166,7 @@ def matrix_to_evidence(matrix: pd.DataFrame) -> dict[str, Any]:
             {"label": str(label), "start": int(start), "end": int(end)}
             for label, start, end in matrix.columns.tolist()
         ],
-        "values": [
-            [_optional_float(value) for value in row]
-            for row in matrix.to_numpy().tolist()
-        ],
+        "values": [[_optional_float(value) for value in row] for row in matrix.to_numpy().tolist()],
     }
 
 
@@ -223,10 +206,7 @@ def table_to_evidence(table: pd.DataFrame) -> dict[str, Any]:
             "values": [list(map(canonical_value, _as_tuple(value))) for value in table.index],
         },
         "metrics": [str(column) for column in table.columns],
-        "values": [
-            [_optional_float(value) for value in row]
-            for row in table.to_numpy().tolist()
-        ],
+        "values": [[_optional_float(value) for value in row] for row in table.to_numpy().tolist()],
     }
 
 
@@ -274,9 +254,7 @@ def validate_selection_identity(identity: Mapping[str, Any]) -> None:
             raise TypeError(f"continuous selection identity requires {field}")
 
 
-def _warmup_evidence(
-    preflight: OptimizationPreflight, *, data_start: Any
-) -> dict[str, Any]:
+def _warmup_evidence(preflight: OptimizationPreflight, *, data_start: Any) -> dict[str, Any]:
     candidates = preflight.plan.candidates
     lookbacks = preflight.plan.lookbacks
     records = []
@@ -285,8 +263,7 @@ def _warmup_evidence(
         candidate_maximum = lookbacks.candidate_warmup_bars[position]
         params = _canonical_mapping(candidates.params_at(position))
         canonical_lookbacks = {
-            str(component): int(bars)
-            for component, bars in sorted(component_lookbacks.items())
+            str(component): int(bars) for component, bars in sorted(component_lookbacks.items())
         }
         records.append(
             {
@@ -317,14 +294,26 @@ def _warmup_evidence(
     }
 
 
-def _candidate_position(
-    candidate_keys: tuple[tuple[Any, ...], ...], value: Any
-) -> int:
-    key = _as_tuple(value)
-    try:
-        return candidate_keys.index(key)
-    except ValueError as error:
-        raise ValueError("rank matrix contains an unknown Candidate identity") from error
+def _mean_rank_evidence(
+    ranks: pd.DataFrame,
+    *,
+    candidate_positions: dict[tuple[Any, ...], int],
+    candidate_grid: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for key, value in zip(ranks.index.tolist(), ranks.mean(axis="columns").tolist(), strict=True):
+        try:
+            position = candidate_positions[_as_tuple(key)]
+        except KeyError as error:
+            raise ValueError("rank matrix contains an unknown Candidate identity") from error
+        records.append(
+            {
+                "candidate_position": position,
+                "params": candidate_grid[position]["params"],
+                "value": _optional_float(value),
+            }
+        )
+    return records
 
 
 def _candidate_verdict(key: tuple[Any, ...], verdicts: Verdicts) -> str:
@@ -368,9 +357,7 @@ def _representative_evidence(analysis: ObservationBlockAnalysis) -> list[dict[st
             "ordinal_rank": ordinal,
             "params": _canonical_mapping(candidate.params),
             "mean_rank": _optional_float(candidate.score),
-            "observation_block_metrics": _block_metrics(
-                candidate.observation_block_metrics
-            ),
+            "observation_block_metrics": _block_metrics(candidate.observation_block_metrics),
             "complete_period_metrics": _metric_map(candidate.metrics),
         }
         for ordinal, (role, candidate) in enumerate(
@@ -428,9 +415,7 @@ def _restore_canonical(value: Any) -> Any:
         return _restore_canonical(value["value"])
     if kind == "repr":
         return str(value["value"])
-    return tuple(
-        (str(key), _restore_canonical(item)) for key, item in sorted(value.items())
-    )
+    return tuple((str(key), _restore_canonical(item)) for key, item in sorted(value.items()))
 
 
 __all__ = [

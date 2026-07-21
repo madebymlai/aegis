@@ -18,7 +18,6 @@ from research.aegis_research.optimization.observation_blocks import (
     apply_metric_to_blocks,
     apply_registered_metric_to_blocks,
     rank_observation_block_candidates,
-    select_observation_block_representatives,
 )
 from tests.support.research.aegis_research.factories import make_report_config
 
@@ -123,9 +122,7 @@ def test_vbt_constructor_and_apply_contract_are_pinned(
     assert calls["constructor_kwargs"]["split_labels"].equals(
         pd.Index(["b0", "b1"], name="observation_block")
     )
-    assert calls["constructor_kwargs"]["set_labels"].equals(
-        pd.Index(["observation"], name="set")
-    )
+    assert calls["constructor_kwargs"]["set_labels"].equals(pd.Index(["observation"], name="set"))
     assert isinstance(calls["apply_args"][0], vbt.Rep)
     assert calls["apply_args"][1] is portfolio
     assert calls["apply_kwargs"] == {
@@ -192,13 +189,13 @@ def test_one_candidate_remains_a_vector_and_two_dimensional_matrix() -> None:
         unit="ratio",
         value_semantics="test score",
     )
-    selected = select_observation_block_representatives(
+    selected = rank_observation_block_candidates(
         result,
         param_names=("window",),
         verdicts=Verdicts(valid={(1,)}),
         full_period_metrics=pd.DataFrame({"score": [999.0]}, index=candidate_index),
         definition=definition,
-    )
+    ).result
 
     assert selected.best == selected.median == selected.worst
     assert selected.best.score == 1.0
@@ -206,12 +203,8 @@ def test_one_candidate_remains_a_vector_and_two_dimensional_matrix() -> None:
 
 def test_registered_metric_aligns_authored_levels_to_canonical_candidate_identity() -> None:
     blocks = ObservationBlocks.from_bounds(pd.RangeIndex(4), [(0, 2), (2, 4)])
-    candidate_index = pd.MultiIndex.from_tuples(
-        [(1, 2), (3, 4)], names=["a", "b"]
-    )
-    authored_index = pd.MultiIndex.from_tuples(
-        [(2, 1), (4, 3)], names=["b", "a"]
-    )
+    candidate_index = pd.MultiIndex.from_tuples([(1, 2), (3, 4)], names=["a", "b"])
+    authored_index = pd.MultiIndex.from_tuples([(2, 1), (4, 3)], names=["b", "a"])
     definition = MetricDefinition(
         id="score",
         title="Score",
@@ -281,9 +274,7 @@ def test_registered_metric_expands_vbt_candidate_key_index_to_canonical_levels()
     candidate_index = pd.MultiIndex.from_tuples(
         [(1, 0.25), (3, 0.75)], names=["window", "threshold"]
     )
-    collapsed_index = pd.Index(
-        [(1, 0.25), (3, 0.75)], tupleize_cols=False, name="candidate_id"
-    )
+    collapsed_index = pd.Index([(1, 0.25), (3, 0.75)], tupleize_cols=False, name="candidate_id")
     definition = MetricDefinition(
         id="score",
         title="Score",
@@ -321,9 +312,7 @@ def test_mean_rank_beats_one_arbitrarily_large_block_win_and_ignores_full_metric
         index=candidate_index,
         columns=["b0", "b1", "b2"],
     )
-    full_metrics = pd.DataFrame(
-        {"score": [1_000_000.0, 3.0, -3.0]}, index=candidate_index
-    )
+    full_metrics = pd.DataFrame({"score": [1_000_000.0, 3.0, -3.0]}, index=candidate_index)
     definition = MetricDefinition(
         id="score",
         title="Score",
@@ -333,13 +322,13 @@ def test_mean_rank_beats_one_arbitrarily_large_block_win_and_ignores_full_metric
         direction="maximize",
     )
 
-    result = select_observation_block_representatives(
+    result = rank_observation_block_candidates(
         metric_matrix,
         param_names=("window",),
         verdicts=Verdicts(valid=set(candidate_index.tolist())),
         full_period_metrics=full_metrics,
         definition=definition,
-    )
+    ).result
 
     assert result.best.params == {"window": 2}
     assert result.median.params == {"window": 1}
@@ -367,9 +356,7 @@ def test_published_ranks_are_the_exact_admissible_ranks_used_for_selection() -> 
         metric_matrix,
         param_names=("window",),
         verdicts=Verdicts(invalid={(1,)}, valid={(2,), (3,)}),
-        full_period_metrics=pd.DataFrame(
-            {"score": [100.0, 15.0, 10.0]}, index=candidate_index
-        ),
+        full_period_metrics=pd.DataFrame({"score": [100.0, 15.0, 10.0]}, index=candidate_index),
         definition=definition,
     )
 
@@ -381,18 +368,22 @@ def test_published_ranks_are_the_exact_admissible_ranks_used_for_selection() -> 
     assert ranking.result.worst.score == 2.0
 
 
-@pytest.mark.parametrize("direction", ["maximize", "minimize"])
+@pytest.mark.parametrize(
+    ("direction", "values"),
+    [
+        ("maximize", [[1.0, 1.0], [1.0, 1.0], [0.0, 0.0], [None, None]]),
+        ("minimize", [[-1.0, -1.0], [-1.0, -1.0], [0.0, 0.0], [None, None]]),
+    ],
+)
 def test_exact_rank_ties_use_parameter_order_for_odd_even_and_missing(
-    direction: str,
+    direction: str, values: list[list[float | None]]
 ) -> None:
     candidate_index = _candidate_index(1, 2, 3, 4)
     matrix = pd.DataFrame(
-        [[1.0, 1.0], [1.0, 1.0], [0.0, 0.0], [None, None]],
+        values,
         index=candidate_index,
         columns=["b0", "b1"],
     )
-    if direction == "minimize":
-        matrix = -matrix
     definition = MetricDefinition(
         id="score",
         title="Score",
@@ -402,13 +393,15 @@ def test_exact_rank_ties_use_parameter_order_for_odd_even_and_missing(
         direction=direction,
     )
 
-    result = select_observation_block_representatives(
+    result = rank_observation_block_candidates(
         matrix,
         param_names=("window",),
         verdicts=Verdicts(valid=set(candidate_index.tolist())),
-        full_period_metrics=pd.DataFrame({"score": [999.0, -999.0, 0.0, 0.0]}, index=candidate_index),
+        full_period_metrics=pd.DataFrame(
+            {"score": [999.0, -999.0, 0.0, 0.0]}, index=candidate_index
+        ),
         definition=definition,
-    )
+    ).result
 
     assert result.best.params == {"window": 1}
     assert result.median.params == {"window": 2}

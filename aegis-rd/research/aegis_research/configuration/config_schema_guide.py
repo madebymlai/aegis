@@ -131,9 +131,7 @@ def _render_forward_contract() -> str:
     lines.append(f"- **`schema_version`** — must be present and exactly `{ver}`.")
 
     # optimization required
-    lines.append(
-        f"- **`optimization`** — required. {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE}"
-    )
+    lines.append(f"- **`optimization`** — required. {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE}")
 
     # removed fields
     lines.append(
@@ -331,7 +329,7 @@ def _render_lock_section() -> str:
         "",
         "When `lock` is present, the run takes every Component's parameters from the "
         "locked Candidate rather than searching for new ones. The `optimization` "
-        "section is still required but its `search` / `split` values are ignored.",
+        "section is still required, but locked runs do not perform Candidate search.",
         "",
     ]
     lines.append(_render_field_table(Lock))

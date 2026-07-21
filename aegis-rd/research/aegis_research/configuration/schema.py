@@ -19,7 +19,6 @@ from research.aegis_research.configuration.field_types import (
     PositiveCash,
     PositiveInt,
     RootSymbol,
-    StrictFloat,
     TimedeltaStr,
     UnitInterval,
 )
@@ -220,9 +219,7 @@ def _require_unique_non_empty(
 
 
 def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    return merge_data_arrays(
-        *(DATA_ARRAY_SHORTCUTS.get(token, (token,)) for token in arrays)
-    )
+    return merge_data_arrays(*(DATA_ARRAY_SHORTCUTS.get(token, (token,)) for token in arrays))
 
 
 def merge_data_arrays(*array_groups: tuple[str, ...]) -> tuple[str, ...]:
@@ -352,9 +349,6 @@ class PortfolioConfig:
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class ReportConfig:
-    min_oos_sharpe: StrictFloat = 0.5
-    max_oos_drawdown: UnitInterval = 0.35
-    min_oos_trades: NonNegativeInt = 5
     freq: TimedeltaStr = "1D"
     year_freq: TimedeltaStr = "252D"
     # Extra opt-in custom metrics to compute and report per candidate alongside the
@@ -415,18 +409,14 @@ class OptimizationConfig:
     def _random_needs_subset_and_seed(self):
         if self.search == "random":
             if self.random_subset is None:
-                raise ValueError(
-                    "random_subset is required when optimization.search is 'random'"
-                )
+                raise ValueError("random_subset is required when optimization.search is 'random'")
             if self.seed is None:
                 raise ValueError(
                     "seed is required when optimization.search is 'random' "
                     "so sampled evidence is deterministic"
                 )
         if self.search == "grid" and self.random_subset is not None:
-            raise ValueError(
-                "random_subset is only valid when optimization.search is 'random'"
-            )
+            raise ValueError("random_subset is only valid when optimization.search is 'random'")
         return self
 
     @model_validator(mode="after")

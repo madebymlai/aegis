@@ -37,6 +37,9 @@ OBSERVATION_BLOCK_APPLICATION = {
     "merge_func": "column_stack",
     "wrap_results": True,
 }
+_RANK_METHOD = "average"
+_RANK_SCORE = "mean_within_observation_block_rank"
+_RANK_TIE_BREAK = "materialized_candidate_position"
 
 
 class ObservationBlockError(ValueError):
@@ -69,11 +72,7 @@ class ObservationBlocks:
             raise ObservationBlockError(
                 "scored_start must select an integer position in the path index"
             )
-        if (
-            not isinstance(block_bars, int)
-            or isinstance(block_bars, bool)
-            or block_bars <= 0
-        ):
+        if not isinstance(block_bars, int) or isinstance(block_bars, bool) or block_bars <= 0:
             raise ObservationBlockError("Observation Block bars must be a positive integer")
         complete_blocks = (len(index) - scored_start) // block_bars
         if complete_blocks < 2:
@@ -223,9 +222,7 @@ def apply_registered_metric_to_blocks(
     """Apply the registry-owned native/custom extractor and transforms."""
     range_factory = spec.range_factory
     if range_factory is None:
-        raise ObservationBlockError(
-            f"Metric {definition.id!r} has no bounds-aware range extractor"
-        )
+        raise ObservationBlockError(f"Metric {definition.id!r} has no bounds-aware range extractor")
     read_bounds = range_factory(report)
     metric_input = full_portfolio if definition.source_type == "vbt_stats" else primitives
 
@@ -246,9 +243,7 @@ def apply_registered_metric_to_blocks(
     return apply_metric_to_blocks(blocks, metric_input, extractor, candidate_index)
 
 
-def _align_registered_candidates(
-    raw: pd.Series, candidate_index: pd.Index
-) -> pd.Series:
+def _align_registered_candidates(raw: pd.Series, candidate_index: pd.Index) -> pd.Series:
     """Align VBT's authored parameter-level order to canonical Candidate identity."""
     if (
         isinstance(raw.index, pd.MultiIndex)
@@ -260,9 +255,8 @@ def _align_registered_candidates(
     ):
         raw = raw.reorder_levels(candidate_index.names)
     names_match = list(raw.index.names) == list(candidate_index.names)
-    vbt_dropped_level_names = (
-        raw.index.nlevels == candidate_index.nlevels
-        and all(name is None for name in raw.index.names)
+    vbt_dropped_level_names = raw.index.nlevels == candidate_index.nlevels and all(
+        name is None for name in raw.index.names
     )
     vbt_collapsed_candidate_key = (
         not isinstance(raw.index, pd.MultiIndex)
@@ -307,28 +301,8 @@ def _candidate_metric_vector(value: Any, candidate_index: pd.Index) -> pd.Series
             "bounds-aware extractor must return a CandidateMetricVector Series"
         )
     if not value.index.equals(candidate_index):
-        raise ObservationBlockError(
-            "CandidateMetricVector must use the canonical Candidate Index"
-        )
+        raise ObservationBlockError("CandidateMetricVector must use the canonical Candidate Index")
     return value.astype("float64")
-
-
-def select_observation_block_representatives(
-    metric_matrix: pd.DataFrame,
-    *,
-    param_names: Sequence[str],
-    verdicts: Verdicts,
-    full_period_metrics: pd.DataFrame,
-    definition: MetricDefinition,
-) -> OptimizationResult:
-    """Return representatives from the authoritative admissible rank matrix."""
-    return rank_observation_block_candidates(
-        metric_matrix,
-        param_names=param_names,
-        verdicts=verdicts,
-        full_period_metrics=full_period_metrics,
-        definition=definition,
-    ).result
 
 
 def rank_observation_block_candidates(
@@ -342,9 +316,7 @@ def rank_observation_block_candidates(
     """Rank admissible Candidates once and select representatives from those ranks."""
     candidate_keys = [_as_key(value) for value in metric_matrix.index.tolist()]
     positions = [
-        position
-        for position, key in enumerate(candidate_keys)
-        if key in verdicts.admissible
+        position for position, key in enumerate(candidate_keys) if key in verdicts.admissible
     ]
     if not positions:
         raise ObservationBlockError("no admissible Candidate survived continuous classification")
@@ -365,9 +337,7 @@ def rank_observation_block_candidates(
             EvaluatedCandidate(
                 params=dict(zip(param_names, key, strict=True)),
                 score=float(mean_ranks.iloc[local]),
-                observation_block_metrics=_observation_block_metrics(
-                    block_values, definition.id
-                ),
+                observation_block_metrics=_observation_block_metrics(block_values, definition.id),
                 metrics=_full_metrics(full_period_metrics.iloc[source_position]),
             )
         )
@@ -398,9 +368,8 @@ def analyze_development_paths(
         raise ObservationBlockError(
             f"ranking metric {ranking_metric!r} is not in the Metric registry"
         )
-    if (
-        blocks.index is not paths.replay.portfolio.wrapper.index
-        and not blocks.index.equals(paths.replay.portfolio.wrapper.index)
+    if blocks.index is not paths.replay.portfolio.wrapper.index and not blocks.index.equals(
+        paths.replay.portfolio.wrapper.index
     ):
         raise ObservationBlockError("Observation Blocks must use the continuous path index")
     if (
@@ -447,10 +416,24 @@ def analyze_development_paths(
 def _rank_matrix(matrix: pd.DataFrame, definition: MetricDefinition) -> pd.DataFrame:
     return matrix.rank(
         axis="index",
-        method="average",
+        method=_RANK_METHOD,
         ascending=definition.direction == "minimize",
         na_option="bottom",
     )
+
+
+def observation_block_ranking_protocol(
+    definition: MetricDefinition, *, min_trades: int
+) -> dict[str, Any]:
+    """Describe the ranking semantics owned and executed by this module."""
+    return {
+        "metric": definition.id,
+        "direction": definition.direction,
+        "min_trades": min_trades,
+        "score": _RANK_SCORE,
+        "tie_method": _RANK_METHOD,
+        "equal_score_tie_break": _RANK_TIE_BREAK,
+    }
 
 
 def _as_key(value: Any) -> tuple[Any, ...]:
@@ -461,8 +444,7 @@ def _observation_block_metrics(
     row: pd.Series, metric_id: str
 ) -> Mapping[Any, Mapping[str, float | None]]:
     return {
-        _block_label(column): {metric_id: _optional_float(value)}
-        for column, value in row.items()
+        _block_label(column): {metric_id: _optional_float(value)} for column, value in row.items()
     }
 
 
@@ -490,5 +472,6 @@ __all__ = [
     "apply_metric_to_blocks",
     "apply_registered_metric_to_blocks",
     "observation_block_protocol",
-    "select_observation_block_representatives",
+    "observation_block_ranking_protocol",
+    "rank_observation_block_candidates",
 ]

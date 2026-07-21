@@ -47,8 +47,7 @@ def _flat_adjusted_last() -> pd.Series:
 def _adjusted_last_with_cash_distribution() -> pd.Series:
     adjusted = _PRICE / (1.0 - (_DISTRIBUTION_AMOUNT / _PRICE))
     return pd.Series(
-        [_PRICE] * _DISTRIBUTION_OFFSET
-        + [adjusted] * (_PERIODS - _DISTRIBUTION_OFFSET),
+        [_PRICE] * _DISTRIBUTION_OFFSET + [adjusted] * (_PERIODS - _DISTRIBUTION_OFFSET),
         index=pd.date_range(_START, periods=_PERIODS, freq="D", tz="UTC"),
     )
 
@@ -121,9 +120,7 @@ def _pipeline_total_return(
         component_registry=registry,
         run_id=workspace.name,
     )
-    return float(
-        result["candidates"][0]["complete_period_metrics"]["total_return"]
-    )
+    return float(result["candidates"][0]["complete_period_metrics"]["total_return"])
 
 
 def _run_config(
@@ -155,7 +152,7 @@ def _run_config(
         "strategy": {"id": "demo.always_long"},
         "indicators": [],
         "ranking": {"metric": "total_return"},
-        "report": {"min_oos_trades": 0},
+        "report": {},
         "optimization": {
             "search": "grid",
             "observation_block_bars": 6,
@@ -178,16 +175,16 @@ def _write_always_long_strategy(path: Path) -> None:
         "'output_name': 'target_weights', 'owns_portfolio': False}\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
-        "    \"\"\"Return a fully invested long-only allocation frame.\"\"\"\n"
+        '    """Return a fully invested long-only allocation frame."""\n'
         "    close = bundle.data.array('Close')\n"
         "    return pd.DataFrame(1.0, index=close.index, columns=close.columns)\n"
         "\n# %% lookback\n"
         "def lookback(**params):\n"
-        "    \"\"\"Use the complete path without a warmup.\"\"\"\n"
+        '    """Use the complete path without a warmup."""\n'
         "    return 0\n"
         "\n# %% wide compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
-        "    \"\"\"Return a wide fully invested long-only allocation matrix.\"\"\"\n"
+        '    """Return a wide fully invested long-only allocation matrix."""\n'
         "    close = inputs.data.array('Close')\n"
         "    rows, symbols = close.shape\n"
         "    return np.ones((rows, n_candidates * symbols), dtype=float)\n"

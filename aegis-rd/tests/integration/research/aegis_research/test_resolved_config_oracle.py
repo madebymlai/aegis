@@ -62,9 +62,11 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 # resolved document shrank; the int-coercion case now rides init_cash.
 # Re-pinned 2026-07-21 for continuous Future-in-Past selection (aegis-rd-fuc9.5):
 # arbitrary Split configuration was replaced by required observation_block_bars.
+# Re-pinned 2026-07-22 when retired OOS promotion thresholds left ReportConfig:
+# the resolved document no longer advertises gates that selection does not use.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "d25b1a0ed51e276ebd3ee7ee8bb0de6b18c4876cfe1de22fe38ba90181934827",
-    "int_valued_cash": "8025de147021d748ce696fb17e4f021ff821196baaadc023e671f05b3b5f5684",
+    "canonical_grid": "ce6122fd477b7663225d1c8cd8d74eed952f4468d62238811230da02b3bb71f5",
+    "int_valued_cash": "d4f549878d468a235468431e9844995107ef59c269e8d3bab17340ac38ef81dc",
 }
 
 

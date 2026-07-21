@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -42,6 +43,13 @@ from tests.support.research.aegis_research.factories import (
     make_ranking_config,
     make_report_config,
 )
+
+
+def _set_nested_value(mapping: dict[str, Any], path: tuple[str | int, ...], value: object) -> None:
+    cursor: Any = mapping
+    for part in path[:-1]:
+        cursor = cursor[part]
+    cursor[path[-1]] = value
 
 
 def _registry():
@@ -180,9 +188,7 @@ def test_continuous_evidence_round_trips_protocol_and_matrix(candidate_count: in
     assert evidence["warmup"]["maximum_drivers"][0]["candidate_position"] == candidate_count - 1
 
     restored_blocks = observation_blocks_from_evidence(index, evidence)
-    restored_matrix = matrix_from_evidence(
-        evidence["raw_metric_matrices"]["total_return"]
-    )
+    restored_matrix = matrix_from_evidence(evidence["raw_metric_matrices"]["total_return"])
     assert restored_blocks.index.equals(analysis.blocks.index)
     assert restored_blocks.bounds == analysis.blocks.bounds
     assert restored_blocks.labels == analysis.blocks.labels
@@ -336,10 +342,7 @@ def test_candidate_key_changes_for_each_pinned_execution_contract(
         data_start="2024-01-01",
     )
     changed_identity = deepcopy(published.selection_identity)
-    cursor = changed_identity
-    for part in path[:-1]:
-        cursor = cursor[part]
-    cursor[path[-1]] = changed_value
+    _set_nested_value(changed_identity, path, changed_value)
 
     common = {
         "source_identity": {"strategy": {"id": "demo"}},
@@ -438,9 +441,7 @@ def test_candidate_store_rejects_stale_and_mismatched_selection_evidence(tmp_pat
         CandidateStore(tmp_path / "stale" / "candidates.sqlite3") as store,
         pytest.raises(CandidateStoreError, match="schema_version"),
     ):
-        store.insert_completed_run(
-            run_id="run-stale", candidate_rows=stale, provenance=provenance
-        )
+        store.insert_completed_run(run_id="run-stale", candidate_rows=stale, provenance=provenance)
 
     mismatched = deepcopy(provenance)
     mismatched["selection_identity"]["ranking"]["metric"] = "sharpe_ratio"
@@ -482,6 +483,4 @@ def test_candidate_store_rejects_row_params_that_disagree_with_identity(tmp_path
         CandidateStore(tmp_path / "params" / "candidates.sqlite3") as store,
         pytest.raises(CandidateStoreError, match=r"params.*identity"),
     ):
-        store.insert_completed_run(
-            run_id="run-params", candidate_rows=rows, provenance=provenance
-        )
+        store.insert_completed_run(run_id="run-params", candidate_rows=rows, provenance=provenance)

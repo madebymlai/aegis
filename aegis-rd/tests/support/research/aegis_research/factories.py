@@ -138,9 +138,6 @@ def make_portfolio_config(**overrides: Any) -> PortfolioConfig:
 def make_report_config(**overrides: Any) -> ReportConfig:
     """Return a ReportConfig with valid defaults, overridden by any kwargs."""
     defaults: dict[str, Any] = {
-        "min_oos_sharpe": 0.5,
-        "max_oos_drawdown": 0.35,
-        "min_oos_trades": 5,
         "freq": "1D",
         "year_freq": "252D",
     }
@@ -193,9 +190,7 @@ def make_optimization_config(**overrides: Any) -> OptimizationConfig:
 
 def make_selection_identity(**overrides: Any) -> dict[str, Any]:
     """Return a structurally current continuous-selection identity for tests."""
-    blocks = ObservationBlocks.from_bounds(
-        pd.RangeIndex(20), ((0, 10), (10, 20))
-    )
+    blocks = ObservationBlocks.from_bounds(pd.RangeIndex(20), ((0, 10), (10, 20)))
     defaults: dict[str, Any] = {
         "schema_version": CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
         "trial_lineage": {

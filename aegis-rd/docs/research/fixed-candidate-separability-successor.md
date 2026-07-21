@@ -1,5 +1,9 @@
 # Successor to the Friedman separability warning
 
+> **Status: superseded.** The continuous Observation-Block ranking design replaces
+> the whole-Development winner and separate held-out replay assumed below. This file
+> is retained only as historical research context.
+
 **Date:** 2026-07-21  
 **Question:** What should tell Aegis that the globally ranked fixed-Candidate winner is not uniquely supported by continuous Development evidence?
 

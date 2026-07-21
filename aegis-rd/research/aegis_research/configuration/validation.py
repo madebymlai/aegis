@@ -5,8 +5,7 @@ With ``RunConfig`` as a whole-tree pydantic dataclass, one
 and accumulates all structural errors natively.
 
 The coordinator owns:
-- Top-level prepass: ``schema_version`` presence/version check,
-  ``split.method`` inspection.
+- Top-level prepass: ``schema_version`` presence/version check.
 - Whole-tree pydantic ``validate_python`` call + error-to-issue adapter.
 - Name check and lock shape check.
 - One unconditional call to the registry cross-checks module.
@@ -90,6 +89,7 @@ def validate_run_config(
 
 # ── prepass ──────────────────────────────────────────────────────────────────
 
+
 def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
     """Raw-dict checks that must run before (or regardless of) pydantic validation.
 
@@ -108,7 +108,9 @@ def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]
         if field_name not in raw:
             issues.append(ConfigValidationIssue(field_name, required_message))
 
+
 # ── error adapter ────────────────────────────────────────────────────────────
+
 
 def _validation_error_to_issues_whole_tree(
     error: ValidationError,
@@ -140,6 +142,7 @@ def _validation_error_to_issues_whole_tree(
 
 
 # ── post-pydantic checks ────────────────────────────────────────────────────
+
 
 def _post_validate_name(
     name: str,

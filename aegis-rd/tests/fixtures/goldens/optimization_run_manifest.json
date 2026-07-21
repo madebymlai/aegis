@@ -120,10 +120,7 @@
     },
     "report": {
       "freq": "1D",
-      "max_oos_drawdown": 0.35,
       "metrics": [],
-      "min_oos_sharpe": 0.5,
-      "min_oos_trades": 5,
       "year_freq": "252D"
     },
     "schema_version": 11,
@@ -139,7 +136,7 @@
       "raw_config_identity": {
         "hash": "d976ef295e2d893924e4216fa7c3757e45cb53b4e239db89fb9cc854351e5f2c"
       },
-      "resolved_config_hash": "b24c52f10ad9e2e5e8a0c31d226ebd40ce9bbe1c48fbd67166c51571340364cc",
+      "resolved_config_hash": "9ad6031e69ca5217ef7ff62c6f7fcbba408d7621dcd7b8ddfe785e8ba482e426",
       "schema_version": 11,
       "selection": {
         "config_path": "<masked>",

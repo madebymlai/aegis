@@ -117,10 +117,9 @@ class _ComposedSource:
     def precompute(
         self, close: pd.DataFrame, n_candidates: int, **param_lists: Any
     ) -> IndicatorPrecompute:
-        # Run each indicator's batched callable once over ``close`` (the full series in
-        # the selection phase) and return a candidate-major store sliceable by split
-        # range. Candidates whose warmup still exceeds the full series are marked
-        # invalid by the runner before ranking.
+        # Run each indicator's batched callable once over ``close`` and return a
+        # candidate-major store. Candidates whose warmup exceeds the full series are
+        # marked invalid by the runner before ranking.
         data_full = _slice_data(self.data, close, self.input_names)
         n_symbols = len(close.columns)
         outputs: dict[str, np.ndarray] = {}
@@ -175,14 +174,10 @@ class _ComposedSource:
                 "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
             },
         )
-        strategy_params = _params_for_runtime(
-            self.strategy, param_lists, n_candidates=n_candidates
-        )
+        strategy_params = _params_for_runtime(self.strategy, param_lists, n_candidates=n_candidates)
         alloc_arr = _validated_component_array(
             self.strategy,
-            self.strategy.callable(
-                strategy_inputs, n_candidates=n_candidates, **strategy_params
-            ),
+            self.strategy.callable(strategy_inputs, n_candidates=n_candidates, **strategy_params),
             expected_shape=_candidate_major_shape(close_window, n_candidates),
             output_label="allocation",
         )
@@ -268,9 +263,7 @@ def _build_runtime(
     component_callable = definition.load_callable()
     param_space_callable = None if locked else definition.load_param_space()
     param_space = (
-        {}
-        if param_space_callable is None
-        else _load_param_space(definition, param_space_callable)
+        {} if param_space_callable is None else _load_param_space(definition, param_space_callable)
     )
     fixed_params = _fixed_params_for_ref(
         family,
@@ -376,9 +369,7 @@ def _validate_component_param_sources(
     fixed_params: Mapping[str, Any],
     param_space: Mapping[str, vbt.Param],
 ) -> None:
-    missing = sorted(
-        set(definition.declared_param_names()) - set(fixed_params) - set(param_space)
-    )
+    missing = sorted(set(definition.declared_param_names()) - set(fixed_params) - set(param_space))
     if missing:
         raise ComponentSourceError(
             f"component {definition.family}/{definition.id} has no fixed value or param space "
@@ -525,9 +516,7 @@ def _slice_data(
 ) -> MarketDataBundle:
     arrays: dict[str, pd.DataFrame] = {}
     for name in input_names:
-        arrays[name] = (
-            close_slice if name == "Close" else data.array(name).loc[close_slice.index]
-        )
+        arrays[name] = close_slice if name == "Close" else data.array(name).loc[close_slice.index]
     return MarketDataBundle(arrays=arrays)
 
 
