@@ -1,7 +1,7 @@
 name: atalanta_trend_buy_hold_spread
 schema_version: 11
 output_dir: runs/atalanta/trend-buy-hold-spread
-lock: 20260709T232701314885Z_atalanta_trend_buy_hold_spread
+lock: 20260722T121727832118Z_atalanta_trend_buy_hold_spread
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # ATALANTA — the definitive convex trend sleeve (the floor's long-gamma "drawdown payer").
