@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from research.aegis_research.canonical_json import to_builtin
@@ -28,7 +27,6 @@ def _utc_now() -> str:
 @dataclass
 class RunManifest:
     run_id: str
-    run_dir: Path
     config: dict[str, Any]
     status: str = RunStatus.RUNNING
     started_at: str = field(default_factory=_utc_now)
@@ -41,12 +39,10 @@ class RunManifest:
         cls,
         *,
         run_id: str,
-        run_dir: str | Path,
         config: dict[str, Any],
     ) -> RunManifest:
         return cls(
             run_id=run_id,
-            run_dir=Path(run_dir),
             config=to_builtin(config),
         )
 

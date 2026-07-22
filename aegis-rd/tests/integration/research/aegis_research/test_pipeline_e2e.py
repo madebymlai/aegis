@@ -81,7 +81,7 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     payload = json.loads(output.out)
     assert payload["status"] == "success"
 
-    manifest_path = tmp_path / "runs" / "pipeline-e2e" / "manifest.json"
+    manifest_path = tmp_path / "runs" / "pipeline-e2e.json"
     manifest = json.loads(manifest_path.read_text())
     assert not (tmp_path / "runs" / "pipeline-e2e" / "strategy_run.json").exists()
     assert not (tmp_path / "runs" / "pipeline-e2e" / "data_metadata.json").exists()

@@ -196,8 +196,7 @@ def test_run_success_payload_is_the_emitted_json_contract(
         return {
             "run_id": kwargs["run_id"],
             "status": "completed",
-            "run_dir": str(long_base),
-            "manifest_path": str(long_base / "manifest.json"),
+            "manifest_path": str(long_base / "stubbed-success.json"),
             "started_at": "2026-06-12T00:00:00Z",
             "finished_at": "2026-06-12T00:01:00Z",
             "candidate_store_path": str(store_path),
@@ -219,8 +218,7 @@ def test_run_success_payload_is_the_emitted_json_contract(
     assert payload["run"] == {
         "id": "stubbed-success",
         "status": "completed",
-        "run_dir": str(long_base.resolve(strict=False)),
-        "manifest_path": str((long_base / "manifest.json").resolve(strict=False)),
+        "manifest_path": str((long_base / "stubbed-success.json").resolve(strict=False)),
         "started_at": "2026-06-12T00:00:00Z",
         "finished_at": "2026-06-12T00:01:00Z",
     }
@@ -392,7 +390,7 @@ def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
     assert carry_on == carry_off
 
 
-def test_run_rejects_stale_train_shaped_config_before_run_directory(
+def test_run_rejects_stale_train_shaped_config_before_manifest_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -472,15 +470,14 @@ def test_run_refs_emits_absolute_paths_unscrubbed() -> None:
     refs: dict[str, object] = {
         "run_id": "abc123",
         "status": "success",
-        "run_dir": "/data/runs/abc123",
-        "manifest_path": "/data/runs/abc123/manifest.json",
+        "manifest_path": "/data/runs/abc123.json",
         "started_at": "2026-06-12T00:00:00Z",
         "finished_at": "2026-06-12T00:01:00Z",
     }
     block = run_refs(refs)
     assert block["id"] == "abc123"
-    assert block["run_dir"] == "/data/runs/abc123"
-    assert block["manifest_path"] == "/data/runs/abc123/manifest.json"
+    assert "run_dir" not in block
+    assert block["manifest_path"] == "/data/runs/abc123.json"
 
 
 def test_run_refs_resolves_relative_paths_against_cwd(
@@ -491,9 +488,9 @@ def test_run_refs_resolves_relative_paths_against_cwd(
     from research.aegis_research.cli_support.output import run_refs
 
     monkeypatch.chdir(tmp_path)
-    block = run_refs({"run_id": "x", "run_dir": "runs/x", "manifest_path": "runs/x/manifest.json"})
-    assert block["run_dir"] == str(tmp_path / "runs" / "x")
-    assert block["manifest_path"] == str(tmp_path / "runs" / "x" / "manifest.json")
+    block = run_refs({"run_id": "x", "manifest_path": "runs/x.json"})
+    assert "run_dir" not in block
+    assert block["manifest_path"] == str(tmp_path / "runs" / "x.json")
 
 
 def test_run_refs_stringifies_path_values() -> None:
@@ -506,12 +503,11 @@ def test_run_refs_stringifies_path_values() -> None:
     block = run_refs(
         {
             "run_id": "abc123",
-            "run_dir": Path("/data/runs/abc123"),
-            "manifest_path": Path("/data/runs/abc123/manifest.json"),
+            "manifest_path": Path("/data/runs/abc123.json"),
         }
     )
-    assert block["run_dir"] == "/data/runs/abc123"
-    assert block["manifest_path"] == "/data/runs/abc123/manifest.json"
+    assert "run_dir" not in block
+    assert block["manifest_path"] == "/data/runs/abc123.json"
 
 
 # ── config-schema show subcommand ────────────────────────────────────────────

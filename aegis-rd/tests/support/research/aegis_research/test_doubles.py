@@ -24,14 +24,13 @@ class FakeManifest:
 class FakeRecorder:
     """Stand-in for ``RunRecorder``.
 
-    ``run_dir`` is optional: publishing reads only ``manifest``; completion
-    also reads ``run_dir``/``manifest_path`` and marks the run completed.
+    ``manifest_path`` is optional: publishing reads only ``manifest``;
+    completion also reads the path and marks the run completed.
     """
 
-    def __init__(self, run_id: str, run_dir: Path | None = None) -> None:
+    def __init__(self, run_id: str, manifest_path: Path | None = None) -> None:
         self.manifest = FakeManifest(run_id)
-        self.run_dir = run_dir
-        self.manifest_path = run_dir / "manifest.json" if run_dir is not None else None
+        self.manifest_path = manifest_path
 
     def persist(self) -> None:
         pass
@@ -44,7 +43,6 @@ class FakeRecorder:
     def run_refs(self) -> dict[str, Any]:
         return {
             "run_id": self.manifest.run_id,
-            "run_dir": str(self.run_dir) if self.run_dir is not None else "",
             "manifest_path": str(self.manifest_path) if self.manifest_path is not None else "",
             "status": self.manifest.status,
             "started_at": self.manifest.started_at,

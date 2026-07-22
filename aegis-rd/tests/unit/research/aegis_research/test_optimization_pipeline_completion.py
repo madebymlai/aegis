@@ -72,7 +72,7 @@ def test_completion_returns_result_and_marks_completed(
     store_path = tmp_path / "candidates.sqlite3"
     setup = make_setup_result(store_path=store_path)
     run_id = "run-cmp"
-    run_dir = tmp_path / "runs" / run_id
+    manifest_path = tmp_path / "runs" / f"{run_id}.json"
 
     candidate_rows = _candidate_rows()
     publishing = PublishingResult(
@@ -92,7 +92,7 @@ def test_completion_returns_result_and_marks_completed(
             publication_state=PUBLICATION_PENDING,
         )
 
-    recorder = FakeRecorder(run_id, run_dir)
+    recorder = FakeRecorder(run_id, manifest_path)
     run_evidence = RunEvidence(
         recorder.manifest.evidence,
         component_registry_fingerprint="registry-fp",
@@ -125,8 +125,8 @@ def test_completion_returns_result_and_marks_completed(
 
     # Assert returned result dict
     assert result["run_id"] == run_id
-    assert result["run_dir"] == str(run_dir)
-    assert result["manifest_path"] == str(run_dir / "manifest.json")
+    assert "run_dir" not in result
+    assert result["manifest_path"] == str(manifest_path)
     assert "strategy_artifact_id" not in result
     assert "strategy_artifact_path" not in result
     assert result["candidate_store_path"] == str(store_path)

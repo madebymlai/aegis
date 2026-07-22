@@ -70,7 +70,7 @@ def _run(tmp_path: Path, capsys: pytest.CaptureFixture[str], config: dict, run_i
     assert exit_code == 0, f"CLI failed for {run_id}: {output.err}"
     payload = json.loads(output.out)
     assert payload["status"] == "success"
-    assert not (tmp_path / "runs" / run_id / "strategy_run.json").exists()
+    assert not (tmp_path / "runs" / run_id).exists()
     return payload
 
 

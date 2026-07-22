@@ -19,7 +19,6 @@ from tests.support.research.aegis_research.run_config_fixtures import build_reso
 def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
     manifest = RunManifest.new(
         run_id="run-1",
-        run_dir=tmp_path,
         config={"schema_version": 1},
     )
 

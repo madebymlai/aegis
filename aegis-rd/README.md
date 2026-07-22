@@ -13,11 +13,11 @@ promotion evidence. The result is a research process you can rerun, inspect,
 reject, or promote without relying on memory, notebooks, or hand-waved
 assumptions.
 
-Each valid run writes a local `manifest.json`. It records lifecycle status,
-config evidence, environment and Git evidence, artifact hashes, schema versions,
-and lineage. Failed runs stay inspectable. Optimization replays each Candidate
-once, observes fixed chronological blocks without resetting portfolio state, and
-writes immutable Candidate and lock Evidence.
+Each valid run writes one local `<run-id>.json` Manifest under its configured
+Run root. It records lifecycle status plus config, environment, Git, data, and
+optimization Evidence. Failed runs stay inspectable. Optimization replays each
+Candidate once, observes fixed chronological blocks without resetting portfolio
+state, and publishes representative Candidates to the shared Candidate Store.
 
 ## What it does
 
@@ -54,9 +54,9 @@ Each research loop follows one clear contract:
 
 Configs stay inert: YAML selects trusted IDs and parameters only. It cannot
 import Python, execute formulas, point at arbitrary notebooks or scripts, or
-reference generated run artifacts as reproducible inputs. Stale `lane`, `train`,
+reference generated Run files as reproducible inputs. Stale `lane`, `train`,
 `model`, `label`, `labeler`, or `signals` fields are rejected before a run
-directory is created.
+Manifest is created.
 
 ## Market data contract
 

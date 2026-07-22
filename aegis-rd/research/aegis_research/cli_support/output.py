@@ -138,7 +138,6 @@ def run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "id": refs.get("run_id") or refs.get("id"),
         "status": refs.get("status"),
-        "run_dir": real_path_text(refs.get("run_dir")),
         "manifest_path": real_path_text(refs.get("manifest_path")),
         "started_at": refs.get("started_at"),
         "finished_at": refs.get("finished_at"),

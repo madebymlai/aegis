@@ -76,3 +76,9 @@ contains identity, status, timing, and—only for failed or interrupted Runs—o
 fact with stage, exception type, and bounded message. The generic stage ledger, duplicate
 optimization-failure diagnostics, rerun modes, and parent/supersedes lineage are removed. The
 callback contract and exception propagation remain unchanged.
+
+**Amendment (2026-07-23) — flattened Run storage.** Each Run is now one Manifest file named
+`<run-id>.json` directly under the configured Run root. The recorder's refs projection therefore
+becomes a five-field dict: Run ID, Manifest path, status, started-at, and finished-at. Both callback
+firings still carry live in-memory lifecycle facts after persistence, and no failure path rereads
+the Manifest. The removed Run-directory field has no placeholder or compatibility alias.

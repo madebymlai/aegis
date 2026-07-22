@@ -1,7 +1,7 @@
 """Golden-bytes oracle: a full optimization Run's persisted Manifest is byte-stable.
 
 Executes a complete synthetic Run (fixture Components, pinned seed, pinned
-run-id) through the real CLI and compares the persisted ``manifest.json`` —
+run-id) through the real CLI and compares the persisted Manifest —
 volatile fields masked, re-serialized in Canonical Form — byte-for-byte
 against a committed golden. Any unexpected movement in config evidence,
 optimization evidence, stage outcomes, artifact hashes, or candidate rows
@@ -50,8 +50,8 @@ def test_optimization_run_manifest_matches_golden_bytes(tmp_path, monkeypatch) -
 
     assert cli.main(["run", str(config_path), "--run-id", _RUN_ID]) == 0
 
-    run_dir = tmp_path / "runs" / _RUN_ID
-    manifest = json.loads((run_dir / "manifest.json").read_text())
+    manifest_path = tmp_path / "runs" / f"{_RUN_ID}.json"
+    manifest = json.loads(manifest_path.read_text())
     source_evidence = manifest["evidence"]["optimization"]["source"]
 
     assert source_evidence["schema_version"] == "component_optimization_source.v2"

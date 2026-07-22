@@ -82,3 +82,7 @@ for Candidate rows, roles, activation, Candidate Keys, and Lock resolution; its 
 longer names a strategy artifact. The CLI still returns representative Candidate summaries and
 copy-paste Lock handles directly from the completed in-memory result. Lock resolution and exact
 Candidate reproduction therefore depend only on the authority this ADR established.
+
+**Amendment (2026-07-23) — Run IDs outlive the directory layout.** A Lock handle continues to use
+the Run ID recorded in Candidate Store; it is no longer described as a folder name. Flattening Run
+storage to `<run-id>.json` changes neither Lock parsing nor Candidate lookup.

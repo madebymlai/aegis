@@ -27,16 +27,19 @@ class RunStore:
     ) -> RunRecorder:
         _assert_relative_run_root_safe(self.root_dir)
         physical_run_id = _validate_run_id(run_id or _new_run_id(str(config["name"])))
-        run_dir = self.root_dir / physical_run_id
-        _assert_run_dir_within_root(self.root_dir, run_dir)
-        if run_dir.exists():
-            raise RunCollisionError(f"Run already exists: {run_dir}")
+        manifest_path = self.root_dir / f"{physical_run_id}.json"
+        _assert_manifest_path_within_root(self.root_dir, manifest_path)
+        if manifest_path.exists():
+            raise RunCollisionError(f"Run already exists: {manifest_path}")
 
-        return RunRecorder.start(
-            run_dir=run_dir,
-            run_id=physical_run_id,
-            config=config,
-        )
+        try:
+            return RunRecorder.start(
+                manifest_path=manifest_path,
+                run_id=physical_run_id,
+                config=config,
+            )
+        except FileExistsError as error:
+            raise RunCollisionError(f"Run already exists: {manifest_path}") from error
 
 
 def _new_run_id(run_label: str) -> str:
@@ -52,9 +55,9 @@ def _validate_run_id(run_id: str) -> str:
     return run_id
 
 
-def _assert_run_dir_within_root(root_dir: Path, run_dir: Path) -> None:
+def _assert_manifest_path_within_root(root_dir: Path, manifest_path: Path) -> None:
     root = root_dir.resolve(strict=False)
-    target = run_dir.resolve(strict=False)
+    target = manifest_path.resolve(strict=False)
     if root not in target.parents:
         raise ValueError("run_id must resolve inside the run root")
 

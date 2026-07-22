@@ -18,7 +18,7 @@ from tests.support.research.aegis_research.run_config_fixtures import build_reso
 
 def test_run_recorder_starts_and_completes_manifest(tmp_path: Path) -> None:
     recorder = RunRecorder.start(
-        run_dir=tmp_path / "run-1",
+        manifest_path=tmp_path / "run-1.json",
         run_id="run-1",
         config={"schema_version": 1},
     )
@@ -41,6 +41,8 @@ def test_run_store_new_mode_rejects_existing_run_id(tmp_path: Path) -> None:
         config={"schema_version": 1},
         run_id="fixed-run",
     )
+    assert (tmp_path / "fixed-run.json").is_file()
+    assert not (tmp_path / "fixed-run").exists()
 
     with pytest.raises(RunCollisionError):
         store.start_run(
@@ -78,7 +80,7 @@ def test_run_store_rejects_relative_symlinked_run_root(
             run_id="escape-run",
         )
 
-    assert not (outside / "escape-run").exists()
+    assert not (outside / "escape-run.json").exists()
 
 
 def test_strategy_run_initializes_manifest_before_data_loading(
@@ -89,7 +91,7 @@ def test_strategy_run_initializes_manifest_before_data_loading(
     resolved = build_resolved_run_config(tmp_path)
 
     def fail_after_manifest(_config, **_kwargs):
-        manifest_path = tmp_path / "runs" / "fixed-run" / "manifest.json"
+        manifest_path = tmp_path / "runs" / "fixed-run.json"
         assert manifest_path.exists()
         raise RuntimeError("data stage failed")
 
@@ -102,7 +104,7 @@ def test_strategy_run_initializes_manifest_before_data_loading(
             run_id="fixed-run",
         )
 
-    manifest = json.loads((tmp_path / "runs" / "fixed-run" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "fixed-run.json").read_text())
     assert manifest["run"]["status"] == RunStatus.FAILED
     assert manifest["run"]["failure"] == {
         "stage": "data",
@@ -184,7 +186,7 @@ def test_strategy_run_marks_failed_when_on_run_refs_callback_fails(
             on_run_refs=fail_callback,
         )
 
-    manifest = json.loads((tmp_path / "runs" / "callback-failed-run" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "callback-failed-run.json").read_text())
     assert manifest["run"]["status"] == RunStatus.FAILED
     assert manifest["run"]["failure"] == {
         "stage": "run",
@@ -222,7 +224,7 @@ def test_failed_run_diagnostic_is_length_clipped_not_redacted(
             run_id="secret-failed-run",
         )
 
-    manifest = json.loads((tmp_path / "runs" / "secret-failed-run" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "secret-failed-run.json").read_text())
     diagnostic = manifest["run"]["failure"]
     assert diagnostic["stage"] == "data"
     assert diagnostic["message"] == long_message[:1000]

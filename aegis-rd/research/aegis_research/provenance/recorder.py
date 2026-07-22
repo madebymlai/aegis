@@ -14,27 +14,27 @@ _FAILURE_MESSAGE_LIMIT = 1000
 
 
 class RunRecorder:
-    def __init__(self, manifest: RunManifest) -> None:
+    def __init__(self, manifest: RunManifest, manifest_path: Path) -> None:
         self.manifest = manifest
-        self.run_dir = manifest.run_dir
-        self.manifest_path = self.run_dir / "manifest.json"
+        self.manifest_path = manifest_path
 
     @classmethod
     def start(
         cls,
         *,
-        run_dir: str | Path,
+        manifest_path: str | Path,
         run_id: str,
         config: dict[str, Any],
     ) -> RunRecorder:
-        path = Path(run_dir)
-        path.mkdir(parents=True, exist_ok=False, mode=0o700)
+        path = Path(manifest_path)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if path.exists():
+            raise FileExistsError(f"Run already exists: {path}")
         manifest = RunManifest.new(
             run_id=run_id,
-            run_dir=path,
             config=config,
         )
-        recorder = cls(manifest)
+        recorder = cls(manifest, path)
         recorder.persist()
         return recorder
 
@@ -69,10 +69,9 @@ class RunRecorder:
         self.persist()
 
     def run_refs(self) -> dict[str, Any]:
-        """Return a snapshot of the current Manifest state (run_id, status, timestamps, paths)."""
+        """Return a snapshot of the current Manifest state and its durable path."""
         return {
             "run_id": self.manifest.run_id,
-            "run_dir": str(self.run_dir),
             "manifest_path": str(self.manifest_path),
             "status": self.manifest.status,
             "started_at": self.manifest.started_at,

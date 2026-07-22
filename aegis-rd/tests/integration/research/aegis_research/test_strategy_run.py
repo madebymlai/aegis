@@ -97,11 +97,11 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert cli.main(["run", str(config_path), "--run-id", "component-opt"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    manifest = json.loads((tmp_path / "runs" / "component-opt" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "component-opt.json").read_text())
     optimization = manifest["evidence"]["optimization"]
 
     assert payload["status"] == "success"
-    assert not (tmp_path / "runs" / "component-opt" / "strategy_run.json").exists()
+    assert not (tmp_path / "runs" / "component-opt").exists()
     assert optimization["source"]["strategy"]["family"] == "strategies"
     assert optimization["source"]["strategy"]["id"] == "demo.cross"
     assert optimization["preflight"]["candidate_param_names"] == [FIXED_CANDIDATE_PARAM]
@@ -163,13 +163,11 @@ def test_strategy_run_always_emits_json_with_lock_handles(
     # aegis-rd-gg3.4: run block carries real, resolved absolute paths — no scrubbing
     run_block = payload["run"]
     assert run_block["id"] == "lock-handle-run"
-    assert run_block["run_dir"] == str(tmp_path / "runs" / "lock-handle-run")
-    assert run_block["manifest_path"] == str(
-        tmp_path / "runs" / "lock-handle-run" / "manifest.json"
-    )
+    assert "run_dir" not in run_block
+    assert run_block["manifest_path"] == str(tmp_path / "runs" / "lock-handle-run.json")
     # aegis-rd-gg3.4: the Manifest's config-selection Evidence records the
     # resolved absolute config path (asserted at the Manifest seam).
-    manifest = json.loads((tmp_path / "runs" / "lock-handle-run" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "lock-handle-run.json").read_text())
     assert manifest["evidence"]["config"]["selection"] == {
         "source": "explicit",
         "config_path": str(config_path.resolve()),
@@ -197,10 +195,10 @@ def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
     assert cli.main(["run", str(config_path), "--run-id", "component-locks"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    manifest = json.loads((tmp_path / "runs" / "component-locks" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "component-locks.json").read_text())
     source = manifest["evidence"]["optimization"]["source"]
 
-    assert not (tmp_path / "runs" / "component-locks" / "strategy_run.json").exists()
+    assert not (tmp_path / "runs" / "component-locks").exists()
     assert "locks" not in manifest["evidence"]["optimization"]
     assert "locks" not in payload
 

@@ -85,3 +85,10 @@ The same 2026-07-23 contract removes the `artifacts` block and strategy artifact
 success output. The command returns only live references: Run lifecycle refs, Manifest path,
 CandidateStore path, optimization accounting, and representative Candidate summaries. No
 placeholder or renamed report projection replaces the deleted file.
+
+**Amendment (2026-07-23) — one path for one Run document.** Run storage is flattened from
+`<run-root>/<run-id>/manifest.json` to `<run-root>/<run-id>.json`. The shared success/error Run
+block consequently has five fields (`id`, `status`, `manifest_path`, `started_at`, `finished_at`)
+and no `run_dir`. `manifest_path` remains a real resolved absolute path. Candidate Store output
+continues to name its separate shared database, while Execution Bundle creation remains an
+explicit export command independent of Run storage.

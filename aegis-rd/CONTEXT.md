@@ -5,7 +5,7 @@ A research operating system for turning market hypotheses into reproducible, sco
 ## Language
 
 **Run**:
-A single, reproducible execution of a strategy hypothesis against market data, producing scored evidence and a manifest.
+A single, reproducible execution of a strategy hypothesis against market data, persisted as one Manifest document named from its Run ID.
 _Avoid_: research loop, experiment, backtest
 
 **Component**:
@@ -65,15 +65,15 @@ The content-derived identifier that names a **Candidate** across **Runs**, compu
 _Avoid_: candidate token, token, candidate hash, candidate_id
 
 **Lock**:
-A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives — the **Run** folder name *is* the `run_id`, so the common case is copy-the-directory-name-and-paste. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw **Candidate Key**; `run_id` + a resolved **Candidate Key** together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its **Candidate Key** through the storage-free `candidate_rankings` table, and **Lock** provenance always records the resolved hash. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body (the overridden values are recorded in **Evidence**, never silently dropped).
+A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw **Candidate Key**; `run_id` + a resolved **Candidate Key** together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its **Candidate Key** through the storage-free `candidate_rankings` table, and **Lock** provenance always records the resolved hash. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body (the overridden values are recorded in **Evidence**, never silently dropped).
 _Avoid_: promotion, lock token, per-component lock, lock_id
 
 **Manifest**:
-The immutable audit record of a **Run**. Records lifecycle status, config evidence, artifact hashes, and stage outcomes.
+The one immutable audit document for a **Run**, stored as `<run-id>.json` under the configured Run root. Records identity, lifecycle status and timing, an optional terminal failure, the resolved Run Config, and Evidence.
 _Avoid_: log, report, receipt
 
 **Evidence**:
-A structured, schema-versioned artifact written by a **Run** stage that records what happened and why. Evidence makes a Run's claims inspectable and reproducible. Examples: config selection record, data quality diagnostics, candidate scoring rows.
+A structured, schema-versioned fact recorded in a **Manifest** that says what happened and why. Evidence makes a Run's claims inspectable and reproducible. Examples: config selection, data quality diagnostics, and Candidate scoring rows.
 _Avoid_: output, result, log
 
 **Canonical Form**:

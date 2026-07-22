@@ -33,7 +33,7 @@ def test_component_optimization_uses_component_native_candidate_grid(
     assert cli.main(["run", str(config_path), "--run-id", "component-boundary"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    manifest = json.loads((tmp_path / "runs" / "component-boundary" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "component-boundary.json").read_text())
     optimization = manifest["evidence"]["optimization"]
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
     fast_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "fast_window")
@@ -45,15 +45,13 @@ def test_component_optimization_uses_component_native_candidate_grid(
     run_block = payload["run"]
     assert run_block["id"] == "component-boundary"
     assert run_block["status"] == RunStatus.COMPLETED
-    assert run_block["run_dir"] == str(tmp_path / "runs" / "component-boundary")
-    assert run_block["manifest_path"] == str(
-        tmp_path / "runs" / "component-boundary" / "manifest.json"
-    )
+    assert "run_dir" not in run_block
+    assert run_block["manifest_path"] == str(tmp_path / "runs" / "component-boundary.json")
     assert run_block["started_at"] is not None
     assert run_block["finished_at"] is not None
     assert "artifacts" not in payload
     assert payload["candidate_store"]["path"] == str(store_path)
-    assert not (tmp_path / "runs" / "component-boundary" / "strategy_run.json").exists()
+    assert not (tmp_path / "runs" / "component-boundary").exists()
     assert optimization["source"]["strategy"]["family"] == "strategies"
     assert optimization["source"]["strategy"]["id"] == "demo.ma_opt"
     assert [candidate["role"] for candidate in payload["candidates"]] == [
@@ -97,7 +95,7 @@ def test_component_optimization_candidate_publish_failure_preserves_run_evidence
     assert cli.main(["run", str(config_path), "--run-id", "publish-failure"]) == 10
 
     payload = _last_json_line(capsys.readouterr().err)
-    manifest = json.loads((tmp_path / "runs" / "publish-failure" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "publish-failure.json").read_text())
     optimization_evidence = manifest["evidence"]["optimization"]
 
     assert payload["error"]["category"] == "execution_failure"
@@ -120,10 +118,8 @@ def test_component_optimization_candidate_publish_failure_preserves_run_evidence
     run_block = payload["run"]
     assert run_block["id"] == "publish-failure"
     assert run_block["status"] == RunStatus.FAILED
-    assert run_block["run_dir"] == str(tmp_path / "runs" / "publish-failure")
-    assert run_block["manifest_path"] == str(
-        tmp_path / "runs" / "publish-failure" / "manifest.json"
-    )
+    assert "run_dir" not in run_block
+    assert run_block["manifest_path"] == str(tmp_path / "runs" / "publish-failure.json")
 
 
 def test_component_optimization_completion_failure_leaves_candidates_pending(
@@ -145,7 +141,7 @@ def test_component_optimization_completion_failure_leaves_candidates_pending(
     assert cli.main(["run", str(config_path), "--run-id", "completion-failure"]) == 10
 
     capsys.readouterr()
-    manifest = json.loads((tmp_path / "runs" / "completion-failure" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "completion-failure.json").read_text())
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
 
     # The run never activated, so its candidates stay pending and unqueryable.
@@ -174,7 +170,7 @@ def test_component_optimization_activation_failure_fails_closed(
     assert cli.main(["run", str(config_path), "--run-id", "activation-failure"]) == 10
 
     payload = _last_json_line(capsys.readouterr().err)
-    manifest = json.loads((tmp_path / "runs" / "activation-failure" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "activation-failure.json").read_text())
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
 
     assert "activation failed for activation-failure" in payload["error"]["message"]
@@ -201,7 +197,7 @@ def test_component_optimization_runtime_error_records_failure_diagnostics(
     exit_code = cli.main(["run", str(config_path), "--run-id", "runtime-failure"])
     assert exit_code != 0
 
-    manifest = json.loads((tmp_path / "runs" / "runtime-failure" / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "runtime-failure.json").read_text())
     payload = json.loads(capsys.readouterr().err)
 
     assert payload["error"]["category"] == "execution_failure"

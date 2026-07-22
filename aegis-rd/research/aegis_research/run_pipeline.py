@@ -49,8 +49,8 @@ def run_strategy_sweep(
 ) -> dict[str, Any]:
     """Run a strategy sweep end-to-end, recording provenance for the Run.
 
-    ``on_run_refs`` receives the Run's refs snapshot (run id, run directory,
-    manifest path, status, started-at, finished-at) when the Run is created,
+    ``on_run_refs`` receives the Run's refs snapshot (run id, manifest path,
+    status, started-at, finished-at) when the Run is created,
     and again with terminal refs after a failure or interruption is recorded,
     immediately before the exception re-raises. It does not fire on successful
     completion — the returned result carries the final refs. The callback must

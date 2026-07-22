@@ -7,14 +7,14 @@ from research.aegis_research.provenance.recorder import RunRecorder
 from tests.support.research.aegis_research.factories import make_run_data
 
 
-def test_recorder_run_refs_returns_six_field_snapshot(tmp_path: Path) -> None:
-    """run_refs() returns a snapshot of run_id, run_dir, manifest_path, status, started_at, and finished_at.
+def test_recorder_run_refs_returns_five_field_snapshot(tmp_path: Path) -> None:
+    """run_refs() returns run_id, manifest_path, status, started_at, and finished_at.
 
     The snapshot tracks Manifest state changes through mark methods — status
     and finished_at reflect the terminal mark-methods.
     """
     recorder = RunRecorder.start(
-        run_dir=tmp_path / "run-refs",
+        manifest_path=tmp_path / "run-refs.json",
         run_id="run-refs",
         config={"schema_version": 1},
     )
@@ -22,8 +22,8 @@ def test_recorder_run_refs_returns_six_field_snapshot(tmp_path: Path) -> None:
     # Running state — finished_at is absent.
     refs = recorder.run_refs()
     assert refs["run_id"] == "run-refs"
-    assert refs["run_dir"] == str(tmp_path / "run-refs")
-    assert refs["manifest_path"] == str(tmp_path / "run-refs" / "manifest.json")
+    assert "run_dir" not in refs
+    assert refs["manifest_path"] == str(tmp_path / "run-refs.json")
     assert refs["status"] == RunStatus.RUNNING
     assert refs["started_at"] is not None
     assert refs["finished_at"] is None
@@ -41,7 +41,7 @@ def test_recorder_run_refs_reflects_failed_and_interrupted_terminal_states(
     """run_refs() reflects the terminal status and finished_at for failed and interrupted runs."""
     # Failed
     failed = RunRecorder.start(
-        run_dir=tmp_path / "run-failed",
+        manifest_path=tmp_path / "run-failed.json",
         run_id="run-failed",
         config={"schema_version": 1},
     )
@@ -52,7 +52,7 @@ def test_recorder_run_refs_reflects_failed_and_interrupted_terminal_states(
 
     # Interrupted
     interrupted = RunRecorder.start(
-        run_dir=tmp_path / "run-int",
+        manifest_path=tmp_path / "run-int.json",
         run_id="run-int",
         config={"schema_version": 1},
     )

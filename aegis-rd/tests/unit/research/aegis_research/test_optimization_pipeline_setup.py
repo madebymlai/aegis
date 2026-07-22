@@ -73,7 +73,7 @@ def test_pipeline_setup_evidence_baseline_shape(
     array_contract = build_run_data_array_contract(config, resolved.component_registry)
 
     run_evidence = _run_evidence()
-    result = run_pipeline_setup(
+    run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
         run_data=_run_data(),

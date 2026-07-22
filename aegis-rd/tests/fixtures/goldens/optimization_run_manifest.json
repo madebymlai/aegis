@@ -1,41 +1,4 @@
 {
-  "artifacts": [
-    {
-      "hash": "20453453309785a49d3aeec61c0fd907ceb5786cf8e7e302ac6bc5fbf7bc80ba",
-      "hash_algorithm": "sha256",
-      "id": "data.metadata",
-      "metadata": {},
-      "path": "data_metadata.json",
-      "producer_stage": "data",
-      "role": "data_metadata",
-      "schema_version": "data_metadata.v4",
-      "shape": {},
-      "size": 4847,
-      "status": "completed",
-      "type": "json",
-      "updated_at": "<masked>",
-      "upstream_artifact_ids": []
-    },
-    {
-      "hash": "7fe32cb29d03db37a7b9ea9148b57368905deb4f062e122eb7876c35a9605a3d",
-      "hash_algorithm": "sha256",
-      "id": "strategy.run",
-      "metadata": {},
-      "path": "strategy_run.json",
-      "producer_stage": "strategy_run",
-      "role": "optimization_evidence",
-      "schema_version": "optimization_artifact.v2",
-      "shape": {
-        "candidate_count": 3,
-        "observation_block_count": 3
-      },
-      "size": 512248,
-      "status": "completed",
-      "type": "json",
-      "updated_at": "<masked>",
-      "upstream_artifact_ids": []
-    }
-  ],
   "config": {
     "data": {
       "arrays": [
@@ -10333,16 +10296,11 @@
       }
     }
   },
-  "lineage": {},
   "run": {
     "finished_at": "<masked>",
     "id": "golden-bytes-oracle",
-    "label": "golden_bytes_oracle",
-    "mode": "new",
-    "run_dir": "golden-bytes-oracle",
     "started_at": "<masked>",
     "status": "completed"
   },
-  "schema_version": 4,
-  "stages": []
+  "schema_version": 6
 }

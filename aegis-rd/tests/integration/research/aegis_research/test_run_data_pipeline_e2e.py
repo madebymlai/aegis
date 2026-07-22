@@ -178,7 +178,7 @@ def _array_strategy_registry(tmp_path: Path, *, input_name: str):
 
 
 def _manifest(tmp_path: Path, run_id: str) -> dict[str, object]:
-    return json.loads((tmp_path / "runs" / run_id / "manifest.json").read_text())
+    return json.loads((tmp_path / "runs" / f"{run_id}.json").read_text())
 
 
 class _FixtureProvider:
