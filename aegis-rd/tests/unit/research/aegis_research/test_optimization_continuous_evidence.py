@@ -7,20 +7,20 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from research.aegis_research.candidates.evidence import (
+    candidate_rows_from_result,
+)
+from research.aegis_research.candidates.store import (
+    CandidateStore,
+    CandidateStoreError,
+)
 from research.aegis_research.metrics import MetricRegistry
 from research.aegis_research.metrics.contracts import ExtractorSpec, MetricDefinition
 from research.aegis_research.optimization import continuous_evidence as continuous_evidence_module
-from research.aegis_research.optimization.candidate_evidence import (
-    candidate_rows_from_result,
-)
 from research.aegis_research.optimization.candidate_paths import (
     CandidateLookbacks,
     DevelopmentPlan,
     MaterializedCandidates,
-)
-from research.aegis_research.optimization.candidate_store import (
-    CandidateStore,
-    CandidateStoreError,
 )
 from research.aegis_research.optimization.candidate_validity import Verdicts
 from research.aegis_research.optimization.continuous_evidence import (

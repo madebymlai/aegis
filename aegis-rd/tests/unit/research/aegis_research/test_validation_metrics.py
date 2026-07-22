@@ -144,9 +144,7 @@ def test_ranking_not_a_dict_fails(tmp_path: Path) -> None:
 def test_ranking_structural_failure_stops_before_metric_membership(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve({"metric": "not_a_metric", "bogus": 42}, tmp_path=tmp_path)
-    assert str(e.value) == (
-        "Invalid run config: ranking.bogus: Unexpected keyword argument"
-    )
+    assert str(e.value) == ("Invalid run config: ranking.bogus: Unexpected keyword argument")
 
 
 def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:

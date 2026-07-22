@@ -7,7 +7,6 @@ from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.metrics import make_default_metric_registry
-from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.preflight import PreflightError, build_preflight
 from research.aegis_research.optimization.runner import (
@@ -15,6 +14,7 @@ from research.aegis_research.optimization.runner import (
     execute_optimization,
 )
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,

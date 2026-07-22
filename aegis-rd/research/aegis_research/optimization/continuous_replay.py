@@ -16,7 +16,7 @@ from aegis_data.distributions import Distribution
 from aegis_runtime.currency import CurrencyConversion
 from vectorbtpro import vbt
 
-from research.aegis_research.optimization.portfolio_simulation._simulation import (
+from research.aegis_research.portfolio_simulation._simulation import (
     PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
     VBT_LEVERAGE_MODE,
     VBT_NEXT_CLOSE_PRICE,
@@ -26,7 +26,7 @@ from research.aegis_research.optimization.portfolio_simulation._simulation impor
     portfolio_replay_implementation_fingerprint,
     simulate_portfolio_batch,
 )
-from research.aegis_research.optimization.portfolio_simulation.resolved_book import (
+from research.aegis_research.portfolio_simulation.resolved_book import (
     ResolvedBook,
 )
 

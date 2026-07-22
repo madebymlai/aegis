@@ -380,12 +380,8 @@ def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
     write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
     seed_catalog_ohlcv(tmp_path / "catalog", ["SYN.XNAS"], periods=120)
 
-    carry_on = _run_candidate_returns(
-        tmp_path, capsys, short_borrow_rate=None, run_id="carry-on"
-    )
-    carry_off = _run_candidate_returns(
-        tmp_path, capsys, short_borrow_rate=0.0, run_id="carry-off"
-    )
+    carry_on = _run_candidate_returns(tmp_path, capsys, short_borrow_rate=None, run_id="carry-on")
+    carry_off = _run_candidate_returns(tmp_path, capsys, short_borrow_rate=0.0, run_id="carry-off")
 
     assert carry_on == carry_off
 
@@ -1268,8 +1264,7 @@ def test_config_schema_guide_derives_run_name_constraints() -> None:
     assert (
         "| `name` | `str` | yes | — | "
         "must match `^(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\."
-        "[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\.\\.[A-Za-z0-9_.-]+)$` |"
-        in guide
+        "[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\.\\.[A-Za-z0-9_.-]+)$` |" in guide
     )
 
 

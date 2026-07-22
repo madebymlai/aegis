@@ -21,7 +21,7 @@ The implementation seams are:
 
 - `optimization/candidate_paths.py`: materializes Candidate parameters and common Warmup.
 - `optimization/continuous_replay.py`: builds each Candidate's single causal Portfolio.
-- `optimization/portfolio_simulation/`: owns the internal VBT simulation engine and
+- `portfolio_simulation/`: owns the internal VBT simulation engine and
   `ResolvedBook`.
 - `optimization/observation_blocks.py`: applies analysis-only bounds to unchanged
   Portfolios and ranks admissible Candidates.

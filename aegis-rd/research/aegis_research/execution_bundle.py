@@ -17,6 +17,9 @@ from aegis_runtime import (
 )
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 
+from research.aegis_research.candidates.identity import candidate_store_path
+from research.aegis_research.candidates.lock import ResolvedComponentParams, resolve_lock_run
+from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.component_registry import (
     ComponentDefinition,
     ComponentSelection,
@@ -29,9 +32,6 @@ from research.aegis_research.configuration import (
     load_run_config,
 )
 from research.aegis_research.instrument_resolution import resolve_instruments
-from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
-from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
 from research.aegis_research.optimization.param_namespace import ComponentRef
 
 STRATEGY_SLOT = "strategy"

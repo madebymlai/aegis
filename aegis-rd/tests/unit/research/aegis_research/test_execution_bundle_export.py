@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 from aegis_runtime import ComponentSpec
 
-from research.aegis_research.execution_bundle import assemble_bundle
-from research.aegis_research.optimization.candidate_evidence import (
+from research.aegis_research.candidates.evidence import (
     candidate_rows_from_result,
 )
-from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.candidate_store_identity import (
+from research.aegis_research.candidates.identity import (
     CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
 )
+from research.aegis_research.candidates.store import CandidateStore
+from research.aegis_research.execution_bundle import assemble_bundle
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
@@ -44,7 +44,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
         ComponentSpec(
             family="indicators",
             component_id="tests.export_indicator",
-            module="aegis_exec_tests_export_strategy_cand_991.indicator_0",
+            module="aegis_exec_tests_export_strategy_cand_85c.indicator_0",
             input_names=("Close",),
             output_names=("signal",),
             params={"window": 5},
@@ -53,7 +53,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
     assert artifact.plan.strategy == ComponentSpec(
         family="strategies",
         component_id="tests.export_strategy",
-        module="aegis_exec_tests_export_strategy_cand_991.strategy",
+        module="aegis_exec_tests_export_strategy_cand_85c.strategy",
         input_names=("Close",),
         output_names=(),
         params={"holding_period": 2},

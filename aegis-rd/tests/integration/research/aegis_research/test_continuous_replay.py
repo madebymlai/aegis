@@ -8,7 +8,7 @@ import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.optimization.continuous_replay import replay_candidates
-from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
+from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import make_portfolio_config
 
 

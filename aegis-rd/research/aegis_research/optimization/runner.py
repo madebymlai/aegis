@@ -20,13 +20,13 @@ from research.aegis_research.optimization.observation_blocks import (
     ObservationBlockAnalysis,
     analyze_development_paths,
 )
-from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.preflight import OptimizationPreflight
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
-from research.aegis_research.run_data import RunData
+from research.aegis_research.portfolio_simulation import ResolvedBook
+from research.aegis_research.run.data import RunData
 
 
 class OptimizationRunnerError(ValueError):

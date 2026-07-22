@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from research.aegis_research.run_record.manifest import RunFailure, RunStage, RunStatus
-from research.aegis_research.run_record.recorder import RunRecorder
+from research.aegis_research.run.record.manifest import RunFailure, RunStage, RunStatus
+from research.aegis_research.run.record.recorder import RunRecorder
 from tests.support.research.aegis_research.factories import make_run_data
 
 

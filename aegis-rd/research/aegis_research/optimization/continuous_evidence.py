@@ -8,13 +8,13 @@ from typing import Any
 
 import pandas as pd
 
+from research.aegis_research.candidates.evidence import canonical_value
 from research.aegis_research.configuration import (
     OptimizationConfig,
     RankingConfig,
     ReportConfig,
 )
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
-from research.aegis_research.optimization.candidate_evidence import canonical_value
 from research.aegis_research.optimization.candidate_validity import Verdicts
 from research.aegis_research.optimization.continuous_replay import (
     continuous_replay_protocol,
@@ -25,10 +25,10 @@ from research.aegis_research.optimization.observation_blocks import (
     observation_block_protocol,
     observation_block_ranking_protocol,
 )
-from research.aegis_research.optimization.portfolio_simulation._simulation import (
+from research.aegis_research.optimization.preflight import OptimizationPreflight
+from research.aegis_research.portfolio_simulation._simulation import (
     PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
 )
-from research.aegis_research.optimization.preflight import OptimizationPreflight
 
 CONTINUOUS_SELECTION_EVIDENCE_SCHEMA_VERSION = "continuous_selection_evidence.v1"
 CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION = "continuous_selection_identity.v1"

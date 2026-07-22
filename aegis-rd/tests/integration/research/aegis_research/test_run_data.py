@@ -20,10 +20,10 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-from research.aegis_research import run_data as run_data_module
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.instrument_resolution import TradeableInstrument
-from research.aegis_research.run_data import (
+from research.aegis_research.run import data as run_data_module
+from research.aegis_research.run.data import (
     RunDataEmptyArrayError,
     RunDataIndexMismatchError,
     RunDataMissingArrayError,

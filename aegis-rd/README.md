@@ -58,6 +58,22 @@ reference generated Run files as reproducible inputs. Stale `lane`, `train`,
 `model`, `label`, `labeler`, or `signals` fields are rejected before a run
 Manifest is created.
 
+## Code layout
+
+The `research/aegis_research` package follows domain ownership:
+
+- `run/` owns the Run pipeline, RunData contract, Evidence ledger, and Manifest
+  lifecycle persistence. `run.pipeline` is the orchestration seam; `_stages/`
+  is its internal implementation.
+- `candidates/` owns durable Candidate publication, Candidate Store identity,
+  and Lock resolution across Runs.
+- `optimization/` owns Candidate search and evaluation: precompute, Preflight,
+  continuous replay, Observation Blocks, ranking, and the optimizer runner.
+- `portfolio_simulation/` owns `ResolvedBook` and the internal VectorBT
+  simulation engine used by replay.
+- `configuration/`, `component_registry/`, and `metrics/` own their matching
+  authoring and registry domains.
+
 ## Market data contract
 
 Runs call one deep `load_run_data` operation over Aegis Data's Nautilus

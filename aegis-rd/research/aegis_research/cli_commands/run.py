@@ -25,7 +25,7 @@ from research.aegis_research.configuration import (
     load_run_config,
     with_run_config_selection,
 )
-from research.aegis_research.run_pipeline import run_strategy_sweep
+from research.aegis_research.run.pipeline import run_strategy_sweep
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

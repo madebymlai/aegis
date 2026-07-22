@@ -11,14 +11,14 @@ from aegis_data.custom_data import FixtureRecord, ServedCustomData
 from aegis_data.testing import FakeCatalog, future
 from nautilus_trader.model.identifiers import InstrumentId
 
-from research.aegis_research import run_data as run_data_module
-from research.aegis_research import run_pipeline as run_pipeline_module
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION, resolve_run_config
-from research.aegis_research.optimization.portfolio_simulation._simulation import (
+from research.aegis_research.portfolio_simulation._simulation import (
     VBT_STATICIZED_CACHE_ENV,
 )
-from research.aegis_research.run_pipeline import run_strategy_sweep
+from research.aegis_research.run import data as run_data_module
+from research.aegis_research.run import pipeline as run_pipeline_module
+from research.aegis_research.run.pipeline import run_strategy_sweep
 from tests.support.research.aegis_research.market_data_fixtures import seed_catalog_ohlcv
 
 _START = "2024-01-01"

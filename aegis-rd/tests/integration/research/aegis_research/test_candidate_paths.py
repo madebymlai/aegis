@@ -24,7 +24,6 @@ from research.aegis_research.optimization.observation_blocks import (
     analyze_development_paths,
     rank_observation_block_candidates,
 )
-from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.precompute import (
     IndicatorPrecompute,
     build_candidate_index,
@@ -33,6 +32,7 @@ from research.aegis_research.optimization.precompute import (
 from research.aegis_research.optimization.preflight import build_preflight
 from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,

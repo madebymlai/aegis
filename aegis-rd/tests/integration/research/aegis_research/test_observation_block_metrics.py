@@ -12,7 +12,7 @@ from research.aegis_research.optimization.observation_blocks import (
     ObservationBlocks,
     apply_registered_metric_to_blocks,
 )
-from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
+from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,

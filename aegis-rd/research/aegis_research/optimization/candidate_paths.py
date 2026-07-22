@@ -20,7 +20,6 @@ from research.aegis_research.optimization.continuous_replay import (
     ContinuousReplayResult,
     replay_candidates,
 )
-from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
     candidate_keys,
@@ -30,7 +29,8 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
-from research.aegis_research.run_data import RunData
+from research.aegis_research.portfolio_simulation import ResolvedBook
+from research.aegis_research.run.data import RunData
 
 
 class CandidatePathError(ValueError):

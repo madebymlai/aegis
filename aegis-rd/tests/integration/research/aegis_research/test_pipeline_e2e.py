@@ -8,8 +8,8 @@ import pytest
 import yaml
 
 from research.aegis_research import cli
+from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
-from research.aegis_research.optimization.candidate_store import CandidateStore
 from tests.support.research.aegis_research.market_data_fixtures import (
     ETF_INSTRUMENT_ID_VALUES,
     native_data_config_payload,

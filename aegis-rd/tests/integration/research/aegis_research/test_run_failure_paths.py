@@ -7,13 +7,13 @@ import pytest
 import yaml
 
 from research.aegis_research import cli
+from research.aegis_research.candidates.store import CandidateStore, CandidateStoreError
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
-from research.aegis_research.optimization.candidate_store import CandidateStore, CandidateStoreError
 from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     encode,
 )
-from research.aegis_research.run_record.manifest import RunStatus
+from research.aegis_research.run.record.manifest import RunStatus
 from tests.support.research.aegis_research.market_data_fixtures import (
     DEFAULT_INSTRUMENT_ID_VALUES,
     native_data_config_payload,
@@ -127,7 +127,7 @@ def test_component_optimization_completion_failure_leaves_candidates_pending(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from research.aegis_research.run_record.recorder import RunRecorder
+    from research.aegis_research.run.record.recorder import RunRecorder
 
     monkeypatch.chdir(tmp_path)
     _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")

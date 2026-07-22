@@ -60,14 +60,14 @@ from research.aegis_research.optimization.observation_blocks import (
     ObservationBlocks,
     observation_block_protocol,
 )
-from research.aegis_research.optimization.pipeline.setup import SetupResult
-from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
-from research.aegis_research.optimization.portfolio_simulation._simulation import (
+from research.aegis_research.portfolio_simulation import ResolvedBook
+from research.aegis_research.portfolio_simulation._simulation import (
     _build_portfolio,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
 )
-from research.aegis_research.run_data import RunData, RunDataEvidence
+from research.aegis_research.run._stages.setup import SetupResult
+from research.aegis_research.run.data import RunData, RunDataEvidence
 
 
 def make_data_config(**overrides: Any) -> DataConfig:

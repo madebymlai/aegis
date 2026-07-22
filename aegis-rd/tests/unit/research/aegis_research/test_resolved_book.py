@@ -18,7 +18,7 @@ from research.aegis_research.instrument_resolution import (
     InstrumentResolution,
     TradeableInstrument,
 )
-from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
+from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_data_config,
     make_portfolio_config,

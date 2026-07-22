@@ -15,8 +15,8 @@ from typing import Any
 import pytest
 
 from research.aegis_research import cli
-from research.aegis_research.run_pipeline import run_strategy_sweep
-from research.aegis_research.run_record.manifest import RunStatus
+from research.aegis_research.run.pipeline import run_strategy_sweep
+from research.aegis_research.run.record.manifest import RunStatus
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
 # ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ def test_on_run_refs_fires_twice_on_run_failure(
         raise RuntimeError("data stage failed")
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_run_data",
+        "research.aegis_research.run.pipeline.load_run_data",
         fail_after_manifest,
     )
 
@@ -81,7 +81,7 @@ def test_on_run_refs_fires_twice_on_interrupt(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_run_data",
+        "research.aegis_research.run.pipeline.load_run_data",
         interrupt_after_manifest,
     )
 
@@ -98,9 +98,7 @@ def test_on_run_refs_fires_twice_on_interrupt(
     assert firings[0]["finished_at"] is None
     assert firings[1]["status"] == RunStatus.INTERRUPTED
     assert firings[1]["finished_at"] is not None
-    manifest = json.loads(
-        (tmp_path / "runs" / "firing-interrupted-run.json").read_text()
-    )
+    manifest = json.loads((tmp_path / "runs" / "firing-interrupted-run.json").read_text())
     assert manifest["run"]["failure"] == {
         "stage": "data",
         "error_type": "KeyboardInterrupt",
@@ -138,7 +136,7 @@ def test_terminal_callback_raise_chains_original_failure_as_context(
         raise RuntimeError("data stage failed")
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_run_data",
+        "research.aegis_research.run.pipeline.load_run_data",
         fail_data_loading,
     )
 
@@ -197,7 +195,5 @@ def test_manifest_marks_starting_callback_failure(
             on_run_refs=fail_callback,
         )
 
-    manifest = json.loads(
-        (tmp_path / "runs" / "start-callback-failed-run.json").read_text()
-    )
+    manifest = json.loads((tmp_path / "runs" / "start-callback-failed-run.json").read_text())
     assert manifest["run"]["status"] == RunStatus.FAILED

@@ -82,9 +82,9 @@ Aegis calls `PFO.from_filled_allocations`, then
 staticized `pre_order_segment_func_nb`, target-allocation state, drift bands,
 margin-interest state, dividends, fees, slippage, grouping, and a NoCash
 tripwire. See
-[`_build_portfolio`](../../research/aegis_research/optimization/portfolio_simulation/_simulation.py#L354)
+[`_build_portfolio`](../../research/aegis_research/portfolio_simulation/_simulation.py#L359)
 and
-[`_band_pre_order_segment_nb`](../../research/aegis_research/optimization/portfolio_simulation/_simulation.py#L175).
+[`_band_pre_order_segment_nb`](../../research/aegis_research/portfolio_simulation/_simulation.py#L186).
 
 Both the pinned VBT MCP source and latest upstream source show that
 `from_optimizer(..., pf_method="from_signals")` calls `from_signals` with

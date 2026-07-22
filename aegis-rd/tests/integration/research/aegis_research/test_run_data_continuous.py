@@ -12,17 +12,17 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity, FuturesContract, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
 
-from research.aegis_research import run_data as run_data_module
-from research.aegis_research.optimization.run_data_contract import (
-    build_data_array_contract,
-    candidate_data_identity,
-)
-from research.aegis_research.run_data import (
+from research.aegis_research.run import data as run_data_module
+from research.aegis_research.run.data import (
     ContinuousRootCollisionError,
     RunData,
     RunDataUnavailable,
     RunDataWindowBoundsError,
     load_run_data,
+)
+from research.aegis_research.run.data_contract import (
+    build_data_array_contract,
+    candidate_data_identity,
 )
 from tests.support.research.aegis_research.factories import make_data_config
 

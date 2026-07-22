@@ -7,14 +7,14 @@ from threading import Barrier
 
 import pytest
 
-from research.aegis_research.run_data import (
+from research.aegis_research.run.data import (
     RunDataFailureEvidence,
     RunDataUnavailable,
 )
-from research.aegis_research.run_pipeline import run_strategy_sweep
-from research.aegis_research.run_record.manifest import RunStatus
-from research.aegis_research.run_record.recorder import RunRecorder
-from research.aegis_research.run_record.run_store import RunCollisionError, RunStore
+from research.aegis_research.run.pipeline import run_strategy_sweep
+from research.aegis_research.run.record.manifest import RunStatus
+from research.aegis_research.run.record.recorder import RunRecorder
+from research.aegis_research.run.record.run_store import RunCollisionError, RunStore
 from tests.support.research.aegis_research.factories import make_run_data
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
@@ -132,7 +132,7 @@ def test_strategy_run_initializes_manifest_before_data_loading(
         assert manifest_path.exists()
         raise RuntimeError("data stage failed")
 
-    monkeypatch.setattr("research.aegis_research.run_pipeline.load_run_data", fail_after_manifest)
+    monkeypatch.setattr("research.aegis_research.run.pipeline.load_run_data", fail_after_manifest)
 
     with pytest.raises(RuntimeError, match="data stage failed"):
         run_strategy_sweep(
@@ -192,7 +192,7 @@ def test_environmental_data_evidence_is_persisted_before_terminal_failure(
         original_mark_failed(self, stage=stage, error=error)
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_run_data",
+        "research.aegis_research.run.pipeline.load_run_data",
         fail_environmentally,
     )
     monkeypatch.setattr(RunRecorder, "mark_run_failed", assert_evidence_precedes_terminal)
@@ -243,11 +243,11 @@ def test_strategy_run_records_interruption_at_active_optimization_stage(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.run_pipeline_setup",
+        "research.aegis_research.run.pipeline.run_pipeline_setup",
         interrupt_setup,
     )
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_run_data",
+        "research.aegis_research.run.pipeline.load_run_data",
         lambda *_args, **_kwargs: make_run_data(),
     )
 
@@ -282,7 +282,7 @@ def test_failed_run_diagnostic_is_length_clipped_not_redacted(
     def fail_with_secret(_config, **_kwargs):
         raise RuntimeError(long_message)
 
-    monkeypatch.setattr("research.aegis_research.run_pipeline.load_run_data", fail_with_secret)
+    monkeypatch.setattr("research.aegis_research.run.pipeline.load_run_data", fail_with_secret)
 
     with pytest.raises(RuntimeError, match="provider returned"):
         run_strategy_sweep(

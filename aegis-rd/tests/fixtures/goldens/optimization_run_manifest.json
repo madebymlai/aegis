@@ -330,7 +330,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_05b081262d581da7b05e860e293869c3",
+          "candidate_key": "cand_43f24163e9c04d9b407d4dfab618786b",
           "complete_period_metrics": {
             "max_dd": 27.043452145100744,
             "sharpe_ratio": -0.17267188338676512,
@@ -673,7 +673,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "21d46d8dbb4d665b63ecffbcf66568e9e221caaa0bbfe4e2781c551259f97273",
+                "implementation_fingerprint": "f7020906b3cdf5e90fbde42c35f55aa6c12c740505d3cc95fcc5549154d5e5f3",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -1781,7 +1781,7 @@
           }
         },
         {
-          "candidate_key": "cand_243e2c4ac8d0b75588e70625d0d617ce",
+          "candidate_key": "cand_724207cdc1bba1a0d50ebc155dc5d1ce",
           "complete_period_metrics": {
             "max_dd": 23.779896871973637,
             "sharpe_ratio": -0.11453647945898061,
@@ -2124,7 +2124,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "21d46d8dbb4d665b63ecffbcf66568e9e221caaa0bbfe4e2781c551259f97273",
+                "implementation_fingerprint": "f7020906b3cdf5e90fbde42c35f55aa6c12c740505d3cc95fcc5549154d5e5f3",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -3232,7 +3232,7 @@
           }
         },
         {
-          "candidate_key": "cand_b1344f5b8cb3edbd6bf36021b1ac73c5",
+          "candidate_key": "cand_e334920e2b0c3857c11e844666f63987",
           "complete_period_metrics": {
             "max_dd": 35.84222833612172,
             "sharpe_ratio": -0.5146992551247971,
@@ -3575,7 +3575,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "21d46d8dbb4d665b63ecffbcf66568e9e221caaa0bbfe4e2781c551259f97273",
+                "implementation_fingerprint": "f7020906b3cdf5e90fbde42c35f55aa6c12c740505d3cc95fcc5549154d5e5f3",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -8052,7 +8052,7 @@
               "vbt_effective_delay_bars": 1,
               "vbt_price": "nextclose"
             },
-            "implementation_fingerprint": "21d46d8dbb4d665b63ecffbcf66568e9e221caaa0bbfe4e2781c551259f97273",
+            "implementation_fingerprint": "f7020906b3cdf5e90fbde42c35f55aa6c12c740505d3cc95fcc5549154d5e5f3",
             "portfolio": {
               "call_seq": "auto",
               "cash_sharing": true,
