@@ -20,11 +20,16 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
+from research.aegis_research import run_data as run_data_module
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.instrument_resolution import TradeableInstrument
 from research.aegis_research.run_data import (
+    RunDataEmptyArrayError,
+    RunDataIndexMismatchError,
+    RunDataMissingArrayError,
+    RunDataMissingValueError,
+    RunDataNonNumericArrayError,
     RunDataUnavailable,
-    RunDataValidationError,
     load_run_data,
 )
 from tests.support.research.aegis_research.factories import make_data_config
@@ -84,6 +89,8 @@ def test_load_run_data_returns_an_eager_native_bundle_from_one_catalog_window(
     assert tuple(run_data.bundle.array("Open").columns) == expected_ids
     assert tuple(run_data.bundle.array("Close").columns) == expected_ids
     assert len(run_data.bundle.array("Close").index) == 3
+    assert run_data.replay_index.equals(run_data.bundle.array("Close").index)
+    assert run_data.instrument_count == 2
     evidence = to_builtin(run_data.evidence)
     assert evidence["schema_version"] == "run_data.v1"
     assert evidence["requested_instrument_ids"] == [
@@ -165,7 +172,7 @@ def test_load_run_data_rejects_mismatching_tradeable_calendars_under_raise(
     )
     port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path))
 
-    with pytest.raises(RunDataValidationError, match="mismatching indexes"):
+    with pytest.raises(RunDataIndexMismatchError, match="mismatching indexes"):
         load_run_data(
             config,
             required_arrays=("Open", "Close"),
@@ -235,7 +242,7 @@ def test_load_run_data_keeps_authoring_errors_direct() -> None:
         end="2024-01-03",
     )
 
-    with pytest.raises(RunDataValidationError, match="missing required Arrays") as excinfo:
+    with pytest.raises(RunDataMissingArrayError, match="missing required Arrays") as excinfo:
         load_run_data(
             config,
             required_arrays=("Open", "Close"),
@@ -422,7 +429,7 @@ def test_load_run_data_chains_custom_provider_failures(tmp_path: Path) -> None:
 def test_load_run_data_keeps_incompatible_custom_values_direct(tmp_path: Path) -> None:
     config, port = _custom_config_and_port(tmp_path)
 
-    with pytest.raises(RunDataValidationError, match="contains missing values") as excinfo:
+    with pytest.raises(RunDataMissingValueError, match="contains missing values") as excinfo:
         load_run_data(
             config,
             required_arrays=("Open", "Close", "FixtureValue"),
@@ -431,6 +438,56 @@ def test_load_run_data_keeps_incompatible_custom_values_direct(tmp_path: Path) -
         )
 
     assert not isinstance(excinfo.value, RunDataUnavailable)
+
+
+def test_load_run_data_rejects_an_empty_required_custom_array(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, port = _custom_config_and_port(tmp_path)
+    aapl = InstrumentId.from_str("AAPL.XNAS")
+    monkeypatch.setattr(run_data_module, "ensure_arrays", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        run_data_module,
+        "custom_arrays",
+        lambda *_args, **_kwargs: {"FixtureValue": pd.DataFrame({aapl: pd.Series(dtype=float)})},
+    )
+
+    with pytest.raises(RunDataEmptyArrayError, match="required Array 'FixtureValue' is empty"):
+        load_run_data(
+            config,
+            required_arrays=("Close", "FixtureValue"),
+            port=port,
+            custom_data_providers=None,
+        )
+
+
+def test_load_run_data_rejects_a_nonnumeric_required_custom_array(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, port = _custom_config_and_port(tmp_path)
+    aapl = InstrumentId.from_str("AAPL.XNAS")
+    index = pd.date_range("2024-01-01", periods=3, freq="D")
+    monkeypatch.setattr(run_data_module, "ensure_arrays", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        run_data_module,
+        "custom_arrays",
+        lambda *_args, **_kwargs: {
+            "FixtureValue": pd.DataFrame({aapl: ["bad", "bad", "bad"]}, index=index)
+        },
+    )
+
+    with pytest.raises(
+        RunDataNonNumericArrayError,
+        match="required Array 'FixtureValue' contains nonnumeric values",
+    ):
+        load_run_data(
+            config,
+            required_arrays=("Close", "FixtureValue"),
+            port=port,
+            custom_data_providers=None,
+        )
 
 
 def _ohlcv(days: list[str]) -> pd.DataFrame:

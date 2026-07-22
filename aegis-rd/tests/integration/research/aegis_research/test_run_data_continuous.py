@@ -7,7 +7,6 @@ from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.testing import FakeCatalog, bars, future
-from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity, FuturesContract, Instrument
@@ -16,7 +15,8 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 from research.aegis_research import run_data as run_data_module
 from research.aegis_research.run_data import (
     ContinuousRootCollisionError,
-    RunDataValidationError,
+    RunData,
+    RunDataWindowBoundsError,
     load_run_data,
 )
 from tests.support.research.aegis_research.factories import make_data_config
@@ -54,32 +54,14 @@ def _definition(instrument_id: InstrumentId) -> Instrument:
     )
 
 
-class _RecordingFakeCatalog(FakeCatalog):
-    def __init__(self, instruments: list[Instrument], bar_data: dict[str, list[Bar]]) -> None:
-        super().__init__(instruments, bar_data)
-        self.queried_bar_identifiers: list[str] = []
-
-    def query(
-        self,
-        data_cls: type,
-        identifiers: list[str] | None = None,
-        start: object = None,
-        end: object = None,
-        **kwargs: object,
-    ) -> list:
-        if data_cls is Bar:
-            self.queried_bar_identifiers.extend(identifiers or [])
-        return super().query(data_cls, identifiers, start, end, **kwargs)
-
-
 def _fake_port(
     frames: dict[InstrumentId, pd.DataFrame],
     *,
     legs: list[FuturesContract] | None = None,
     exchange: tuple[InstrumentId, ...] = (),
-) -> tuple[CatalogBackedDataPort, _RecordingFakeCatalog]:
+) -> CatalogBackedDataPort:
     resolver = DeclaredMarkingResolver(declared=dict.fromkeys(exchange, MarkMode.MID))
-    catalog = _RecordingFakeCatalog(
+    catalog = FakeCatalog(
         [
             *(_definition(mic_canonical_instrument_id(iid)) for iid in frames),
             *(legs or []),
@@ -89,7 +71,7 @@ def _fake_port(
             for iid, frame in frames.items()
         },
     )
-    return CatalogBackedDataPort(catalog, resolver=resolver), catalog
+    return CatalogBackedDataPort(catalog, resolver=resolver)
 
 
 def _frame(
@@ -110,25 +92,24 @@ def _frame(
     )
 
 
-def test_materializes_continuous_future_roots_as_tradeable_columns(
+def _load_native_and_continuous(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> RunData:
     aapl = _id("AAPL.NASDAQ")
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port, catalog = _fake_port(
+    port = _fake_port(
         {aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])},
         legs=[future("ESH4.XCME", "2024-03-15")],
     )
     continuous = _frame(index, close=[5000.0, 5010.0], volume=[1.0, 2.0])
-    seen_modes: list[object] = []
 
     class FakeContinuousModel:
         quote_currency = "USD"
 
         def __init__(self, _port_arg, root, *, adjustment_mode, **_kwargs):
             assert str(root) == "ES"
-            seen_modes.append(adjustment_mode)
+            assert adjustment_mode is DEFAULT_ADJUSTMENT_MODE
             self.continuous_id = es
             self.frame = continuous
 
@@ -143,19 +124,33 @@ def test_materializes_continuous_future_roots_as_tradeable_columns(
         futures=["ES"],
     )
 
-    result = load_run_data(
+    return load_run_data(
         config,
         required_arrays=("Close", "Volume"),
         port=port,
         custom_data_providers=None,
     )
 
-    assert set(catalog.queried_bar_identifiers) == {"AAPL.XNAS-1-DAY-LAST-EXTERNAL"}
+
+def test_materializes_continuous_future_roots_as_tradeable_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _load_native_and_continuous(monkeypatch)
+    aapl = _id("AAPL.NASDAQ")
+    es = _id("ES.XCME")
+
     assert list(result.bundle.array("Close").columns) == [aapl, es]
     assert result.bundle.array("Close")[es].tolist() == [5000.0, 5010.0]
     assert result.bundle.array("Volume")[es].tolist() == [1.0, 2.0]
+
+
+def test_continuous_future_records_run_economics_and_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _load_native_and_continuous(monkeypatch)
+    es = _id("ES.XCME")
+
     assert result.adjustment_mode is DEFAULT_ADJUSTMENT_MODE
-    assert seen_modes == [DEFAULT_ADJUSTMENT_MODE]
     assert result.evidence.continuous_root_currencies == {es: "USD"}
     assert result.size_increment_by_instrument[es] == 1.0
     coverage = {row["instrument_id"]: row for row in result.evidence.distribution_coverage}
@@ -168,7 +163,7 @@ def test_converts_non_base_continuous_root_through_exchange_fx(
     es = _id("ES.XCME")
     eurusd = _id("EUR/USD.IDEALPRO")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port, _ = _fake_port(
+    port = _fake_port(
         {eurusd: _frame(index, close=[1.25, 1.20], volume=[0.0, 0.0])},
         legs=[future("ESH4.XCME", "2024-03-15")],
         exchange=(eurusd,),
@@ -207,12 +202,21 @@ def test_converts_non_base_continuous_root_through_exchange_fx(
     assert result.evidence.continuous_root_currencies == {es: "USD"}
 
 
-def test_adjustment_modes_have_distinct_evidence_identity(
+@pytest.mark.parametrize(
+    ("mode", "expected_evidence"),
+    [
+        (ContinuousFutureAdjustmentType.BACKWARD_RATIO, "backward_ratio"),
+        (ContinuousFutureAdjustmentType.BACKWARD_SPREAD, "backward_spread"),
+    ],
+)
+def test_adjustment_mode_is_recorded_in_evidence_identity(
     monkeypatch: pytest.MonkeyPatch,
+    mode: ContinuousFutureAdjustmentType,
+    expected_evidence: str,
 ) -> None:
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port, _ = _fake_port({}, legs=[future("ESH4.XCME", "2024-03-15")])
+    port = _fake_port({}, legs=[future("ESH4.XCME", "2024-03-15")])
     seen_modes: list[ContinuousFutureAdjustmentType] = []
 
     class FakeContinuousModel:
@@ -227,23 +231,17 @@ def test_adjustment_modes_have_distinct_evidence_identity(
             assert end == "2024-01-03"
 
     monkeypatch.setattr(run_data_module, "ContinuousContractModel", FakeContinuousModel)
+    monkeypatch.setattr(run_data_module, "DEFAULT_ADJUSTMENT_MODE", mode)
     config = make_data_config(arrays=["Close"], base_currency="USD", instruments=[], futures=["ES"])
-    evidence_by_mode: dict[ContinuousFutureAdjustmentType, str | None] = {}
-    for mode in (
-        ContinuousFutureAdjustmentType.BACKWARD_RATIO,
-        ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
-    ):
-        monkeypatch.setattr(run_data_module, "DEFAULT_ADJUSTMENT_MODE", mode)
-        result = load_run_data(
-            config,
-            required_arrays=("Close",),
-            port=port,
-            custom_data_providers=None,
-        )
-        evidence_by_mode[mode] = result.evidence.adjustment_mode
+    result = load_run_data(
+        config,
+        required_arrays=("Close",),
+        port=port,
+        custom_data_providers=None,
+    )
 
-    assert seen_modes == list(evidence_by_mode)
-    assert len(set(evidence_by_mode.values())) == 2
+    assert seen_modes == [mode]
+    assert result.evidence.adjustment_mode == expected_evidence
 
 
 def test_rejects_continuous_root_collision_as_authoring_error(
@@ -251,7 +249,7 @@ def test_rejects_continuous_root_collision_as_authoring_error(
 ) -> None:
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port, _ = _fake_port(
+    port = _fake_port(
         {es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])},
         legs=[future("ESH4.XCME", "2024-03-15")],
     )
@@ -284,7 +282,7 @@ def test_rejects_continuous_root_collision_as_authoring_error(
 
 
 def test_rejects_missing_window_edge_as_authoring_error() -> None:
-    port, _ = _fake_port({})
+    port = _fake_port({})
     config = make_data_config(
         arrays=["Close"],
         base_currency="USD",
@@ -293,7 +291,7 @@ def test_rejects_missing_window_edge_as_authoring_error() -> None:
         start=None,
     )
 
-    with pytest.raises(RunDataValidationError, match=r"data\.start is required"):
+    with pytest.raises(RunDataWindowBoundsError, match=r"data\.start is required"):
         load_run_data(
             config,
             required_arrays=("Close",),

@@ -63,8 +63,8 @@ def run_pipeline_execution(
         preflight = build_preflight(
             source=setup.optimization_source,
             optimization=config.optimization,
-            index=setup.run_data.bundle.array("Close").index,
-            symbol_count=len(setup.run_data.bundle.array("Close").columns),
+            index=setup.run_data.replay_index,
+            symbol_count=setup.run_data.instrument_count,
             metric_count=len(metric_registry.ids()),
             has_open_prices=True,
         )

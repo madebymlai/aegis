@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 import pandas as pd
 from aegis_data.array_names import is_bar_derived_array
@@ -41,6 +42,34 @@ from research.aegis_research.instrument_resolution import (
 
 class RunDataValidationError(ValueError):
     """The authored Run data contract cannot produce usable Run data."""
+
+
+class RunDataWindowBoundsError(RunDataValidationError):
+    """A required Catalog Window edge is absent."""
+
+
+class RunDataMissingArrayError(RunDataValidationError):
+    """A required Array is not configured or was not loaded."""
+
+
+class RunDataEmptyArrayError(RunDataValidationError):
+    """A required Array has no observations."""
+
+
+class RunDataInstrumentColumnsError(RunDataValidationError):
+    """A required Array does not have the resolved tradeable columns."""
+
+
+class RunDataIndexMismatchError(RunDataValidationError):
+    """Tradeable instruments do not share the required calendar."""
+
+
+class RunDataMissingValueError(RunDataValidationError):
+    """A required Array contains a missing value."""
+
+
+class RunDataNonNumericArrayError(RunDataValidationError):
+    """A required Array contains values outside the numeric contract."""
 
 
 class ContinuousRootCollisionError(RunDataValidationError):
@@ -99,6 +128,16 @@ class RunData:
     adjustment_mode: ContinuousFutureAdjustmentType | None
     evidence: RunDataEvidence
 
+    @property
+    def replay_index(self) -> pd.Index:
+        """The governing market calendar for Candidate replay."""
+        return self.bundle.array("Close").index
+
+    @property
+    def instrument_count(self) -> int:
+        """The number of resolved tradeable instruments."""
+        return len(self.instrument_resolution.instrument_ids)
+
 
 def load_run_data(
     config: DataConfig,
@@ -122,12 +161,9 @@ def load_run_data(
                 timeframe=config.timeframe,
             )
         )
-    except (CatalogCoverageGapError, GapFillProviderError) as error:
-        _raise_unavailable(error, config, requested_ids, start=start, end=end)
-    adjustment_mode: ContinuousFutureAdjustmentType | None = (
-        DEFAULT_ADJUSTMENT_MODE if config.futures else None
-    )
-    try:
+        adjustment_mode: ContinuousFutureAdjustmentType | None = (
+            DEFAULT_ADJUSTMENT_MODE if config.futures else None
+        )
         continuous_frames, continuous_currencies = _continuous_frames(
             port,
             config.futures,
@@ -141,24 +177,25 @@ def load_run_data(
             if continuous_frames
             else ()
         )
-    except (CatalogCoverageGapError, GapFillProviderError) as error:
-        _raise_unavailable(error, config, requested_ids, start=start, end=end)
-    collisions = set(window.ohlcv) & set(continuous_frames)
-    if collisions:
-        raise ContinuousRootCollisionError(
-            "continuous-future root ids collide with raw instrument ids: "
-            f"{sorted(instrument_id.value for instrument_id in collisions)}"
-        )
-    frames = {**window.ohlcv, **continuous_frames}
-    try:
-        native_bundle = _native_bundle(
+        collisions = set(window.ohlcv) & set(continuous_frames)
+        if collisions:
+            raise ContinuousRootCollisionError(
+                "continuous-future root ids collide with raw instrument ids: "
+                f"{sorted(instrument_id.value for instrument_id in collisions)}"
+            )
+        frames = {**window.ohlcv, **continuous_frames}
+        tradeable_bundle = _tradeable_bundle(
             config,
             required_arrays,
             resolution,
             frames,
             custom_data_providers=custom_data_providers,
         )
-    except (CustomDataCoverageError, GapFillProviderError) as error:
+    except (
+        CatalogCoverageGapError,
+        CustomDataCoverageError,
+        GapFillProviderError,
+    ) as error:
         _raise_unavailable(error, config, requested_ids, start=start, end=end)
     currency_conversion = _catalog_currency_conversion(
         config,
@@ -167,7 +204,7 @@ def load_run_data(
         frames,
         continuous_currencies,
     )
-    bundle = MarketDataBundle(currency_conversion.apply(native_bundle.arrays))
+    bundle = MarketDataBundle(currency_conversion.apply(tradeable_bundle.arrays))
     size_increments = _size_increments(resolution, window, port)
     index = next(iter(bundle.arrays.values())).index
     return RunData(
@@ -274,7 +311,7 @@ def _size_increments(
     return increments
 
 
-def _native_bundle(
+def _tradeable_bundle(
     config: DataConfig,
     required_arrays: tuple[str, ...],
     resolution: InstrumentResolution,
@@ -332,7 +369,7 @@ def _raise_unavailable(
     *,
     start: str,
     end: str,
-) -> None:
+) -> NoReturn:
     raise RunDataUnavailable(
         RunDataFailureEvidence(
             schema_version="run_data_failure.v1",
@@ -358,7 +395,7 @@ def _tradeable_index(
         if config.missing_index == "drop":
             index = index.intersection(other)
         elif not index.equals(other):
-            raise RunDataValidationError("tradeable Instruments have mismatching indexes")
+            raise RunDataIndexMismatchError("tradeable Instruments have mismatching indexes")
     return index
 
 
@@ -367,7 +404,7 @@ def _assert_required_arrays_configured(
 ) -> None:
     missing = [array for array in required_arrays if array not in config.effective_arrays]
     if missing:
-        raise RunDataValidationError(f"data.arrays is missing required Arrays: {missing}")
+        raise RunDataMissingArrayError(f"data.arrays is missing required Arrays: {missing}")
 
 
 def _assert_usable(
@@ -377,21 +414,23 @@ def _assert_usable(
 ) -> None:
     for array in required_arrays:
         if array not in panels:
-            raise RunDataValidationError(f"required Array {array!r} was not loaded")
+            raise RunDataMissingArrayError(f"required Array {array!r} was not loaded")
         panel = panels[array]
         if panel.empty:
-            raise RunDataValidationError(f"required Array {array!r} is empty")
+            raise RunDataEmptyArrayError(f"required Array {array!r} is empty")
         if tuple(panel.columns) != instrument_ids:
-            raise RunDataValidationError(
+            raise RunDataInstrumentColumnsError(
                 f"required Array {array!r} has unexpected Instrument columns"
             )
         if panel.isna().to_numpy().any():
-            raise RunDataValidationError(f"required Array {array!r} contains missing values")
+            raise RunDataMissingValueError(f"required Array {array!r} contains missing values")
         if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in panel.dtypes):
-            raise RunDataValidationError(f"required Array {array!r} contains nonnumeric values")
+            raise RunDataNonNumericArrayError(
+                f"required Array {array!r} contains nonnumeric values"
+            )
 
 
 def _required_edge(value: str | None, name: str) -> str:
     if value is None:
-        raise RunDataValidationError(f"data.{name} is required")
+        raise RunDataWindowBoundsError(f"data.{name} is required")
     return value
