@@ -27,3 +27,10 @@ memory and persists the Evidence accumulated so far; it no longer writes a secon
 optimization Evidence. The recorder writes the one terminal failure fact under the Manifest's Run
 lifecycle, with stage, exception type, and bounded message. This keeps partial Evidence durable
 without allowing Evidence and lifecycle diagnostics to disagree.
+
+**Amendment (2026-07-23) — package names the surviving responsibility.** After the generic
+artifact subsystem and auxiliary Run artifacts were removed, `aegis_research.provenance` was
+renamed to `aegis_research.run_record`. The package now names its concrete responsibility: the
+Manifest domain record, lifecycle recorder, Run-path allocation, and config Evidence capture.
+The domain terms **Provenance** and **Evidence** remain unchanged; only the Python package boundary
+was renamed, with no compatibility import shim.

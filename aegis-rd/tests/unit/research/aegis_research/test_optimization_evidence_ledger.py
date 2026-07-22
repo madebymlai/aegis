@@ -8,7 +8,7 @@ from research.aegis_research.optimization.evidence_ledger import (
     EvidenceSection,
     RunEvidence,
 )
-from research.aegis_research.provenance.manifest import RunStage
+from research.aegis_research.run_record.manifest import RunStage
 
 
 def test_run_evidence_seeds_manifest_and_records_optimization_sections() -> None:

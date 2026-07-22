@@ -15,8 +15,8 @@ from typing import Any
 import pytest
 
 from research.aegis_research import cli
-from research.aegis_research.provenance.manifest import RunStatus
 from research.aegis_research.run_pipeline import run_strategy_sweep
+from research.aegis_research.run_record.manifest import RunStatus
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
 # ---------------------------------------------------------------------------

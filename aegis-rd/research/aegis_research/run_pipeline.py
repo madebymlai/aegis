@@ -27,11 +27,11 @@ from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
     run_data_evidence_payload,
 )
-from research.aegis_research.provenance.capture import capture_config_evidence
-from research.aegis_research.provenance.manifest import RunStage
-from research.aegis_research.provenance.recorder import RunRecorder
-from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_data import RunData, RunDataUnavailable, load_run_data
+from research.aegis_research.run_record.capture import capture_config_evidence
+from research.aegis_research.run_record.manifest import RunStage
+from research.aegis_research.run_record.recorder import RunRecorder
+from research.aegis_research.run_record.run_store import RunStore
 
 if TYPE_CHECKING:
     from aegis_data.custom_data import CustomDataProviderMap

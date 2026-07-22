@@ -30,7 +30,7 @@ from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
-from research.aegis_research.provenance.manifest import RunStage
+from research.aegis_research.run_record.manifest import RunStage
 
 
 @dataclass(frozen=True)

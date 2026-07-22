@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 
 from research.aegis_research.canonical_json import canonical_json_bytes
-from research.aegis_research.provenance.capture import (
+from research.aegis_research.run_record.capture import (
     canonical_hash,
     capture_config_evidence,
 )
-from research.aegis_research.provenance.manifest import (
+from research.aegis_research.run_record.manifest import (
     RunManifest,
     RunStatus,
     validate_manifest,

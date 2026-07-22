@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.atomic_write import write_json, write_new_json
-from research.aegis_research.provenance.manifest import (
+from research.aegis_research.run_record.manifest import (
     RunFailure,
     RunManifest,
     RunStage,

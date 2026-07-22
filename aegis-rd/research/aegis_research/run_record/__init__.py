@@ -1,6 +1,6 @@
-"""Experiment provenance primitives."""
+"""Run audit record and lifecycle persistence primitives."""
 
-from research.aegis_research.provenance.manifest import (
+from research.aegis_research.run_record.manifest import (
     ManifestValidationError,
     RunFailure,
     RunManifest,
@@ -8,8 +8,8 @@ from research.aegis_research.provenance.manifest import (
     RunStatus,
     validate_manifest,
 )
-from research.aegis_research.provenance.recorder import RunRecorder
-from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
+from research.aegis_research.run_record.recorder import RunRecorder
+from research.aegis_research.run_record.run_store import RunCollisionError, RunStore
 
 __all__ = [
     "ManifestValidationError",

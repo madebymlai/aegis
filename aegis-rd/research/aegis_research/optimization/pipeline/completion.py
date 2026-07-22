@@ -11,8 +11,8 @@ from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.publishing import PublishingResult
 from research.aegis_research.optimization.pipeline.setup import SetupResult
-from research.aegis_research.provenance.manifest import RunStage
-from research.aegis_research.provenance.recorder import RunRecorder
+from research.aegis_research.run_record.manifest import RunStage
+from research.aegis_research.run_record.recorder import RunRecorder
 
 
 def run_pipeline_completion(

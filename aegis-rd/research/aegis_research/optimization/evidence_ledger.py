@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.provenance.manifest import RunStage
+from research.aegis_research.run_record.manifest import RunStage
 
 OPTIMIZATION_ROUTE_SCHEMA_VERSION = "optimization_route.v2"
 _SUPPORTED_OPTIMIZATION_SCHEMA_VERSIONS = {None, OPTIMIZATION_ROUTE_SCHEMA_VERSION}

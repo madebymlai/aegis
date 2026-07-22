@@ -7,14 +7,14 @@ from threading import Barrier
 
 import pytest
 
-from research.aegis_research.provenance.manifest import RunStatus
-from research.aegis_research.provenance.recorder import RunRecorder
-from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
 from research.aegis_research.run_data import (
     RunDataFailureEvidence,
     RunDataUnavailable,
 )
 from research.aegis_research.run_pipeline import run_strategy_sweep
+from research.aegis_research.run_record.manifest import RunStatus
+from research.aegis_research.run_record.recorder import RunRecorder
+from research.aegis_research.run_record.run_store import RunCollisionError, RunStore
 from tests.support.research.aegis_research.factories import make_run_data
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
