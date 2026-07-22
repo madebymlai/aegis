@@ -304,4 +304,3 @@ def test_invalid_keys_respects_output_candidate_index_dedup() -> None:
     )
     # Block 0 (shared by (1,10) and (2,10)) is all-NaN, block 1 is finite
     assert store.invalid_keys == {(1, 10), (2, 10)}
-
