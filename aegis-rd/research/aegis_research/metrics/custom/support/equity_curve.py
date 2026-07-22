@@ -13,9 +13,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
+
+
+def _scalar_bound(bound: Any) -> int | None:
+    """Collapse a simulation bound to the one scalar every Candidate shares.
+
+    A single-group read yields a scalar bound; a multi-Candidate batch yields VBT's
+    one-value-per-group Series. The derived common-start contract guarantees every
+    Candidate is scored over the identical range, so those per-group bounds are
+    uniform and reduce to one ``int``. A non-uniform bound would violate that
+    contract, so it is rejected rather than silently sliced.
+    """
+    if bound is None:
+        return None
+    unique = np.unique(np.atleast_1d(np.asarray(bound)))
+    if unique.size != 1:
+        raise ValueError(
+            f"expected one shared simulation bound across Candidates, got {unique.tolist()}"
+        )
+    return int(unique[0])
 
 
 @dataclass(frozen=True)
@@ -44,8 +64,8 @@ class EquityCurve:
             value=value,
             close=pf.close,
             canonical_returns=getattr(pf, "canonical_returns", None),
-            sim_start=getattr(pf, "sim_start", None),
-            sim_end=getattr(pf, "sim_end", None),
+            sim_start=_scalar_bound(getattr(pf, "sim_start", None)),
+            sim_end=_scalar_bound(getattr(pf, "sim_end", None)),
         )
 
     def drawdown_curve(self) -> pd.DataFrame:
