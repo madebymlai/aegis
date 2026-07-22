@@ -63,8 +63,8 @@ def run_pipeline_execution(
         preflight = build_preflight(
             source=setup.optimization_source,
             optimization=config.optimization,
-            index=setup.arrays.signal.array("Close").index,
-            symbol_count=len(setup.arrays.signal.array("Close").columns),
+            index=setup.run_data.bundle.array("Close").index,
+            symbol_count=len(setup.run_data.bundle.array("Close").columns),
             metric_count=len(metric_registry.ids()),
             has_open_prices=True,
         )
@@ -76,7 +76,7 @@ def run_pipeline_execution(
 
     try:
         analysis = execute_optimization(
-            arrays=setup.arrays,
+            run_data=setup.run_data,
             source=setup.optimization_source,
             optimization=config.optimization,
             book=book,

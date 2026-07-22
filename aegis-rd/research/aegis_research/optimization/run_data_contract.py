@@ -1,10 +1,7 @@
 """Run data contract.
 
-Owns the facts about what data a Run ran on: the data array contract —
-which arrays a Run requires versus what its config declares — and, once
-market data is loaded, the ``RunDataFacts`` value whose projections build
-the data evidence payload, the candidate data identity, and the data
-metadata artifact payload for orchestrated optimization runs (ADR-0025).
+Owns the pre-load Array contract and the pure projections from the one loaded
+``RunData`` value into evidence, Candidate identity, and store artifacts.
 """
 
 from __future__ import annotations
@@ -22,7 +19,7 @@ from research.aegis_research.configuration import (
     ConfigValidationIssue,
     merge_data_arrays,
 )
-from research.aegis_research.market_data.contracts import MarketDataResult
+from research.aegis_research.run_data import RunData
 
 
 @dataclass(frozen=True)
@@ -62,76 +59,60 @@ class DataArrayContract:
         }
 
 
-@dataclass(frozen=True)
-class RunDataFacts:
-    """The facts about what data this Run ran on (ADR-0025).
+def run_data_evidence_payload(
+    run_data: RunData,
+    array_contract: DataArrayContract,
+) -> dict[str, Any]:
+    """Project compact success Evidence directly from RunData."""
+    return to_builtin(run_data.evidence) | {"array_contract": array_contract.metadata()}
 
-    Born by composition in the orchestrator immediately after market data
-    loads; the contract keeps its separate pre-load life. Every pure
-    projection of these facts lives here — consumers take the value whole
-    and call a projection instead of assembling payloads from the parts.
-    """
 
-    data_result: MarketDataResult
-    array_contract: DataArrayContract
-    metric_registry_fingerprint: str | None
-
-    def evidence_payload(self) -> dict[str, Any]:
-        """The Run data evidence payload for the Evidence baseline and artifact."""
-        return (
-            self._array_evidence_payload()
-            | {
-                "strategy_consumed_runner_data": True,
-                "strategy_data_binding": "runner_data_bundle",
-            }
-            | self._adjustment_mode_fact()
-        )
-
-    def candidate_data_identity(self) -> dict[str, Any]:
-        """The data identity hashed into every Candidate key."""
-        metadata = self.data_result.metadata
-        return {
-            "schema_version": "candidate_data_identity.v3",
-            "requested_instrument_ids": metadata.request.requested_instrument_ids,
-            "instrument_ids": metadata.coverage.instrument_ids,
-            "timeframe": metadata.request.timeframe,
-            "effective_arrays": metadata.request.effective_arrays,
-            "loaded_arrays": self._loaded_arrays(),
-            "rows": metadata.coverage.rows,
-            "index_start": metadata.coverage.start,
-            "index_end": metadata.coverage.end,
-            "index_evidence": metadata.provenance.index_evidence,
-            "source_metadata": metadata.provenance.source_metadata,
-            "array_contract": self.array_contract.metadata(),
-            # Present iff futures were materialised: otherwise-identical ratio and
-            # spread Runs must produce different Candidate keys.
-            **self._adjustment_mode_fact(),
+def candidate_data_identity(
+    run_data: RunData,
+    array_contract: DataArrayContract,
+) -> dict[str, Any]:
+    """Project the structural data identity hashed into every Candidate key."""
+    evidence = run_data.evidence
+    return to_builtin(
+        {
+            "schema_version": "candidate_data_identity.v4",
+            "requested_instrument_ids": evidence.requested_instrument_ids,
+            "tradeables": [
+                {
+                    "instrument_id": tradeable.instrument_id,
+                    **(
+                        {"continuous_root": tradeable.continuous_root}
+                        if tradeable.continuous_root is not None
+                        else {}
+                    ),
+                }
+                for tradeable in evidence.tradeables
+            ],
+            "loaded_arrays": evidence.loaded_arrays,
+            "timeframe": evidence.timeframe,
+            "start": evidence.start,
+            "end": evidence.end,
+            "missing_index": evidence.missing_index,
+            "rows": evidence.rows,
+            "index_start": evidence.index_start,
+            "index_end": evidence.index_end,
+            "source": evidence.source,
+            "catalog_path": evidence.catalog_path,
+            "currency_by_instrument_id": evidence.currency_by_instrument_id,
+            "size_increment_by_instrument": evidence.size_increment_by_instrument,
+            "distribution_coverage": evidence.distribution_coverage,
+            "adjustment_mode": evidence.adjustment_mode,
+            "array_contract": array_contract.metadata(),
         }
+    )
 
-    def metadata_artifact_payload(self) -> dict[str, Any]:
-        """The data metadata artifact payload: serialised metadata plus contract facts."""
-        return to_builtin(self.data_result.metadata) | self.array_contract.metadata()
 
-    def _array_evidence_payload(self) -> dict[str, Any]:
-        metadata = self.data_result.metadata
-        unavailable_arrays = [d.name for d in metadata.arrays if d.required and not d.loaded]
-        return {
-            **self.array_contract.metadata(),
-            "authored_arrays": metadata.request.authored_arrays,
-            "effective_arrays": metadata.request.effective_arrays,
-            "loaded_arrays": self._loaded_arrays(),
-            "unavailable_arrays": unavailable_arrays,
-            "quality_state": self.data_result.quality.state,
-        }
-
-    def _loaded_arrays(self) -> list[str]:
-        return [d.name for d in self.data_result.metadata.arrays if d.loaded]
-
-    def _adjustment_mode_fact(self) -> dict[str, str]:
-        mode = self.data_result.adjustment_mode
-        if mode is None:
-            return {}
-        return {"adjustment_mode": mode.value}
+def data_metadata_artifact_payload(
+    run_data: RunData,
+    array_contract: DataArrayContract,
+) -> dict[str, Any]:
+    """Project the data artifact without a parallel loader-metadata description."""
+    return run_data_evidence_payload(run_data, array_contract)
 
 
 def build_data_array_contract(

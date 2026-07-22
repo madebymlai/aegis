@@ -65,9 +65,11 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 # Re-pinned 2026-07-22 when retired OOS promotion thresholds left ReportConfig:
 # the resolved document no longer advertises gates that selection does not use.
 # Re-pinned again when the unused optimization.execute passthrough was removed.
+# Re-pinned 2026-07-22 when configurable data-quality degradation left the
+# forward RunData contract (aegis-rd-0iom.7).
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "2ea852d408006cdf985d3716f66d0aa2c7afceafa120abf6944c0eeb4f7b1bc4",
-    "int_valued_cash": "33b8bb2906193183391b8851203c44c3d1e9ee890aa25dbef21342cd15a7779c",
+    "canonical_grid": "b4b3a1343923fa09dcdbf63c3d26445d0cacd3dbd55ee80119ef972ed45af921",
+    "int_valued_cash": "94b2f081bf655ab737b8a0104120724a4adfcc927833e32e78344a4cd82896b1",
 }
 
 

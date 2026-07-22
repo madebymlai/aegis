@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from aegis_data.catalog import catalog_data_port
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -27,11 +28,7 @@ from research.aegis_research.configuration import (
     RunConfig,
     load_run_config,
 )
-from research.aegis_research.drift_bands import instrument_bands_from
-from research.aegis_research.market_data.identity import (
-    declared_marking_resolver,
-    resolved_instruments,
-)
+from research.aegis_research.instrument_resolution import resolve_instruments
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.candidate_store_identity import candidate_store_path
 from research.aegis_research.optimization.lock_run import ResolvedComponentParams, resolve_lock_run
@@ -85,8 +82,12 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
         )
     with CandidateStore(candidate_store_path(config)) as store:
         lock_run = resolve_lock_run(config.lock, store=store)
-    instruments = resolved_instruments(config)
-    instrument_ids = tuple(instrument_id for instrument_id, _ in instruments)
+    port = catalog_data_port(
+        config.data.path,
+        resolver=config.data.marking_resolver(),
+    )
+    instruments = resolve_instruments(config.data, port=port)
+    instrument_ids = instruments.instrument_ids
     strategy_definition = component_registry.get(
         ComponentSelection("strategies", config.strategy.id)
     )
@@ -114,7 +115,7 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
     plan = LockedExecutionPlan(
         strategy=components.strategy,
         indicators=components.indicators,
-        instrument_bands=instrument_bands_from(instruments, config.portfolio),
+        instrument_bands=instruments.instrument_bands(config.portfolio),
         direction=config.portfolio.direction,
     )
     version = strategy_definition.version
@@ -280,7 +281,7 @@ def _recorded_mark_modes(
     re-derives it (aegis-rd-tggo.3).  Continuous roots are LAST by
     construction and are not recorded.
     """
-    resolver = declared_marking_resolver(config.data)
+    resolver = config.data.marking_resolver()
     continuous_symbols = set(futures)
     loadable = (
         *(

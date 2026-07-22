@@ -54,7 +54,7 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
         run_pipeline_execution(
             config=config,
             setup=setup,
-            book=ResolvedBook.resolve(config, None),
+            book=ResolvedBook.resolve(config.portfolio, setup.run_data),
             metric_registry=empty_metric_registry().freeze(),
             run_evidence=run_evidence,
         )

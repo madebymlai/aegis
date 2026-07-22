@@ -45,6 +45,7 @@ def test_data_config_accepts_native_instrument_id_shape() -> None:
         "tz_convert",
         "skip_on_error",
         "silence_warnings",
+        "quality",
     ],
 )
 def test_data_config_rejects_removed_legacy_fields(field_name: str) -> None:

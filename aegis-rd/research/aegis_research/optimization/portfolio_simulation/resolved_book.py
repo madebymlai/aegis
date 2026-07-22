@@ -16,10 +16,9 @@ from dataclasses import dataclass
 
 import pandas as pd
 from aegis_runtime import DriftBand, InstrumentId
-from aegis_runtime.currency import CurrencyConversion
 
-from research.aegis_research.configuration import PortfolioConfig, RunConfig
-from research.aegis_research.drift_bands import resolve_instrument_bands
+from research.aegis_research.configuration import PortfolioConfig
+from research.aegis_research.run_data import RunData
 
 
 @dataclass(frozen=True)
@@ -44,36 +43,34 @@ class ResolvedBook:
     @classmethod
     def resolve(
         cls,
-        config: RunConfig,
-        currency_conversion: CurrencyConversion | None,
-        size_increment_by_instrument: Mapping[InstrumentId, float] | None = None,
+        portfolio: PortfolioConfig,
+        run_data: RunData,
     ) -> ResolvedBook:
-        """Resolve the book's per-instrument facts from the declared config.
+        """Resolve every per-instrument fact from one complete RunData value.
 
         A leg is non-base by its currency *derived from the resolved Instrument*
-        (the conversion's ``currency_by_instrument_id``), never a configured
-        field; a single-currency book has no conversion, so every leg reads as
-        base and gets the uniform no-op fee series — no branch, no special case.
+        (the conversion's ``currency_by_instrument_id``), never a configured field.
+        The structural resolution carries native and continuous tradeables together,
+        so fee, band, root, and size facts cannot describe different universes.
         """
-        portfolio = config.portfolio
-        instrument_ids = tuple(InstrumentId.from_str(value) for value in config.data.instruments)
-        currency_by_instrument_id = (
-            currency_conversion.currency_by_instrument_id
-            if currency_conversion is not None
-            else dict.fromkeys(instrument_ids, portfolio.base_currency)
-        )
+        resolution = run_data.instrument_resolution
+        instrument_ids = resolution.instrument_ids
         return cls(
             config=portfolio,
             fees_by_symbol=_fx_adjusted_fees(
                 instrument_ids,
-                currency_by_instrument_id,
+                run_data.currency_conversion.currency_by_instrument_id,
                 portfolio.base_currency,
                 base_fee=portfolio.fees,
                 fx_conversion_cost=portfolio.fx_conversion_cost,
             ),
-            instrument_bands=resolve_instrument_bands(config),
-            futures_roots=tuple(config.data.futures),
-            size_increment_by_instrument=size_increment_by_instrument,
+            instrument_bands=resolution.instrument_bands(portfolio),
+            futures_roots=tuple(
+                tradeable.continuous_root
+                for tradeable in resolution.tradeables
+                if tradeable.continuous_root is not None
+            ),
+            size_increment_by_instrument=run_data.size_increment_by_instrument,
         )
 
 

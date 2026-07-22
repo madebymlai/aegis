@@ -22,11 +22,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from aegis_runtime import MarketDataBundle
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import load_run_config
-from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import (
     build_component_optimization_source,
 )

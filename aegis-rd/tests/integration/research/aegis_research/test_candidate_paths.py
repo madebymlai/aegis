@@ -38,7 +38,7 @@ from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_ranking_config,
     make_report_config,
-    make_run_arrays,
+    make_run_data,
 )
 
 
@@ -102,7 +102,7 @@ def test_development_paths_resolve_one_common_start_from_the_sampled_grid() -> N
         }
 
     paths = build_development_paths(
-        arrays=make_run_arrays(close=close, open_=close),
+        run_data=make_run_data(close=close, open_=close),
         source=_source(lookbacks),
         optimization=make_optimization_config(),
         book=ResolvedBook(
@@ -157,7 +157,7 @@ def test_invalid_lookback_contract_fails_before_replay(
 
     with pytest.raises(CandidatePathError, match=message):
         build_development_paths(
-            arrays=make_run_arrays(close=close, open_=close),
+            run_data=make_run_data(close=close, open_=close),
             source=_source(lambda params: resolved),
             optimization=make_optimization_config(),
             book=ResolvedBook(make_portfolio_config(fill_timing="next_close")),
@@ -191,7 +191,7 @@ def test_random_sample_changes_common_start_only_through_sampled_candidates() ->
 
     def build(seed: int):
         return build_development_paths(
-            arrays=make_run_arrays(close=close, open_=close),
+            run_data=make_run_data(close=close, open_=close),
             source=_source(
                 lambda candidate: {"indicators/demo": candidate["indicator.window"]},
                 params=params,
@@ -234,7 +234,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         has_open_prices=True,
     )
     batch = build_development_paths(
-        arrays=make_run_arrays(close=close, open_=close),
+        run_data=make_run_data(close=close, open_=close),
         source=source,
         optimization=optimization,
         book=book,
@@ -250,7 +250,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
             name: vbt.Param([key[level]]) for level, name in enumerate(batch.candidates.param_names)
         }
         sequential = build_development_paths(
-            arrays=make_run_arrays(close=close, open_=close),
+            run_data=make_run_data(close=close, open_=close),
             source=_source(lambda params: {"source": 1}, params=scalar_params),
             optimization=optimization,
             book=book,
@@ -329,7 +329,7 @@ def test_development_paths_flow_unchanged_into_observation_analysis() -> None:
     report = make_report_config()
     registry = make_metric_registry_for(())
     paths = build_development_paths(
-        arrays=make_run_arrays(close=close, open_=close),
+        run_data=make_run_data(close=close, open_=close),
         source=_source(lambda params: {"source": 2}),
         optimization=make_optimization_config(),
         book=ResolvedBook(
@@ -364,7 +364,7 @@ def test_development_paths_flow_unchanged_into_observation_analysis() -> None:
 def test_preflighted_runner_executes_continuous_replay_without_public_split() -> None:
     index = pd.date_range("2024-01-01", periods=8)
     close = pd.DataFrame({"A": np.arange(10.0, 18.0)}, index=index)
-    arrays = make_run_arrays(close=close, open_=close)
+    run_data = make_run_data(close=close, open_=close)
     seen: list[dict[str, Any]] = []
 
     def lookbacks(params: Mapping[str, Any]) -> Mapping[str, int]:
@@ -385,7 +385,7 @@ def test_preflighted_runner_executes_continuous_replay_without_public_split() ->
     )
 
     analysis = execute_optimization(
-        arrays=arrays,
+        run_data=run_data,
         source=source,
         optimization=optimization,
         book=ResolvedBook(

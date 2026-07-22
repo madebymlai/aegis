@@ -319,7 +319,7 @@ def test_config_evidence_preserves_the_published_shape_and_hashes(tmp_path: Path
         "schema_version": 11,
         "source_path": None,
         "authored_config_hash": "7bcfeb2ce1cdebb4e6c43c829d1aa243720cf09555bc63047c8d98c0b88ccbb5",
-        "resolved_config_hash": "5be40a3753b02e8d03e4d4cd302fb56b0bc4fc61ecdd1fbda08239664391b6d3",
+        "resolved_config_hash": "3ab786ce48e9bc91c4cd52f1b55d13d9cd11640ad2e8a4263808b6f77c02040e",
         "raw_config_identity": {
             "hash": "e974d53bedd622f6c027fb410e0a2b0e8dff93dd513da1134aafbd25e30967e6"
         },

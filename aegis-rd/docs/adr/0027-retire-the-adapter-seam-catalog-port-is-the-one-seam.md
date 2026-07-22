@@ -1,6 +1,6 @@
 # Retire the adapter seam: the catalog port is the one seam, evidence speaks market_data.v4
 
-Status: accepted
+Status: superseded by [ADR-0028](0028-run-data-is-the-single-research-data-interface.md)
 
 Amends ADR-0005 (the seam-stays premise). Builds on Data ADR-0011. Origin:
 architecture review 2026-07-10, candidate 02; decisions settled by grilling

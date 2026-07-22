@@ -19,7 +19,6 @@ from research.aegis_research.configuration.resolution import (
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     DATA_ARRAY_SHORTCUTS,
-    DATA_QUALITY_DEGRADATIONS,
     DEFAULT_LOCK_ROLE,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     IDENTIFIER_RE,
@@ -36,7 +35,6 @@ from research.aegis_research.configuration.schema import (
     ConfigValidationError,
     ConfigValidationIssue,
     DataConfig,
-    DataQualityConfig,
     InstrumentBandConfig,
     Lock,
     OptimizationConfig,
@@ -56,7 +54,6 @@ from research.aegis_research.configuration.schema import (
 __all__ = [
     "CONFIG_SCHEMA_VERSION",
     "DATA_ARRAY_SHORTCUTS",
-    "DATA_QUALITY_DEGRADATIONS",
     "DEFAULT_LOCK_ROLE",
     "FORWARD_OPTIMIZATION_REQUIRED_MESSAGE",
     "IDENTIFIER_RE",
@@ -74,7 +71,6 @@ __all__ = [
     "ConfigValidationError",
     "ConfigValidationIssue",
     "DataConfig",
-    "DataQualityConfig",
     "InstrumentBandConfig",
     "Lock",
     "NonEmptyStr",

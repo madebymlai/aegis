@@ -35,7 +35,6 @@ from research.aegis_research.component_registry.registry import (
 from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     DataConfig,
-    DataQualityConfig,
     Lock,
     OptimizationConfig,
     PortfolioConfig,
@@ -46,7 +45,10 @@ from research.aegis_research.configuration import (
     RunSourceRefConfig,
     SignalConfig,
 )
-from research.aegis_research.market_data.run_arrays import RunArrays
+from research.aegis_research.instrument_resolution import (
+    InstrumentResolution,
+    TradeableInstrument,
+)
 from research.aegis_research.optimization.continuous_evidence import (
     CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
     METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
@@ -65,20 +67,7 @@ from research.aegis_research.optimization.portfolio_simulation._simulation impor
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
 )
-from research.aegis_research.optimization.run_data_contract import (
-    DataArrayContract,
-    RunDataFacts,
-)
-from tests.support.research.aegis_research.test_doubles import FakeDataResult
-
-
-def make_data_quality_config(**overrides: Any) -> DataQualityConfig:
-    """Return a DataQualityConfig with valid defaults, overridden by any kwargs."""
-    defaults: dict[str, Any] = {
-        "allowed_degradations": [],
-    }
-    defaults.update(overrides)
-    return DataQualityConfig(**defaults)
+from research.aegis_research.run_data import RunData, RunDataEvidence
 
 
 def make_data_config(**overrides: Any) -> DataConfig:
@@ -98,7 +87,6 @@ def make_data_config(**overrides: Any) -> DataConfig:
         "timeframe": "1D",
         "path": None,
         "missing_index": "raise",
-        "quality": make_data_quality_config(),
     }
     defaults.update(overrides)
     return DataConfig(**defaults)
@@ -354,43 +342,60 @@ def _component_source_identity(component_id: str) -> ComponentSourceIdentity:
     )
 
 
-def make_run_arrays(**overrides: Any) -> RunArrays:
-    """Return a RunArrays with valid defaults, overridden by any kwargs.
-
-    Defaults are a coherent single-series shape: the P&L frames are the signal
-    Close/Open objects themselves, mirroring what ``prepare_run_arrays``
-    produces when no P&L series is declared.
-    """
-    close = overrides.pop("close", pd.DataFrame({0: [1.0, 2.0]}))
-    open_ = overrides.pop("open_", pd.DataFrame({0: [1.0, 2.0]}))
-    defaults: dict[str, Any] = {
-        "signal": MarketDataBundle({"Close": close, "Open": open_}),
-        "pnl_close": close,
-        "pnl_open": open_,
-        "currency_conversion": None,
-        "distributions": (),
-    }
-    defaults.update(overrides)
-    return RunArrays(**defaults)
-
-
-def make_run_data_facts(**overrides: Any) -> RunDataFacts:
-    """Return a RunDataFacts with valid defaults, overridden by any kwargs.
-
-    Defaults are the simplest healthy fixture: a fake data result, a contract
-    whose configured arrays satisfy the pipeline-required Close/Open pair, and
-    no metric-registry fingerprint.
-    """
-    defaults: dict[str, Any] = {
-        "data_result": FakeDataResult(),
-        "array_contract": DataArrayContract(
-            configured_arrays=("Close", "Open"),
-            pipeline_required_arrays=("Close", "Open"),
+def make_run_data(**overrides: Any) -> RunData:
+    """Return a coherent eager RunData fixture, overridden by any kwargs."""
+    instrument_id = InstrumentId.from_str("SYN.XNAS")
+    close = overrides.pop("close", pd.DataFrame({instrument_id: [1.0, 2.0]}))
+    open_ = overrides.pop("open_", pd.DataFrame({instrument_id: [1.0, 2.0]}))
+    resolution = overrides.pop(
+        "instrument_resolution",
+        InstrumentResolution((TradeableInstrument(instrument_id),)),
+    )
+    conversion = overrides.pop(
+        "currency_conversion",
+        CurrencyConversion({}, currency_by_instrument_id={instrument_id: "EUR"}),
+    )
+    increments = overrides.pop(
+        "size_increment_by_instrument",
+        dict.fromkeys(resolution.instrument_ids, 1.0),
+    )
+    adjustment_mode = overrides.pop("adjustment_mode", None)
+    evidence = overrides.pop(
+        "evidence",
+        RunDataEvidence(
+            schema_version="run_data.v1",
+            requested_instrument_ids=resolution.instrument_ids,
+            tradeables=resolution.tradeables,
+            loaded_arrays=("Close", "Open"),
+            timeframe="1D",
+            start="2024-01-01",
+            end="2024-01-03",
+            missing_index="raise",
+            rows=2,
+            index_start="0",
+            index_end="1",
+            source="fixture",
+            catalog_path=None,
+            currency_by_instrument_id=dict(conversion.currency_by_instrument_id),
+            continuous_root_currencies={},
+            size_increment_by_instrument=increments,
+            distribution_coverage=(),
+            adjustment_mode=(
+                adjustment_mode.value if adjustment_mode is not None else None
+            ),
         ),
-        "metric_registry_fingerprint": None,
+    )
+    defaults: dict[str, Any] = {
+        "bundle": MarketDataBundle({"Close": close, "Open": open_}),
+        "instrument_resolution": resolution,
+        "currency_conversion": conversion,
+        "distributions": (),
+        "size_increment_by_instrument": increments,
+        "adjustment_mode": adjustment_mode,
+        "evidence": evidence,
     }
     defaults.update(overrides)
-    return RunDataFacts(**defaults)
+    return RunData(**defaults)
 
 
 def make_setup_result(**overrides: Any) -> SetupResult:
@@ -403,7 +408,7 @@ def make_setup_result(**overrides: Any) -> SetupResult:
     defaults: dict[str, Any] = {
         "store_path": Path("candidates.sqlite3"),
         "optimization_source": _fake_optimization_source(),
-        "arrays": make_run_arrays(),
+        "run_data": make_run_data(),
     }
     defaults.update(overrides)
     return SetupResult(**defaults)
@@ -431,7 +436,7 @@ def make_candidate_portfolio(
 
     Wraps the Portfolio Simulation internal seam so tests that only
     need a Portfolio to extract metrics from never name the sim module
-    (mirrors ``make_run_arrays``). ``config`` defaults to the factory
+    (mirrors the production portfolio seam). ``config`` defaults to the factory
     PortfolioConfig.
     """
     book = ResolvedBook(config if config is not None else make_portfolio_config())

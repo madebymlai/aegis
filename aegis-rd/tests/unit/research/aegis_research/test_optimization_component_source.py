@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from aegis_runtime import MarketDataBundle
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import discover_component_registry
@@ -14,7 +15,6 @@ from research.aegis_research.configuration import (
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
 )
-from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     _ComponentRuntime,

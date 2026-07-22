@@ -15,25 +15,18 @@ from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
 )
 from tests.support.research.aegis_research.factories import (
-    make_run_arrays,
-    make_run_data_facts,
+    make_run_data,
 )
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
-from tests.support.research.aegis_research.test_doubles import (
-    FakeDataResult,
-    default_metadata,
-)
-
-_OHLCV_METADATA = default_metadata(effective_arrays=["OHLCV"], start=None, end=None)
 
 
-def _arrays() -> Any:
+def _run_data() -> Any:
     import pandas as pd
 
     frame = pd.DataFrame({0: [float(i) for i in range(120)]})
-    return make_run_arrays(close=frame, open_=frame)
+    return make_run_data(close=frame, open_=frame)
 
 
 def _run_evidence() -> RunEvidence:
@@ -57,11 +50,9 @@ def test_pipeline_setup_returns_setup_result(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=_run_evidence(),
     )
 
@@ -70,7 +61,7 @@ def test_pipeline_setup_returns_setup_result(
     assert result.store_path == candidate_store_path(config)
     assert result.optimization_source is not None
     assert isinstance(result.strategy_evidence, dict)
-    assert result.arrays is not None
+    assert result.run_data is not None
     assert not hasattr(result, "split_result")
 
 
@@ -86,11 +77,9 @@ def test_pipeline_setup_evidence_baseline_shape(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=run_evidence,
     )
 
@@ -116,11 +105,9 @@ def test_pipeline_setup_store_path_matches_candidate_store(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=_run_evidence(),
     )
 

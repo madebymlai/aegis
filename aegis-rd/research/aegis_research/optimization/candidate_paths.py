@@ -10,7 +10,6 @@ import pandas as pd
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OptimizationConfig, ReportConfig
-from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.metrics.accessors import central_metrics_from_grouped_accessors
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_validity import (
@@ -31,6 +30,7 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
+from research.aegis_research.run_data import RunData
 
 
 class CandidatePathError(ValueError):
@@ -114,7 +114,7 @@ def materialize_candidates(
 
 def build_development_paths(
     *,
-    arrays: RunArrays,
+    run_data: RunData,
     source: OptimizationSource,
     optimization: OptimizationConfig,
     book: ResolvedBook,
@@ -127,7 +127,7 @@ def build_development_paths(
     """Build every fixed Candidate path before any observational analysis."""
     if ranking_metric not in metric_registry:
         raise CandidatePathError(f"ranking metric {ranking_metric!r} is not in the metric registry")
-    signal_close = arrays.signal.array("Close")
+    signal_close = run_data.bundle.array("Close")
     resolved_plan = (
         plan
         if plan is not None
@@ -155,14 +155,14 @@ def build_development_paths(
         raise CandidatePathError("Candidate allocations must be a pandas DataFrame")
 
     replay = replay_candidates(
-        arrays.pnl_close,
+        run_data.bundle.array("Close"),
         allocations,
         book,
         scored_start=lookbacks.scored_start,
-        open_=arrays.pnl_open,
+        open_=run_data.bundle.array("Open"),
         periods_per_year=report.periods_per_year,
-        distributions=arrays.distributions,
-        currency_conversion=arrays.currency_conversion,
+        distributions=run_data.distributions,
+        currency_conversion=run_data.currency_conversion,
     )
     metrics = central_metrics_from_grouped_accessors(
         replay.portfolio,

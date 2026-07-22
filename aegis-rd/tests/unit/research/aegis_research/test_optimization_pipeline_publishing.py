@@ -31,18 +31,15 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from research.aegis_research.optimization.run_data_contract import DataArrayContract
 from tests.support.research.aegis_research.factories import (
-    make_run_data_facts,
+    make_run_data,
     make_selection_identity,
 )
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
-from tests.support.research.aegis_research.test_doubles import (
-    FakeArrayContract,
-    FakeDataResult,
-    FakeRecorder,
-)
+from tests.support.research.aegis_research.test_doubles import FakeRecorder
 
 _FAMILY = "strategies"
 _COMPONENT_ID = "demo.ma_cross"
@@ -50,6 +47,7 @@ _SLOT = "strategy:demo.ma_cross"
 _STRATEGY_REF = ComponentRef(_FAMILY, _COMPONENT_ID, _SLOT)
 _FAST_KEY = encode(_STRATEGY_REF, "fast_window")
 _SLOW_KEY = encode(_STRATEGY_REF, "slow_window")
+_ARRAY_CONTRACT = DataArrayContract(("Close", "Open"), pipeline_required_arrays=("Close", "Open"))
 
 
 class _FakeSource:
@@ -123,11 +121,9 @@ def test_publishing_writes_three_candidate_output_to_manifest(tmp_path: Path) ->
     out = run_pipeline_publishing(
         config=config,
         recorder=recorder,
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(),
-            array_contract=FakeArrayContract(),
-            metric_registry_fingerprint="fp-test",
-        ),
+        run_data=make_run_data(),
+        array_contract=_ARRAY_CONTRACT,
+        metric_registry_fingerprint="fp-test",
         optimization_source=_FakeSource(),
         execution=_execution(),
         run_evidence=run_evidence,
@@ -157,10 +153,9 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
     run_pipeline_publishing(
         config=config,
         recorder=recorder,
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(),
-            array_contract=FakeArrayContract(),
-        ),
+        run_data=make_run_data(),
+        array_contract=_ARRAY_CONTRACT,
+        metric_registry_fingerprint=None,
         optimization_source=_FakeSource(),
         execution=_execution(),
         run_evidence=run_evidence,

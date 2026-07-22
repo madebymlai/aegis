@@ -40,7 +40,7 @@ def test_on_run_refs_fires_twice_on_run_failure(
         raise RuntimeError("data stage failed")
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_market_data_result",
+        "research.aegis_research.run_pipeline.load_run_data",
         fail_after_manifest,
     )
 
@@ -80,7 +80,7 @@ def test_on_run_refs_fires_twice_on_interrupt(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_market_data_result",
+        "research.aegis_research.run_pipeline.load_run_data",
         interrupt_after_manifest,
     )
 
@@ -128,7 +128,7 @@ def test_terminal_callback_raise_chains_original_failure_as_context(
         raise RuntimeError("data stage failed")
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_market_data_result",
+        "research.aegis_research.run_pipeline.load_run_data",
         fail_data_loading,
     )
 

@@ -13,12 +13,12 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
+from research.aegis_research import run_pipeline as run_pipeline_module
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     resolve_run_config,
 )
-from research.aegis_research.market_data.adapters import catalog as catalog_adapter
 from research.aegis_research.optimization.portfolio_simulation._simulation import (
     VBT_STATICIZED_CACHE_ENV,
 )
@@ -104,7 +104,7 @@ def _pipeline_total_return(
         distribution_provider=_AdjustedLastProvider(adjusted_last),
     )
     monkeypatch.setattr(
-        catalog_adapter,
+        run_pipeline_module,
         "catalog_data_port",
         lambda _path, resolver=None: port,
     )

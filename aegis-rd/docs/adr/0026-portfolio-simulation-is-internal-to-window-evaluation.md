@@ -7,6 +7,10 @@ portfolio engine and `ResolvedBook` remain one deep internal module, now named
 `optimization/portfolio_simulation/`. Historical design language below describes the
 module that existed when this decision was accepted.
 
+Amended by [ADR-0028](0028-run-data-is-the-single-research-data-interface.md):
+`ResolvedBook.resolve` consumes the one coherent `RunData` value, including its
+shared `InstrumentResolution`, conversion, distributions, and size increments.
+
 Window Evaluation is the deep module that turns one Candidate chunk over one split window
 into a metric frame, yet before this work its single production call into the portfolio
 simulation module crossed an 11-argument seam and its own construction took 9 fields. Five

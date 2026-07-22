@@ -34,8 +34,7 @@ from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
 )
 from tests.support.research.aegis_research.factories import (
-    make_run_arrays,
-    make_run_data_facts,
+    make_run_data,
     make_selection_identity,
 )
 from tests.support.research.aegis_research.market_data_fixtures import (
@@ -44,12 +43,7 @@ from tests.support.research.aegis_research.market_data_fixtures import (
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
 )
-from tests.support.research.aegis_research.test_doubles import (
-    FakeDataResult,
-    default_metadata,
-)
 
-_OHLCV_METADATA = default_metadata(effective_arrays=["OHLCV"], start=None, end=None)
 _DATA_IDENTITY = {
     "schema_version": "candidate_data_identity.v3",
     "requested_instrument_ids": ["SYN.XNAS"],
@@ -58,11 +52,11 @@ _DATA_IDENTITY = {
 }
 
 
-def _arrays() -> Any:
+def _run_data() -> Any:
     import pandas as pd
 
     frame = pd.DataFrame({0: [float(i) for i in range(120)]})
-    return make_run_arrays(close=frame, open_=frame)
+    return make_run_data(close=frame, open_=frame)
 
 
 def _run_evidence() -> RunEvidence:
@@ -174,11 +168,9 @@ def test_locked_setup_resolves_every_component_from_candidate(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=_run_evidence(),
     )
 
@@ -199,11 +191,9 @@ def test_locked_setup_performs_no_optimization(
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=_run_evidence(),
     )
 
@@ -222,11 +212,9 @@ def test_locked_setup_records_reproduction_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=run_evidence,
     )
 
@@ -249,11 +237,9 @@ def test_unlocked_setup_has_no_lock_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=run_evidence,
     )
 
@@ -364,11 +350,9 @@ def test_locked_setup_records_overridden_params_in_evidence(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=run_evidence,
     )
 
@@ -400,11 +384,9 @@ def test_locked_setup_records_empty_overrides_when_no_params(
     run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
-        arrays=_arrays(),
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(quality_state="ok", metadata=_OHLCV_METADATA),
-            array_contract=array_contract,
-        ),
+        run_data=_run_data(),
+        array_contract=array_contract,
+        metric_registry_fingerprint="metric-fp",
         run_evidence=run_evidence,
     )
 

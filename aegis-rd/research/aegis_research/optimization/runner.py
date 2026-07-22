@@ -11,7 +11,6 @@ from research.aegis_research.configuration import (
     RankingConfig,
     ReportConfig,
 )
-from research.aegis_research.market_data.run_arrays import RunArrays
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
 from research.aegis_research.optimization.candidate_paths import (
     CandidatePathError,
@@ -27,6 +26,7 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
+from research.aegis_research.run_data import RunData
 
 
 class OptimizationRunnerError(ValueError):
@@ -35,7 +35,7 @@ class OptimizationRunnerError(ValueError):
 
 def execute_optimization(
     *,
-    arrays: RunArrays,
+    run_data: RunData,
     source: OptimizationSource,
     optimization: OptimizationConfig,
     book: ResolvedBook,
@@ -54,7 +54,7 @@ def execute_optimization(
 
     try:
         paths = build_development_paths(
-            arrays=arrays,
+            run_data=run_data,
             source=source,
             optimization=optimization,
             book=book,

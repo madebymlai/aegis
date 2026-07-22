@@ -4,8 +4,9 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
-from aegis_data.marking import split_mark_token
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode, split_mark_token
 from aegis_runtime import DriftBand
+from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -46,13 +47,6 @@ MISSING_POLICIES = set(get_args(MissingPolicy))
 # config load. aegis-data's marking seam owns the grammar and the resolution.
 MarkModeName = Literal["LAST", "MID", "QUOTE"]
 MARK_MODES = set(get_args(MarkModeName))
-Degradation = Literal[
-    "duplicate_index",
-    "missing_rows",
-    "non_monotonic_index",
-    "skipped_instrument_ids",
-]
-DATA_QUALITY_DEGRADATIONS = set(get_args(Degradation))
 FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
     "is required; fixed/non-optimized strategy runs are removed from the forward "
     "run contract; use optimization.search and optimization.observation_block_bars"
@@ -92,11 +86,6 @@ class ConfigValidationError(ValueError):
         super().__init__(f"Invalid run config: {details}")
 
 
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class DataQualityConfig:
-    allowed_degradations: list[Degradation] = field(default_factory=list)
-
-
 def _validate_array_token(token: str) -> str:
     """Pydantic item-validator: reject tokens not in shortcuts or malformed."""
     if token in DATA_ARRAY_SHORTCUTS:
@@ -134,8 +123,6 @@ class DataConfig:
     timeframe: str = "1D"
     path: str | None = None
     missing_index: MissingPolicy = "raise"
-    quality: DataQualityConfig = field(default_factory=DataQualityConfig)
-
     @property
     def effective_arrays(self) -> tuple[str, ...]:
         return expand_data_arrays(self.arrays)
@@ -144,6 +131,21 @@ class DataConfig:
     def native_instrument_ids(self) -> tuple[str, ...]:
         """Native Nautilus InstrumentIds requested from the catalog/port."""
         return tuple(dict.fromkeys([*self.instruments, *self.exchange]))
+
+    def marking_resolver(self) -> DeclaredMarkingResolver:
+        """Build the run's marking policy from its explicit declarations."""
+        return DeclaredMarkingResolver(
+            declared={
+                **{
+                    InstrumentId.from_str(value): MarkMode.MID
+                    for value in self.exchange
+                },
+                **{
+                    InstrumentId.from_str(value): MarkMode(mode)
+                    for value, mode in self.mark_modes.items()
+                },
+            }
+        )
 
     @model_validator(mode="after")
     def _validate_conditional_requireds(self) -> DataConfig:

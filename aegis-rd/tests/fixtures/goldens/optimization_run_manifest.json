@@ -1,23 +1,23 @@
 {
   "artifacts": [
     {
-      "hash": "837afb264c829a0705efc1a762d5b052c032a7a0c21a10b4426daaf840f6d5da",
+      "hash": "20453453309785a49d3aeec61c0fd907ceb5786cf8e7e302ac6bc5fbf7bc80ba",
       "hash_algorithm": "sha256",
       "id": "data.metadata",
       "metadata": {},
       "path": "data_metadata.json",
       "producer_stage": "data",
       "role": "data_metadata",
-      "schema_version": "data_metadata.v3",
+      "schema_version": "data_metadata.v4",
       "shape": {},
-      "size": 20576,
+      "size": 4847,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
       "upstream_artifact_ids": []
     },
     {
-      "hash": "138c2268d0637a35c33835ad1d138cab82dca34131bfc60c1107498c06417dd9",
+      "hash": "3cf8a4fd208eed4af72cc1cca60b1d810d5ca1717d8b4c8a139af0e0dbdd20c2",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "observation_block_count": 3
       },
-      "size": 505876,
+      "size": 512248,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -60,9 +60,6 @@
       "mark_modes": {},
       "missing_index": "raise",
       "path": "catalog",
-      "quality": {
-        "allowed_degradations": []
-      },
       "start": "2024-01-01",
       "timeframe": "1D"
     },
@@ -135,13 +132,215 @@
       "raw_config_identity": {
         "hash": "d976ef295e2d893924e4216fa7c3757e45cb53b4e239db89fb9cc854351e5f2c"
       },
-      "resolved_config_hash": "5d989a44fbb6d62185455db7ce75ecb2bb3f39a2de6ac9ed30d10dd4471c282a",
+      "resolved_config_hash": "30311bca81cab00874e91c61d2e16b9b42279610d955fd976412f8da501161dc",
       "schema_version": 11,
       "selection": {
         "config_path": "<masked>",
         "source": "explicit"
       },
       "source_path": "<masked>"
+    },
+    "data": {
+      "adjustment_mode": null,
+      "array_contract": {
+        "component_required_arrays": [
+          "Close"
+        ],
+        "configured_arrays": [
+          "Open",
+          "High",
+          "Low",
+          "Close",
+          "Volume"
+        ],
+        "contract_required_arrays": [
+          "Close",
+          "Open"
+        ],
+        "missing_required_arrays": [],
+        "pipeline_required_arrays": [
+          "Close",
+          "Open"
+        ]
+      },
+      "catalog_path": "catalog",
+      "continuous_root_currencies": {},
+      "currency_by_instrument_id": {
+        "DBC.XNAS": "EUR",
+        "EEM.XNAS": "EUR",
+        "GLD.XNAS": "EUR",
+        "IWM.XNAS": "EUR",
+        "SPY.XNAS": "EUR",
+        "TLT.XNAS": "EUR",
+        "UUP.XNAS": "EUR",
+        "VNQ.XNAS": "EUR",
+        "XLE.XNAS": "EUR",
+        "XLU.XNAS": "EUR"
+      },
+      "distribution_coverage": [
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "SPY.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "IWM.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "EEM.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "TLT.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "GLD.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "DBC.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "VNQ.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "UUP.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "XLE.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        },
+        {
+          "applicable": true,
+          "checked_at": "2024-01-01T00:00:00+00:00",
+          "event_count": 0,
+          "instrument_id": "XLU.XNAS",
+          "verified_end": "2026-10-05T00:00:00+00:00",
+          "verified_start": "2024-01-01T00:00:00+00:00"
+        }
+      ],
+      "end": "2026-10-05",
+      "index_end": "2026-10-04 00:00:00",
+      "index_start": "2024-01-01 00:00:00",
+      "loaded_arrays": [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume"
+      ],
+      "missing_index": "raise",
+      "requested_instrument_ids": [
+        "SPY.XNAS",
+        "IWM.XNAS",
+        "EEM.XNAS",
+        "TLT.XNAS",
+        "GLD.XNAS",
+        "DBC.XNAS",
+        "VNQ.XNAS",
+        "UUP.XNAS",
+        "XLE.XNAS",
+        "XLU.XNAS"
+      ],
+      "rows": 1008,
+      "schema_version": "run_data.v1",
+      "size_increment_by_instrument": {
+        "DBC.XNAS": 1.0,
+        "EEM.XNAS": 1.0,
+        "GLD.XNAS": 1.0,
+        "IWM.XNAS": 1.0,
+        "SPY.XNAS": 1.0,
+        "TLT.XNAS": 1.0,
+        "UUP.XNAS": 1.0,
+        "VNQ.XNAS": 1.0,
+        "XLE.XNAS": 1.0,
+        "XLU.XNAS": 1.0
+      },
+      "source": "nautilus_catalog",
+      "start": "2024-01-01",
+      "timeframe": "1D",
+      "tradeables": [
+        {
+          "continuous_root": null,
+          "instrument_id": "SPY.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "IWM.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "EEM.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "TLT.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "GLD.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "DBC.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "VNQ.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "UUP.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "XLE.XNAS"
+        },
+        {
+          "continuous_root": null,
+          "instrument_id": "XLU.XNAS"
+        }
+      ]
     },
     "data_arrays": {
       "component_required_arrays": [
@@ -168,7 +367,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_a45c60666cd40e7162aba7d1e2e2a77c",
+          "candidate_key": "cand_22e0a84c4b3905c9ab27783ff6390b04",
           "complete_period_metrics": {
             "max_dd": 27.043452145100744,
             "sharpe_ratio": -0.17267188338676512,
@@ -196,6 +395,7 @@
               "slippage": 0.0005
             },
             "data_identity": {
+              "adjustment_mode": null,
               "array_contract": {
                 "component_required_arrays": [
                   "Close"
@@ -217,180 +417,173 @@
                   "Open"
                 ]
               },
-              "effective_arrays": [
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume"
-              ],
-              "index_end": "2026-10-04 00:00:00",
-              "index_evidence": {
-                "raw_index_end": "2026-10-04 00:00:00",
-                "raw_index_has_duplicates": false,
-                "raw_index_monotonic_increasing": true,
-                "raw_index_start": "2024-01-01 00:00:00",
-                "raw_index_timezone": null,
-                "raw_rows": 1008,
-                "source": "nautilus_catalog"
+              "catalog_path": "catalog",
+              "currency_by_instrument_id": {
+                "DBC.XNAS": "EUR",
+                "EEM.XNAS": "EUR",
+                "GLD.XNAS": "EUR",
+                "IWM.XNAS": "EUR",
+                "SPY.XNAS": "EUR",
+                "TLT.XNAS": "EUR",
+                "UUP.XNAS": "EUR",
+                "VNQ.XNAS": "EUR",
+                "XLE.XNAS": "EUR",
+                "XLU.XNAS": "EUR"
               },
-              "index_start": "2024-01-01 00:00:00",
-              "instrument_ids": [
+              "distribution_coverage": [
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('SPY.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "SPY.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('IWM.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "IWM.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('EEM.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "EEM.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('TLT.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "TLT.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('GLD.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "GLD.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('DBC.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "DBC.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('VNQ.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "VNQ.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('UUP.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "UUP.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLE.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "XLE.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLU.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "XLU.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 }
               ],
+              "end": "2026-10-05",
+              "index_end": "2026-10-04 00:00:00",
+              "index_start": "2024-01-01 00:00:00",
               "loaded_arrays": [
-                "Close",
+                "Open",
                 "High",
                 "Low",
-                "Open",
+                "Close",
                 "Volume"
               ],
+              "missing_index": "raise",
               "requested_instrument_ids": [
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('SPY.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('IWM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('EEM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('TLT.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('GLD.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('DBC.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('VNQ.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('UUP.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLE.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLU.XNAS')"
-                }
+                "SPY.XNAS",
+                "IWM.XNAS",
+                "EEM.XNAS",
+                "TLT.XNAS",
+                "GLD.XNAS",
+                "DBC.XNAS",
+                "VNQ.XNAS",
+                "UUP.XNAS",
+                "XLE.XNAS",
+                "XLU.XNAS"
               ],
               "rows": 1008,
-              "schema_version": "candidate_data_identity.v3",
-              "source_metadata": {
-                "catalog_path": "catalog",
-                "continuous_root_currencies": {},
-                "continuous_root_ids": [],
-                "exchange_instrument_ids": [],
-                "requested_instrument_ids": [
-                  "SPY.XNAS",
-                  "IWM.XNAS",
-                  "EEM.XNAS",
-                  "TLT.XNAS",
-                  "GLD.XNAS",
-                  "DBC.XNAS",
-                  "VNQ.XNAS",
-                  "UUP.XNAS",
-                  "XLE.XNAS",
-                  "XLU.XNAS"
-                ],
-                "size_increment_by_instrument": {
-                  "DBC.XNAS": 1.0,
-                  "EEM.XNAS": 1.0,
-                  "GLD.XNAS": 1.0,
-                  "IWM.XNAS": 1.0,
-                  "SPY.XNAS": 1.0,
-                  "TLT.XNAS": 1.0,
-                  "UUP.XNAS": 1.0,
-                  "VNQ.XNAS": 1.0,
-                  "XLE.XNAS": 1.0,
-                  "XLU.XNAS": 1.0
-                },
-                "tradeable_instrument_ids": [
-                  "SPY.XNAS",
-                  "IWM.XNAS",
-                  "EEM.XNAS",
-                  "TLT.XNAS",
-                  "GLD.XNAS",
-                  "DBC.XNAS",
-                  "VNQ.XNAS",
-                  "UUP.XNAS",
-                  "XLE.XNAS",
-                  "XLU.XNAS"
-                ]
+              "schema_version": "candidate_data_identity.v4",
+              "size_increment_by_instrument": {
+                "DBC.XNAS": 1.0,
+                "EEM.XNAS": 1.0,
+                "GLD.XNAS": 1.0,
+                "IWM.XNAS": 1.0,
+                "SPY.XNAS": 1.0,
+                "TLT.XNAS": 1.0,
+                "UUP.XNAS": 1.0,
+                "VNQ.XNAS": 1.0,
+                "XLE.XNAS": 1.0,
+                "XLU.XNAS": 1.0
               },
-              "timeframe": "1D"
+              "source": "nautilus_catalog",
+              "start": "2024-01-01",
+              "timeframe": "1D",
+              "tradeables": [
+                {
+                  "instrument_id": "SPY.XNAS"
+                },
+                {
+                  "instrument_id": "IWM.XNAS"
+                },
+                {
+                  "instrument_id": "EEM.XNAS"
+                },
+                {
+                  "instrument_id": "TLT.XNAS"
+                },
+                {
+                  "instrument_id": "GLD.XNAS"
+                },
+                {
+                  "instrument_id": "DBC.XNAS"
+                },
+                {
+                  "instrument_id": "VNQ.XNAS"
+                },
+                {
+                  "instrument_id": "UUP.XNAS"
+                },
+                {
+                  "instrument_id": "XLE.XNAS"
+                },
+                {
+                  "instrument_id": "XLU.XNAS"
+                }
+              ]
             },
             "hidden_params": {},
             "params": {
@@ -517,7 +710,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "6077517557f91bb7f0167e003b092f67f6c23cc8f4e8ad36bf4c54709dd42957",
+                "implementation_fingerprint": "417b9e0d26b25a7e3fc81c93dd3ce1933ff1b7b34471310fc55a2200e3cfae07",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -1625,7 +1818,7 @@
           }
         },
         {
-          "candidate_key": "cand_a29eeb6c6888b65183c1d800061cb630",
+          "candidate_key": "cand_5146104d21d7c2d7c38b7137bdfda4e5",
           "complete_period_metrics": {
             "max_dd": 23.779896871973637,
             "sharpe_ratio": -0.11453647945898061,
@@ -1653,6 +1846,7 @@
               "slippage": 0.0005
             },
             "data_identity": {
+              "adjustment_mode": null,
               "array_contract": {
                 "component_required_arrays": [
                   "Close"
@@ -1674,180 +1868,173 @@
                   "Open"
                 ]
               },
-              "effective_arrays": [
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume"
-              ],
-              "index_end": "2026-10-04 00:00:00",
-              "index_evidence": {
-                "raw_index_end": "2026-10-04 00:00:00",
-                "raw_index_has_duplicates": false,
-                "raw_index_monotonic_increasing": true,
-                "raw_index_start": "2024-01-01 00:00:00",
-                "raw_index_timezone": null,
-                "raw_rows": 1008,
-                "source": "nautilus_catalog"
+              "catalog_path": "catalog",
+              "currency_by_instrument_id": {
+                "DBC.XNAS": "EUR",
+                "EEM.XNAS": "EUR",
+                "GLD.XNAS": "EUR",
+                "IWM.XNAS": "EUR",
+                "SPY.XNAS": "EUR",
+                "TLT.XNAS": "EUR",
+                "UUP.XNAS": "EUR",
+                "VNQ.XNAS": "EUR",
+                "XLE.XNAS": "EUR",
+                "XLU.XNAS": "EUR"
               },
-              "index_start": "2024-01-01 00:00:00",
-              "instrument_ids": [
+              "distribution_coverage": [
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('SPY.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "SPY.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('IWM.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "IWM.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('EEM.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "EEM.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('TLT.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "TLT.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('GLD.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "GLD.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('DBC.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "DBC.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('VNQ.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "VNQ.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('UUP.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "UUP.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLE.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "XLE.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLU.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "XLU.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 }
               ],
+              "end": "2026-10-05",
+              "index_end": "2026-10-04 00:00:00",
+              "index_start": "2024-01-01 00:00:00",
               "loaded_arrays": [
-                "Close",
+                "Open",
                 "High",
                 "Low",
-                "Open",
+                "Close",
                 "Volume"
               ],
+              "missing_index": "raise",
               "requested_instrument_ids": [
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('SPY.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('IWM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('EEM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('TLT.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('GLD.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('DBC.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('VNQ.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('UUP.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLE.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLU.XNAS')"
-                }
+                "SPY.XNAS",
+                "IWM.XNAS",
+                "EEM.XNAS",
+                "TLT.XNAS",
+                "GLD.XNAS",
+                "DBC.XNAS",
+                "VNQ.XNAS",
+                "UUP.XNAS",
+                "XLE.XNAS",
+                "XLU.XNAS"
               ],
               "rows": 1008,
-              "schema_version": "candidate_data_identity.v3",
-              "source_metadata": {
-                "catalog_path": "catalog",
-                "continuous_root_currencies": {},
-                "continuous_root_ids": [],
-                "exchange_instrument_ids": [],
-                "requested_instrument_ids": [
-                  "SPY.XNAS",
-                  "IWM.XNAS",
-                  "EEM.XNAS",
-                  "TLT.XNAS",
-                  "GLD.XNAS",
-                  "DBC.XNAS",
-                  "VNQ.XNAS",
-                  "UUP.XNAS",
-                  "XLE.XNAS",
-                  "XLU.XNAS"
-                ],
-                "size_increment_by_instrument": {
-                  "DBC.XNAS": 1.0,
-                  "EEM.XNAS": 1.0,
-                  "GLD.XNAS": 1.0,
-                  "IWM.XNAS": 1.0,
-                  "SPY.XNAS": 1.0,
-                  "TLT.XNAS": 1.0,
-                  "UUP.XNAS": 1.0,
-                  "VNQ.XNAS": 1.0,
-                  "XLE.XNAS": 1.0,
-                  "XLU.XNAS": 1.0
-                },
-                "tradeable_instrument_ids": [
-                  "SPY.XNAS",
-                  "IWM.XNAS",
-                  "EEM.XNAS",
-                  "TLT.XNAS",
-                  "GLD.XNAS",
-                  "DBC.XNAS",
-                  "VNQ.XNAS",
-                  "UUP.XNAS",
-                  "XLE.XNAS",
-                  "XLU.XNAS"
-                ]
+              "schema_version": "candidate_data_identity.v4",
+              "size_increment_by_instrument": {
+                "DBC.XNAS": 1.0,
+                "EEM.XNAS": 1.0,
+                "GLD.XNAS": 1.0,
+                "IWM.XNAS": 1.0,
+                "SPY.XNAS": 1.0,
+                "TLT.XNAS": 1.0,
+                "UUP.XNAS": 1.0,
+                "VNQ.XNAS": 1.0,
+                "XLE.XNAS": 1.0,
+                "XLU.XNAS": 1.0
               },
-              "timeframe": "1D"
+              "source": "nautilus_catalog",
+              "start": "2024-01-01",
+              "timeframe": "1D",
+              "tradeables": [
+                {
+                  "instrument_id": "SPY.XNAS"
+                },
+                {
+                  "instrument_id": "IWM.XNAS"
+                },
+                {
+                  "instrument_id": "EEM.XNAS"
+                },
+                {
+                  "instrument_id": "TLT.XNAS"
+                },
+                {
+                  "instrument_id": "GLD.XNAS"
+                },
+                {
+                  "instrument_id": "DBC.XNAS"
+                },
+                {
+                  "instrument_id": "VNQ.XNAS"
+                },
+                {
+                  "instrument_id": "UUP.XNAS"
+                },
+                {
+                  "instrument_id": "XLE.XNAS"
+                },
+                {
+                  "instrument_id": "XLU.XNAS"
+                }
+              ]
             },
             "hidden_params": {},
             "params": {
@@ -1974,7 +2161,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "6077517557f91bb7f0167e003b092f67f6c23cc8f4e8ad36bf4c54709dd42957",
+                "implementation_fingerprint": "417b9e0d26b25a7e3fc81c93dd3ce1933ff1b7b34471310fc55a2200e3cfae07",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -3082,7 +3269,7 @@
           }
         },
         {
-          "candidate_key": "cand_6c3ed650a7db329fa43c2a12bbf01469",
+          "candidate_key": "cand_b2bcdf490132b0da036311595f4011a2",
           "complete_period_metrics": {
             "max_dd": 35.84222833612172,
             "sharpe_ratio": -0.5146992551247971,
@@ -3110,6 +3297,7 @@
               "slippage": 0.0005
             },
             "data_identity": {
+              "adjustment_mode": null,
               "array_contract": {
                 "component_required_arrays": [
                   "Close"
@@ -3131,180 +3319,173 @@
                   "Open"
                 ]
               },
-              "effective_arrays": [
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume"
-              ],
-              "index_end": "2026-10-04 00:00:00",
-              "index_evidence": {
-                "raw_index_end": "2026-10-04 00:00:00",
-                "raw_index_has_duplicates": false,
-                "raw_index_monotonic_increasing": true,
-                "raw_index_start": "2024-01-01 00:00:00",
-                "raw_index_timezone": null,
-                "raw_rows": 1008,
-                "source": "nautilus_catalog"
+              "catalog_path": "catalog",
+              "currency_by_instrument_id": {
+                "DBC.XNAS": "EUR",
+                "EEM.XNAS": "EUR",
+                "GLD.XNAS": "EUR",
+                "IWM.XNAS": "EUR",
+                "SPY.XNAS": "EUR",
+                "TLT.XNAS": "EUR",
+                "UUP.XNAS": "EUR",
+                "VNQ.XNAS": "EUR",
+                "XLE.XNAS": "EUR",
+                "XLU.XNAS": "EUR"
               },
-              "index_start": "2024-01-01 00:00:00",
-              "instrument_ids": [
+              "distribution_coverage": [
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('SPY.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "SPY.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('IWM.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "IWM.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('EEM.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "EEM.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('TLT.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "TLT.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('GLD.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "GLD.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('DBC.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "DBC.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('VNQ.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "VNQ.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('UUP.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "UUP.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLE.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "XLE.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 },
                 {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLU.XNAS')"
+                  "applicable": true,
+                  "checked_at": "2024-01-01T00:00:00+00:00",
+                  "event_count": 0,
+                  "instrument_id": "XLU.XNAS",
+                  "verified_end": "2026-10-05T00:00:00+00:00",
+                  "verified_start": "2024-01-01T00:00:00+00:00"
                 }
               ],
+              "end": "2026-10-05",
+              "index_end": "2026-10-04 00:00:00",
+              "index_start": "2024-01-01 00:00:00",
               "loaded_arrays": [
-                "Close",
+                "Open",
                 "High",
                 "Low",
-                "Open",
+                "Close",
                 "Volume"
               ],
+              "missing_index": "raise",
               "requested_instrument_ids": [
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('SPY.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('IWM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('EEM.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('TLT.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('GLD.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('DBC.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('VNQ.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('UUP.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLE.XNAS')"
-                },
-                {
-                  "kind": "repr",
-                  "type": "nautilus_trader.model.identifiers.InstrumentId",
-                  "value": "InstrumentId('XLU.XNAS')"
-                }
+                "SPY.XNAS",
+                "IWM.XNAS",
+                "EEM.XNAS",
+                "TLT.XNAS",
+                "GLD.XNAS",
+                "DBC.XNAS",
+                "VNQ.XNAS",
+                "UUP.XNAS",
+                "XLE.XNAS",
+                "XLU.XNAS"
               ],
               "rows": 1008,
-              "schema_version": "candidate_data_identity.v3",
-              "source_metadata": {
-                "catalog_path": "catalog",
-                "continuous_root_currencies": {},
-                "continuous_root_ids": [],
-                "exchange_instrument_ids": [],
-                "requested_instrument_ids": [
-                  "SPY.XNAS",
-                  "IWM.XNAS",
-                  "EEM.XNAS",
-                  "TLT.XNAS",
-                  "GLD.XNAS",
-                  "DBC.XNAS",
-                  "VNQ.XNAS",
-                  "UUP.XNAS",
-                  "XLE.XNAS",
-                  "XLU.XNAS"
-                ],
-                "size_increment_by_instrument": {
-                  "DBC.XNAS": 1.0,
-                  "EEM.XNAS": 1.0,
-                  "GLD.XNAS": 1.0,
-                  "IWM.XNAS": 1.0,
-                  "SPY.XNAS": 1.0,
-                  "TLT.XNAS": 1.0,
-                  "UUP.XNAS": 1.0,
-                  "VNQ.XNAS": 1.0,
-                  "XLE.XNAS": 1.0,
-                  "XLU.XNAS": 1.0
-                },
-                "tradeable_instrument_ids": [
-                  "SPY.XNAS",
-                  "IWM.XNAS",
-                  "EEM.XNAS",
-                  "TLT.XNAS",
-                  "GLD.XNAS",
-                  "DBC.XNAS",
-                  "VNQ.XNAS",
-                  "UUP.XNAS",
-                  "XLE.XNAS",
-                  "XLU.XNAS"
-                ]
+              "schema_version": "candidate_data_identity.v4",
+              "size_increment_by_instrument": {
+                "DBC.XNAS": 1.0,
+                "EEM.XNAS": 1.0,
+                "GLD.XNAS": 1.0,
+                "IWM.XNAS": 1.0,
+                "SPY.XNAS": 1.0,
+                "TLT.XNAS": 1.0,
+                "UUP.XNAS": 1.0,
+                "VNQ.XNAS": 1.0,
+                "XLE.XNAS": 1.0,
+                "XLU.XNAS": 1.0
               },
-              "timeframe": "1D"
+              "source": "nautilus_catalog",
+              "start": "2024-01-01",
+              "timeframe": "1D",
+              "tradeables": [
+                {
+                  "instrument_id": "SPY.XNAS"
+                },
+                {
+                  "instrument_id": "IWM.XNAS"
+                },
+                {
+                  "instrument_id": "EEM.XNAS"
+                },
+                {
+                  "instrument_id": "TLT.XNAS"
+                },
+                {
+                  "instrument_id": "GLD.XNAS"
+                },
+                {
+                  "instrument_id": "DBC.XNAS"
+                },
+                {
+                  "instrument_id": "VNQ.XNAS"
+                },
+                {
+                  "instrument_id": "UUP.XNAS"
+                },
+                {
+                  "instrument_id": "XLE.XNAS"
+                },
+                {
+                  "instrument_id": "XLU.XNAS"
+                }
+              ]
             },
             "hidden_params": {},
             "params": {
@@ -3431,7 +3612,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "6077517557f91bb7f0167e003b092f67f6c23cc8f4e8ad36bf4c54709dd42957",
+                "implementation_fingerprint": "417b9e0d26b25a7e3fc81c93dd3ce1933ff1b7b34471310fc55a2200e3cfae07",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -4541,46 +4722,206 @@
       ],
       "contract": "aegis.optimization_source.v1",
       "data": {
-        "authored_arrays": [
-          "OHLCV"
+        "adjustment_mode": null,
+        "array_contract": {
+          "component_required_arrays": [
+            "Close"
+          ],
+          "configured_arrays": [
+            "Open",
+            "High",
+            "Low",
+            "Close",
+            "Volume"
+          ],
+          "contract_required_arrays": [
+            "Close",
+            "Open"
+          ],
+          "missing_required_arrays": [],
+          "pipeline_required_arrays": [
+            "Close",
+            "Open"
+          ]
+        },
+        "catalog_path": "catalog",
+        "continuous_root_currencies": {},
+        "currency_by_instrument_id": {
+          "DBC.XNAS": "EUR",
+          "EEM.XNAS": "EUR",
+          "GLD.XNAS": "EUR",
+          "IWM.XNAS": "EUR",
+          "SPY.XNAS": "EUR",
+          "TLT.XNAS": "EUR",
+          "UUP.XNAS": "EUR",
+          "VNQ.XNAS": "EUR",
+          "XLE.XNAS": "EUR",
+          "XLU.XNAS": "EUR"
+        },
+        "distribution_coverage": [
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "SPY.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "IWM.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "EEM.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "TLT.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "GLD.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "DBC.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "VNQ.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "UUP.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "XLE.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          },
+          {
+            "applicable": true,
+            "checked_at": "2024-01-01T00:00:00+00:00",
+            "event_count": 0,
+            "instrument_id": "XLU.XNAS",
+            "verified_end": "2026-10-05T00:00:00+00:00",
+            "verified_start": "2024-01-01T00:00:00+00:00"
+          }
         ],
-        "component_required_arrays": [
-          "Close"
-        ],
-        "configured_arrays": [
-          "Open",
-          "High",
-          "Low",
-          "Close",
-          "Volume"
-        ],
-        "contract_required_arrays": [
-          "Close",
-          "Open"
-        ],
-        "effective_arrays": [
-          "Open",
-          "High",
-          "Low",
-          "Close",
-          "Volume"
-        ],
+        "end": "2026-10-05",
+        "index_end": "2026-10-04 00:00:00",
+        "index_start": "2024-01-01 00:00:00",
         "loaded_arrays": [
-          "Close",
+          "Open",
           "High",
           "Low",
-          "Open",
+          "Close",
           "Volume"
         ],
-        "missing_required_arrays": [],
-        "pipeline_required_arrays": [
-          "Close",
-          "Open"
+        "missing_index": "raise",
+        "requested_instrument_ids": [
+          "SPY.XNAS",
+          "IWM.XNAS",
+          "EEM.XNAS",
+          "TLT.XNAS",
+          "GLD.XNAS",
+          "DBC.XNAS",
+          "VNQ.XNAS",
+          "UUP.XNAS",
+          "XLE.XNAS",
+          "XLU.XNAS"
         ],
-        "quality_state": "healthy",
-        "strategy_consumed_runner_data": true,
-        "strategy_data_binding": "runner_data_bundle",
-        "unavailable_arrays": []
+        "rows": 1008,
+        "schema_version": "run_data.v1",
+        "size_increment_by_instrument": {
+          "DBC.XNAS": 1.0,
+          "EEM.XNAS": 1.0,
+          "GLD.XNAS": 1.0,
+          "IWM.XNAS": 1.0,
+          "SPY.XNAS": 1.0,
+          "TLT.XNAS": 1.0,
+          "UUP.XNAS": 1.0,
+          "VNQ.XNAS": 1.0,
+          "XLE.XNAS": 1.0,
+          "XLU.XNAS": 1.0
+        },
+        "source": "nautilus_catalog",
+        "start": "2024-01-01",
+        "timeframe": "1D",
+        "tradeables": [
+          {
+            "continuous_root": null,
+            "instrument_id": "SPY.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "IWM.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "EEM.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "TLT.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "GLD.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "DBC.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "VNQ.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "UUP.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "XLE.XNAS"
+          },
+          {
+            "continuous_root": null,
+            "instrument_id": "XLU.XNAS"
+          }
+        ]
       },
       "execution": {
         "candidate_accounting": {
@@ -7748,7 +8089,7 @@
               "vbt_effective_delay_bars": 1,
               "vbt_price": "nextclose"
             },
-            "implementation_fingerprint": "6077517557f91bb7f0167e003b092f67f6c23cc8f4e8ad36bf4c54709dd42957",
+            "implementation_fingerprint": "417b9e0d26b25a7e3fc81c93dd3ce1933ff1b7b34471310fc55a2200e3cfae07",
             "portfolio": {
               "call_seq": "auto",
               "cash_sharing": true,

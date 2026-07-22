@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.atomic_write import hash_file, write_json
-from research.aegis_research.optimization.run_data_contract import RunDataFacts
+from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
+    run_data_evidence_payload,
+)
+from research.aegis_research.run_data import RunData
 
 OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v2"
 
@@ -19,7 +23,9 @@ OPTIMIZATION_ARTIFACT_SCHEMA_VERSION = "optimization_artifact.v2"
 def build_strategy_artifact_payload(
     *,
     strategy_evidence: Mapping[str, Any],
-    facts: RunDataFacts,
+    run_data: RunData,
+    array_contract: DataArrayContract,
+    metric_registry_fingerprint: str | None,
     ranking: Mapping[str, Any],
     portfolio: Mapping[str, Any],
     optimization: Mapping[str, Any],
@@ -33,7 +39,7 @@ def build_strategy_artifact_payload(
     return {
         "schema_version": OPTIMIZATION_ARTIFACT_SCHEMA_VERSION,
         "strategy": strategy_evidence,
-        "data": facts.evidence_payload(),
+        "data": run_data_evidence_payload(run_data, array_contract),
         "ranking": dict(ranking),
         "portfolio": dict(portfolio),
         "optimization": dict(optimization),
@@ -46,7 +52,7 @@ def build_strategy_artifact_payload(
             "path": candidate_store_path,
             "provenance": dict(candidate_store_provenance),
         },
-        "metric_registry_fingerprint": facts.metric_registry_fingerprint,
+        "metric_registry_fingerprint": metric_registry_fingerprint,
     }
 
 

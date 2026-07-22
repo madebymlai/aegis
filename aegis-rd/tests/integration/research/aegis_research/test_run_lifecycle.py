@@ -9,6 +9,10 @@ from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
+from research.aegis_research.run_data import (
+    RunDataFailureEvidence,
+    RunDataUnavailable,
+)
 from research.aegis_research.run_pipeline import run_strategy_sweep
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
@@ -138,7 +142,7 @@ def test_strategy_run_initializes_manifest_before_data_loading(
         raise RuntimeError("data stage failed")
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_market_data_result", fail_after_manifest
+        "research.aegis_research.run_pipeline.load_run_data", fail_after_manifest
     )
 
     with pytest.raises(RuntimeError, match="data stage failed"):
@@ -152,6 +156,54 @@ def test_strategy_run_initializes_manifest_before_data_loading(
     assert manifest["run"]["status"] == RunStatus.FAILED
     assert manifest["stages"][0]["id"] == "run"
     assert manifest["stages"][0]["status"] == "failed"
+
+
+def test_environmental_data_evidence_is_persisted_before_terminal_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    resolved = build_resolved_run_config(tmp_path)
+    failure = RunDataFailureEvidence(
+        schema_version="run_data_failure.v1",
+        requested_instrument_ids=(),
+        timeframe="1D",
+        start="2024-01-01",
+        end="2024-01-03",
+        error_type="CatalogCoverageGapError",
+        message="catalog gap",
+        source="nautilus_catalog",
+    )
+    original_mark_failed = RunRecorder.mark_run_failed
+
+    def fail_environmentally(_config, **_kwargs):
+        raise RunDataUnavailable(failure)
+
+    def assert_evidence_precedes_terminal(self, *, diagnostic):
+        assert self.manifest.evidence["data"] == {
+            "schema_version": "run_data_failure.v1",
+            "requested_instrument_ids": [],
+            "timeframe": "1D",
+            "start": "2024-01-01",
+            "end": "2024-01-03",
+            "error_type": "CatalogCoverageGapError",
+            "message": "catalog gap",
+            "source": "nautilus_catalog",
+        }
+        original_mark_failed(self, diagnostic=diagnostic)
+
+    monkeypatch.setattr(
+        "research.aegis_research.run_pipeline.load_run_data",
+        fail_environmentally,
+    )
+    monkeypatch.setattr(RunRecorder, "mark_run_failed", assert_evidence_precedes_terminal)
+
+    with pytest.raises(RunDataUnavailable, match="catalog gap"):
+        run_strategy_sweep(
+            resolved,
+            component_registry=resolved.component_registry,
+            run_id="environmental-failure",
+        )
 
 
 def test_strategy_run_marks_failed_when_on_run_refs_callback_fails(
@@ -199,7 +251,7 @@ def test_failed_run_diagnostic_is_length_clipped_not_redacted(
         raise RuntimeError(long_message)
 
     monkeypatch.setattr(
-        "research.aegis_research.run_pipeline.load_market_data_result", fail_with_secret
+        "research.aegis_research.run_pipeline.load_run_data", fail_with_secret
     )
 
     with pytest.raises(RuntimeError, match="provider returned"):

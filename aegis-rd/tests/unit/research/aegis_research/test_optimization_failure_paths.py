@@ -20,7 +20,7 @@ from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_ranking_config,
     make_report_config,
-    make_run_arrays,
+    make_run_data,
 )
 
 
@@ -67,7 +67,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     optimization = _optimization_config()
     with pytest.raises(OptimizationRunnerError, match="no portfolio allocations"):
         execute_optimization(
-            arrays=make_run_arrays(close=close, open_=close),
+            run_data=make_run_data(close=close, open_=close),
             source=source,
             optimization=optimization,
             book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
@@ -95,7 +95,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     optimization = _optimization_config()
     with pytest.raises(RuntimeError, match="pipeline blew up"):
         execute_optimization(
-            arrays=make_run_arrays(close=close, open_=close),
+            run_data=make_run_data(close=close, open_=close),
             source=source,
             optimization=optimization,
             book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),

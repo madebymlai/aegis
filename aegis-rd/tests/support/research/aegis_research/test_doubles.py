@@ -1,113 +1,13 @@
 """Shared test doubles for pipeline-stage unit tests.
 
-These stand-ins replace production types that carry heavy dependencies
-(e.g. MarketDataResult, DataArrayContract) so that pipeline-stage tests
-can construct the minimal surface each stage reads without importing
-the full data or array stack.
+These stand-ins let pipeline-stage tests construct the minimal recorder and
+manifest surfaces they read.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-
-from nautilus_trader.model.identifiers import InstrumentId
-
-from research.aegis_research.market_data.contracts import (
-    ArrayDescriptor,
-    CoverageFacet,
-    MarketDataMetadataV4,
-    MarketDataQuality,
-    ProvenanceFacet,
-    RequestFacet,
-)
-
-
-def _id(value: str) -> InstrumentId:
-    return InstrumentId.from_str(value)
-
-
-def default_metadata(
-    *,
-    instrument_ids: list[InstrumentId] | None = None,
-    effective_arrays: list[str] | None = None,
-    rows: int = 120,
-    start: str | None = "2020-01-01",
-    end: str | None = "2020-06-01",
-) -> MarketDataMetadataV4:
-    """Build a minimal ``MarketDataMetadataV4`` for test doubles.
-
-    Callers that need a specific facet shape can pass keyword overrides;
-    the defaults represent the simplest healthy synthetic-data fixture.
-    """
-    ids = instrument_ids or [_id("SYN.XNAS")]
-    arrays = effective_arrays or ["Close", "Open"]
-    return MarketDataMetadataV4(
-        schema_version="market_data.v4",
-        request=RequestFacet(
-            requested_instrument_ids=ids,
-            timeframe="1D",
-            authored_arrays=arrays,
-            effective_arrays=arrays,
-        ),
-        arrays=[
-            ArrayDescriptor(
-                name=name,
-                required=True,
-                loaded=True,
-                observed=True,
-                ohlc=name in {"Close", "Open", "High", "Low", "Volume"},
-            )
-            for name in arrays
-        ],
-        coverage=CoverageFacet(instrument_ids=ids, rows=rows, start=start, end=end),
-        quality=MarketDataQuality(state="healthy"),
-        diagnostics=[],
-        provenance=ProvenanceFacet(
-            source_class=None,
-            source_metadata={},
-            index_evidence={},
-            port_metadata={},
-            update_supported=False,
-            missing_index="raise",
-        ),
-    )
-
-
-class FakeDataResult:
-    """Lightweight stand-in for ``MarketDataResult``.
-
-    ``metadata`` is a class attribute so every instance surfaces identical
-    metadata — tests never mutate it during a stage invocation.
-    Pass ``metadata`` to override it for specialised fixtures; otherwise
-    :func:`default_metadata` supplies the common healthy-synthetic shape.
-    ``quality`` is an instance attribute so it can hold a simple
-    stand-in without pulling in the real quality model.
-    """
-
-    metadata = default_metadata()
-
-    adjustment_mode = None
-
-    def __init__(
-        self,
-        *,
-        quality_state: str = "healthy",
-        metadata: MarketDataMetadataV4 | None = None,
-        adjustment_mode: Any = None,
-    ) -> None:
-        self.quality = type("_Quality", (), {"state": quality_state})()
-        if metadata is not None:
-            self.metadata = metadata
-        if adjustment_mode is not None:
-            self.adjustment_mode = adjustment_mode
-
-
-class FakeArrayContract:
-    """Stand-in for ``DataArrayContract``."""
-
-    def metadata(self) -> dict[str, Any]:
-        return {"schema_version": "data_array_contract.v1"}
 
 
 class FakeManifest:

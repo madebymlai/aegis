@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_runtime import MarketDataBundle
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import (
@@ -20,7 +21,6 @@ from research.aegis_research.configuration import (
     RunSourceRefConfig,
     to_builtin,
 )
-from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.param_namespace import (
     FIXED_CANDIDATE_PARAM,
     ComponentRef,

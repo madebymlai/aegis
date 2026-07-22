@@ -1251,7 +1251,7 @@ def test_config_schema_guide_states_all_data_array_shortcuts() -> None:
 def test_config_schema_guide_states_allowed_degradations() -> None:
     """Drift: allowed data-quality degradations catalog is interpolated from code."""
     guide = _render_guide("config-schema")
-    assert "Allowed Data-Quality Degradations" in guide
+    assert "Allowed Data-Quality Degradations" not in guide
 
 
 def test_config_schema_guide_states_missing_policies() -> None:

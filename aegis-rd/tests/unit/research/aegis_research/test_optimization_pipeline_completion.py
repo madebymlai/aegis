@@ -29,18 +29,17 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from research.aegis_research.optimization.run_data_contract import DataArrayContract
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_run_config,
-    make_run_data_facts,
+    make_run_data,
     make_selection_identity,
     make_setup_result,
 )
-from tests.support.research.aegis_research.test_doubles import (
-    FakeArrayContract,
-    FakeDataResult,
-    FakeRecorder,
-)
+from tests.support.research.aegis_research.test_doubles import FakeRecorder
+
+_ARRAY_CONTRACT = DataArrayContract(("Close", "Open"), pipeline_required_arrays=("Close", "Open"))
 
 
 def _candidate_rows() -> list[dict[str, Any]]:
@@ -137,11 +136,9 @@ def test_completion_returns_result_and_marks_completed(
         publishing=publishing,
         config=config,
         recorder=recorder,
-        facts=make_run_data_facts(
-            data_result=FakeDataResult(),
-            array_contract=FakeArrayContract(),
-            metric_registry_fingerprint="test-fp",
-        ),
+        run_data=make_run_data(),
+        array_contract=_ARRAY_CONTRACT,
+        metric_registry_fingerprint="test-fp",
         run_evidence=run_evidence,
     )
 

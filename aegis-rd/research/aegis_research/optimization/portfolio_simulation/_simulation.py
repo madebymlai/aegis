@@ -4,7 +4,7 @@ import hashlib
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -26,7 +26,6 @@ from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.market_data.identity import as_instrument_id
 from research.aegis_research.optimization.portfolio_simulation.resolved_book import (
     ResolvedBook,
 )
@@ -453,12 +452,15 @@ def _size_granularity(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
 
     if book.size_increment_by_instrument is None:
         return np.full((1, len(columns)), np.nan, dtype=float)
-    symbols = columns.get_level_values(SYMBOL_LEVEL)
+    symbols = tuple(
+        cast(InstrumentId, symbol)
+        for symbol in columns.get_level_values(SYMBOL_LEVEL)
+    )
     missing = sorted(
         {
-            as_instrument_id(symbol).value
+            symbol.value
             for symbol in symbols
-            if as_instrument_id(symbol) not in book.size_increment_by_instrument
+            if symbol not in book.size_increment_by_instrument
         }
     )
     if missing:
@@ -466,7 +468,7 @@ def _size_granularity(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
             f"portfolio simulation has no catalog size increment for tradeable columns: {missing}"
         )
     increments = np.array(
-        [book.size_increment_by_instrument[as_instrument_id(symbol)] for symbol in symbols],
+        [book.size_increment_by_instrument[symbol] for symbol in symbols],
         dtype=float,
     )
     if (~np.isfinite(increments) | (increments <= 0.0)).any():
@@ -511,7 +513,7 @@ def _band_arrays(
         return up, down, destination
     symbols = allocations.columns.get_level_values(SYMBOL_LEVEL)
     for col, symbol in enumerate(symbols):
-        band = instrument_bands.get(as_instrument_id(symbol))
+        band = instrument_bands.get(cast(InstrumentId, symbol))
         if band is None:
             continue
         up[0, col] = band.up

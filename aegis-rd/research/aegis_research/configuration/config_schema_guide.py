@@ -24,7 +24,6 @@ from typing import Any, Literal, get_args, get_origin
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     DATA_ARRAY_SHORTCUTS,
-    DATA_QUALITY_DEGRADATIONS,
     DEFAULT_LOCK_ROLE,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     LOCK_ROLES,
@@ -37,7 +36,6 @@ from research.aegis_research.configuration.schema import (
     SIGNAL_EXECUTION_TIMINGS,
     SIGNAL_POLICIES,
     DataConfig,
-    DataQualityConfig,
     Lock,
     OptimizationConfig,
     PortfolioConfig,
@@ -62,7 +60,6 @@ GUIDE_SCHEMA_VERSION = "config_schema_guide.v1"
 # Each top-level RunConfig section maps to its pydantic dataclass type.
 _SECTION_TYPES: dict[str, type[object] | list[type[object]]] = {
     "data": DataConfig,
-    "data.quality": DataQualityConfig,
     "portfolio": PortfolioConfig,
     "strategy": RunSourceRefConfig,
     "indicators": [RunIndicatorSourceConfig],  # list item type
@@ -204,7 +201,6 @@ def _render_data_section() -> str:
             "series (Path A); venue and quote currency are catalog-authoritative from its "
             "dated legs. A run needs at least one of `instruments` or `futures`.",
             "",
-            "<br>**`quality.allowed_degradations`**: ",
         ],
     )
 
@@ -347,11 +343,6 @@ def _render_literal_catalogs() -> str:
             dict(DATA_ARRAY_SHORTCUTS),
             "Top-level shortcuts that expand to feature-name groups. "
             f"E.g. `OHLCV` → `{', '.join(OHLCV_ARRAYS)}`.",
-        ),
-        (
-            "Allowed Data-Quality Degradations",
-            DATA_QUALITY_DEGRADATIONS,
-            "Valid values for `data.quality.allowed_degradations`.",
         ),
         (
             "Lock Roles",
@@ -651,10 +642,6 @@ def _render_nested_section(
         cls = cls[0]
 
     lines = [title, "", f"*{tag}*", "", _render_field_table(cls)]
-
-    quality_cls = _SECTION_TYPES.get(f"{section_key}.quality")
-    if quality_cls is not None and not isinstance(quality_cls, list):
-        lines.extend(["", "**`quality` sub-section:**", "", _render_field_table(quality_cls)])
 
     if extra_lines:
         lines.extend(extra_lines)

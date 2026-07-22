@@ -18,9 +18,6 @@ from research.aegis_research.configuration import (
     RunConfig,
     to_builtin,
 )
-from research.aegis_research.data import (
-    RunArrays,
-)
 from research.aegis_research.optimization.candidate_store import CandidateStore
 from research.aegis_research.optimization.candidate_store_identity import (
     candidate_store_path,
@@ -39,11 +36,15 @@ from research.aegis_research.optimization.lock_run import (
     ResolvedLockRun,
     resolve_lock_run,
 )
-from research.aegis_research.optimization.run_data_contract import RunDataFacts
+from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
+    run_data_evidence_payload,
+)
 from research.aegis_research.optimization.source import (
     OPTIMIZATION_SOURCE_CONTRACT,
     OptimizationSource,
 )
+from research.aegis_research.run_data import RunData
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,7 @@ class SetupResult:
 
     store_path: Path
     optimization_source: OptimizationSource
-    arrays: RunArrays
+    run_data: RunData
 
     @property
     def strategy_evidence(self) -> Mapping[str, Any]:
@@ -74,8 +75,9 @@ def run_pipeline_setup(
     *,
     config: RunConfig,
     component_registry: FrozenComponentRegistry,
-    arrays: RunArrays,
-    facts: RunDataFacts,
+    run_data: RunData,
+    array_contract: DataArrayContract,
+    metric_registry_fingerprint: str | None,
     run_evidence: RunEvidence,
 ) -> SetupResult:
     """Resolve the Lock, build the optimization source, and construct the evidence baseline."""
@@ -97,7 +99,7 @@ def run_pipeline_setup(
     optimization_source = build_component_optimization_source(
         config,
         component_registry=component_registry,
-        data=arrays.signal,
+        data=run_data.bundle,
         resolved_component_params=resolved_component_params,
         force_locked=force_locked,
     )
@@ -110,14 +112,16 @@ def run_pipeline_setup(
                 "protocol": "continuous_future_in_past",
                 "observation_block_bars": config.optimization.observation_block_bars,
             },
-            facts=facts,
+            run_data=run_data,
+            array_contract=array_contract,
+            metric_registry_fingerprint=metric_registry_fingerprint,
             lock_evidence=lock_evidence,
         )
     )
     return SetupResult(
         store_path=store_path,
         optimization_source=optimization_source,
-        arrays=arrays,
+        run_data=run_data,
     )
 
 
@@ -148,7 +152,9 @@ def _optimization_evidence_baseline(
     optimization_source: Any,
     optimization_builtin: Mapping[str, Any],
     selection_metadata: Mapping[str, Any],
-    facts: RunDataFacts,
+    run_data: RunData,
+    array_contract: DataArrayContract,
+    metric_registry_fingerprint: str | None,
     lock_evidence: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     return {
@@ -158,8 +164,8 @@ def _optimization_evidence_baseline(
         "param_names": list(optimization_source.params),
         "optimization": optimization_builtin,
         "selection": selection_metadata,
-        "data": facts.evidence_payload(),
-        "metric_registry_fingerprint": facts.metric_registry_fingerprint,
+        "data": run_data_evidence_payload(run_data, array_contract),
+        "metric_registry_fingerprint": metric_registry_fingerprint,
         "open_prices_available": True,
         "lock": lock_evidence,
     }

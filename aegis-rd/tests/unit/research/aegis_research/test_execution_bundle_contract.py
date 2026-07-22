@@ -163,24 +163,15 @@ def test_bundle_contract_carries_the_locked_runs_recorded_mode_not_the_default()
 def test_export_retains_the_recorded_mode_after_the_process_default_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Flip the process default everywhere it is actually read (aegis-data and the
-    # research adapter's binding): the exported contract must still carry the
+    # Flip the process default at its owner: the exported contract must still carry the
     # locked Run's recorded BACKWARD_RATIO, because export never reads the default.
     import aegis_data.continuous_future as continuous_future_module
-
-    from research.aegis_research.market_data.adapters import catalog as catalog_adapter
 
     monkeypatch.setattr(
         continuous_future_module,
         "DEFAULT_ADJUSTMENT_MODE",
         ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
     )
-    monkeypatch.setattr(
-        catalog_adapter,
-        "DEFAULT_ADJUSTMENT_MODE",
-        ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
-    )
-
     contract = _bundle_contract(
         SimpleNamespace(data=_futures_data()),
         _components(),

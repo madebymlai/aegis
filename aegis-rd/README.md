@@ -23,8 +23,8 @@ writes immutable Candidate and lock Evidence.
 
 Each research loop follows one clear contract:
 
-- **Load** market data from the shared Nautilus catalog by native `InstrumentId`,
-  with explicit arrays, timeframe, timezone, missing-data, and quality behavior.
+- **Load** one coherent `RunData` value from the shared Nautilus catalog by native
+  `InstrumentId`, with explicit Arrays, timeframe, and missing-index policy.
 - **Build** indicator outputs with preserved parameter metadata.
 - **Generate** strategy signals from reviewed components.
 - **Replay** each fixed Candidate continuously after a common derived warmup.
@@ -60,9 +60,11 @@ directory is created.
 
 ## Market data contract
 
-Runs load market data from Aegis Data's Nautilus `ParquetDataCatalog` through the
-shared DataProvider port. A run config declares native Nautilus `InstrumentId`
-strings:
+Runs call one deep `load_run_data` operation over Aegis Data's Nautilus
+`ParquetDataCatalog` port. It resolves tradeables, materialises continuous
+futures, loads custom Arrays, applies base-currency conversion, validates the
+result, and returns one coherent `RunData` value. A run config declares native
+Nautilus `InstrumentId` strings:
 
 ```yaml
 data:
@@ -79,11 +81,12 @@ data:
 the same catalog and port, but never exposed as tradeable columns. The forward
 data schema has no `source`, `symbols`, or `provider` field.
 
-Each run writes public `data.metadata` with the requested and observed native
-IDs, canonical feature availability, per-instrument diagnostics, quality state,
-timezone and index evidence, and provider-port provenance. Private `data.native`
-preserves VectorBT-native state after public metadata succeeds, and stays
-secret-scanned and fail-closed.
+`RunData` carries the kernel `MarketDataBundle` consumed by Components, the one
+`InstrumentResolution` used by simulation and export, currency and distribution
+facts, catalog size increments, and structural load Evidence. Successful values
+are valid by construction. Environmental failures carry Evidence that is
+persisted before the Run is marked failed; there is no configurable degradation
+or partially usable success state.
 
 ## Why it exists
 
