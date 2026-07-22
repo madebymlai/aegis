@@ -18,6 +18,11 @@ from pydantic import (
     ValidationError as PydanticValidationError,
 )
 
+from research.aegis_research.authoring_fields import (
+    ComponentIdStr,
+    NonEmptyStr,
+    has_data_array_token_shape,
+)
 from research.aegis_research.component_registry.contracts import (
     COMPONENT_ENTRYPOINT,
     COMPONENT_LOOKBACK_ENTRYPOINT,
@@ -30,11 +35,6 @@ from research.aegis_research.component_registry.contracts import (
     IndicatorManifest,
     StrategyManifest,
 )
-from research.aegis_research.configuration.field_types import (
-    ComponentIdStr,
-    NonEmptyStr,
-)
-from research.aegis_research.configuration.schema import has_data_array_token_shape
 
 COMPONENT_MANIFEST_NAME = "COMPONENT_MANIFEST"
 COMPONENT_PERCENT_CELL_MARKER = "# %%"

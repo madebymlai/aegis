@@ -1,15 +1,10 @@
 """Public config surface — single import home for all configuration names.
 
 All public configuration types, constants, and entry points are re-exported
-here.  Internal implementation modules (cross_checks, field_types, etc.) are
-package-private and not part of this surface.
+here. Internal implementation modules are package-private.
 """
 
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration.field_types import (
-    ComponentIdStr,
-    NonEmptyStr,
-)
 from research.aegis_research.configuration.resolution import (
     ResolvedRunConfig,
     load_run_config,
@@ -21,7 +16,6 @@ from research.aegis_research.configuration.schema import (
     DATA_ARRAY_SHORTCUTS,
     DEFAULT_LOCK_ROLE,
     FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
-    IDENTIFIER_RE,
     LOCK_ROLES,
     MISSING_POLICIES,
     OHLCV_ARRAYS,
@@ -46,7 +40,6 @@ from research.aegis_research.configuration.schema import (
     RunSourceRefConfig,
     SignalConfig,
     expand_data_arrays,
-    has_data_array_token_shape,
     lock_handle,
     merge_data_arrays,
 )
@@ -56,7 +49,6 @@ __all__ = [
     "DATA_ARRAY_SHORTCUTS",
     "DEFAULT_LOCK_ROLE",
     "FORWARD_OPTIMIZATION_REQUIRED_MESSAGE",
-    "IDENTIFIER_RE",
     "LOCK_ROLES",
     "MISSING_POLICIES",
     "OHLCV_ARRAYS",
@@ -66,14 +58,12 @@ __all__ = [
     "PREPASS_REQUIRED_FIELDS",
     "SIGNAL_EXECUTION_TIMINGS",
     "SIGNAL_POLICIES",
-    "ComponentIdStr",
     "ConfigSelectionEvidence",
     "ConfigValidationError",
     "ConfigValidationIssue",
     "DataConfig",
     "InstrumentBandConfig",
     "Lock",
-    "NonEmptyStr",
     "OptimizationConfig",
     "PortfolioConfig",
     "RankingConfig",
@@ -84,7 +74,6 @@ __all__ = [
     "RunSourceRefConfig",
     "SignalConfig",
     "expand_data_arrays",
-    "has_data_array_token_shape",
     "load_run_config",
     "lock_handle",
     "merge_data_arrays",

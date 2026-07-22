@@ -17,11 +17,13 @@ accumulated issues.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from research.aegis_research.configuration.field_types import IDENTIFIER_RE
+from research.aegis_research.authoring_fields import IDENTIFIER_RE
+from research.aegis_research.component_registry import FrozenComponentRegistry
+from research.aegis_research.configuration.cross_checks import cross_check_registries
 from research.aegis_research.configuration.schema import (
     LOCK_ROLES,
     PREPASS_CONST_FIELDS,
@@ -31,9 +33,6 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
 )
 from research.aegis_research.metrics import FrozenMetricRegistry
-
-if TYPE_CHECKING:
-    from research.aegis_research.component_registry import FrozenComponentRegistry
 
 # Built once at import: TypeAdapter construction compiles the whole-tree core
 # schema, which is too expensive to repeat per validation call.
@@ -73,8 +72,6 @@ def validate_run_config(
         _check_portfolio_band_overrides(config, issues)
 
     # ── Registry cross-checks (always run, even when pydantic failed) ─────
-    from research.aegis_research.configuration.cross_checks import cross_check_registries
-
     registry_input = config if config is not None else raw
     issues.extend(
         cross_check_registries(

@@ -10,8 +10,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from research.aegis_research.configuration.field_types import (
-    IDENTIFIER_RE,  # noqa: F401 — re-exported for configuration
+from research.aegis_research.authoring_fields import (
     ComponentIdStr,
     NonEmptyStr,
     NonNegativeCash,
@@ -22,6 +21,7 @@ from research.aegis_research.configuration.field_types import (
     RootSymbol,
     TimedeltaStr,
     UnitInterval,
+    has_data_array_token_shape,
 )
 
 # v11 (aegis-rd-ui1m): portfolio.gross_cap / portfolio.net_cap removed — the
@@ -233,10 +233,6 @@ def merge_data_arrays(*array_groups: tuple[str, ...]) -> tuple[str, ...]:
             merged.append(feature)
             seen.add(feature)
     return tuple(merged)
-
-
-def has_data_array_token_shape(value: str) -> bool:
-    return bool(value) and value.strip() == value and not any(char in "\t\n\r" for char in value)
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))

@@ -8,19 +8,21 @@ public config surface.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from research.aegis_research.component_registry import (
+    ComponentDefinition,
+    ComponentRegistryError,
+    ComponentSelection,
+    FrozenComponentRegistry,
+)
 from research.aegis_research.configuration.schema import (
     ConfigValidationIssue,
     RunConfig,
+    RunIndicatorSourceConfig,
+    RunSourceRefConfig,
 )
 from research.aegis_research.metrics import FrozenMetricRegistry
-
-if TYPE_CHECKING:
-    from research.aegis_research.component_registry import (
-        ComponentDefinition,
-        FrozenComponentRegistry,
-    )
 
 
 def cross_check_registries(
@@ -84,18 +86,11 @@ def _check_strategy_membership(
     *,
     component_registry: FrozenComponentRegistry,
 ) -> ComponentDefinition | None:
-    from research.aegis_research.configuration.schema import RunSourceRefConfig
-
     if not isinstance(strategy_config, RunSourceRefConfig):
         return None
     if strategy_config.id == "all":
         issues.append(ConfigValidationIssue("strategy.id", "must select one component id"))
         return None
-    from research.aegis_research.component_registry import (
-        ComponentRegistryError,
-        ComponentSelection,
-    )
-
     try:
         return component_registry.get(ComponentSelection("strategies", strategy_config.id))
     except ComponentRegistryError:
@@ -109,18 +104,11 @@ def _check_indicators_membership(
     *,
     component_registry: FrozenComponentRegistry,
 ) -> list[tuple[int, ComponentDefinition]]:
-    from research.aegis_research.configuration.schema import RunIndicatorSourceConfig
-
     if not isinstance(indicator_configs, list):
         return []
 
     result: list[tuple[int, ComponentDefinition]] = []
     seen_ids: set[str] = set()
-    from research.aegis_research.component_registry import (
-        ComponentRegistryError,
-        ComponentSelection,
-    )
-
     for i, config in enumerate(indicator_configs):
         if not isinstance(config, RunIndicatorSourceConfig):
             continue
@@ -185,11 +173,6 @@ def _check_params(
     definition: ComponentDefinition | None,
     issues: list[ConfigValidationIssue],
 ) -> None:
-    from research.aegis_research.configuration.schema import (
-        RunIndicatorSourceConfig,
-        RunSourceRefConfig,
-    )
-
     if not isinstance(config, (RunSourceRefConfig, RunIndicatorSourceConfig)):
         return
     if definition is None:
@@ -250,11 +233,6 @@ def _raw_best_effort_checks(
     and lock shape checks need typed data and are skipped.
     """
     issues: list[ConfigValidationIssue] = []
-
-    from research.aegis_research.component_registry import (
-        ComponentRegistryError,
-        ComponentSelection,
-    )
 
     # Strategy
     strategy_raw = raw.get("strategy")
