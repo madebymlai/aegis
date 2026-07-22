@@ -3,8 +3,7 @@
 Structural checks (min_trades non-negative, extra keys rejected)
 live on the ``RankingConfig`` pydantic dataclass.  Metric membership is
 covered at the registry cross-check seam in ``test_cross_checks.py``; this
-file keeps the thin coordinator net (structural wording through resolve,
-structural + membership co-reporting).
+file keeps the thin coordinator net for structural wording through resolution.
 """
 
 from __future__ import annotations
@@ -24,6 +23,11 @@ from research.aegis_research.configuration import (
 )
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
+)
+from tests.support.research.aegis_research.factories import (
+    make_ranking_config,
+    make_report_config,
+    make_run_config,
 )
 from tests.support.research.aegis_research.market_data_fixtures import (
     native_data_config_payload,
@@ -142,13 +146,12 @@ def test_ranking_not_a_dict_fails(tmp_path: Path) -> None:
 # ── no duplicate issues ──────────────────────────────────────────────────────
 
 
-def test_ranking_unknown_metric_plus_unknown_key_co_reports(tmp_path: Path) -> None:
-    """Structural error (unknown key) and membership error co-reported."""
+def test_ranking_structural_failure_stops_before_metric_membership(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve({"metric": "not_a_metric", "bogus": 42}, tmp_path=tmp_path)
     paths = {i.path for i in e.value.issues}
     assert "ranking.bogus" in paths
-    assert "ranking.metric" in paths
+    assert "ranking.metric" not in paths
 
 
 def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:
@@ -165,17 +168,17 @@ def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:
 def test_requested_metric_ids_unions_ranking_and_report_metrics() -> None:
     from research.aegis_research.configuration.resolution import _requested_metric_ids
 
-    raw = {
-        "ranking": {"metric": "convergent_income_utility"},
-        "report": {
-            "metrics": [
+    config = make_run_config(
+        ranking=make_ranking_config(metric="convergent_income_utility"),
+        report=make_report_config(
+            metrics=[
                 "convergent_tail_budget",
                 "convergent_downside_lskew",
                 "convergent_income_utility",
             ]
-        },
-    }
-    ids = _requested_metric_ids(raw)
+        ),
+    )
+    ids = _requested_metric_ids(config)
     # Ranker first, then report extras, de-duplicated (income appears once).
     assert ids == (
         "convergent_income_utility",

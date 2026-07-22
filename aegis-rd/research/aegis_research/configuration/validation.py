@@ -1,11 +1,12 @@
-"""Run Config validation — whole-tree coordinator.
+"""Run Config structural validation — whole-tree coordinator.
 
 With ``RunConfig`` as a whole-tree pydantic dataclass, one
 ``TypeAdapter(RunConfig).validate_python(raw)`` validates the entire tree
 and accumulates all structural errors natively.
 
 The coordinator owns the whole-tree pydantic call, its error-to-issue adapter,
-the typed whole-config checks, and registry cross-check orchestration.
+and the typed whole-config band-override check. Registry orchestration begins
+only after this coordinator has constructed a complete ``RunConfig``.
 
 Returns ``(RunConfig | None, list[ConfigValidationIssue])`` so the caller
 can inspect whether pydantic construction succeeded while still seeing all
@@ -18,30 +19,17 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from research.aegis_research.component_registry import FrozenComponentRegistry
-from research.aegis_research.configuration.cross_checks import cross_check_registries
 from research.aegis_research.configuration.schema import ConfigValidationIssue, RunConfig
-from research.aegis_research.metrics import FrozenMetricRegistry
 
 # Built once at import: TypeAdapter construction compiles the whole-tree core
 # schema, which is too expensive to repeat per validation call.
 _RUN_CONFIG_ADAPTER = TypeAdapter(RunConfig)
 
 
-def validate_run_config(
+def _validate_run_config(
     raw: dict[str, Any],
-    *,
-    component_registry: FrozenComponentRegistry,
-    metric_registry: FrozenMetricRegistry,
 ) -> tuple[RunConfig | None, list[ConfigValidationIssue]]:
-    """Whole-tree run config validation with accumulated issues.
-
-    Always returns the full issues list even when pydantic construction fails,
-    so structural and registry errors are co-reported.
-    """
-    if not isinstance(raw, dict):
-        return None, [ConfigValidationIssue("$", "run config must be a mapping")]
-
+    """Construct a complete Run Config and return config-local issues."""
     issues: list[ConfigValidationIssue] = []
 
     # ── Whole-tree pydantic validation ────────────────────────────────────
@@ -54,16 +42,6 @@ def validate_run_config(
     # ── Post-pydantic checks (need runtime state) ─────────────────────────
     if config is not None:
         _check_portfolio_band_overrides(config, issues)
-
-    # ── Registry cross-checks (always run, even when pydantic failed) ─────
-    registry_input = config if config is not None else raw
-    issues.extend(
-        cross_check_registries(
-            registry_input,
-            component_registry=component_registry,
-            metric_registry=metric_registry,
-        )
-    )
 
     return config, issues
 

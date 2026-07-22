@@ -71,3 +71,20 @@ unknown role keyword) — it was never security.
 - "Registry cross-checks" is architecture vocabulary, not domain language: no CONTEXT.md term.
   CONTEXT.md's existing sentence — "Configs are inert — they select trusted IDs and parameters
   only" — is the domain concept this module enforces.
+
+## Amendment — 2026-07-22: typed-only registry cross-checking
+
+The raw best-effort dialect and the union entry described above are removed. Registry
+cross-checking now accepts only a complete `RunConfig` plus frozen registries. Resolution
+first constructs the typed Run Config without registry state; structural failure stops
+before discovery, Metric Registry construction, or cross-checking.
+
+After typed construction, resolution discovers or accepts the Component Registry, derives
+requested ranking and report Metric IDs from `RunConfig`, constructs the effective Metric
+Registry, and accumulates all typed registry issues. The typed band-override universe issue
+is retained and co-reported with those registry issues. Discovery and registry-integrity
+failures remain fail-fast setup errors rather than authoring diagnostics.
+
+The programmatic boundary accepts Mapping-shaped input and immediately copies it to the
+plain authored mapping used for evidence and hashing. YAML scalars, sequences, and other
+non-mapping roots retain the friendly `$: run config must be a mapping` diagnostic.

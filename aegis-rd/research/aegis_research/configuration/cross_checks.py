@@ -1,14 +1,6 @@
-"""Registry cross-checks that verify Run Config component/metric selections.
-
-One public entry: ``cross_check_registries`` dispatches to full checks
-(validated ``RunConfig``) or best-effort membership checks (raw dict when
-pydantic structural validation failed).  Package-internal — not part of the
-public config surface.
-"""
+"""Typed registry cross-checks for Run Config component/metric selections."""
 
 from __future__ import annotations
-
-from typing import Any
 
 from research.aegis_research.component_registry import (
     ComponentDefinition,
@@ -26,7 +18,7 @@ from research.aegis_research.metrics import FrozenMetricRegistry
 
 
 def cross_check_registries(
-    config_or_raw: RunConfig | dict[str, Any],
+    config: RunConfig,
     *,
     component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
@@ -35,28 +27,6 @@ def cross_check_registries(
 
     Returns a fresh issue list.  The caller extends its own issue list.
     """
-    if isinstance(config_or_raw, RunConfig):
-        return _full_cross_checks(
-            config_or_raw,
-            component_registry=component_registry,
-            metric_registry=metric_registry,
-        )
-    return _raw_best_effort_checks(
-        config_or_raw,
-        component_registry=component_registry,
-        metric_registry=metric_registry,
-    )
-
-
-# ── full dialect (validated RunConfig) ────────────────────────────────────────
-
-
-def _full_cross_checks(
-    config: RunConfig,
-    *,
-    component_registry: FrozenComponentRegistry,
-    metric_registry: FrozenMetricRegistry,
-) -> list[ConfigValidationIssue]:
     issues: list[ConfigValidationIssue] = []
 
     strategy_def = _check_strategy_membership(
@@ -81,13 +51,11 @@ def _full_cross_checks(
 
 
 def _check_strategy_membership(
-    strategy_config: object,
+    strategy_config: RunSourceRefConfig,
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
 ) -> ComponentDefinition | None:
-    if not isinstance(strategy_config, RunSourceRefConfig):
-        return None
     if strategy_config.id == "all":
         issues.append(ConfigValidationIssue("strategy.id", "must select one component id"))
         return None
@@ -99,19 +67,14 @@ def _check_strategy_membership(
 
 
 def _check_indicators_membership(
-    indicator_configs: object,
+    indicator_configs: list[RunIndicatorSourceConfig],
     issues: list[ConfigValidationIssue],
     *,
     component_registry: FrozenComponentRegistry,
 ) -> list[tuple[int, ComponentDefinition]]:
-    if not isinstance(indicator_configs, list):
-        return []
-
     result: list[tuple[int, ComponentDefinition]] = []
     seen_ids: set[str] = set()
     for i, config in enumerate(indicator_configs):
-        if not isinstance(config, RunIndicatorSourceConfig):
-            continue
         item_path = f"indicators[{i}]"
         if config.id in seen_ids:
             issues.append(
@@ -169,15 +132,10 @@ def _check_output_contract(
 
 def _check_params(
     path: str,
-    config: object,
-    definition: ComponentDefinition | None,
+    config: RunSourceRefConfig | RunIndicatorSourceConfig,
+    definition: ComponentDefinition,
     issues: list[ConfigValidationIssue],
 ) -> None:
-    if not isinstance(config, (RunSourceRefConfig, RunIndicatorSourceConfig)):
-        return
-    if definition is None:
-        return
-
     provided = frozenset(config.params)
     unknown = sorted(definition.undeclared_params(provided))
     if unknown:
@@ -214,79 +172,3 @@ def _check_metric_membership(
                 f"must be one of {sorted(metric_registry.ids())}",
             )
         )
-
-
-# ── raw best-effort dialect ─────────────────────────────────────────────────
-
-
-def _raw_best_effort_checks(
-    raw: dict[str, Any],
-    *,
-    component_registry: FrozenComponentRegistry,
-    metric_registry: FrozenMetricRegistry,
-) -> list[ConfigValidationIssue]:
-    """Best-effort registry checks from raw dict.
-
-    When pydantic structural validation failed (no typed RunConfig), we best-effort
-    check membership from the raw dict so structural + registry errors are
-    co-reported.  Only membership checks are performed — params, output contract,
-    and lock shape checks need typed data and are skipped.
-    """
-    issues: list[ConfigValidationIssue] = []
-
-    # Strategy
-    strategy_raw = raw.get("strategy")
-    if isinstance(strategy_raw, dict) and "id" in strategy_raw:
-        sid = strategy_raw.get("id")
-        if sid == "all":
-            issues.append(ConfigValidationIssue("strategy.id", "must select one component id"))
-        elif isinstance(sid, str) and sid:
-            try:
-                component_registry.get(ComponentSelection("strategies", sid))
-            except ComponentRegistryError:
-                issues.append(ConfigValidationIssue("strategy.id", "unknown strategy component id"))
-
-    # Indicators
-    indicators_raw = raw.get("indicators")
-    if isinstance(indicators_raw, list):
-        seen: set[str] = set()
-        for i, item in enumerate(indicators_raw):
-            if not isinstance(item, dict):
-                continue
-            iid = item.get("id")
-            if not isinstance(iid, str) or not iid:
-                continue
-            if iid in seen:
-                issues.append(
-                    ConfigValidationIssue(
-                        f"indicators[{i}].id",
-                        f"duplicates indicator component id {iid!r}",
-                    )
-                )
-                continue
-            seen.add(iid)
-            if iid == "all":
-                issues.append(
-                    ConfigValidationIssue(f"indicators[{i}].id", "must select one component id")
-                )
-                continue
-            try:
-                component_registry.get(ComponentSelection("indicators", iid))
-            except ComponentRegistryError:
-                issues.append(
-                    ConfigValidationIssue(f"indicators[{i}].id", "unknown indicator component id")
-                )
-
-    # Ranking metric
-    ranking_raw = raw.get("ranking")
-    if isinstance(ranking_raw, dict):
-        metric = ranking_raw.get("metric")
-        if isinstance(metric, str) and metric and metric not in metric_registry:
-            issues.append(
-                ConfigValidationIssue(
-                    "ranking.metric",
-                    f"must be one of {sorted(metric_registry.ids())}",
-                )
-            )
-
-    return issues

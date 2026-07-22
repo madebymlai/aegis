@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
     discover_component_registry,
 )
+from research.aegis_research.configuration.cross_checks import cross_check_registries
 from research.aegis_research.configuration.schema import (
     ConfigSelectionEvidence,
     ConfigValidationError,
@@ -19,7 +21,7 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
 )
 from research.aegis_research.configuration.validation import (
-    validate_run_config,
+    _validate_run_config,
 )
 from research.aegis_research.metrics import (
     FrozenMetricRegistry,
@@ -122,7 +124,7 @@ def load_run_config(
 
 
 def resolve_run_config(
-    value: dict[str, Any],
+    value: Mapping[str, Any],
     *,
     raw_text: str | None = None,
     source_path: str | None = None,
@@ -133,17 +135,32 @@ def resolve_run_config(
 
     Non-mapping values raise ``ConfigValidationError``.
     """
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
+
+    raw = dict(value)
+    config, issues = _validate_run_config(raw)
+    if config is None:
+        raise ConfigValidationError(issues)
 
     registry = component_registry or discover_component_registry()
     frozen_metric_registry = freeze_metric_registry(metric_registry)
     effective_metric_registry = frozen_metric_registry or make_metric_registry_for(
-        _requested_metric_ids(value)
+        _requested_metric_ids(config)
     )
+    issues.extend(
+        cross_check_registries(
+            config,
+            component_registry=registry,
+            metric_registry=effective_metric_registry,
+        )
+    )
+    if issues:
+        raise ConfigValidationError(issues)
 
     return _build_resolved_run_config(
-        value,
+        config,
+        raw,
         raw_text=raw_text,
         source_path=source_path,
         component_registry=registry,
@@ -151,25 +168,14 @@ def resolve_run_config(
     )
 
 
-def _requested_metric_ids(raw: dict[str, Any]) -> tuple[str, ...]:
-    """Metric ids the raw config asks for, before validation has run.
-
-    Custom metrics are opt-in per run: only a requested id can pull its record
-    into the effective registry. The ranking metric plus any extra reported
-    metrics under ``report.metrics`` are requested. Malformed shapes are ignored
-    here — validation reports them properly later.
-    """
-    ids: list[str] = []
-    ranking = raw.get("ranking")
-    if isinstance(ranking, dict) and isinstance(ranking.get("metric"), str):
-        ids.append(ranking["metric"])
-    report = raw.get("report")
-    if isinstance(report, dict) and isinstance(report.get("metrics"), list):
-        ids.extend(m for m in report["metrics"] if isinstance(m, str))
+def _requested_metric_ids(config: RunConfig) -> tuple[str, ...]:
+    """Return the unique Metric IDs requested by a typed Run Config."""
+    ids = [config.ranking.metric, *config.report.metrics]
     return tuple(dict.fromkeys(ids))
 
 
 def _build_resolved_run_config(
+    config: RunConfig,
     raw: dict[str, Any],
     *,
     raw_text: str | None,
@@ -177,17 +183,9 @@ def _build_resolved_run_config(
     component_registry: FrozenComponentRegistry,
     metric_registry: FrozenMetricRegistry,
 ) -> ResolvedRunConfig:
-    config, issues = validate_run_config(
-        raw,
-        component_registry=component_registry,
-        metric_registry=metric_registry,
-    )
-    if issues:
-        raise ConfigValidationError(issues)
-
     text_for_hash = raw_text if raw_text is not None else yaml.safe_dump(raw, sort_keys=False)
     return ResolvedRunConfig(
-        config=config,  # type: ignore[arg-type]  # guaranteed non-None when issues is empty
+        config=config,
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
         source_path=source_path,

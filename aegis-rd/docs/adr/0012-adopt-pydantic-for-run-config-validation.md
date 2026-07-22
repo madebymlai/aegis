@@ -148,3 +148,16 @@ neutral Aegis RD authoring leaf consumed by both Run Config schema and Component
 manifests. This removes their import cycle without creating a compatibility surface.
 Registry orchestration and structural-versus-registry co-reporting are addressed
 separately by the ADR-0014 amendment.
+
+## Amendment — 2026-07-22: typed construction is the registry cutoff
+
+Run Config resolution now performs one registry-free whole-tree Pydantic construction
+before any Component discovery, Metric Registry construction, or registry cross-check.
+If construction fails, resolution returns all Pydantic structural issues and stops. Raw
+authoring mappings are retained only as boundary input and authored evidence; they are no
+longer interpreted by a second validation dialect.
+
+When construction succeeds, the coordinator's typed band-override universe issue may be
+combined with typed Component and Metric registry issues. Registry discovery and integrity
+failures remain separate setup errors because there is no trustworthy registry against
+which authoring selections can be checked.

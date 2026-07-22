@@ -61,14 +61,19 @@ def _component_registry(tmp_path: Path):
     return discover_component_registry(root=root, repo_root=tmp_path)
 
 
-def _resolve(portfolio: dict[str, Any], *, tmp_path: Path):
+def _resolve(
+    portfolio: dict[str, Any],
+    *,
+    tmp_path: Path,
+    strategy_id: str = "demo.strategy",
+):
     """Resolve a minimal valid Run Config with the given portfolio section."""
     raw: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "val-test",
         "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
         "portfolio": portfolio,
-        "strategy": {"id": "demo.strategy"},
+        "strategy": {"id": strategy_id},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},
         "optimization": {"search": "grid", "observation_block_bars": 20},
@@ -269,6 +274,22 @@ def test_portfolio_band_override_key_must_be_in_tradeable_universe(tmp_path: Pat
         and "SYN.XNAS" in i.message
         for i in e.value.issues
     )
+
+
+def test_typed_band_override_and_registry_issues_are_combined(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {
+                "direction": "longonly",
+                "band_overrides": {"OTHER.XNAS": {"up": 0.03, "down": 0.07}},
+            },
+            tmp_path=tmp_path,
+            strategy_id="missing.strategy",
+        )
+
+    paths = {issue.path for issue in e.value.issues}
+    assert "portfolio.band_overrides" in paths
+    assert "strategy.id" in paths
 
 
 def test_resolved_config_carries_margin_interest_default(tmp_path: Path) -> None:

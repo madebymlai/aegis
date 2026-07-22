@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -13,6 +14,7 @@ from research.aegis_research.configuration import (
     load_run_config,
     resolve_run_config,
 )
+from research.aegis_research.configuration import resolution as resolution_module
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
 
 
@@ -49,6 +51,43 @@ def test_resolve_rejects_non_mapping_input(tmp_path: Path) -> None:
 
     issues = error.value.issues
     assert any(issue.path == "$" and "must be a mapping" in issue.message for issue in issues)
+
+
+def test_resolve_accepts_programmatic_mapping_input(tmp_path: Path) -> None:
+    resolved = resolve_run_config(
+        MappingProxyType(_run_config()),
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.name == "canonical_run"
+
+
+def test_structural_failure_does_not_discover_component_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_discovery() -> None:
+        raise AssertionError("component discovery must not run for structurally invalid input")
+
+    monkeypatch.setattr(resolution_module, "discover_component_registry", fail_discovery)
+    raw = _run_config()
+    raw["optimization"] = None
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw)
+
+    assert any(issue.path == "optimization" for issue in error.value.issues)
+
+
+def test_registry_discovery_failure_remains_a_setup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_discovery() -> None:
+        raise RuntimeError("broken Component registry")
+
+    monkeypatch.setattr(resolution_module, "discover_component_registry", fail_discovery)
+
+    with pytest.raises(RuntimeError, match="broken Component registry"):
+        resolve_run_config(_run_config())
 
 
 def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> None:

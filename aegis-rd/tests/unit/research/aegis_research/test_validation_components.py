@@ -5,7 +5,7 @@ Structural validation is driven through pydantic construction
 coordinator-level wording.  Registry cross-check rules (membership, ``all``,
 duplicates, params, output contract) are covered at their own seam in
 ``test_cross_checks.py``; this file keeps only the thin coordinator net —
-a valid config resolves, and structural + registry issues co-report.
+a valid config resolves, while structural failures stop before registry checks.
 """
 
 from __future__ import annotations
@@ -255,10 +255,9 @@ def test_indicator_missing_id_reported_with_pydantic_wording(tmp_path: Path) -> 
 # ── coordinator: all-errors-at-once ──────────────────────────────────────────
 
 
-def test_co_reports_strategy_structural_and_indicator_membership_errors(
+def test_strategy_structural_failure_stops_before_indicator_membership(
     tmp_path: Path,
 ) -> None:
-    """Structural errors and membership errors are both reported."""
     with pytest.raises(ConfigValidationError) as e:
         _resolve(
             tmp_path=tmp_path,
@@ -267,7 +266,7 @@ def test_co_reports_strategy_structural_and_indicator_membership_errors(
         )
     paths = {i.path for i in e.value.issues}
     assert "strategy.id" in paths
-    assert "indicators[0].id" in paths
+    assert "indicators[0].id" not in paths
 
 
 def test_co_reports_indicator_duplicate_and_membership_errors(
