@@ -50,5 +50,6 @@ JSON-safe metadata dict), not a secret guard.
 - Secret-behavior and env-ref resolution tests are deleted. The
   `config-contract-security-reproducibility-2026-05-16.md` solution doc
   is amended to mark its secret-safety guidance retired under this ADR.
-- **CONTEXT.md is untouched.** "Artifacts stay local" is a threat-model decision (this ADR), not
-  a glossary term.
+- The environment-state wording in `CONTEXT.md`'s **Manifest** definition is removed with the
+  unused provenance probes. "Artifacts stay local" remains a threat-model decision, not a
+  glossary term.
