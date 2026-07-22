@@ -70,3 +70,9 @@ The change lands in three slices:
 - ADR-0004 (terminal status persisted by recorder mark-methods before raise) stands.
 - ADR-0009 (Runs are local and single-process, so in-memory hand-off is sufficient) is relied upon.
 - ADR-0015 (terminal CLI-facing surfaces stay dicts) is followed — no typed refs object.
+
+**Amendment (2026-07-23).** The Manifest is now the single Run lifecycle record. Its Run section
+contains identity, status, timing, and—only for failed or interrupted Runs—one terminal failure
+fact with stage, exception type, and bounded message. The generic stage ledger, duplicate
+optimization-failure diagnostics, rerun modes, and parent/supersedes lineage are removed. The
+callback contract and exception propagation remain unchanged.

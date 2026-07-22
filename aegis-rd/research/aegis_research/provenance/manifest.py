@@ -8,7 +8,7 @@ from typing import Any
 from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.canonical_json import to_builtin
 
-MANIFEST_SCHEMA_VERSION = 4
+MANIFEST_SCHEMA_VERSION = 5
 
 
 class RunStatus:
@@ -16,16 +16,6 @@ class RunStatus:
     COMPLETED = "completed"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
-    STALE = "stale"
-    SUPERSEDED = "superseded"
-
-
-class StageStatus:
-    PLANNED = "planned"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    SKIPPED = "skipped"
 
 
 class ArtifactStatus:
@@ -48,16 +38,13 @@ def _utc_now() -> str:
 class RunManifest:
     run_id: str
     run_dir: Path
-    run_label: str
-    mode: str
     config: dict[str, Any]
     status: str = RunStatus.RUNNING
     started_at: str = field(default_factory=_utc_now)
     finished_at: str | None = None
-    stages: list[dict[str, Any]] = field(default_factory=list)
+    failure: dict[str, str] | None = None
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
-    lineage: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def new(
@@ -65,32 +52,13 @@ class RunManifest:
         *,
         run_id: str,
         run_dir: str | Path,
-        run_label: str,
-        mode: str,
         config: dict[str, Any],
-        lineage: dict[str, Any] | None = None,
     ) -> RunManifest:
         return cls(
             run_id=run_id,
             run_dir=Path(run_dir),
-            run_label=run_label,
-            mode=mode,
             config=to_builtin(config),
-            lineage=to_builtin(lineage or {}),
         )
-
-    def add_stage(self, stage_id: str, status: str, **metadata: Any) -> None:
-        record = {
-            "id": stage_id,
-            "status": status,
-            "updated_at": _utc_now(),
-            **to_builtin(metadata),
-        }
-        for index, stage in enumerate(self.stages):
-            if stage["id"] == stage_id:
-                self.stages[index] = {**stage, **record}
-                return
-        self.stages.append(record)
 
     def add_artifact(
         self,
@@ -152,21 +120,19 @@ class RunManifest:
         raise ManifestValidationError(f"unknown artifact id: {artifact_id}")
 
     def to_dict(self) -> dict[str, Any]:
+        run = {
+            "id": self.run_id,
+            "status": self.status,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+        }
+        if self.failure is not None:
+            run["failure"] = to_builtin(self.failure)
         return {
             "schema_version": MANIFEST_SCHEMA_VERSION,
-            "run": {
-                "id": self.run_id,
-                "label": self.run_label,
-                "status": self.status,
-                "mode": self.mode,
-                "run_dir": self.run_id,
-                "started_at": self.started_at,
-                "finished_at": self.finished_at,
-            },
+            "run": run,
             "config": to_builtin(self.config),
             "evidence": to_builtin(self.evidence),
-            "lineage": to_builtin(self.lineage),
-            "stages": to_builtin(self.stages),
             "artifacts": to_builtin(self.artifacts),
         }
 

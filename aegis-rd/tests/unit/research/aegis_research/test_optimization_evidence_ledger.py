@@ -55,7 +55,7 @@ def test_run_evidence_seeds_manifest_and_records_optimization_sections() -> None
     assert manifest_evidence["optimization"]["preflight"] == {"eligible_candidate_count": 3}
 
 
-def test_run_evidence_fail_records_typed_failure_and_persists() -> None:
+def test_run_evidence_failure_stage_is_transient_and_persists_partial_evidence() -> None:
     manifest_evidence: dict[str, Any] = {}
     persisted: list[bool] = []
     ledger = RunEvidence(
@@ -69,10 +69,8 @@ def test_run_evidence_fail_records_typed_failure_and_persists() -> None:
     ledger.fail(EvidenceFailureStage.PUBLISHING, RuntimeError("candidate store unavailable"))
 
     assert persisted == [True]
-    assert manifest_evidence["optimization"]["publishing_failure"] == {
-        "error_type": "RuntimeError",
-        "message": "candidate store unavailable",
-    }
+    assert ledger.failure_stage is EvidenceFailureStage.PUBLISHING
+    assert "publishing_failure" not in manifest_evidence["optimization"]
 
 
 def test_run_evidence_rejects_untyped_section_keys() -> None:

@@ -32,12 +32,17 @@ def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
     assert "play" not in output.out
 
 
-def test_run_help_does_not_list_train_flag(capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_help_lists_only_live_run_creation_options(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert cli.main(["run", "--help"]) == 0
 
     output = capsys.readouterr()
     assert "--train" not in output.out
     assert "Run the config's train section" not in output.out
+    assert "--rerun-mode" not in output.out
+    assert "--parent-run-id" not in output.out
+    assert "--supersedes-run-id" not in output.out
 
 
 def test_show_components_lists_registry_json(

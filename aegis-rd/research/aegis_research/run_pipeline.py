@@ -32,7 +32,7 @@ from research.aegis_research.optimization.run_data_contract import (
 )
 from research.aegis_research.provenance.capture import capture_config_evidence
 from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
-from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
+from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_data import RunData, RunDataUnavailable, load_run_data
 
@@ -44,10 +44,7 @@ def run_strategy_sweep(
     resolved_config: ResolvedRunConfig,
     *,
     component_registry: FrozenComponentRegistry,
-    rerun_mode: str = RerunMode.NEW,
     run_id: str | None = None,
-    parent_run_id: str | None = None,
-    supersedes_run_id: str | None = None,
     on_run_refs: Callable[[dict[str, Any]], None] | None = None,
     custom_data_providers: CustomDataProviderMap | None = None,
 ) -> dict[str, Any]:
@@ -65,12 +62,8 @@ def run_strategy_sweep(
     array_contract = build_run_data_array_contract(config, component_registry)
 
     recorder = RunStore(config.output_dir).start_run(
-        run_label=config.name,
         config=resolved_config.resolved_config_document(),
-        mode=rerun_mode,
         run_id=run_id,
-        parent_run_id=parent_run_id,
-        supersedes_run_id=supersedes_run_id,
     )
     run_evidence = RunEvidence(
         recorder.manifest.evidence,
@@ -87,9 +80,11 @@ def run_strategy_sweep(
         recorder.manifest.evidence["config"] = capture_config_evidence(resolved_config)
     recorder.persist()
 
+    failure_stage = "run"
     try:
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
+        failure_stage = "data"
         array_contract.assert_configured()
         try:
             run_data = load_run_data(
@@ -123,26 +118,22 @@ def run_strategy_sweep(
             metric_registry=metric_registry,
             run_evidence=run_evidence,
         )
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as error:
         recorder.mark_run_interrupted(
-            diagnostic={"error_type": "KeyboardInterrupt", "message": "interrupted"}
+            stage=(run_evidence.failure_stage.value if run_evidence.failure_stage else failure_stage),
+            error=error,
         )
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
         raise
     except Exception as error:
-        recorder.mark_run_failed(diagnostic=_failure_diagnostic(error))
+        recorder.mark_run_failed(
+            stage=(run_evidence.failure_stage.value if run_evidence.failure_stage else failure_stage),
+            error=error,
+        )
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
         raise
-
-
-def _failure_diagnostic(error: Exception) -> dict[str, str]:
-    return {
-        "error_type": type(error).__name__,
-        "message": str(error)[:1000],
-    }
-
 
 def _run_optimization_strategy_sweep(
     config: RunConfig,

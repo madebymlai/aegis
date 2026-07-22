@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
+from research.aegis_research.provenance.recorder import RunRecorder
 
 
 class RunCollisionError(FileExistsError):
@@ -22,45 +22,20 @@ class RunStore:
     def start_run(
         self,
         *,
-        run_label: str,
         config: dict[str, Any],
-        mode: str = RerunMode.NEW,
         run_id: str | None = None,
-        parent_run_id: str | None = None,
-        supersedes_run_id: str | None = None,
     ) -> RunRecorder:
-        if mode not in {
-            RerunMode.NEW,
-            RerunMode.DUPLICATE,
-            RerunMode.FORK,
-            RerunMode.OVERWRITE,
-        }:
-            raise ValueError(f"Unsupported run mode for new physical run: {mode}")
-        if mode == RerunMode.FORK and parent_run_id is None:
-            raise ValueError("fork mode requires parent_run_id")
-        if mode == RerunMode.OVERWRITE and supersedes_run_id is None:
-            raise ValueError("overwrite mode requires supersedes_run_id")
-
         _assert_relative_run_root_safe(self.root_dir)
-        physical_run_id = _validate_run_id(run_id or _new_run_id(run_label))
+        physical_run_id = _validate_run_id(run_id or _new_run_id(str(config["name"])))
         run_dir = self.root_dir / physical_run_id
         _assert_run_dir_within_root(self.root_dir, run_dir)
         if run_dir.exists():
             raise RunCollisionError(f"Run already exists: {run_dir}")
 
-        lineage: dict[str, Any] = {}
-        if parent_run_id is not None:
-            lineage["parent_run_id"] = parent_run_id
-        if supersedes_run_id is not None:
-            lineage["supersedes_run_id"] = supersedes_run_id
-
         return RunRecorder.start(
             run_dir=run_dir,
             run_id=physical_run_id,
-            run_label=run_label,
-            mode=mode,
             config=config,
-            lineage=lineage,
         )
 
 

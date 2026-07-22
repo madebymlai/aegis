@@ -17,7 +17,6 @@ from research.aegis_research.provenance.manifest import (
     ManifestValidationError,
     RunManifest,
     RunStatus,
-    StageStatus,
     validate_manifest,
 )
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
@@ -31,11 +30,8 @@ def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={"schema_version": 1},
     )
-    manifest.add_stage("data", StageStatus.COMPLETED)
     manifest.add_artifact(
         artifact_id="data.prices",
         role="prices",
@@ -51,12 +47,13 @@ def test_manifest_record_serializes_minimal_inventory(tmp_path: Path) -> None:
 
     payload = manifest.to_dict()
 
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert payload["run"]["id"] == "run-1"
-    assert payload["run"]["run_dir"] == "run-1"
     assert str(tmp_path) not in json.dumps(payload)
     assert payload["run"]["status"] == RunStatus.RUNNING
-    assert payload["stages"][0]["id"] == "data"
+    assert set(payload["run"]) == {"id", "status", "started_at", "finished_at"}
+    assert "lineage" not in payload
+    assert "stages" not in payload
     assert payload["artifacts"][0]["id"] == "data.prices"
     validate_manifest(payload, run_dir=tmp_path)
 
@@ -65,8 +62,6 @@ def test_completed_artifact_requires_content_identity(tmp_path: Path) -> None:
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={},
     )
 
@@ -90,8 +85,6 @@ def test_manifest_validation_rejects_missing_completed_artifact_file(tmp_path: P
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={},
     )
     manifest.add_artifact(
@@ -115,8 +108,6 @@ def test_manifest_rejects_duplicate_artifact_ids_and_paths(tmp_path: Path) -> No
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={},
     )
     artifact = {
@@ -152,8 +143,6 @@ def test_manifest_rejects_unsafe_artifact_paths(tmp_path: Path, path: str) -> No
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={},
     )
 
@@ -192,8 +181,6 @@ def test_artifact_registry_requires_the_persist_hook(tmp_path: Path) -> None:
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={},
     )
 
@@ -207,8 +194,6 @@ def test_artifact_registry_persists_the_manifest_on_every_mutation(
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={},
     )
     persist_calls: list[bool] = []
@@ -239,8 +224,6 @@ def test_artifact_registry_completes_only_after_hash_and_manifest_update(
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={},
     )
     registry = ArtifactRegistry(manifest, tmp_path, persist=lambda: None)
@@ -278,8 +261,6 @@ def test_manifest_validation_rejects_completed_aggregate_with_incomplete_child(
     manifest = RunManifest.new(
         run_id="run-1",
         run_dir=tmp_path,
-        run_label="baseline",
-        mode="new",
         config={},
     )
     manifest.add_artifact(

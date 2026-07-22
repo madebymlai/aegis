@@ -120,10 +120,12 @@ def test_component_optimization_candidate_publish_failure_preserves_run_evidence
     ]
     assert optimization_evidence["candidate_count"] == 3
     assert "locks" not in optimization_evidence
-    assert optimization_evidence["publishing_failure"] == {
+    assert manifest["run"]["failure"] == {
+        "stage": "publishing",
         "error_type": "OSError",
         "message": "candidate store write failed",
     }
+    assert "publishing_failure" not in optimization_evidence
     # aegis-rd-gg3.4: error envelope's run block carries real, resolved
     # absolute paths — no scrubbing
     run_block = payload["run"]
@@ -247,11 +249,10 @@ def test_component_optimization_runtime_error_records_failure_diagnostics(
 
     assert payload["error"]["category"] == "execution_failure"
     assert manifest["run"]["status"] == RunStatus.FAILED
-    assert manifest["evidence"]["optimization"]["execution_failure"]["error_type"] == "RuntimeError"
-    assert (
-        "component optimization failed intentionally"
-        in manifest["stages"][-1]["diagnostic"]["message"]
-    )
+    assert manifest["run"]["failure"]["stage"] == "execution"
+    assert manifest["run"]["failure"]["error_type"] == "RuntimeError"
+    assert "component optimization failed intentionally" in manifest["run"]["failure"]["message"]
+    assert "execution_failure" not in manifest["evidence"]["optimization"]
 
 
 def _write_run_config(

@@ -97,6 +97,14 @@ def test_on_run_refs_fires_twice_on_interrupt(
     assert firings[0]["finished_at"] is None
     assert firings[1]["status"] == RunStatus.INTERRUPTED
     assert firings[1]["finished_at"] is not None
+    manifest = json.loads(
+        (tmp_path / "runs" / "firing-interrupted-run" / "manifest.json").read_text()
+    )
+    assert manifest["run"]["failure"] == {
+        "stage": "data",
+        "error_type": "KeyboardInterrupt",
+        "message": "interrupted",
+    }
     for key in ("run_id", "run_dir", "manifest_path", "status", "started_at", "finished_at"):
         assert key in firings[0]
         assert key in firings[1]

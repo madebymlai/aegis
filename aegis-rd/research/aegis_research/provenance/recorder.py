@@ -9,15 +9,9 @@ from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.manifest import (
     RunManifest,
     RunStatus,
-    StageStatus,
 )
 
-
-class RerunMode:
-    NEW = "new"
-    DUPLICATE = "duplicate"
-    FORK = "fork"
-    OVERWRITE = "overwrite"
+_FAILURE_MESSAGE_LIMIT = 1000
 
 
 class RunRecorder:
@@ -33,20 +27,14 @@ class RunRecorder:
         *,
         run_dir: str | Path,
         run_id: str,
-        run_label: str,
-        mode: str,
         config: dict[str, Any],
-        lineage: dict[str, Any] | None = None,
     ) -> RunRecorder:
         path = Path(run_dir)
         path.mkdir(parents=True, exist_ok=False, mode=0o700)
         manifest = RunManifest.new(
             run_id=run_id,
             run_dir=path,
-            run_label=run_label,
-            mode=mode,
             config=config,
-            lineage=lineage,
         )
         recorder = cls(manifest)
         recorder.persist()
@@ -54,10 +42,6 @@ class RunRecorder:
 
     def persist(self) -> None:
         write_json(self.manifest_path, self.manifest.to_dict())
-
-    def mark_stage(self, stage_id: str, status: str, **metadata: Any) -> None:
-        self.manifest.add_stage(stage_id, status, **metadata)
-        self.persist()
 
     def mark_run_completed(self) -> None:
         self.manifest.status = RunStatus.COMPLETED
@@ -67,10 +51,10 @@ class RunRecorder:
     def mark_run_failed(
         self,
         *,
-        stage_id: str = "run",
-        diagnostic: dict[str, Any] | None = None,
+        stage: str,
+        error: BaseException,
     ) -> None:
-        self.manifest.add_stage(stage_id, StageStatus.FAILED, diagnostic=diagnostic or {})
+        self.manifest.failure = _terminal_failure(stage, error)
         self.manifest.status = RunStatus.FAILED
         self.manifest.finished_at = self._now_from_manifest()
         self.persist()
@@ -78,10 +62,10 @@ class RunRecorder:
     def mark_run_interrupted(
         self,
         *,
-        stage_id: str = "run",
-        diagnostic: dict[str, Any] | None = None,
+        stage: str,
+        error: BaseException,
     ) -> None:
-        self.manifest.add_stage(stage_id, StageStatus.FAILED, diagnostic=diagnostic or {})
+        self.manifest.failure = _terminal_failure(stage, error)
         self.manifest.status = RunStatus.INTERRUPTED
         self.manifest.finished_at = self._now_from_manifest()
         self.persist()
@@ -99,3 +83,14 @@ class RunRecorder:
 
     def _now_from_manifest(self) -> str:
         return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _terminal_failure(stage: str, error: BaseException) -> dict[str, str]:
+    message = str(error)
+    if isinstance(error, KeyboardInterrupt) and not message:
+        message = "interrupted"
+    return {
+        "stage": stage,
+        "error_type": type(error).__name__,
+        "message": message[:_FAILURE_MESSAGE_LIMIT],
+    }

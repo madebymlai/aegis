@@ -11,6 +11,7 @@ from vectorbtpro import vbt
 from research.aegis_research.metrics.registry import empty_metric_registry
 from research.aegis_research.optimization.evidence_ledger import (
     OPTIMIZATION_ROUTE_SCHEMA_VERSION,
+    EvidenceFailureStage,
     RunEvidence,
 )
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
@@ -64,6 +65,5 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
     assert preflight["loaded_rows"] == 2
     assert preflight["scored_rows"] == 2
     assert preflight["observation_block_bars"] == 20
-    assert manifest_evidence["optimization"]["preflight_failure"]["error_type"] == (
-        "PreflightError"
-    )
+    assert run_evidence.failure_stage is EvidenceFailureStage.PREFLIGHT
+    assert "preflight_failure" not in manifest_evidence["optimization"]

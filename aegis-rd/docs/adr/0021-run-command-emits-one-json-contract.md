@@ -75,3 +75,8 @@ capturing stdout. That seam also pins the ADR's real-path requirement against th
 success-envelope serializer: success payload strings are preserved in full, so long
 resolved artifact and Candidate Store paths are not clipped. Error messages and error
 details keep their clipping behavior.
+
+**Amendment (2026-07-23).** Every invocation creates a uniquely identified immutable Run.
+`--rerun-mode`, `--parent-run-id`, and `--supersedes-run-id` are removed rather than accepted as
+no-ops. The Manifest likewise drops mode, lineage, and the duplicate Run label; the resolved Run
+Config remains the sole home of the configured name.

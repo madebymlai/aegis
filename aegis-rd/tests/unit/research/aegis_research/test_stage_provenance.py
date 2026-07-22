@@ -16,8 +16,6 @@ def test_recorder_run_refs_returns_six_field_snapshot(tmp_path: Path) -> None:
     recorder = RunRecorder.start(
         run_dir=tmp_path / "run-refs",
         run_id="run-refs",
-        run_label="baseline",
-        mode="new",
         config={"schema_version": 1},
     )
 
@@ -45,11 +43,9 @@ def test_recorder_run_refs_reflects_failed_and_interrupted_terminal_states(
     failed = RunRecorder.start(
         run_dir=tmp_path / "run-failed",
         run_id="run-failed",
-        run_label="baseline",
-        mode="new",
         config={"schema_version": 1},
     )
-    failed.mark_run_failed(diagnostic={"error": "boom"})
+    failed.mark_run_failed(stage="run", error=RuntimeError("boom"))
     refs = failed.run_refs()
     assert refs["status"] == RunStatus.FAILED
     assert refs["finished_at"] is not None
@@ -58,11 +54,9 @@ def test_recorder_run_refs_reflects_failed_and_interrupted_terminal_states(
     interrupted = RunRecorder.start(
         run_dir=tmp_path / "run-int",
         run_id="run-int",
-        run_label="baseline",
-        mode="new",
         config={"schema_version": 1},
     )
-    interrupted.mark_run_interrupted(diagnostic={"signal": "SIGINT"})
+    interrupted.mark_run_interrupted(stage="run", error=KeyboardInterrupt())
     refs = interrupted.run_refs()
     assert refs["status"] == RunStatus.INTERRUPTED
     assert refs["finished_at"] is not None

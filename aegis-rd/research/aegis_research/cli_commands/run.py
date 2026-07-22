@@ -25,22 +25,13 @@ from research.aegis_research.configuration import (
     load_run_config,
     with_run_config_selection,
 )
-from research.aegis_research.provenance.recorder import RerunMode
 from research.aegis_research.run_pipeline import run_strategy_sweep
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("run", help="Run a config")
     parser.add_argument("config", nargs="?", help="Path to run YAML")
-    parser.add_argument(
-        "--rerun-mode",
-        choices=[RerunMode.NEW, RerunMode.DUPLICATE, RerunMode.FORK, RerunMode.OVERWRITE],
-        default=RerunMode.NEW,
-        help="Explicit run creation mode",
-    )
     parser.add_argument("--run-id", help="Optional physical run id")
-    parser.add_argument("--parent-run-id", help="Parent run id for forked runs")
-    parser.add_argument("--supersedes-run-id", help="Prior run id superseded by overwrite mode")
     parser.set_defaults(handler=handle_run, command_name="run")
 
 
@@ -80,10 +71,7 @@ def _handle_strategy_run(
         result = run_strategy_sweep(
             resolved,
             component_registry=component_registry,
-            rerun_mode=args.rerun_mode,
             run_id=args.run_id,
-            parent_run_id=args.parent_run_id,
-            supersedes_run_id=args.supersedes_run_id,
             on_run_refs=failure_refs.update,
         )
         failure_refs.update(result)

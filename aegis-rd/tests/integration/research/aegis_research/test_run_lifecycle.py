@@ -7,7 +7,7 @@ import pytest
 
 from research.aegis_research.atomic_write import hash_file
 from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus
-from research.aegis_research.provenance.recorder import RerunMode, RunRecorder
+from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
 from research.aegis_research.run_data import (
     RunDataFailureEvidence,
@@ -21,8 +21,6 @@ def test_run_recorder_starts_and_completes_manifest(tmp_path: Path) -> None:
     recorder = RunRecorder.start(
         run_dir=tmp_path / "run-1",
         run_id="run-1",
-        run_label="baseline",
-        mode=RerunMode.NEW,
         config={"schema_version": 1},
     )
 
@@ -35,19 +33,18 @@ def test_run_recorder_starts_and_completes_manifest(tmp_path: Path) -> None:
     completed_manifest = json.loads(recorder.manifest_path.read_text())
     assert completed_manifest["run"]["status"] == RunStatus.COMPLETED
     assert completed_manifest["run"]["finished_at"]
+    assert "failure" not in completed_manifest["run"]
 
 
 def test_run_store_new_mode_rejects_existing_run_id(tmp_path: Path) -> None:
     store = RunStore(tmp_path)
     store.start_run(
-        run_label="baseline",
         config={"schema_version": 1},
         run_id="fixed-run",
     )
 
     with pytest.raises(RunCollisionError):
         store.start_run(
-            run_label="baseline",
             config={"schema_version": 1},
             run_id="fixed-run",
         )
@@ -59,7 +56,6 @@ def test_run_store_rejects_unsafe_run_ids(tmp_path: Path, run_id: str) -> None:
 
     with pytest.raises(ValueError, match="run_id"):
         store.start_run(
-            run_label="baseline",
             config={"schema_version": 1},
             run_id=run_id,
         )
@@ -79,54 +75,11 @@ def test_run_store_rejects_relative_symlinked_run_root(
 
     with pytest.raises(ValueError, match="symlinked"):
         store.start_run(
-            run_label="baseline",
             config={"schema_version": 1},
             run_id="escape-run",
         )
 
     assert not (outside / "escape-run").exists()
-
-
-def test_run_store_overwrite_creates_superseding_physical_run(tmp_path: Path) -> None:
-    store = RunStore(tmp_path)
-    original = store.start_run(
-        run_label="baseline",
-        config={"schema_version": 1},
-        run_id="original-run",
-    )
-    original.mark_run_completed()
-
-    superseding = store.start_run(
-        run_label="baseline",
-        config={"schema_version": 1},
-        mode=RerunMode.OVERWRITE,
-        run_id="new-run",
-        supersedes_run_id="original-run",
-    )
-
-    assert original.manifest_path.exists()
-    assert superseding.run_dir != original.run_dir
-    assert superseding.manifest.lineage["supersedes_run_id"] == "original-run"
-
-
-@pytest.mark.parametrize(
-    ("mode", "message"),
-    [(RerunMode.FORK, "parent_run_id"), (RerunMode.OVERWRITE, "supersedes_run_id")],
-)
-def test_run_store_requires_lineage_for_lineage_modes(
-    tmp_path: Path,
-    mode: str,
-    message: str,
-) -> None:
-    store = RunStore(tmp_path)
-
-    with pytest.raises(ValueError, match=message):
-        store.start_run(
-            run_label="baseline",
-            config={"schema_version": 1},
-            mode=mode,
-            run_id="lineage-run",
-        )
 
 
 def test_strategy_run_initializes_manifest_before_data_loading(
@@ -152,8 +105,12 @@ def test_strategy_run_initializes_manifest_before_data_loading(
 
     manifest = json.loads((tmp_path / "runs" / "fixed-run" / "manifest.json").read_text())
     assert manifest["run"]["status"] == RunStatus.FAILED
-    assert manifest["stages"][0]["id"] == "run"
-    assert manifest["stages"][0]["status"] == "failed"
+    assert manifest["run"]["failure"] == {
+        "stage": "data",
+        "error_type": "RuntimeError",
+        "message": "data stage failed",
+    }
+    assert "stages" not in manifest
 
 
 def test_environmental_data_evidence_is_persisted_before_terminal_failure(
@@ -180,7 +137,7 @@ def test_environmental_data_evidence_is_persisted_before_terminal_failure(
     def fail_environmentally(_config, **_kwargs):
         raise RunDataUnavailable(failure)
 
-    def assert_evidence_precedes_terminal(self, *, diagnostic):
+    def assert_evidence_precedes_terminal(self, *, stage, error):
         assert self.manifest.evidence["data"] == {
             "schema_version": "run_data_failure.v1",
             "requested_instrument_ids": [],
@@ -194,7 +151,7 @@ def test_environmental_data_evidence_is_persisted_before_terminal_failure(
             "message": "catalog gap",
             "source": "nautilus_catalog",
         }
-        original_mark_failed(self, diagnostic=diagnostic)
+        original_mark_failed(self, stage=stage, error=error)
 
     monkeypatch.setattr(
         "research.aegis_research.run_pipeline.load_run_data",
@@ -230,8 +187,11 @@ def test_strategy_run_marks_failed_when_on_run_refs_callback_fails(
 
     manifest = json.loads((tmp_path / "runs" / "callback-failed-run" / "manifest.json").read_text())
     assert manifest["run"]["status"] == RunStatus.FAILED
-    assert manifest["stages"][0]["id"] == "run"
-    assert manifest["stages"][0]["status"] == "failed"
+    assert manifest["run"]["failure"] == {
+        "stage": "run",
+        "error_type": "RuntimeError",
+        "message": "callback failed",
+    }
 
 
 def test_failed_run_diagnostic_is_length_clipped_not_redacted(
@@ -264,7 +224,8 @@ def test_failed_run_diagnostic_is_length_clipped_not_redacted(
         )
 
     manifest = json.loads((tmp_path / "runs" / "secret-failed-run" / "manifest.json").read_text())
-    diagnostic = manifest["stages"][0]["diagnostic"]
+    diagnostic = manifest["run"]["failure"]
+    assert diagnostic["stage"] == "data"
     assert diagnostic["message"] == long_message[:1000]
     assert "<redacted>" not in diagnostic["message"]
     assert diagnostic["message"].startswith("provider returned super-secret-token")
@@ -274,8 +235,6 @@ def test_artifact_registry_persists_planned_and_writing_transitions(tmp_path: Pa
     recorder = RunRecorder.start(
         run_dir=tmp_path / "run-1",
         run_id="run-1",
-        run_label="baseline",
-        mode=RerunMode.NEW,
         config={"schema_version": 1},
     )
 
