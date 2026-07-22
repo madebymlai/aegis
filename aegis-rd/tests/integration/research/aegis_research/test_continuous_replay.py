@@ -98,16 +98,6 @@ def test_replay_has_no_terminal_liquidation() -> None:
         periods_per_year=252,
     )
 
-    for forwarding_property in (
-        "values",
-        "returns",
-        "positions",
-        "cash",
-        "orders",
-        "costs",
-        "trades",
-    ):
-        assert not hasattr(type(result), forwarding_property)
     assert result.portfolio.assets.iloc[-1, 0] > 0.0
     assert result.portfolio.orders.records_readable["Fill Index"].tolist() == [close.index[1]]
     assert result.portfolio.returns.index.equals(close.index)

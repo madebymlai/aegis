@@ -146,8 +146,53 @@ def _case(candidate_count: int = 2, *, resolved_warmup_bars: int | None = None):
     return index, preflight, analysis
 
 
-@pytest.mark.parametrize("candidate_count", [1, 2])
-def test_continuous_evidence_publishes_protocol_and_matrix_payload(candidate_count: int) -> None:
+@pytest.mark.parametrize(
+    ("candidate_count", "maximum_driver_position", "expected_bounds", "expected_matrix"),
+    [
+        (
+            1,
+            0,
+            [
+                {"label": "block-000", "start": 1, "end": 6},
+                {"label": "block-001", "start": 6, "end": 10},
+            ],
+            {
+                "schema_version": "candidate_block_matrix.v1",
+                "orientation": "candidate_by_observation_block",
+                "candidate_index": {"names": ["window"], "values": [[1]]},
+                "observation_blocks": [
+                    {"label": "block-000", "start": 1, "end": 6},
+                    {"label": "block-001", "start": 6, "end": 10},
+                ],
+                "values": [[10.0, 5.0]],
+            },
+        ),
+        (
+            2,
+            1,
+            [
+                {"label": "block-000", "start": 2, "end": 6},
+                {"label": "block-001", "start": 6, "end": 10},
+            ],
+            {
+                "schema_version": "candidate_block_matrix.v1",
+                "orientation": "candidate_by_observation_block",
+                "candidate_index": {"names": ["window"], "values": [[1], [2]]},
+                "observation_blocks": [
+                    {"label": "block-000", "start": 2, "end": 6},
+                    {"label": "block-001", "start": 6, "end": 10},
+                ],
+                "values": [[10.0, 5.0], [9.0, 6.0]],
+            },
+        ),
+    ],
+)
+def test_continuous_evidence_publishes_protocol_and_matrix_payload(
+    candidate_count: int,
+    maximum_driver_position: int,
+    expected_bounds: list[dict[str, object]],
+    expected_matrix: dict[str, object],
+) -> None:
     _index, preflight, analysis = _case(candidate_count)
     published = build_continuous_evidence(
         analysis=analysis,
@@ -185,22 +230,9 @@ def test_continuous_evidence_publishes_protocol_and_matrix_payload(candidate_cou
     assert replay["portfolio"]["pf_method"] == "from_signals"
     assert replay["fill_timing"]["vbt_effective_delay_bars"] == 1
     assert evidence["warmup"]["resolved_warmup_bars"] == candidate_count
-    assert evidence["warmup"]["maximum_drivers"][0]["candidate_position"] == candidate_count - 1
-
-    assert protocol["bounds"] == [
-        {"label": "block-000", "start": candidate_count, "end": 6},
-        {"label": "block-001", "start": 6, "end": 10},
-    ]
-    assert evidence["raw_metric_matrices"]["total_return"] == {
-        "schema_version": "candidate_block_matrix.v1",
-        "orientation": "candidate_by_observation_block",
-        "candidate_index": {
-            "names": ["window"],
-            "values": {1: [[1]], 2: [[1], [2]]}[candidate_count],
-        },
-        "observation_blocks": protocol["bounds"],
-        "values": {1: [[10.0, 5.0]], 2: [[10.0, 5.0], [9.0, 6.0]]}[candidate_count],
-    }
+    assert evidence["warmup"]["maximum_drivers"][0]["candidate_position"] == maximum_driver_position
+    assert protocol["bounds"] == expected_bounds
+    assert evidence["raw_metric_matrices"]["total_return"] == expected_matrix
 
 
 def test_candidate_identity_and_key_change_with_selection_protocol() -> None:
@@ -405,10 +437,10 @@ def test_matrix_writer_canonicalizes_timestamp_and_tuple_candidate_params() -> N
     }
 
 
-def test_continuous_evidence_has_no_rehydration_surface() -> None:
-    for decoder in ("matrix_from_evidence", "observation_blocks_from_evidence"):
-        assert decoder not in continuous_evidence_module.__all__
-        assert not hasattr(continuous_evidence_module, decoder)
+@pytest.mark.parametrize("decoder", ["matrix_from_evidence", "observation_blocks_from_evidence"])
+def test_continuous_evidence_has_no_rehydration_surface(decoder: str) -> None:
+    assert decoder not in continuous_evidence_module.__all__
+    assert not hasattr(continuous_evidence_module, decoder)
 
 
 def test_maximum_lookback_change_moves_scored_interval_and_replay_identity() -> None:
