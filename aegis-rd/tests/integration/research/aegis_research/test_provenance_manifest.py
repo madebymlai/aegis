@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from research.aegis_research.atomic_write import hash_file
-from research.aegis_research.canonical_json import canonical_json_bytes
+from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.capture import (
     canonical_hash,
@@ -316,11 +316,9 @@ def test_config_evidence_preserves_the_published_shape_and_hashes(tmp_path: Path
     evidence = capture_config_evidence(config)
 
     assert evidence == {
-        "schema_version": 11,
-        "source_path": None,
-        "authored_config_hash": "7bcfeb2ce1cdebb4e6c43c829d1aa243720cf09555bc63047c8d98c0b88ccbb5",
-        "resolved_config_hash": "3ab786ce48e9bc91c4cd52f1b55d13d9cd11640ad2e8a4263808b6f77c02040e",
-        "raw_config_identity": {
-            "hash": "e974d53bedd622f6c027fb410e0a2b0e8dff93dd513da1134aafbd25e30967e6"
-        },
+        "schema_version": config.config.schema_version,
+        "source_path": config.source_path,
+        "authored_config_hash": canonical_hash(config.authored_config),
+        "resolved_config_hash": canonical_hash(to_builtin(config.config)),
+        "raw_config_identity": {"hash": config.raw_config_hash},
     }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,6 +64,13 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
 
     source = build_component_optimization_source(config, component_registry=registry, data=data)
 
+    assert {field.name for field in fields(source)} == {
+        "precompute",
+        "simulate",
+        "resolve_lookbacks",
+        "params",
+        "evidence",
+    }
     assert set(source.params) == {_INDICATOR_WINDOW_KEY, _STRATEGY_THRESHOLD_KEY}
     assert source.evidence["produced_outputs"] == ["trend"]
     assert source.evidence["consumed_outputs"] == ["trend"]
