@@ -194,10 +194,7 @@ class IndicatorPrecompute:
         the store is the authority on which candidates it holds.
 
         Cached because the verdict is a pure function of the store's immutable
-        outputs and every reader wants the same set. ``cached_property`` writes to
-        ``__dict__`` (bypassing the frozen ``__setattr__``), so when the runner
-        touches this once before the parallel sweep, dill ships the warm cache to
-        every pathos worker instead of each worker re-scanning the full series.
+        outputs and every reader in the continuous batch wants the same set.
         """
         if not self.outputs or self.n_symbols < 1:
             return set()

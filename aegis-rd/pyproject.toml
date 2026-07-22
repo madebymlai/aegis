@@ -10,7 +10,6 @@ requires-python = ">=3.12"
 dependencies = [
   "aegis-runtime",
   "aegis-data",
-  "dill",
   "edgartools==5.42.0",
   "nautilus_trader",
   "numpy",
