@@ -26,9 +26,7 @@ from tests.support.research.aegis_research.test_doubles import (
     default_metadata,
 )
 
-_OHLCV_METADATA = default_metadata(
-    effective_arrays=["OHLCV"], start=None, end=None
-)
+_OHLCV_METADATA = default_metadata(effective_arrays=["OHLCV"], start=None, end=None)
 
 
 def _arrays() -> Any:
@@ -105,7 +103,6 @@ def test_pipeline_setup_evidence_baseline_shape(
     assert "resolved_locks" not in evidence
     # strategy_evidence is derived from optimization_source — same object.
     assert result.strategy_evidence is result.optimization_source.evidence["strategy"]
-
 
 
 def test_pipeline_setup_store_path_matches_candidate_store(

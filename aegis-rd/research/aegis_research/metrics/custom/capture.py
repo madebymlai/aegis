@@ -109,11 +109,13 @@ def capture_metrics(
     return [
         (
             _definition(NEG_DOWN_CAPTURE_ID, f"Negated {benchmark} Down-Capture", benchmark),
-            ExtractorSpec(_make_neg_down_capture_read(benchmark)),
+            ExtractorSpec(_make_neg_down_capture_read(benchmark), contract_version=1),
         ),
         (
-            _definition(CAPTURE_SPREAD_ID, f"{benchmark} Capture Spread (up minus down)", benchmark),
-            ExtractorSpec(_make_capture_spread_read(benchmark)),
+            _definition(
+                CAPTURE_SPREAD_ID, f"{benchmark} Capture Spread (up minus down)", benchmark
+            ),
+            ExtractorSpec(_make_capture_spread_read(benchmark), contract_version=1),
         ),
     ]
 

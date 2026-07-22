@@ -27,9 +27,9 @@ from research.aegis_research.market_data.panels import (
 class RunArrayAlignmentError(ValueError):
     """A P&L frame diverges from the signal Close it must align with.
 
-    Every downstream consumer slices both views positionally by the splitter's
-    range template, so any calendar or column divergence would corrupt window
-    P&L silently. The two series come from one catalog pull; a mismatch is a
+    Every downstream consumer carries both views through one continuous path, so
+    any calendar or column divergence would corrupt path returns silently. The two
+    series come from one catalog pull; a mismatch is a
     wiring bug and fails loud here — never repair-by-reindex.
     """
 
@@ -65,8 +65,7 @@ class RunArrayAlignmentError(ValueError):
         if extra_columns:
             details.append(f"columns only in pnl: {list(extra_columns)}")
         super().__init__(
-            f"P&L array {array_name!r} does not align with the signal Close: "
-            + "; ".join(details)
+            f"P&L array {array_name!r} does not align with the signal Close: " + "; ".join(details)
         )
 
 
@@ -143,9 +142,7 @@ def _assert_aligned(
     pnl_columns = set(pnl_frame.columns)
     if index_aligned and signal_columns == pnl_columns:
         return
-    first_divergent, last_divergent = _divergent_timestamps(
-        signal_close.index, pnl_frame.index
-    )
+    first_divergent, last_divergent = _divergent_timestamps(signal_close.index, pnl_frame.index)
     raise RunArrayAlignmentError(
         array_name,
         signal_rows=len(signal_close.index),

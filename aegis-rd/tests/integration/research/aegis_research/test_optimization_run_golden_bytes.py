@@ -36,6 +36,7 @@ _FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"
 _GOLDEN_PATH = _FIXTURES / "goldens" / "optimization_run_manifest.json"
 _RUN_ID = "golden-bytes-oracle"
 
+
 def test_optimization_run_manifest_matches_golden_bytes(tmp_path, monkeypatch) -> None:
     _install_fixture_components(tmp_path)
     seed_catalog_ohlcv(

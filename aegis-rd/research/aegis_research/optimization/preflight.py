@@ -58,7 +58,6 @@ def build_preflight(
         "symbol_count": symbol_count,
         "metric_count": metric_count,
         "has_open_prices": has_open_prices,
-        "execute": dict(optimization.execute),
     }
     try:
         plan = plan_development(
@@ -110,10 +109,7 @@ def build_preflight(
             "peak_candidate_batch_count": candidate_count,
             "peak_candidate_batch_rows": candidate_count * len(index),
             "peak_candidate_batch_cells": (
-                candidate_count
-                * len(index)
-                * symbol_count
-                * materialized_frame_count
+                candidate_count * len(index) * symbol_count * materialized_frame_count
             ),
             "replay_candidate_rows": candidate_count * scored_rows,
             "observation_metric_cells": candidate_count * block_count * metric_count,

@@ -31,9 +31,7 @@ def _manifest(**overrides: object) -> dict:
             "optimization": {"total": 30},
         },
         "stages": [{"id": "optimize", "status": "completed", "updated_at": "2026-06-10T08:00:05Z"}],
-        "artifacts": [
-            {"id": "manifest", "hash": "abc123", "updated_at": "2026-06-10T08:00:09Z"}
-        ],
+        "artifacts": [{"id": "manifest", "hash": "abc123", "updated_at": "2026-06-10T08:00:09Z"}],
     }
     base.update(overrides)
     return base
@@ -62,9 +60,7 @@ def test_masked_bytes_identical_when_only_volatile_fields_differ() -> None:
 def test_masked_bytes_differ_when_substantive_field_moves() -> None:
     baseline = _manifest()
     drifted = _manifest(
-        artifacts=[
-            {"id": "manifest", "hash": "DRIFTED", "updated_at": "2026-06-10T08:00:09Z"}
-        ]
+        artifacts=[{"id": "manifest", "hash": "DRIFTED", "updated_at": "2026-06-10T08:00:09Z"}]
     )
 
     assert masked_canonical_manifest(baseline) != masked_canonical_manifest(drifted)

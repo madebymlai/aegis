@@ -49,9 +49,7 @@ from tests.support.research.aegis_research.test_doubles import (
     default_metadata,
 )
 
-_OHLCV_METADATA = default_metadata(
-    effective_arrays=["OHLCV"], start=None, end=None
-)
+_OHLCV_METADATA = default_metadata(effective_arrays=["OHLCV"], start=None, end=None)
 _DATA_IDENTITY = {
     "schema_version": "candidate_data_identity.v3",
     "requested_instrument_ids": ["SYN.XNAS"],
@@ -186,9 +184,7 @@ def test_locked_setup_resolves_every_component_from_candidate(
 
     evidence = result.optimization_source.evidence
     assert evidence["strategy"]["param_mode"] == "locked"
-    assert all(
-        indicator["param_mode"] == "locked" for indicator in evidence["indicators"]
-    )
+    assert all(indicator["param_mode"] == "locked" for indicator in evidence["indicators"])
     assert evidence["strategy"]["id"] == "demo.strategy"
     assert any(indicator["id"] == "demo.returns" for indicator in evidence["indicators"])
 

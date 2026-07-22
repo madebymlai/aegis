@@ -29,11 +29,11 @@ from research.aegis_research.optimization.pipeline.completion import (
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
 from research.aegis_research.optimization.pipeline.publishing import run_pipeline_publishing
 from research.aegis_research.optimization.pipeline.setup import run_pipeline_setup
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.run_data_contract import (
     RunDataFacts,
     build_run_data_array_contract,
 )
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from research.aegis_research.provenance.capture import capture_config_evidence
 from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RerunMode, RunRecorder

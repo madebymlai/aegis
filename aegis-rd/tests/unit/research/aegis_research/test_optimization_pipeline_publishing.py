@@ -171,12 +171,12 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
     with CandidateStore(store_path) as store:
         store.activate_run("run-pub")
         stored = [
-            store.candidate_by_key(
-                store.candidate_key_for_role("run-pub", role), run_id="run-pub"
-            )
+            store.candidate_by_key(store.candidate_key_for_role("run-pub", role), run_id="run-pub")
             for role in ("best", "median", "worst")
         ]
 
-    assert [
-        row["candidate"]["complete_period_metrics"]["total_return"] for row in stored
-    ] == [0.30, 0.20, 0.10]
+    assert [row["candidate"]["complete_period_metrics"]["total_return"] for row in stored] == [
+        0.30,
+        0.20,
+        0.10,
+    ]

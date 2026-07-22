@@ -42,8 +42,14 @@ def _config(*, catalog_path: Path, fx_conversion_cost: float) -> dict:
             {
                 "id": "tests.momentum_score",
                 "params": {
-                    "h1": 15, "h2": 42, "h3": 63, "h4": 84,
-                    "w1": 8.0, "w2": 4.0, "w3": 3.0, "w4": 2.0,
+                    "h1": 15,
+                    "h2": 42,
+                    "h3": 63,
+                    "h4": 84,
+                    "w1": 8.0,
+                    "w2": 4.0,
+                    "w3": 3.0,
+                    "w4": 2.0,
                 },
             },
             {"id": "tests.realized_vol", "params": {"window": 20}},

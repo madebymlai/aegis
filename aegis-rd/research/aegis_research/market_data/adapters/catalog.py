@@ -157,9 +157,7 @@ def _load_from_port(
         },
         **{
             continuous_id: data_port.continuous_size_increment(root)
-            for root, continuous_id in zip(
-                config.futures, continuous_frames, strict=True
-            )
+            for root, continuous_id in zip(config.futures, continuous_frames, strict=True)
         },
     }
     port_metadata: dict[str, object] = {"source": "nautilus_data_provider_port"}
@@ -169,9 +167,7 @@ def _load_from_port(
     distribution_coverage = (
         *window.distribution_coverage,
         *(
-            data_port.distribution_coverage_report(
-                tuple(continuous_frames), start=start, end=end
-            )
+            data_port.distribution_coverage_report(tuple(continuous_frames), start=start, end=end)
             if continuous_frames
             else ()
         ),
@@ -189,8 +185,7 @@ def _load_from_port(
             # Derived from each root's dated-leg definitions; rides the existing
             # data-identity projection into Candidate evidence.
             "continuous_root_currencies": {
-                root_id.value: currency
-                for root_id, currency in continuous_currencies.items()
+                root_id.value: currency for root_id, currency in continuous_currencies.items()
             },
             "size_increment_by_instrument": {
                 instrument_id.value: increment
@@ -334,9 +329,7 @@ def _ensure_custom_array_coverage(
 
 
 def _custom_array_names(config: DataConfig) -> tuple[str, ...]:
-    return tuple(
-        array for array in config.effective_arrays if not is_bar_derived_array(array)
-    )
+    return tuple(array for array in config.effective_arrays if not is_bar_derived_array(array))
 
 
 def _panel_index(

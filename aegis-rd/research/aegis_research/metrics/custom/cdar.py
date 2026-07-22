@@ -58,7 +58,7 @@ def _read_cdar_ratio(pf: Any, config: ReportConfig) -> pd.Series:
     return annualized / cdar.replace(0.0, np.nan)
 
 
-CDAR_RATIO_EXTRACTOR = ExtractorSpec(_read_cdar_ratio)
+CDAR_RATIO_EXTRACTOR = ExtractorSpec(_read_cdar_ratio, contract_version=1)
 
 __all__ = [
     "CDAR_RATIO_DEFINITION",

@@ -17,7 +17,7 @@
       "upstream_artifact_ids": []
     },
     {
-      "hash": "cde6d3dabde6f912d6c7731bdd370cedcd75f5d2fd870e1df451d1c787028ade",
+      "hash": "138c2268d0637a35c33835ad1d138cab82dca34131bfc60c1107498c06417dd9",
       "hash_algorithm": "sha256",
       "id": "strategy.run",
       "metadata": {},
@@ -29,7 +29,7 @@
         "candidate_count": 3,
         "observation_block_count": 3
       },
-      "size": 504780,
+      "size": 505876,
       "status": "completed",
       "type": "json",
       "updated_at": "<masked>",
@@ -90,7 +90,6 @@
     "lock": null,
     "name": "golden_bytes_oracle",
     "optimization": {
-      "execute": {},
       "observation_block_bars": 252,
       "random_subset": null,
       "search": "grid",
@@ -130,13 +129,13 @@
     }
   },
   "evidence": {
-    "component_registry_fingerprint": "9fc1dd446661fe44915f69debe840ce7a1071e10231bb583b7c7e794c1d4b77e",
+    "component_registry_fingerprint": "80d2a5be1ebb7f6788f8372f48a37bb17548f60e57654dedb8930d0069f9c1d5",
     "config": {
       "authored_config_hash": "0a85a8207ab292ddaae6d056642ffb2f09279102cbce331676d95bad5fc68209",
       "raw_config_identity": {
         "hash": "d976ef295e2d893924e4216fa7c3757e45cb53b4e239db89fb9cc854351e5f2c"
       },
-      "resolved_config_hash": "9ad6031e69ca5217ef7ff62c6f7fcbba408d7621dcd7b8ddfe785e8ba482e426",
+      "resolved_config_hash": "5d989a44fbb6d62185455db7ce75ecb2bb3f39a2de6ac9ed30d10dd4471c282a",
       "schema_version": 11,
       "selection": {
         "config_path": "<masked>",
@@ -169,7 +168,7 @@
       "candidate_count": 3,
       "candidates": [
         {
-          "candidate_key": "cand_25d236be4ebaae32292a1026c78e62ef",
+          "candidate_key": "cand_a45c60666cd40e7162aba7d1e2e2a77c",
           "complete_period_metrics": {
             "max_dd": 27.043452145100744,
             "sharpe_ratio": -0.17267188338676512,
@@ -412,6 +411,7 @@
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
@@ -419,6 +419,7 @@
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -426,6 +427,7 @@
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -433,6 +435,7 @@
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
@@ -440,6 +443,7 @@
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -447,13 +451,14 @@
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
                 },
-                "registry_fingerprint": "af5741041fac9bac11ba5663c3fe45a11b7b772950c3a322f0bca80ecd4aa603",
-                "schema_version": "bounds_metric_extractors.v1"
+                "registry_fingerprint": "da71f153812ca785c6208fa979f435b7cbacffdf0be341c95c48353ddc4a0302",
+                "schema_version": "bounds_metric_extractors.v2"
               },
               "observation_block_protocol": {
                 "application": {
@@ -512,7 +517,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "fc8112814cf0c62279bc6c5587ab2faa39453b4763fa4dd26e5c795c456765d9",
+                "implementation_fingerprint": "6077517557f91bb7f0167e003b092f67f6c23cc8f4e8ad36bf4c54709dd42957",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -1548,7 +1553,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
                   "slot": "tests.momentum_score",
-                  "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
+                  "source_hash": "5f590dab24b3140f4402bb13dadae8dce42ee5d6bd2f5f45ed0a846e1733463c",
                   "version": "1.0.0"
                 },
                 {
@@ -1589,7 +1594,7 @@
                 "param_mode": "parameterized",
                 "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
                 "slot": "strategy",
-                "source_hash": "b12d37eee6cd546791a0c0534278cd92041030d7af3c0477a617a18fd435b6ae",
+                "source_hash": "45e291b1503a0725a449fb2178fcfbca1d45b27565afb4030c9af93a7770c7cc",
                 "version": "1.0.0"
               }
             }
@@ -1620,7 +1625,7 @@
           }
         },
         {
-          "candidate_key": "cand_ceb1f6f376ce7539658f14001bc358c7",
+          "candidate_key": "cand_a29eeb6c6888b65183c1d800061cb630",
           "complete_period_metrics": {
             "max_dd": 23.779896871973637,
             "sharpe_ratio": -0.11453647945898061,
@@ -1863,6 +1868,7 @@
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
@@ -1870,6 +1876,7 @@
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -1877,6 +1884,7 @@
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -1884,6 +1892,7 @@
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
@@ -1891,6 +1900,7 @@
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -1898,13 +1908,14 @@
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
                 },
-                "registry_fingerprint": "af5741041fac9bac11ba5663c3fe45a11b7b772950c3a322f0bca80ecd4aa603",
-                "schema_version": "bounds_metric_extractors.v1"
+                "registry_fingerprint": "da71f153812ca785c6208fa979f435b7cbacffdf0be341c95c48353ddc4a0302",
+                "schema_version": "bounds_metric_extractors.v2"
               },
               "observation_block_protocol": {
                 "application": {
@@ -1963,7 +1974,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "fc8112814cf0c62279bc6c5587ab2faa39453b4763fa4dd26e5c795c456765d9",
+                "implementation_fingerprint": "6077517557f91bb7f0167e003b092f67f6c23cc8f4e8ad36bf4c54709dd42957",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -2999,7 +3010,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
                   "slot": "tests.momentum_score",
-                  "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
+                  "source_hash": "5f590dab24b3140f4402bb13dadae8dce42ee5d6bd2f5f45ed0a846e1733463c",
                   "version": "1.0.0"
                 },
                 {
@@ -3040,7 +3051,7 @@
                 "param_mode": "parameterized",
                 "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
                 "slot": "strategy",
-                "source_hash": "b12d37eee6cd546791a0c0534278cd92041030d7af3c0477a617a18fd435b6ae",
+                "source_hash": "45e291b1503a0725a449fb2178fcfbca1d45b27565afb4030c9af93a7770c7cc",
                 "version": "1.0.0"
               }
             }
@@ -3071,7 +3082,7 @@
           }
         },
         {
-          "candidate_key": "cand_f1e3876a3275b73f2b9398e458ddfa29",
+          "candidate_key": "cand_6c3ed650a7db329fa43c2a12bbf01469",
           "complete_period_metrics": {
             "max_dd": 35.84222833612172,
             "sharpe_ratio": -0.5146992551247971,
@@ -3314,6 +3325,7 @@
                   "max_dd": {
                     "absolute": true,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
@@ -3321,6 +3333,7 @@
                   "sharpe_ratio": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -3328,6 +3341,7 @@
                   "total_fees_paid": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -3335,6 +3349,7 @@
                   "total_return": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
@@ -3342,6 +3357,7 @@
                   "total_trades": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "identity",
                     "source_type": "vbt_stats"
@@ -3349,13 +3365,14 @@
                   "win_rate": {
                     "absolute": false,
                     "boundary_semantics": "native_continuous",
+                    "contract_version": 1,
                     "kind": "native_full_portfolio",
                     "scale": "percent",
                     "source_type": "vbt_stats"
                   }
                 },
-                "registry_fingerprint": "af5741041fac9bac11ba5663c3fe45a11b7b772950c3a322f0bca80ecd4aa603",
-                "schema_version": "bounds_metric_extractors.v1"
+                "registry_fingerprint": "da71f153812ca785c6208fa979f435b7cbacffdf0be341c95c48353ddc4a0302",
+                "schema_version": "bounds_metric_extractors.v2"
               },
               "observation_block_protocol": {
                 "application": {
@@ -3414,7 +3431,7 @@
                   "vbt_effective_delay_bars": 1,
                   "vbt_price": "nextclose"
                 },
-                "implementation_fingerprint": "fc8112814cf0c62279bc6c5587ab2faa39453b4763fa4dd26e5c795c456765d9",
+                "implementation_fingerprint": "6077517557f91bb7f0167e003b092f67f6c23cc8f4e8ad36bf4c54709dd42957",
                 "portfolio": {
                   "call_seq": "auto",
                   "cash_sharing": true,
@@ -4450,7 +4467,7 @@
                   "param_mode": "fixed",
                   "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
                   "slot": "tests.momentum_score",
-                  "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
+                  "source_hash": "5f590dab24b3140f4402bb13dadae8dce42ee5d6bd2f5f45ed0a846e1733463c",
                   "version": "1.0.0"
                 },
                 {
@@ -4491,7 +4508,7 @@
                 "param_mode": "parameterized",
                 "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
                 "slot": "strategy",
-                "source_hash": "b12d37eee6cd546791a0c0534278cd92041030d7af3c0477a617a18fd435b6ae",
+                "source_hash": "45e291b1503a0725a449fb2178fcfbca1d45b27565afb4030c9af93a7770c7cc",
                 "version": "1.0.0"
               }
             }
@@ -7625,6 +7642,7 @@
               "max_dd": {
                 "absolute": true,
                 "boundary_semantics": "native_continuous",
+                "contract_version": 1,
                 "kind": "native_full_portfolio",
                 "scale": "percent",
                 "source_type": "vbt_stats"
@@ -7632,6 +7650,7 @@
               "sharpe_ratio": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
+                "contract_version": 1,
                 "kind": "native_full_portfolio",
                 "scale": "identity",
                 "source_type": "vbt_stats"
@@ -7639,6 +7658,7 @@
               "total_fees_paid": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
+                "contract_version": 1,
                 "kind": "native_full_portfolio",
                 "scale": "identity",
                 "source_type": "vbt_stats"
@@ -7646,6 +7666,7 @@
               "total_return": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
+                "contract_version": 1,
                 "kind": "native_full_portfolio",
                 "scale": "percent",
                 "source_type": "vbt_stats"
@@ -7653,6 +7674,7 @@
               "total_trades": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
+                "contract_version": 1,
                 "kind": "native_full_portfolio",
                 "scale": "identity",
                 "source_type": "vbt_stats"
@@ -7660,13 +7682,14 @@
               "win_rate": {
                 "absolute": false,
                 "boundary_semantics": "native_continuous",
+                "contract_version": 1,
                 "kind": "native_full_portfolio",
                 "scale": "percent",
                 "source_type": "vbt_stats"
               }
             },
-            "registry_fingerprint": "af5741041fac9bac11ba5663c3fe45a11b7b772950c3a322f0bca80ecd4aa603",
-            "schema_version": "bounds_metric_extractors.v1"
+            "registry_fingerprint": "da71f153812ca785c6208fa979f435b7cbacffdf0be341c95c48353ddc4a0302",
+            "schema_version": "bounds_metric_extractors.v2"
           },
           "observation_block_protocol": {
             "application": {
@@ -7725,7 +7748,7 @@
               "vbt_effective_delay_bars": 1,
               "vbt_price": "nextclose"
             },
-            "implementation_fingerprint": "fc8112814cf0c62279bc6c5587ab2faa39453b4763fa4dd26e5c795c456765d9",
+            "implementation_fingerprint": "6077517557f91bb7f0167e003b092f67f6c23cc8f4e8ad36bf4c54709dd42957",
             "portfolio": {
               "call_seq": "auto",
               "cash_sharing": true,
@@ -9801,10 +9824,9 @@
         }
       },
       "lock": null,
-      "metric_registry_fingerprint": "af5741041fac9bac11ba5663c3fe45a11b7b772950c3a322f0bca80ecd4aa603",
+      "metric_registry_fingerprint": "da71f153812ca785c6208fa979f435b7cbacffdf0be341c95c48353ddc4a0302",
       "open_prices_available": true,
       "optimization": {
-        "execute": {},
         "observation_block_bars": 252,
         "random_subset": null,
         "search": "grid",
@@ -9854,7 +9876,6 @@
           200
         ],
         "derived_warmup_rows": 200,
-        "execute": {},
         "has_open_prices": true,
         "loaded_rows": 1008,
         "materialized_frame_count": 5,
@@ -9924,7 +9945,7 @@
             "param_mode": "fixed",
             "repo_relative_path": "research/components/indicators/tests_momentum_score.py",
             "slot": "tests.momentum_score",
-            "source_hash": "a99c0d39d5e32d4668fdadb19e5413004804db91154afafed5f8d6aa37b0739a",
+            "source_hash": "5f590dab24b3140f4402bb13dadae8dce42ee5d6bd2f5f45ed0a846e1733463c",
             "version": "1.0.0"
           },
           {
@@ -9965,7 +9986,7 @@
           "param_mode": "parameterized",
           "repo_relative_path": "research/components/strategies/tests_momentum_rotator.py",
           "slot": "strategy",
-          "source_hash": "b12d37eee6cd546791a0c0534278cd92041030d7af3c0477a617a18fd435b6ae",
+          "source_hash": "45e291b1503a0725a449fb2178fcfbca1d45b27565afb4030c9af93a7770c7cc",
           "version": "1.0.0"
         }
       }

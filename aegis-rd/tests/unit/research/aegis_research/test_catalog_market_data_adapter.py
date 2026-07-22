@@ -358,12 +358,8 @@ def test_catalog_adapter_preserves_custom_panels_through_vbt(
         end="2024-01-03",
         path=str(catalog_path),
     )
-    expected_value = pd.DataFrame(
-        [[0.0, 0.0], [7.0, 0.0]], index=index, columns=instrument_ids
-    )
-    expected_available = pd.DataFrame(
-        [[0.0, 0.0], [1.0, 0.0]], index=index, columns=instrument_ids
-    )
+    expected_value = pd.DataFrame([[0.0, 0.0], [7.0, 0.0]], index=index, columns=instrument_ids)
+    expected_available = pd.DataFrame([[0.0, 0.0], [1.0, 0.0]], index=index, columns=instrument_ids)
 
     result = load_market_data_result(config, port=port)
 
@@ -480,9 +476,9 @@ def test_catalog_adapter_converts_a_non_base_continuous_root_through_exchange_fx
     conversion = result.currency_conversion
     assert conversion is not None
     # USD -> EUR is the inverse of the declared EUR/USD pair, applied per period.
-    converted = conversion.apply(
-        {"Close": pd.DataFrame({es: [5000.0, 5010.0]}, index=index)}
-    )["Close"]
+    converted = conversion.apply({"Close": pd.DataFrame({es: [5000.0, 5010.0]}, index=index)})[
+        "Close"
+    ]
     assert converted[es].tolist() == pytest.approx([5000.0 / 1.25, 5010.0 / 1.20])
 
 
@@ -522,9 +518,7 @@ def test_catalog_adapter_fails_loud_for_a_non_base_continuous_root_without_fx(
 def test_catalog_adapter_returns_no_adjustment_mode_without_futures() -> None:
     aapl = _id("AAPL.NASDAQ")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port, _catalog = _fake_port(
-        {aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
-    )
+    port, _catalog = _fake_port({aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])})
     config = make_data_config(
         arrays=["Close", "Volume"],
         base_currency="USD",
@@ -548,9 +542,7 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
     # column on merge — fail loud instead.
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port, _catalog = _fake_port(
-        {es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])}
-    )
+    port, _catalog = _fake_port({es: _frame(index, close=[10.0, 11.0], volume=[1.0, 1.0])})
 
     class FakeContinuousModel:
         quote_currency = "USD"
@@ -579,9 +571,7 @@ def test_catalog_adapter_rejects_a_continuous_root_colliding_with_a_raw_instrume
 def test_catalog_adapter_accepts_declared_empty_distributions() -> None:
     aapl = _id("AAPL.NASDAQ")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
-    port, _catalog = _fake_port(
-        {aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])}
-    )
+    port, _catalog = _fake_port({aapl: _frame(index, close=[10.0, 11.0], volume=[100.0, 110.0])})
     config = make_data_config(
         arrays=["Close", "Volume"],
         base_currency="USD",

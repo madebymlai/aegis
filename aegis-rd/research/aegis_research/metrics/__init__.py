@@ -40,13 +40,12 @@ def make_metric_registry_for(metric_ids: tuple[str, ...]) -> FrozenMetricRegistr
     from research.aegis_research.metrics.stats import register_vbt_stats_metrics
 
     optional = optional_custom_metrics()
-    requested = tuple(
-        optional[metric_id] for metric_id in metric_ids if metric_id in optional
-    )
+    requested = tuple(optional[metric_id] for metric_id in metric_ids if metric_id in optional)
     registry = MetricRegistry()
     register_vbt_stats_metrics(registry)
     register_custom_metrics(registry, metrics=requested)
     return registry.freeze()
+
 
 __all__ = [
     "SOURCE_TYPE_CUSTOM",

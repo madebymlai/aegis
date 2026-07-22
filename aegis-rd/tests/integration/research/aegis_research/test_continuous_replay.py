@@ -8,7 +8,7 @@ import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.optimization.continuous_replay import replay_candidates
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import make_portfolio_config
 
 
@@ -16,12 +16,8 @@ def _candidate_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     index = pd.date_range("2024-01-01", periods=5)
     close = pd.DataFrame({"A": [10.0, 11.0, 12.0, 13.0, 14.0]}, index=index)
     open_ = pd.DataFrame({"A": [10.5, 11.5, 12.5, 13.5, 14.5]}, index=index)
-    columns = pd.MultiIndex.from_tuples(
-        [("candidate-a", "A")], names=["candidate_id", "symbol"]
-    )
-    allocations = pd.DataFrame(
-        [1.0, 1.0, 0.0, np.nan, np.nan], index=index, columns=columns
-    )
+    columns = pd.MultiIndex.from_tuples([("candidate-a", "A")], names=["candidate_id", "symbol"])
+    allocations = pd.DataFrame([1.0, 1.0, 0.0, np.nan, np.nan], index=index, columns=columns)
     return close, open_, allocations
 
 
@@ -192,15 +188,9 @@ def test_candidate_batch_matches_sequential_continuous_paths() -> None:
     }
 
     for candidate, replay in sequential.items():
-        pd.testing.assert_series_equal(
-            batch.values[candidate], replay.values, check_names=False
-        )
-        pd.testing.assert_series_equal(
-            batch.returns[candidate], replay.returns, check_names=False
-        )
-        pd.testing.assert_frame_equal(
-            batch.positions.loc[:, [candidate]], replay.positions
-        )
+        pd.testing.assert_series_equal(batch.values[candidate], replay.values, check_names=False)
+        pd.testing.assert_series_equal(batch.returns[candidate], replay.returns, check_names=False)
+        pd.testing.assert_frame_equal(batch.positions.loc[:, [candidate]], replay.positions)
         batch_orders = batch.orders[batch.orders["Column"].map(lambda value: value[0]) == candidate]
         pd.testing.assert_series_equal(
             batch_orders["Fees"].reset_index(drop=True),
@@ -208,6 +198,6 @@ def test_candidate_batch_matches_sequential_continuous_paths() -> None:
             check_names=False,
         )
         assert len(batch_orders) == len(replay.orders)
-        assert len(batch.trades[batch.trades["Column"].map(lambda value: value[0]) == candidate]) == len(
-            replay.trades
-        )
+        assert len(
+            batch.trades[batch.trades["Column"].map(lambda value: value[0]) == candidate]
+        ) == len(replay.trades)

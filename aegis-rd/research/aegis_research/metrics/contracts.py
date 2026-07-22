@@ -22,12 +22,13 @@ class ExtractorSpec:
     ``read`` makes exactly one VBT accessor call over the whole grouped batch
     and returns a per-group value (a Series, or a scalar for a one-group batch);
     ``scale``/``abs_`` are transform flags the extraction loop applies — they are
-    deliberately NOT baked into the read. An ``ExtractorSpec`` is the value half
-    of a Metric's registry record (``MetricDefinition`` is the identity half);
-    it carries a callable and so is never part of the fingerprint payload.
+    deliberately NOT baked into the read. ``contract_version`` is the explicit
+    identity-bearing version of the read and boundary algorithm; callable identity
+    itself is deliberately excluded because it is not stable across processes.
     """
 
     read: Callable[..., Any]
+    contract_version: int
     scale: Literal["percent", "identity"] = "identity"
     abs_: bool = False
     range_factory: Callable[[Any], Callable[..., Any]] | None = None
@@ -42,9 +43,9 @@ class MetricDefinition:
     value_semantics: str
     direction: Literal["maximize", "minimize"] = "maximize"
     missing_value_policy: Literal["worst"] = "worst"
-    boundary_semantics: Literal[
-        "native_continuous", "inherited_path", "block_local"
-    ] = "inherited_path"
+    boundary_semantics: Literal["native_continuous", "inherited_path", "block_local"] = (
+        "inherited_path"
+    )
     required_inputs: Sequence[str] = ()
     provider: str = "aegis"
     target: str | None = None
@@ -59,24 +60,26 @@ class MetricDefinition:
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def public_snapshot(self) -> dict[str, Any]:
-        return to_builtin({
-            "id": self.id,
-            "title": self.title,
-            "source_type": self.source_type,
-            "unit": self.unit,
-            "value_semantics": self.value_semantics,
-            "direction": self.direction,
-            "missing_value_policy": self.missing_value_policy,
-            "boundary_semantics": self.boundary_semantics,
-            "required_inputs": list(self.required_inputs),
-            "provider": self.provider,
-            "target": self.target,
-            "vbt_metric": self.vbt_metric,
-            "source_method": self.source_method,
-            "required_report_output": self.required_report_output,
-            "required_gate_input": self.required_gate_input,
-            "metadata": dict(self.metadata),
-        })
+        return to_builtin(
+            {
+                "id": self.id,
+                "title": self.title,
+                "source_type": self.source_type,
+                "unit": self.unit,
+                "value_semantics": self.value_semantics,
+                "direction": self.direction,
+                "missing_value_policy": self.missing_value_policy,
+                "boundary_semantics": self.boundary_semantics,
+                "required_inputs": list(self.required_inputs),
+                "provider": self.provider,
+                "target": self.target,
+                "vbt_metric": self.vbt_metric,
+                "source_method": self.source_method,
+                "required_report_output": self.required_report_output,
+                "required_gate_input": self.required_gate_input,
+                "metadata": dict(self.metadata),
+            }
+        )
 
     def fingerprint_payload(self) -> dict[str, Any]:
         return self.public_snapshot()

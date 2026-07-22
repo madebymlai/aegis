@@ -87,9 +87,7 @@ def test_archived_component_does_not_collide_with_active_same_id(tmp_path) -> No
     trip the duplicate-id guard — the archive is invisible to discovery."""
     root = tmp_path / "research" / "components"
     _write_component(root / "indicators" / "current.py", "indicators", "demo.signal")
-    _write_component(
-        root / "indicators" / "archive" / "previous.py", "indicators", "demo.signal"
-    )
+    _write_component(root / "indicators" / "archive" / "previous.py", "indicators", "demo.signal")
 
     registry = discover_component_registry(root=root, repo_root=tmp_path)
 
@@ -620,9 +618,7 @@ def _manifest_for(family: str, component_id: str) -> dict[str, object]:
 # stray module-level assignment is inert.
 @pytest.mark.parametrize("family", ["indicators", "strategies"])
 @pytest.mark.parametrize("plumbing_key", ["wide_callable", "param_space_callable"])
-def test_manifest_rejects_unknown_callable_plumbing_key(
-    tmp_path, family, plumbing_key
-) -> None:
+def test_manifest_rejects_unknown_callable_plumbing_key(tmp_path, family, plumbing_key) -> None:
     root = tmp_path / "research" / "components"
     manifest = _manifest_for(family, "demo.unknown_key")
     manifest[plumbing_key] = "custom"

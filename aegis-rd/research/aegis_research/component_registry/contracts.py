@@ -159,11 +159,7 @@ class ComponentDefinition:
         """
         if self._has_param_space:
             return frozenset()
-        return (
-            frozenset(self._manifest.param_names)
-            - provided
-            - frozenset(self._manifest.defaults)
-        )
+        return frozenset(self._manifest.param_names) - provided - frozenset(self._manifest.defaults)
 
     def produced_output_names(self) -> tuple[str, ...]:
         """Output names this component produces (uniform across families).

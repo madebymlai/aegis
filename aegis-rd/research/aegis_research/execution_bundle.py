@@ -207,9 +207,7 @@ def _assemble_components(
         params=params,
     )
     hashes[f"strategies/{definition.id}"] = definition.identity.source_hash
-    sources["strategy.py"] = _assert_payload_imports_clean(
-        "strategy.py", definition.source_text()
-    )
+    sources["strategy.py"] = _assert_payload_imports_clean("strategy.py", definition.source_text())
     return AssembledComponents(
         strategy=strategy_spec,
         indicators=tuple(indicator_specs),

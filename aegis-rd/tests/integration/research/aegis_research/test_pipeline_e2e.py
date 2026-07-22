@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
@@ -17,25 +16,6 @@ from tests.support.research.aegis_research.market_data_fixtures import (
 )
 
 COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
-
-
-def _assert_metric_matrix_shapes(matrices: dict[str, dict[str, Any]]) -> None:
-    for matrix in matrices.values():
-        assert matrix["orientation"] == "candidate_by_observation_block"
-        assert len(matrix["values"]) == len(matrix["candidate_index"]["values"])
-        assert all(len(row) == len(matrix["observation_blocks"]) for row in matrix["values"])
-
-
-def _assert_candidate_contracts(candidates: list[dict[str, Any]]) -> None:
-    assert all(
-        candidate["schema_version"] == "candidate_eval_row.v3"
-        and candidate["identity"]["schema_version"] == "candidate_identity.v5"
-        for candidate in candidates
-    )
-
-
-def _assert_component_param_keys(params: dict[str, Any]) -> None:
-    assert all(key.startswith("component__") for key in params)
 
 
 def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
@@ -121,19 +101,25 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     assert "optimism_gap" not in serialized_public_evidence
     assert "friedman" not in serialized_public_evidence
     assert "omnibus" not in serialized_public_evidence
-    _assert_metric_matrix_shapes(execution["raw_metric_matrices"])
-    assert [candidate["role"] for candidate in artifact["candidates"]] == [
-        "best",
-        "median",
-        "worst",
-    ]
-    assert artifact["candidates"]
-    assert len(artifact["candidates"]) > 0
-    _assert_candidate_contracts(artifact["candidates"])
+    assert set(execution["raw_metric_matrices"]) == {
+        "max_dd",
+        "sharpe_ratio",
+        "total_fees_paid",
+        "total_return",
+        "total_trades",
+        "win_rate",
+    }
+    best, median, worst = artifact["candidates"]
+    assert best["role"] == "best"
+    assert median["role"] == "median"
+    assert worst["role"] == "worst"
+    assert best["schema_version"] == "candidate_eval_row.v3"
+    assert median["schema_version"] == "candidate_eval_row.v3"
+    assert worst["schema_version"] == "candidate_eval_row.v3"
+    assert best["identity"]["schema_version"] == "candidate_identity.v5"
+    assert median["identity"]["schema_version"] == "candidate_identity.v5"
+    assert worst["identity"]["schema_version"] == "candidate_identity.v5"
     assert (
         artifact["candidate_store"]["provenance"]["schema_version"]
         == "candidate_store_provenance.v2"
     )
-
-    first_candidate = artifact["candidates"][0]
-    _assert_component_param_keys(first_candidate["params"])

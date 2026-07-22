@@ -103,8 +103,7 @@ def test_candidate_store_deduplicates_single_candidate_into_three_roles(tmp_path
         )
 
         distinct_keys = {
-            store.candidate_key_for_role("run-a", role)
-            for role in ("best", "median", "worst")
+            store.candidate_key_for_role("run-a", role) for role in ("best", "median", "worst")
         }
         connection = store._connection
         candidate_count = connection.execute(
@@ -141,9 +140,10 @@ def test_candidate_store_pending_run_is_not_queryable_until_activation(tmp_path:
         store.activate_run("run-a")
 
         assert store.candidate_key_for_role("run-a", "best") == candidate["candidate_key"]
-        assert store.candidate_by_key(
-            candidate["candidate_key"], run_id="run-a"
-        )["params"] == candidate["params"]
+        assert (
+            store.candidate_by_key(candidate["candidate_key"], run_id="run-a")["params"]
+            == candidate["params"]
+        )
 
 
 def test_candidate_store_has_no_per_component_lock_surface(tmp_path: Path) -> None:

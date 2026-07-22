@@ -30,7 +30,6 @@ from research.aegis_research.configuration.schema import (
     LOCK_ROLES,
     MISSING_POLICIES,
     OHLCV_ARRAYS,
-    OPTIMIZATION_EXECUTE_RESERVED_KEYS,
     OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
     PREPASS_CONST_FIELDS,
@@ -288,14 +287,6 @@ def _render_optimization_section() -> str:
         "all remaining Development rows, and merges a final remainder into the "
         "preceding block. Splitter construction and application are internal policy."
     )
-    lines.append("")
-    lines.append(
-        "**`optimization.execute`** forwards raw `vbt.parameterized` engine "
-        "kwargs only (e.g. chunking, engine, progress). The reserved keys below "
-        "are managed by Aegis's optimization layer and must not be set here: "
-        f"{', '.join(f'`{k}`' for k in sorted(OPTIMIZATION_EXECUTE_RESERVED_KEYS))}."
-    )
-
     return "\n".join(lines)
 
 
@@ -381,12 +372,6 @@ def _render_literal_catalogs() -> str:
             "Missing-Index Policy",
             MISSING_POLICIES,
             "Valid values for `data.missing_index`.",
-        ),
-        (
-            "Reserved `optimization.execute` Keys",
-            set(OPTIMIZATION_EXECUTE_RESERVED_KEYS),
-            "Keys that must NOT appear under `optimization.execute`; "
-            "managed by Aegis's optimization layer.",
         ),
     ]
 

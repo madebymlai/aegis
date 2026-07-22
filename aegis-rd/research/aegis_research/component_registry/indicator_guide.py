@@ -57,8 +57,7 @@ def _manifest_field_table() -> str:
 
     # Base fields (common to Indicator and Strategy manifests)
     lines.append(
-        "| `family` | `Literal[\"indicators\"]` | yes | — | "
-        "Must be the literal string `indicators` |"
+        '| `family` | `Literal["indicators"]` | yes | — | Must be the literal string `indicators` |'
     )
     lines.append(
         "| `id` | string | yes | — | "
@@ -66,18 +65,17 @@ def _manifest_field_table() -> str:
         "must not be `.` or `..` |"
     )
     lines.append(
-        "| `version` | string | yes | — | "
-        "Semantic version of this component file (e.g. `1.0.0`) |"
+        "| `version` | string | yes | — | Semantic version of this component file (e.g. `1.0.0`) |"
     )
     lines.append(
         "| `input_names` | list[string] | yes | — | "
         "VBT feature names this component reads from the run data "
-        "(e.g. `[\"Close\"]`); no surrounding whitespace or control "
+        '(e.g. `["Close"]`); no surrounding whitespace or control '
         "characters |"
     )
     lines.append(
         "| `param_names` | list[string] | no | `[]` | "
-        "Names of configurable parameters (e.g. `[\"window\", \"wtype\"]`) |"
+        'Names of configurable parameters (e.g. `["window", "wtype"]`) |'
     )
     lines.append(
         "| `defaults` | dict | no | `{}` | "
@@ -88,7 +86,7 @@ def _manifest_field_table() -> str:
     # Indicator-specific fields
     lines.append(
         "| `output_names` | list[string] | yes | — | "
-        "Names of outputs this Indicator produces (e.g. `[\"ma\"]`); "
+        'Names of outputs this Indicator produces (e.g. `["ma"]`); '
         "must not be empty, must be unique, must be valid VBT feature "
         "names |"
     )
@@ -143,10 +141,7 @@ def _extend_percent_cell_structure(lines: list[str]) -> None:
         "One-line description of what the component measures and its data source | "
         "yes |"
     )
-    lines.append(
-        "| `# %% imports` | Standard-library and third-party imports | "
-        "yes |"
-    )
+    lines.append("| `# %% imports` | Standard-library and third-party imports | yes |")
     lines.append(
         "| `# %% define component metadata` | "
         "The literal `COMPONENT_MANIFEST` dict (domain facts only) | "
@@ -158,10 +153,7 @@ def _extend_percent_cell_structure(lines: list[str]) -> None:
         f"defines explorable parameter grid | "
         "no |"
     )
-    lines.append(
-        "| `# %% helpers` | Private helper functions (convention; not enforced) | "
-        "no |"
-    )
+    lines.append("| `# %% helpers` | Private helper functions (convention; not enforced) | no |")
     lines.append(
         "| `# %% main compute` | "
         f"The `def {COMPONENT_ENTRYPOINT}(...)` entry point — **required** | "
@@ -195,7 +187,7 @@ def _extend_manifest(lines: list[str]) -> None:
     lines.append("")
     lines.append(
         "Every other key in the manifest dict is **rejected at discovery time** "
-        "(pydantic `extra=\"forbid\"`) — only the fields above are accepted."
+        '(pydantic `extra="forbid"`) — only the fields above are accepted.'
     )
     lines.append("")
 
@@ -209,10 +201,8 @@ def _extend_entry_points(lines: list[str]) -> None:
         "declarations — a component file cannot rename them."
     )
     lines.append("")
-    lines.append(
-        "| Entry point | Name | Required | How detected |")
-    lines.append(
-        "|-------------|------|----------|--------------|")
+    lines.append("| Entry point | Name | Required | How detected |")
+    lines.append("|-------------|------|----------|--------------|")
     lines.append(
         f"| Batched compute | `{COMPONENT_ENTRYPOINT}` | **yes** | "
         f"`def {COMPONENT_ENTRYPOINT}` at module level; must have a docstring |"
@@ -244,9 +234,7 @@ def _extend_run_signature(lines: list[str]) -> None:
     lines.append("### Signature")
     lines.append("")
     lines.append("```python")
-    lines.append(
-        f"def {COMPONENT_ENTRYPOINT}(data, *, n_candidates, **param_lists):"
-    )
+    lines.append(f"def {COMPONENT_ENTRYPOINT}(data, *, n_candidates, **param_lists):")
     lines.append('    """Compute candidate-major indicator output for all candidates."""')
     lines.append("    ...")
     lines.append("```")

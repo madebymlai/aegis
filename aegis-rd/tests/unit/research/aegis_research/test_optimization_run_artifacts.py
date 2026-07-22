@@ -17,9 +17,7 @@ def test_strategy_artifact_shape_counts_candidates_and_observation_blocks() -> N
     """Shape reflects candidate and Observation Block counts."""
     payload: dict[str, Any] = {
         "candidates": [{"role": "best"}, {"role": "median"}, {"role": "worst"}],
-        "selection": {
-            "observation_block_bounds": [[0, 20], [20, 40], [40, 60], [60, 80]]
-        },
+        "selection": {"observation_block_bounds": [[0, 20], [20, 40], [40, 60], [60, 80]]},
     }
 
     shape = strategy_artifact_shape(payload)

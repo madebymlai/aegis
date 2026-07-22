@@ -27,7 +27,7 @@ from vectorbtpro.portfolio.enums import Direction, OrderStatusInfo, SizeType
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.configuration import PortfolioConfig
 from research.aegis_research.market_data.identity import as_instrument_id
-from research.aegis_research.optimization.window_evaluation.resolved_book import (
+from research.aegis_research.optimization.portfolio_simulation.resolved_book import (
     ResolvedBook,
 )
 
@@ -302,9 +302,7 @@ def _accrue_margin_interest_nb(
     last_margin_accrual_i[c.group] = c.i
 
 
-def _execution_settings(
-    fill_timing: str, open_: pd.DataFrame | None
-) -> dict[str, Any]:
+def _execution_settings(fill_timing: str, open_: pd.DataFrame | None) -> dict[str, Any]:
     """Resolve VBT fill-timing kwargs from the explicit ``fill_timing`` decision.
 
     ``next_close`` fills at bar t+1's close, ``next_open`` at bar t+1's open (the only
@@ -316,9 +314,7 @@ def _execution_settings(
         return {}
     if price == VBT_NEXT_OPEN_PRICE:
         if open_ is None:
-            raise ValueError(
-                "next_open fill_timing requires Open prices, but none were provided"
-            )
+            raise ValueError("next_open fill_timing requires Open prices, but none were provided")
         return {"price": price, "open": open_, "from_ago": None}
     return {"price": price, "from_ago": None}
 
@@ -339,9 +335,7 @@ def _resolve_fees(
     """
     symbols = price_frame.columns.get_level_values(SYMBOL_LEVEL)
     fees = (
-        pd.Series(config.fees, index=symbols.unique())
-        if fees_by_symbol is None
-        else fees_by_symbol
+        pd.Series(config.fees, index=symbols.unique()) if fees_by_symbol is None else fees_by_symbol
     )
     return fees.reindex(symbols).to_numpy().reshape(1, -1)
 
@@ -388,17 +382,13 @@ def _build_portfolio(
         unique_only=False,
     )
     exec_kwargs = _execution_settings(config.fill_timing, open_frame)
-    band_up, band_down, band_destination = _band_arrays(
-        allocations, config, book.instrument_bands
-    )
+    band_up, band_down, band_destination = _band_arrays(allocations, config, book.instrument_bands)
     # The gate reads targets from our own copy of the allocations: ``order_mode``
     # overwrites its internal ``size`` array with resolved order amounts before the
     # pre-order-segment callback runs.
     target_alloc = np.ascontiguousarray(allocations.to_numpy(), dtype=np.float64)
     margin_day_offsets = _margin_day_offsets(price_frame.index)
-    last_margin_accrual_i = np.zeros(
-        _candidate_group_count(allocations.columns), dtype=np.int64
-    )
+    last_margin_accrual_i = np.zeros(_candidate_group_count(allocations.columns), dtype=np.int64)
     futures_mask = _futures_mask(allocations.columns, book.futures_roots)
     cash_dividends = short_masked_cash_dividends(
         price_frame, allocations, config, periods_per_year=periods_per_year
@@ -473,8 +463,7 @@ def _size_granularity(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
     )
     if missing:
         raise ValueError(
-            "portfolio simulation has no catalog size increment for tradeable columns: "
-            f"{missing}"
+            f"portfolio simulation has no catalog size increment for tradeable columns: {missing}"
         )
     increments = np.array(
         [book.size_increment_by_instrument[as_instrument_id(symbol)] for symbol in symbols],
@@ -609,9 +598,7 @@ def distribution_cash_dividends(
 
 def _columns_by_instrument(columns: pd.Index) -> dict[str, list[Any]]:
     values = (
-        columns.get_level_values(SYMBOL_LEVEL)
-        if isinstance(columns, pd.MultiIndex)
-        else columns
+        columns.get_level_values(SYMBOL_LEVEL) if isinstance(columns, pd.MultiIndex) else columns
     )
     out: dict[str, list[Any]] = {}
     for column, value in zip(columns, values, strict=True):
@@ -705,10 +692,14 @@ def expand_market_frame_to_candidate_columns(
     symbol_values = target_columns.get_level_values(SYMBOL_LEVEL)
     missing_symbols = sorted({str(symbol) for symbol in symbol_values} - set(symbol_columns))
     if missing_symbols:
-        raise ValueError(f"{feature_name} input is missing symbols for candidate columns: {missing_symbols}")
+        raise ValueError(
+            f"{feature_name} input is missing symbols for candidate columns: {missing_symbols}"
+        )
     expanded = pd.DataFrame(
         {
-            column: frame[symbol_columns[str(column[target_columns.names.index(SYMBOL_LEVEL)])]].to_numpy()
+            column: frame[
+                symbol_columns[str(column[target_columns.names.index(SYMBOL_LEVEL)])]
+            ].to_numpy()
             for column in target_columns
         },
         index=frame.index,

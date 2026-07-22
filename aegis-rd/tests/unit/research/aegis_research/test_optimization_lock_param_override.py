@@ -56,9 +56,7 @@ def test_strategy_params_recorded_as_override() -> None:
 
 
 def test_indicator_params_recorded_with_component_slot() -> None:
-    overrides = overridden_component_params(
-        _config(indicator_params={"window": 5})
-    )
+    overrides = overridden_component_params(_config(indicator_params={"window": 5}))
     assert overrides == [
         {
             "family": "indicators",
@@ -71,8 +69,6 @@ def test_indicator_params_recorded_with_component_slot() -> None:
 
 
 def test_param_names_are_sorted_for_stable_evidence() -> None:
-    overrides = overridden_component_params(
-        _config(strategy_params={"b": 2, "a": 1})
-    )
+    overrides = overridden_component_params(_config(strategy_params={"b": 2, "a": 1}))
     assert overrides[0]["param_names"] == ["a", "b"]
     assert overrides[0]["ignored_values"] == {"a": 1, "b": 2}

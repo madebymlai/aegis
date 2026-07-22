@@ -77,7 +77,7 @@ _HORIZON_BAND = (42, 63, 84, 126)
 _ANNUALIZATION_DAYS = 252.0
 # Benchmark-free convexity payoff: the net decile tail of overlapping multi-month own-returns — the
 # right tail the sleeve is hired to grow vs the left tail it must keep shallow. A window floor keeps the
-# decile means stable on a held-out split.
+# decile means stable on a finite Development path.
 _TAIL_QUANTILE = 0.10
 _MIN_TAIL_WINDOWS = 30
 
@@ -177,7 +177,9 @@ def _crisis_payoff_bootstrap_ci(
         starts = rng.integers(0, n - block + 1, n_blocks)
         idx = np.concatenate([np.arange(s, s + block) for s in starts])[:n]
         draws[d] = _crisis_quarter_return(stream[idx], bench[idx])
-    return float(np.nanpercentile(draws, lower * 100.0)), float(np.nanpercentile(draws, upper * 100.0))
+    return float(np.nanpercentile(draws, lower * 100.0)), float(
+        np.nanpercentile(draws, upper * 100.0)
+    )
 
 
 def crisis_payoff_bootstrap_ci_from_curve(
@@ -186,7 +188,7 @@ def crisis_payoff_bootstrap_ci_from_curve(
     """Per-group (lower, upper) block-bootstrap CI of the crisis-conditional payoff, from one read.
 
     Post-hoc trust / shortlist-ranking aid (the "rank on a lower confidence bound" option from
-    [[measuring-crisis-alpha]]): too heavy to compute per candidate per split, but the right way to
+    [[measuring-crisis-alpha]]): too heavy to compute per Candidate per Observation Block, but the right way to
     rank a final shortlist of locked candidates - a positive payoff resting on one lucky crisis is
     shrunk toward its (wide) lower bound. Returns a frame indexed by group with ``lower``/``upper`` columns.
     """
@@ -220,6 +222,7 @@ def _per_column(
 
 
 # ── Signature reducers ────────────────────────────────────────────────────────
+
 
 def _tm_betas(stream: np.ndarray, bench: np.ndarray) -> tuple[float, float]:
     """Treynor-Mazuy (raw market beta_1, scale-invariant convexity beta_2).
@@ -268,7 +271,7 @@ def _rolling_compound(daily: np.ndarray, horizon: int) -> np.ndarray:
     if daily.size < horizon:
         return np.empty(0)
     log_growth = np.cumsum(np.log1p(daily))
-    windowed = log_growth[horizon - 1:] - np.concatenate(([0.0], log_growth[:-horizon]))
+    windowed = log_growth[horizon - 1 :] - np.concatenate(([0.0], log_growth[:-horizon]))
     return np.expm1(windowed)
 
 
@@ -312,6 +315,7 @@ def _crisis_quarter_return(stream: np.ndarray, bench: np.ndarray) -> float:
 
 # ── Benchmark-free convexity payoff (the trend-sleeve ranker) ─────────────────
 
+
 def _net_tail_payoff(stream: np.ndarray, horizon: int) -> float:
     """Annualized (right-decile mean + left-decile mean) of overlapping ``horizon``-day own returns.
 
@@ -351,7 +355,10 @@ def _make_trend_convexity_payoff_read() -> Callable[[Any, ReportConfig], pd.Seri
     def _read(pf: Any, config: ReportConfig) -> pd.Series:
         returns = EquityCurve.from_portfolio(pf).returns()
         return pd.Series(
-            {col: _trend_convexity_payoff(returns[col].dropna().to_numpy()) for col in returns.columns}
+            {
+                col: _trend_convexity_payoff(returns[col].dropna().to_numpy())
+                for col in returns.columns
+            }
         )
 
     return _read
@@ -374,10 +381,13 @@ TREND_CONVEXITY_PAYOFF_DEFINITION = MetricDefinition(
     required_gate_input=False,
     metadata={"horizon_band_days": list(_HORIZON_BAND), "tail_quantile": _TAIL_QUANTILE},
 )
-TREND_CONVEXITY_PAYOFF_EXTRACTOR = ExtractorSpec(_make_trend_convexity_payoff_read())
+TREND_CONVEXITY_PAYOFF_EXTRACTOR = ExtractorSpec(
+    _make_trend_convexity_payoff_read(), contract_version=1
+)
 
 
 # ── Per-benchmark read factories ──────────────────────────────────────────────
+
 
 def _make_quarterly_skew_read(benchmark: str) -> Callable[[Any, ReportConfig], pd.Series]:
     def _read(pf: Any, config: ReportConfig) -> pd.Series:
@@ -422,7 +432,10 @@ def _make_bear_regime_beta_read(benchmark: str) -> Callable[[Any, ReportConfig],
 
 # ── Registry records, parameterised by benchmark ──────────────────────────────
 
-def _definition(metric_id: str, title: str, unit: str, semantics: str, benchmark: str) -> MetricDefinition:
+
+def _definition(
+    metric_id: str, title: str, unit: str, semantics: str, benchmark: str
+) -> MetricDefinition:
     return MetricDefinition(
         id=metric_id,
         title=title,
@@ -445,38 +458,64 @@ def convexity_metrics(
     """The convexity-axis verification metrics as (definition, extractor) pairs for one benchmark."""
     return [
         (
-            _definition(QUARTERLY_RETURN_SKEW_ID, "Quarterly Return Skew", "skew",
-                        "are the big quarters gains (right tail) or losses (left)?", benchmark),
-            ExtractorSpec(_make_quarterly_skew_read(benchmark)),
+            _definition(
+                QUARTERLY_RETURN_SKEW_ID,
+                "Quarterly Return Skew",
+                "skew",
+                "are the big quarters gains (right tail) or losses (left)?",
+                benchmark,
+            ),
+            ExtractorSpec(_make_quarterly_skew_read(benchmark), contract_version=1),
         ),
         (
-            _definition(MARKET_CONVEXITY_ID, f"Market Convexity vs {benchmark}",
-                        "coefficient", "does it gain more on big moves either way? (Treynor-Mazuy beta_2)", benchmark),
-            ExtractorSpec(_make_tm_read(benchmark, which=1)),
+            _definition(
+                MARKET_CONVEXITY_ID,
+                f"Market Convexity vs {benchmark}",
+                "coefficient",
+                "does it gain more on big moves either way? (Treynor-Mazuy beta_2)",
+                benchmark,
+            ),
+            ExtractorSpec(_make_tm_read(benchmark, which=1), contract_version=1),
         ),
         (
-            _definition(MARKET_BETA_ID, f"Market Beta vs {benchmark}",
-                        "coefficient", "net directional exposure to the market (Treynor-Mazuy beta_1)", benchmark),
-            ExtractorSpec(_make_tm_read(benchmark, which=0)),
+            _definition(
+                MARKET_BETA_ID,
+                f"Market Beta vs {benchmark}",
+                "coefficient",
+                "net directional exposure to the market (Treynor-Mazuy beta_1)",
+                benchmark,
+            ),
+            ExtractorSpec(_make_tm_read(benchmark, which=0), contract_version=1),
         ),
         (
-            _definition(CRASH_DAY_RETURN_ID,
-                        f"Crash-Day Return ({benchmark} worst decile)",
-                        "return", "average return on the market's worst days", benchmark),
-            ExtractorSpec(_make_crisis_conditional_read(benchmark)),
+            _definition(
+                CRASH_DAY_RETURN_ID,
+                f"Crash-Day Return ({benchmark} worst decile)",
+                "return",
+                "average return on the market's worst days",
+                benchmark,
+            ),
+            ExtractorSpec(_make_crisis_conditional_read(benchmark), contract_version=1),
         ),
         (
-            _definition(CRISIS_QUARTER_RETURN_ID,
-                        f"Crisis-Conditional Return ({benchmark}, smooth downside, 2-6mo band)",
-                        "return",
-                        "annualized return when the benchmark does badly (smooth downside weight, horizon-band-averaged)",
-                        benchmark),
-            ExtractorSpec(_make_crisis_quarter_read(benchmark)),
+            _definition(
+                CRISIS_QUARTER_RETURN_ID,
+                f"Crisis-Conditional Return ({benchmark}, smooth downside, 2-6mo band)",
+                "return",
+                "annualized return when the benchmark does badly (smooth downside weight, horizon-band-averaged)",
+                benchmark,
+            ),
+            ExtractorSpec(_make_crisis_quarter_read(benchmark), contract_version=1),
         ),
         (
-            _definition(BEAR_MARKET_BETA_ID, f"Bear-Market Beta vs {benchmark}",
-                        "beta", "exposure specifically in down regimes", benchmark),
-            ExtractorSpec(_make_bear_regime_beta_read(benchmark)),
+            _definition(
+                BEAR_MARKET_BETA_ID,
+                f"Bear-Market Beta vs {benchmark}",
+                "beta",
+                "exposure specifically in down regimes",
+                benchmark,
+            ),
+            ExtractorSpec(_make_bear_regime_beta_read(benchmark), contract_version=1),
         ),
     ]
 

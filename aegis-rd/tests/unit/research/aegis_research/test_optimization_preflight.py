@@ -14,7 +14,9 @@ from research.aegis_research.optimization.source import OptimizationSource
 from tests.support.research.aegis_research.factories import make_optimization_config
 
 
-def _source(params: dict[str, vbt.Param], *, lookback_param: str | None = None) -> OptimizationSource:
+def _source(
+    params: dict[str, vbt.Param], *, lookback_param: str | None = None
+) -> OptimizationSource:
     def should_not_execute(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("preflight must not execute Indicator or Portfolio work")
 

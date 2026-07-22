@@ -41,6 +41,7 @@ COMPONENT_PERCENT_CELL_MARKER = "# %%"
 COMPONENT_PERCENT_CELL_RE = re.compile(r"^# %%.*$", re.MULTILINE)
 COMPONENT_MAIN_CELL_RE = re.compile(r"^# %%\s+main\b", re.MULTILINE)
 
+
 def parse_component_file(
     path: Path,
     *,
@@ -48,7 +49,9 @@ def parse_component_file(
     repo_root: Path,
 ) -> ComponentDefinition:
     source_bytes = path.read_bytes()
-    manifest_payload, has_param_space, has_lookback = _read_static_declaration(path, source_bytes.decode())
+    manifest_payload, has_param_space, has_lookback = _read_static_declaration(
+        path, source_bytes.decode()
+    )
     manifest = build_manifest(manifest_payload, expected_family=family, path=path)
     return ComponentDefinition(
         _manifest=manifest,
@@ -62,6 +65,7 @@ def parse_component_file(
         has_lookback=has_lookback,
     )
 
+
 def build_manifest(
     payload: Any,
     *,
@@ -69,9 +73,7 @@ def build_manifest(
     path: Path,
 ) -> IndicatorManifest | StrategyManifest:
     if not isinstance(payload, dict):
-        raise ComponentRegistryError(
-            f"{path}: {COMPONENT_MANIFEST_NAME} must be a literal mapping"
-        )
+        raise ComponentRegistryError(f"{path}: {COMPONENT_MANIFEST_NAME} must be a literal mapping")
     payload = dict(payload)
     try:
         if expected_family == "indicators":
@@ -80,9 +82,8 @@ def build_manifest(
         strategy = _STRATEGY_ADAPTER.validate_python(payload, strict=True)
         return _build_strategy_manifest(strategy)
     except PydanticValidationError as e:
-        raise ComponentRegistryError(
-            _format_manifest_errors(e, path)
-        ) from e
+        raise ComponentRegistryError(_format_manifest_errors(e, path)) from e
+
 
 def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], bool, bool]:
     percent_cell_markers = COMPONENT_PERCENT_CELL_RE.findall(source)
@@ -131,13 +132,16 @@ def _read_static_declaration(path: Path, source: str) -> tuple[dict[str, Any], b
         )
     return manifest, has_param_space, has_lookback
 
+
 def _literal_value(path: Path, name: str, node: ast.AST) -> Any:
     try:
         return ast.literal_eval(node)
     except (SyntaxError, ValueError) as error:
         raise ComponentRegistryError(f"{path}: {name} must be a Python literal") from error
 
+
 # ── Pydantic manifest payload models ──────────────────────────────────────
+
 
 def _validate_manifest_input_name(token: str) -> str:
     """Pydantic item-validator: input_names must be VBT feature names."""
@@ -147,6 +151,7 @@ def _validate_manifest_input_name(token: str) -> str:
         )
     return token
 
+
 def _validate_manifest_output_name(token: str) -> str:
     """Pydantic item-validator: output_names must be VBT feature names."""
     if not has_data_array_token_shape(token):
@@ -154,6 +159,7 @@ def _validate_manifest_output_name(token: str) -> str:
             "must be a VBT feature name without surrounding whitespace or control characters"
         )
     return token
+
 
 def _format_manifest_errors(
     error: PydanticValidationError,
@@ -170,6 +176,7 @@ def _format_manifest_errors(
             messages.append(f"{path}: {entry['msg']}")
     return "; ".join(messages)
 
+
 _ManifestInputName = Annotated[
     str,
     Field(min_length=1),
@@ -181,6 +188,7 @@ _ManifestOutputName = Annotated[
     Field(min_length=1),
     AfterValidator(_validate_manifest_output_name),
 ]
+
 
 class _BaseManifestPayload(BaseModel):
     """Common pydantic model for indicator and strategy manifest payloads."""
@@ -204,10 +212,9 @@ class _BaseManifestPayload(BaseModel):
     def _check_defaults_in_params(self) -> _BaseManifestPayload:
         unknown = sorted(set(self.defaults) - set(self.param_names))
         if unknown:
-            raise ValueError(
-                f"defaults keys must be declared in param_names; unknown: {unknown}"
-            )
+            raise ValueError(f"defaults keys must be declared in param_names; unknown: {unknown}")
         return self
+
 
 class _IndicatorManifestPayload(_BaseManifestPayload):
     """Pydantic model for indicator manifest payload validation."""
@@ -227,6 +234,7 @@ class _IndicatorManifestPayload(_BaseManifestPayload):
             raise ValueError(f"output_names must be unique; duplicates: {duplicates}")
         return self
 
+
 class _StrategyManifestPayload(_BaseManifestPayload):
     """Pydantic model for strategy manifest payload validation."""
 
@@ -244,8 +252,10 @@ class _StrategyManifestPayload(_BaseManifestPayload):
             )
         return self
 
+
 _INDICATOR_ADAPTER = TypeAdapter(_IndicatorManifestPayload)
 _STRATEGY_ADAPTER = TypeAdapter(_StrategyManifestPayload)
+
 
 def _build_indicator_manifest(
     validated: _IndicatorManifestPayload,
@@ -261,6 +271,7 @@ def _build_indicator_manifest(
         bar_aligned=True,
     )
 
+
 def _build_strategy_manifest(
     validated: _StrategyManifestPayload,
 ) -> StrategyManifest:
@@ -275,6 +286,7 @@ def _build_strategy_manifest(
         defaults=dict(validated.defaults),
         owns_portfolio=False,
     )
+
 
 def _source_identity(path: Path, *, repo_root: Path, source_hash: str) -> ComponentSourceIdentity:
     resolved_repo = repo_root.resolve(strict=False)

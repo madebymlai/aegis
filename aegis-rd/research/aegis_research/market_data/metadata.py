@@ -86,9 +86,7 @@ def describe(
     )
 
 
-def _source_metadata(
-    source: MarketDataLoad, quality: MarketDataQuality
-) -> dict[str, Any]:
+def _source_metadata(source: MarketDataLoad, quality: MarketDataQuality) -> dict[str, Any]:
     if source.failure is None:
         return source.source_metadata
     return {

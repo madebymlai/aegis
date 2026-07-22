@@ -39,8 +39,7 @@ def evaluate(
     unavailable = [
         diagnostic
         for diagnostic in diagnostics
-        if diagnostic.configured
-        and diagnostic.load_status == QUALITY_DATA_UNAVAILABLE
+        if diagnostic.configured and diagnostic.load_status == QUALITY_DATA_UNAVAILABLE
     ]
     if unavailable:
         return MarketDataQuality(
@@ -72,9 +71,7 @@ def evaluate(
                 degradations,
             )
         else:
-            reasons.append(
-                f"configured instrument IDs missing from loaded data: {skipped_values}"
-            )
+            reasons.append(f"configured instrument IDs missing from loaded data: {skipped_values}")
 
     if index_evidence.get("raw_index_has_duplicates"):
         _record_quality_issue(
@@ -98,13 +95,11 @@ def evaluate(
     configured_diagnostics = [
         diagnostic
         for diagnostic in diagnostics
-        if diagnostic.configured
-        and diagnostic.instrument_id not in allowed_skipped_instrument_ids
+        if diagnostic.configured and diagnostic.instrument_id not in allowed_skipped_instrument_ids
     ]
     for name in required_arrays:
         array_diagnostics = [
-            (diagnostic, diagnostic.arrays.get(name))
-            for diagnostic in configured_diagnostics
+            (diagnostic, diagnostic.arrays.get(name)) for diagnostic in configured_diagnostics
         ]
         available = [
             (diagnostic, array_diag)
@@ -125,8 +120,7 @@ def evaluate(
         if missing_required_instrument_ids:
             missing_required_values = _instrument_id_values(missing_required_instrument_ids)
             reasons.append(
-                "required array "
-                f"{name!r} is missing instrument IDs {missing_required_values}"
+                f"required array {name!r} is missing instrument IDs {missing_required_values}"
             )
         if any(array_diag.missing > 0 for _, array_diag in available):
             _record_quality_issue(

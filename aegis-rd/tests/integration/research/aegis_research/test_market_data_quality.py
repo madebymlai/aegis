@@ -163,9 +163,7 @@ def test_next_open_feature_requirement_rejects_close_only_data(tmp_path: Path) -
         tmp_path,
         {"SYN.XNAS": _ohlcv(_DAYS, [1.0, 2.0, 3.0])},
         arrays=["Close"],
-        required_arrays=required_experiment_ohlcv_arrays(
-            signal_config=make_signal_config()
-        ),
+        required_arrays=required_experiment_ohlcv_arrays(signal_config=make_signal_config()),
     )
 
     assert result.quality.state == "rejected"
@@ -258,7 +256,9 @@ def test_skipped_symbol_requires_skip_policy_opt_in() -> None:
     )
 
     assert result.quality.state == "rejected"
-    assert "configured instrument IDs missing from loaded data: ['BBB.XNAS']" in result.quality.reasons
+    assert (
+        "configured instrument IDs missing from loaded data: ['BBB.XNAS']" in result.quality.reasons
+    )
 
 
 def test_skipped_symbol_with_explicit_policy_is_degraded_allowed() -> None:
@@ -274,7 +274,10 @@ def test_skipped_symbol_with_explicit_policy_is_degraded_allowed() -> None:
     )
 
     assert result.quality.state == "degraded_allowed"
-    assert "configured instrument IDs missing from loaded data: ['BBB.XNAS']" in result.quality.warnings
+    assert (
+        "configured instrument IDs missing from loaded data: ['BBB.XNAS']"
+        in result.quality.warnings
+    )
 
 
 def test_custom_index_evidence_is_carried_into_provenance() -> None:

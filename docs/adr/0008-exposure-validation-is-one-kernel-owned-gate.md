@@ -69,5 +69,5 @@ supplied group remains part of the gate.
 RD ADR-0026 made portfolio simulation internal to Window Evaluation. Research's one
 mandated wiring test through `simulate_portfolio_batch` (label derivation + Candidate
 phrasing) is unchanged in substance but now crosses Window Evaluation's internal
-simulation seam; the research call site is `optimization/window_evaluation/_simulation.py`
+simulation seam; the research call site is `optimization/portfolio_simulation/_simulation.py`
 rather than `portfolios.py`. The kernel-side surface and test home are untouched.

@@ -16,7 +16,7 @@ from aegis_data.distributions import Distribution
 from aegis_runtime.currency import CurrencyConversion
 from vectorbtpro import vbt
 
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.optimization.portfolio_simulation._simulation import (
     PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
     VBT_LEVERAGE_MODE,
     VBT_NEXT_CLOSE_PRICE,
@@ -26,7 +26,7 @@ from research.aegis_research.optimization.window_evaluation._simulation import (
     portfolio_replay_implementation_fingerprint,
     simulate_portfolio_batch,
 )
-from research.aegis_research.optimization.window_evaluation.resolved_book import (
+from research.aegis_research.optimization.portfolio_simulation.resolved_book import (
     ResolvedBook,
 )
 
@@ -134,9 +134,7 @@ def replay_candidates(
     if scored_start < 0 or scored_start >= len(close.index):
         raise ValueError("continuous replay scored_start must select a row in Close")
     if book.config.fill_timing == "same_close":
-        raise ValueError(
-            "continuous replay rejects same_close for Close-dependent allocations"
-        )
+        raise ValueError("continuous replay rejects same_close for Close-dependent allocations")
 
     portfolio = simulate_portfolio_batch(
         close,

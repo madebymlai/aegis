@@ -20,7 +20,9 @@ from tests.support.research.aegis_research.test_doubles import (
 )
 
 
-def test_build_run_data_array_contract_includes_close_and_open(tmp_path: pytest.TempPathFactory) -> None:
+def test_build_run_data_array_contract_includes_close_and_open(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
     """The pipeline always requires Close and Open arrays."""
     resolved = build_resolved_run_config(tmp_path)
 

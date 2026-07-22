@@ -62,8 +62,7 @@ def _manifest_field_table() -> str:
 
     # Base fields (common to Indicator and Strategy manifests)
     lines.append(
-        "| `family` | `Literal[\"strategies\"]` | yes | — | "
-        "Must be the literal string `strategies` |"
+        '| `family` | `Literal["strategies"]` | yes | — | Must be the literal string `strategies` |'
     )
     lines.append(
         "| `id` | string | yes | — | "
@@ -71,18 +70,17 @@ def _manifest_field_table() -> str:
         "must not be `.` or `..` |"
     )
     lines.append(
-        "| `version` | string | yes | — | "
-        "Semantic version of this component file (e.g. `1.0.0`) |"
+        "| `version` | string | yes | — | Semantic version of this component file (e.g. `1.0.0`) |"
     )
     lines.append(
         "| `input_names` | list[string] | yes | — | "
         "VBT feature names this component reads from the run data "
-        "(e.g. `[\"Close\"]`); no surrounding whitespace or control "
+        '(e.g. `["Close"]`); no surrounding whitespace or control '
         "characters |"
     )
     lines.append(
         "| `param_names` | list[string] | no | `[]` | "
-        "Names of configurable parameters (e.g. `[\"fast_window\", \"slow_window\"]`) |"
+        'Names of configurable parameters (e.g. `["fast_window", "slow_window"]`) |'
     )
     lines.append(
         "| `defaults` | dict | no | `{}` | "
@@ -100,7 +98,7 @@ def _manifest_field_table() -> str:
     lines.append(
         "| `consumes_outputs` | list[string] | no | `[]` | "
         "Names of Indicator outputs this Strategy reads from "
-        "`inputs.indicators` (e.g. `[\"momentum_score\", \"realized_vol\"]`); "
+        '`inputs.indicators` (e.g. `["momentum_score", "realized_vol"]`); '
         "each name must be produced by a declared Indicator whose `id` appears "
         "in the Run Config |"
     )
@@ -157,10 +155,7 @@ def _extend_percent_cell_structure(lines: list[str]) -> None:
         "One-line description of what the strategy does and its allocation shape | "
         "yes |"
     )
-    lines.append(
-        "| `# %% imports` | Standard-library and third-party imports | "
-        "yes |"
-    )
+    lines.append("| `# %% imports` | Standard-library and third-party imports | yes |")
     lines.append(
         "| `# %% define component metadata` | "
         "The literal `COMPONENT_MANIFEST` dict (domain facts only) | "
@@ -172,10 +167,7 @@ def _extend_percent_cell_structure(lines: list[str]) -> None:
         f"defines explorable parameter grid | "
         "no |"
     )
-    lines.append(
-        "| `# %% helpers` | Private helper functions (convention; not enforced) | "
-        "no |"
-    )
+    lines.append("| `# %% helpers` | Private helper functions (convention; not enforced) | no |")
     lines.append(
         "| `# %% main compute` | "
         f"The `def {COMPONENT_ENTRYPOINT}(...)` entry point — **required** | "
@@ -209,7 +201,7 @@ def _extend_manifest(lines: list[str]) -> None:
     lines.append("")
     lines.append(
         "Every other key in the manifest dict is **rejected at discovery time** "
-        "(pydantic `extra=\"forbid\"`) — only the fields above are accepted."
+        '(pydantic `extra="forbid"`) — only the fields above are accepted.'
     )
     lines.append("")
 
@@ -223,10 +215,8 @@ def _extend_entry_points(lines: list[str]) -> None:
         "declarations — a component file cannot rename them."
     )
     lines.append("")
-    lines.append(
-        "| Entry point | Name | Required | How detected |")
-    lines.append(
-        "|-------------|------|----------|--------------|")
+    lines.append("| Entry point | Name | Required | How detected |")
+    lines.append("|-------------|------|----------|--------------|")
     lines.append(
         f"| Batched compute | `{COMPONENT_ENTRYPOINT}` | **yes** | "
         f"`def {COMPONENT_ENTRYPOINT}` at module level; must have a docstring |"
@@ -259,9 +249,7 @@ def _extend_run_signature(lines: list[str]) -> None:
     lines.append("### Signature")
     lines.append("")
     lines.append("```python")
-    lines.append(
-        f"def {COMPONENT_ENTRYPOINT}(inputs, *, n_candidates, **param_lists):"
-    )
+    lines.append(f"def {COMPONENT_ENTRYPOINT}(inputs, *, n_candidates, **param_lists):")
     lines.append('    """Compute candidate-major allocation for all candidates."""')
     lines.append("    ...")
     lines.append("```")
@@ -298,7 +286,7 @@ def _extend_return_contract(lines: list[str]) -> None:
     lines.append("")
     lines.append(
         "**Contrast with Indicators**: Indicators return a **mapping** "
-        "(`{\"output_name\": array}`); Strategies return a **bare array**.  "
+        '(`{"output_name": array}`); Strategies return a **bare array**.  '
         "Wrapping the allocation array in a dict is a hard error."
     )
     lines.append("")
@@ -307,15 +295,10 @@ def _extend_return_contract(lines: list[str]) -> None:
 def _extend_inputs_object(lines: list[str]) -> None:
     lines.append("### The `inputs` Object")
     lines.append("")
-    lines.append(
-        "The first positional argument is an `inputs` object with these "
-        "attributes:"
-    )
+    lines.append("The first positional argument is an `inputs` object with these attributes:")
     lines.append("")
-    lines.append(
-        "| Attribute | Type | Description |")
-    lines.append(
-        "|-----------|------|-------------|")
+    lines.append("| Attribute | Type | Description |")
+    lines.append("|-----------|------|-------------|")
     lines.append(
         "| `inputs.data` | `MarketDataBundle` | "
         "Access to the run's price arrays via `.array(name)` |"
@@ -331,10 +314,7 @@ def _extend_inputs_object(lines: list[str]) -> None:
         "| `inputs.n_candidates` | `int` | "
         "Number of Candidates in the batch (equal to the `n_candidates` kwarg) |"
     )
-    lines.append(
-        "| `inputs.n_symbols` | `int` | "
-        "Number of symbols in the run universe |"
-    )
+    lines.append("| `inputs.n_symbols` | `int` | Number of symbols in the run universe |")
     lines.append(
         "| `inputs.metadata` | `dict` | "
         "Run metadata dict; carries the strategy and indicator component IDs "
@@ -344,8 +324,8 @@ def _extend_inputs_object(lines: list[str]) -> None:
     lines.append(
         "The `consumes_outputs` field in the manifest is the **wiring contract**: "
         "every name listed there must be produced by an Indicator declared in "
-        "the Run Config.  If a Strategy lists `consumes_outputs: [\"returns\"]` "
-        "but no Indicator produces `\"returns\"`, the run is rejected at "
+        'the Run Config.  If a Strategy lists `consumes_outputs: ["returns"]` '
+        'but no Indicator produces `"returns"`, the run is rejected at '
         "configuration time."
     )
     lines.append("")
@@ -416,13 +396,10 @@ def _extend_nan_selection(lines: list[str]) -> None:
         "symbols to allocate to at each rebalance row:"
     )
     lines.append("")
-    lines.append(
-        "- Allocate a **finite** value (e.g. `1.0`, `0.25`) to selected "
-        "symbol columns."
-    )
+    lines.append("- Allocate a **finite** value (e.g. `1.0`, `0.25`) to selected symbol columns.")
     lines.append(
         "- Set **`np.nan`** to excluded symbol columns — Exposure Validation "
-        "treats NaN as \"do not allocate to this symbol this rebalance\"."
+        'treats NaN as "do not allocate to this symbol this rebalance".'
     )
     lines.append(
         "- The component **owns** top-N filtering and gating logic (e.g. rank "
@@ -431,11 +408,10 @@ def _extend_nan_selection(lines: list[str]) -> None:
         "allocations as given."
     )
     lines.append("")
-    lines.append(
-        "```python")
+    lines.append("```python")
     lines.append("# Example: select only fastest-growing symbols per bar")
     lines.append("selected = fast.gt(slow)")
-    lines.append("active = selected.where(selected, other=float(\"nan\")).astype(float)")
+    lines.append('active = selected.where(selected, other=float("nan")).astype(float)')
     lines.append("```")
     lines.append("")
 
@@ -449,25 +425,14 @@ def _extend_ownership_boundaries(lines: list[str]) -> None:
         "policy-owned**, not owned by the Strategy:"
     )
     lines.append("")
-    lines.append(
-        "| Concern | Owner | Config Key |")
-    lines.append(
-        "|----------|-------|------------|")
-    lines.append(
-        "| Portfolio sizing | Sleeve contract | unit gross (`SLEEVE_GROSS_LIMIT`) |"
-    )
-    lines.append(
-        "| Direction (long/short) | Run Config | `portfolio.direction` |"
-    )
+    lines.append("| Concern | Owner | Config Key |")
+    lines.append("|----------|-------|------------|")
+    lines.append("| Portfolio sizing | Sleeve contract | unit gross (`SLEEVE_GROSS_LIMIT`) |")
+    lines.append("| Direction (long/short) | Run Config | `portfolio.direction` |")
     lines.append(
         "| Signal-to-order conversion | Run Config | `signal.policy`, `signal.execution_timing` |"
     )
-    lines.append(
-        "| Metrics (Sharpe, drawdown, etc.) | Run Config | `ranking.metric` |"
-    )
-    lines.append(
-        "| VBT kwargs (engine, chunking) | Run Config | `optimization.execute` |"
-    )
+    lines.append("| Metrics (Sharpe, drawdown, etc.) | Run Config | `ranking.metric` |")
     lines.append(
         "| Observation Block duration | Run Config | `optimization.observation_block_bars` |"
     )

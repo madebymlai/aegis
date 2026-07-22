@@ -37,12 +37,10 @@ def _resolve_env_refs(
         return resolved
     if isinstance(value, dict):
         return {
-            key: _resolve_env_refs(f"{path}.{key}", item, issues)
-            for key, item in value.items()
+            key: _resolve_env_refs(f"{path}.{key}", item, issues) for key, item in value.items()
         }
     if isinstance(value, list):
         return [
-            _resolve_env_refs(f"{path}[{index}]", item, issues)
-            for index, item in enumerate(value)
+            _resolve_env_refs(f"{path}[{index}]", item, issues) for index, item in enumerate(value)
         ]
     return value

@@ -106,21 +106,15 @@ def test_component_source_resolves_lookbacks_from_swept_and_fixed_params(
         _config(), component_registry=registry, data=_data_bundle()
     )
 
-    assert swept.resolve_lookbacks(
-        {_INDICATOR_WINDOW_KEY: 3, _STRATEGY_THRESHOLD_KEY: 0.95}
-    ) == {
+    assert swept.resolve_lookbacks({_INDICATOR_WINDOW_KEY: 3, _STRATEGY_THRESHOLD_KEY: 0.95}) == {
         "indicators/demo.trend@demo.trend": 3,
         "strategies/demo.strategy@strategy": 9,
     }
 
     fixed = build_component_optimization_source(
         _config(
-            strategy=make_run_source_ref_config(
-                id="demo.strategy", params={"threshold": 1.0}
-            ),
-            indicators=[
-                make_run_indicator_source_config(id="demo.trend", params={"window": 2})
-            ],
+            strategy=make_run_source_ref_config(id="demo.strategy", params={"threshold": 1.0}),
+            indicators=[make_run_indicator_source_config(id="demo.trend", params={"window": 2})],
         ),
         component_registry=registry,
         data=_data_bundle(),
@@ -342,7 +336,9 @@ def test_strategy_allocation_shape_gate_rejects_wrong_rows_and_columns(
 ) -> None:
     root = tmp_path / "research" / "components"
     _write_indicator_template(root / "indicators" / "trend.py")
-    _write_strategy_template(root / "strategies" / "strategy.py", return_expression=return_expression)
+    _write_strategy_template(
+        root / "strategies" / "strategy.py", return_expression=return_expression
+    )
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     source = build_component_optimization_source(
         _config(), component_registry=registry, data=_data_bundle()

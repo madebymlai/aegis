@@ -11,9 +11,7 @@ def test_per_symbol_fees_charge_each_leg_its_own_rate_in_simulation() -> None:
     index = pd.date_range("2020-01-01", periods=4, freq="D")
     close = pd.DataFrame({"A": 100.0, "B": 100.0}, index=index)
     # Enter both legs at bar 1 and keep them open through the replay end.
-    allocations = pd.DataFrame(
-        {"A": [0.0, 0.5, 0.5, 0.5], "B": [0.0, 0.5, 0.5, 0.5]}, index=index
-    )
+    allocations = pd.DataFrame({"A": [0.0, 0.5, 0.5, 0.5], "B": [0.0, 0.5, 0.5, 0.5]}, index=index)
     config = PortfolioConfig(direction="both", fees=0.0)
 
     cheap = make_single_book_portfolio(
@@ -33,12 +31,13 @@ def test_fixed_fee_charges_a_flat_amount_on_every_order() -> None:
     # Enter A at bar 1. same_close fills the target on its own bar, so the order
     # count is deterministic without an artificial terminal close.
     allocations = pd.DataFrame({"A": [0.0, 1.0, 1.0, 1.0]}, index=index)
-    free = PortfolioConfig(
-        direction="longonly", fees=0.0, slippage=0.0, fill_timing="same_close"
-    )
+    free = PortfolioConfig(direction="longonly", fees=0.0, slippage=0.0, fill_timing="same_close")
     charged = PortfolioConfig(
-        direction="longonly", fees=0.0, slippage=0.0,
-        fill_timing="same_close", fixed_fee=2.0,
+        direction="longonly",
+        fees=0.0,
+        slippage=0.0,
+        fill_timing="same_close",
+        fixed_fee=2.0,
     )
 
     without = make_single_book_portfolio(close, allocations, free)

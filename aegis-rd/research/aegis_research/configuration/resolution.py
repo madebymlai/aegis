@@ -195,6 +195,3 @@ def _build_resolved_run_config(
         component_registry=component_registry,
         metric_registry=metric_registry,
     )
-
-
-

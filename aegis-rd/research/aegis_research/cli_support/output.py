@@ -128,7 +128,6 @@ def write_error(
     return exit_code
 
 
-
 def run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
     """Project a run-identity block with real, resolved absolute paths — no
     path scrubbing (ADR-0021).
@@ -172,8 +171,7 @@ def jsonable_value(value: Any, *, clip_strings: bool = True) -> Any:
         return real_path_text(value)
     if isinstance(value, Mapping):
         return {
-            str(key): jsonable_value(item, clip_strings=clip_strings)
-            for key, item in value.items()
+            str(key): jsonable_value(item, clip_strings=clip_strings) for key, item in value.items()
         }
     if isinstance(value, list | tuple):
         return [jsonable_value(item, clip_strings=clip_strings) for item in value]

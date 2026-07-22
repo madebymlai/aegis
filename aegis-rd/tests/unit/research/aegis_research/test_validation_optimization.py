@@ -64,9 +64,7 @@ def test_optimization_requires_search_and_observation_block_bars() -> None:
 
 def test_grid_and_seeded_random_search_are_valid() -> None:
     grid = _ADAPTER.validate_python(_optimization())
-    random = _ADAPTER.validate_python(
-        _optimization(search="random", random_subset=100, seed=42)
-    )
+    random = _ADAPTER.validate_python(_optimization(search="random", random_subset=100, seed=42))
 
     assert grid.observation_block_bars == _BLOCK_BARS
     assert random.random_subset == 100
@@ -100,9 +98,7 @@ def test_observation_block_bars_must_be_positive() -> None:
         ("right_inclusive", False),
     ],
 )
-def test_removed_split_warmup_and_vbt_policy_fields_are_rejected(
-    field: str, value: object
-) -> None:
+def test_removed_split_warmup_and_vbt_policy_fields_are_rejected(field: str, value: object) -> None:
     with pytest.raises(ValidationError) as error:
         _ADAPTER.validate_python(_optimization(**{field: value}))
 
@@ -129,18 +125,25 @@ def test_grid_search_rejects_random_subset(tmp_path: Path) -> None:
     assert any("random_subset is only valid" in issue.message for issue in error.value.issues)
 
 
-def test_execute_rejects_reserved_key(tmp_path: Path) -> None:
+def test_execute_is_rejected_as_a_removed_field(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as error:
         _resolve(_optimization(execute={"seed": 1}), tmp_path=tmp_path)
 
-    assert any("reserved keys" in issue.message for issue in error.value.issues)
+    assert any(
+        issue.path == "optimization.execute"
+        and issue.message == "Unexpected keyword argument"
+        for issue in error.value.issues
+    )
 
 
 def test_optimization_section_is_required(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as error:
         _resolve(None, tmp_path=tmp_path)
 
-    assert any(issue.path == "optimization" and "is required" in issue.message for issue in error.value.issues)
+    assert any(
+        issue.path == "optimization" and "is required" in issue.message
+        for issue in error.value.issues
+    )
 
 
 def test_optimization_must_be_mapping(tmp_path: Path) -> None:

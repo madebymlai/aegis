@@ -139,9 +139,7 @@ def test_scalar_lock_empty_run_id_fails_validation(registry) -> None:
             _raw_config(lock=":best"),
             component_registry=registry,
         )
-    assert any(
-        issue.path == "lock" and "run_id" in issue.message for issue in excinfo.value.issues
-    )
+    assert any(issue.path == "lock" and "run_id" in issue.message for issue in excinfo.value.issues)
 
 
 def test_config_without_lock_has_none_lock(registry) -> None:

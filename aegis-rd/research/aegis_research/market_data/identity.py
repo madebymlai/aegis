@@ -34,10 +34,7 @@ def declared_marking_resolver(config: DataConfig) -> DeclaredMarkingResolver:
     """
     return DeclaredMarkingResolver(
         declared={
-            **{
-                InstrumentId.from_str(value): MarkMode.MID
-                for value in config.exchange
-            },
+            **{InstrumentId.from_str(value): MarkMode.MID for value in config.exchange},
             **{
                 InstrumentId.from_str(value): MarkMode(mode)
                 for value, mode in config.mark_modes.items()
@@ -71,7 +68,5 @@ def resolved_instruments(config: RunConfig) -> tuple[tuple[InstrumentId, str | N
     if not data.futures:
         return native
     port = catalog_data_port(data.path)
-    future_ids = tuple(
-        port.resolve_continuous(root).instrument_id for root in data.futures
-    )
+    future_ids = tuple(port.resolve_continuous(root).instrument_id for root in data.futures)
     return (*native, *tuple(zip(future_ids, data.futures, strict=True)))

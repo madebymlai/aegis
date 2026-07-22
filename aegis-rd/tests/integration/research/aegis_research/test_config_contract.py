@@ -81,9 +81,7 @@ def test_removed_target_exposure_cap_field_is_rejected(tmp_path: Path) -> None:
         )
 
     issue = next(
-        issue
-        for issue in error.value.issues
-        if issue.path == "portfolio.target_exposure_cap"
+        issue for issue in error.value.issues if issue.path == "portfolio.target_exposure_cap"
     )
     assert "Unexpected keyword argument" in issue.message
 
@@ -346,7 +344,6 @@ def test_run_accepts_grid_optimization_with_observation_blocks(tmp_path: Path) -
     assert resolved.config.optimization.search == "grid"
     assert resolved.config.optimization.random_subset is None
     assert resolved.config.optimization.seed is None
-    assert resolved.config.optimization.execute == {}
     assert resolved.config.optimization.observation_block_bars == 20
 
 
@@ -356,7 +353,6 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
         search="random",
         random_subset=5,
         seed=42,
-        execute={"engine": "threadpool", "chunk_len": "auto"},
     )
 
     resolved = resolve_run_config(
@@ -368,7 +364,6 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
     assert resolved.config.optimization.search == "random"
     assert resolved.config.optimization.random_subset == 5
     assert resolved.config.optimization.seed == 42
-    assert resolved.config.optimization.execute == {"engine": "threadpool", "chunk_len": "auto"}
 
 
 def test_run_rejects_per_component_lock_reference_fields(tmp_path: Path) -> None:
@@ -427,6 +422,15 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 "mode": "native",
             },
             "optimization.mode",
+            "Unexpected keyword argument",
+        ),
+        (
+            {
+                "search": "grid",
+                "observation_block_bars": 20,
+                "execute": {"engine": "threadpool"},
+            },
+            "optimization.execute",
             "Unexpected keyword argument",
         ),
         (

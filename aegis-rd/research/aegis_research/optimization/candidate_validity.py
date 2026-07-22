@@ -39,12 +39,7 @@ class Verdicts:
 
     @property
     def total(self) -> int:
-        return (
-            len(self.invalid)
-            + len(self.non_trading)
-            + len(self.under_traded)
-            + len(self.valid)
-        )
+        return len(self.invalid) + len(self.non_trading) + len(self.under_traded) + len(self.valid)
 
     @property
     def admissible(self) -> set[CandidateKey]:

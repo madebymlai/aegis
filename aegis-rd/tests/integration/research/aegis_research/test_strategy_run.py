@@ -102,9 +102,7 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert payload["status"] == "success"
     assert artifact["strategy"]["family"] == "strategies"
     assert artifact["strategy"]["id"] == "demo.cross"
-    assert artifact["preflight"]["candidate_param_names"] == [
-        FIXED_CANDIDATE_PARAM
-    ]
+    assert artifact["preflight"]["candidate_param_names"] == [FIXED_CANDIDATE_PARAM]
     assert [candidate["role"] for candidate in artifact["candidates"]] == [
         "best",
         "median",
@@ -164,12 +162,12 @@ def test_strategy_run_always_emits_json_with_lock_handles(
     run_block = payload["run"]
     assert run_block["id"] == "lock-handle-run"
     assert run_block["run_dir"] == str(tmp_path / "runs" / "lock-handle-run")
-    assert run_block["manifest_path"] == str(tmp_path / "runs" / "lock-handle-run" / "manifest.json")
+    assert run_block["manifest_path"] == str(
+        tmp_path / "runs" / "lock-handle-run" / "manifest.json"
+    )
     # aegis-rd-gg3.4: the Manifest's config-selection Evidence records the
     # resolved absolute config path (asserted at the Manifest seam).
-    manifest = json.loads(
-        (tmp_path / "runs" / "lock-handle-run" / "manifest.json").read_text()
-    )
+    manifest = json.loads((tmp_path / "runs" / "lock-handle-run" / "manifest.json").read_text())
     assert manifest["evidence"]["config"]["selection"] == {
         "source": "explicit",
         "config_path": str(config_path.resolve()),

@@ -74,10 +74,12 @@ def _component_registry(
     indicators: dict[str, ComponentDefinition] | None = None,
     strategies: dict[str, ComponentDefinition] | None = None,
 ) -> FrozenComponentRegistry:
-    return make_component_registry({
-        "indicators": indicators or {},
-        "strategies": strategies or {},
-    })
+    return make_component_registry(
+        {
+            "indicators": indicators or {},
+            "strategies": strategies or {},
+        }
+    )
 
 
 def _default_component_registry() -> FrozenComponentRegistry:
@@ -90,6 +92,7 @@ def _default_component_registry() -> FrozenComponentRegistry:
 
 def _default_metric_registry() -> FrozenMetricRegistry:
     from research.aegis_research.metrics import make_default_metric_registry
+
     return make_default_metric_registry()
 
 
@@ -309,7 +312,10 @@ def test_params_unknown_rejected_on_strategy() -> None:
     )
     by_path = _issues_by_path(issues)
     assert "strategy.params" in by_path
-    assert any("params must be declared by the component manifest" in msg for msg in by_path["strategy.params"])
+    assert any(
+        "params must be declared by the component manifest" in msg
+        for msg in by_path["strategy.params"]
+    )
 
 
 def test_params_unknown_rejected_on_indicator() -> None:
@@ -329,7 +335,10 @@ def test_params_unknown_rejected_on_indicator() -> None:
     )
     by_path = _issues_by_path(issues)
     assert "indicators[0].params" in by_path
-    assert any("params must be declared by the component manifest" in msg for msg in by_path["indicators[0].params"])
+    assert any(
+        "params must be declared by the component manifest" in msg
+        for msg in by_path["indicators[0].params"]
+    )
 
 
 def test_params_missing_satisfied_by_default() -> None:
@@ -359,7 +368,11 @@ def test_params_missing_satisfied_by_default() -> None:
 def test_params_missing_rejected_when_not_defaulted() -> None:
     reg = _component_registry(
         indicators={"demo.signal": _indicator(param_names=(), output_names=("value",))},
-        strategies={"demo.strategy": _strategy(param_names=("lookback", "threshold"), consumes_outputs=("value",))},
+        strategies={
+            "demo.strategy": _strategy(
+                param_names=("lookback", "threshold"), consumes_outputs=("value",)
+            )
+        },
     )
     config = make_run_config(
         strategy=make_run_source_ref_config(id="demo.strategy", params={"lookback": 20}),

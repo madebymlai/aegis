@@ -56,9 +56,7 @@ class ResolvedBook:
         base and gets the uniform no-op fee series — no branch, no special case.
         """
         portfolio = config.portfolio
-        instrument_ids = tuple(
-            InstrumentId.from_str(value) for value in config.data.instruments
-        )
+        instrument_ids = tuple(InstrumentId.from_str(value) for value in config.data.instruments)
         currency_by_instrument_id = (
             currency_conversion.currency_by_instrument_id
             if currency_conversion is not None
@@ -96,9 +94,7 @@ def _fx_adjusted_fees(
         instrument_id: base_fee
         + (
             fx_conversion_cost
-            if _requires_conversion(
-                currency_by_instrument_id[instrument_id], base_currency
-            )
+            if _requires_conversion(currency_by_instrument_id[instrument_id], base_currency)
             else 0.0
         )
         for instrument_id in instrument_ids

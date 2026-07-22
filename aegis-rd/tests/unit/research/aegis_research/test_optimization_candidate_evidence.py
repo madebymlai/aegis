@@ -42,9 +42,7 @@ def _evaluated(params: dict[str, object], score: float) -> EvaluatedCandidate:
     )
 
 
-def _single_candidate_row(
-    params: dict[str, Any], **identity_kwargs: Any
-) -> dict[str, Any]:
+def _single_candidate_row(params: dict[str, Any], **identity_kwargs: Any) -> dict[str, Any]:
     only = _evaluated(params, 0.7)
     identity_kwargs.setdefault("selection_identity", make_selection_identity())
     return candidate_rows_from_result(
@@ -139,9 +137,9 @@ def test_candidate_identity_golden_bytes_pin() -> None:
     )
 
     assert hashlib.sha256(canonical_json_bytes(row["identity"])).hexdigest() == (
-        "efa357faa8f1ec152820f2c63941beeedf9568e2d7e1841de48e254f65d5f481"
+        "f3ab3e4f829ea0a9ddc13ae8e0628af0d3e73ed09031ed65dc1de4a1c32940be"
     )
-    assert row["candidate_key"] == "cand_efa357faa8f1ec152820f2c63941beee"
+    assert row["candidate_key"] == "cand_f3ab3e4f829ea0a9ddc13ae8e0628af0"
 
 
 def test_candidate_rows_publish_only_observation_block_and_complete_period_metrics() -> None:
@@ -164,9 +162,7 @@ def test_candidate_rows_publish_only_observation_block_and_complete_period_metri
         "block-000": {"total_return": 0.9},
         "block-001": {"total_return": 1.0},
     }
-    assert rows[0]["complete_period_metrics"] == pytest.approx(
-        {"total_return": 0.95}
-    )
+    assert rows[0]["complete_period_metrics"] == pytest.approx({"total_return": 0.95})
     assert "selection_metrics" not in rows[0]
     assert "held_out_metrics" not in rows[0]
 

@@ -67,8 +67,5 @@ def market_data_bundle(result: MarketDataResult) -> MarketDataBundle:
     """Materialise every declared loaded Array into an eager Bundle."""
     result.assert_usable()
     loaded_arrays = [d.name for d in result.metadata.arrays if d.loaded]
-    arrays = {
-        name: canonical_array_panel(result.native_data, name)
-        for name in loaded_arrays
-    }
+    arrays = {name: canonical_array_panel(result.native_data, name) for name in loaded_arrays}
     return MarketDataBundle(arrays=arrays)

@@ -214,6 +214,7 @@ def test_registered_metric_aligns_authored_levels_to_canonical_candidate_identit
     )
     spec = ExtractorSpec(
         read=lambda portfolio, report: None,
+        contract_version=1,
         range_factory=lambda report: (
             lambda portfolio, *, sim_start, sim_end: pd.Series(
                 [sim_start + 1.0, sim_end + 1.0], index=authored_index
@@ -248,6 +249,7 @@ def test_registered_metric_restores_single_candidate_level_name_dropped_by_vbt()
     )
     spec = ExtractorSpec(
         read=lambda portfolio, report: None,
+        contract_version=1,
         range_factory=lambda report: (
             lambda portfolio, *, sim_start, sim_end: pd.Series(
                 [sim_end - sim_start], index=pd.RangeIndex(1), dtype=float
@@ -284,6 +286,7 @@ def test_registered_metric_expands_vbt_candidate_key_index_to_canonical_levels()
     )
     spec = ExtractorSpec(
         read=lambda portfolio, report: None,
+        contract_version=1,
         range_factory=lambda report: (
             lambda portfolio, *, sim_start, sim_end: pd.Series(
                 [sim_start + 1.0, sim_end + 1.0], index=collapsed_index

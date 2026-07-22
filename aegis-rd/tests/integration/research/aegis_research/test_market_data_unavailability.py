@@ -148,13 +148,9 @@ def test_the_port_passthrough_drives_the_production_wiring() -> None:
     )
     closes = pd.Series(
         [10.0, 11.0, 12.0],
-        index=pd.DatetimeIndex(
-            [pd.Timestamp(day, tz="UTC") for day in frame.index], name="date"
-        ),
+        index=pd.DatetimeIndex([pd.Timestamp(day, tz="UTC") for day in frame.index], name="date"),
     )
-    port = CatalogBackedDataPort(
-        catalog, distribution_provider=_NoDistributionProvider(closes)
-    )
+    port = CatalogBackedDataPort(catalog, distribution_provider=_NoDistributionProvider(closes))
 
     result = load_market_data_result(_config(), port=port)
 

@@ -64,9 +64,10 @@ REPRESENTATIVE_CONFIGS: dict[str, dict[str, object]] = {
 # arbitrary Split configuration was replaced by required observation_block_bars.
 # Re-pinned 2026-07-22 when retired OOS promotion thresholds left ReportConfig:
 # the resolved document no longer advertises gates that selection does not use.
+# Re-pinned again when the unused optimization.execute passthrough was removed.
 GOLDEN_RESOLVED_CONFIG_HASHES: dict[str, str] = {
-    "canonical_grid": "ce6122fd477b7663225d1c8cd8d74eed952f4468d62238811230da02b3bb71f5",
-    "int_valued_cash": "d4f549878d468a235468431e9844995107ef59c269e8d3bab17340ac38ef81dc",
+    "canonical_grid": "2ea852d408006cdf985d3716f66d0aa2c7afceafa120abf6944c0eeb4f7b1bc4",
+    "int_valued_cash": "33b8bb2906193183391b8851203c44c3d1e9ee890aa25dbef21342cd15a7779c",
 }
 
 
@@ -83,7 +84,7 @@ def _component_registry(tmp_path: Path):
         "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
         "}\n"
         "\n# %% main compute\n"
-        "def run(bundle):\n    \"\"\"Fixture strategy, never executed during config resolution.\"\"\"\n"
+        'def run(bundle):\n    """Fixture strategy, never executed during config resolution."""\n'
         "    raise RuntimeError('not executed during config tests')\n"
     )
     return discover_component_registry(root=root, repo_root=tmp_path)

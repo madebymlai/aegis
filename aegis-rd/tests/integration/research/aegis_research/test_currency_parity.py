@@ -54,9 +54,7 @@ def test_rd_conversion_matches_nautilus_base_value_under_fx_movement() -> None:
     rd_base_value = (_QTY * base_close[equity.id]).reindex(oracle.index)
 
     assert not oracle.empty
-    pd.testing.assert_series_equal(
-        rd_base_value, oracle, check_names=False, rtol=1e-9, atol=1e-6
-    )
+    pd.testing.assert_series_equal(rd_base_value, oracle, check_names=False, rtol=1e-9, atol=1e-6)
 
 
 def test_parity_fixture_actually_exercises_fx_movement() -> None:

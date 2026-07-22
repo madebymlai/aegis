@@ -251,8 +251,7 @@ class MarketDataResult:
             )
         if self.adjustment_mode is not None and not roots:
             raise AdjustmentModeEvidenceError(
-                "market data carries an adjustment_mode fact but materialised "
-                "no continuous roots"
+                "market data carries an adjustment_mode fact but materialised no continuous roots"
             )
 
     def assert_usable(self) -> None:

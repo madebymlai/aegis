@@ -14,7 +14,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from pandas.testing import assert_series_equal
 
 from research.aegis_research.configuration import InstrumentBandConfig
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_data_config,
     make_portfolio_config,
@@ -31,9 +31,7 @@ def test_foreign_legs_pay_the_conversion_cost_base_legs_do_not() -> None:
             fees=0.0005, fx_conversion_cost=0.0003, base_currency="EUR"
         ),
     )
-    conversion = CurrencyConversion(
-        {}, currency_by_instrument_id={vool: "EUR", sgln: "USD"}
-    )
+    conversion = CurrencyConversion({}, currency_by_instrument_id={vool: "EUR", sgln: "USD"})
 
     book = ResolvedBook.resolve(config, conversion)
 

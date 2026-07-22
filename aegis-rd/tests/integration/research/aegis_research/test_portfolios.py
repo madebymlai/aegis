@@ -9,8 +9,8 @@ from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo
 
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
+from research.aegis_research.optimization.portfolio_simulation._simulation import (
     distribution_cash_dividends,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
@@ -50,7 +50,9 @@ def test_nan_allocations_row_does_not_rebalance_and_positions_persist() -> None:
         index=index,
     )
 
-    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(
+        close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly")
+    )
 
     # Only the first bar produces orders; the NaN rows hold continuously.
     orders = pf.orders.records_readable
@@ -72,10 +74,14 @@ def test_all_zero_allocations_row_in_non_terminal_location_closes_positions_at_c
         index=index,
     )
 
-    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(
+        close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly")
+    )
 
     assets = pf.assets
-    assert assets.iloc[1].to_dict() == pytest.approx({(SINGLE_CANDIDATE_ID, "A"): 0.0, (SINGLE_CANDIDATE_ID, "B"): 0.0})
+    assert assets.iloc[1].to_dict() == pytest.approx(
+        {(SINGLE_CANDIDATE_ID, "A"): 0.0, (SINGLE_CANDIDATE_ID, "B"): 0.0}
+    )
     orders = pf.orders.records_readable
     second_bar_orders = _orders_on(orders, "2024-01-02")
     assert set(second_bar_orders["Side"]) == {"Sell"}
@@ -94,12 +100,17 @@ def test_full_a_to_full_b_switch_under_shared_cash_executes_single_rebalance() -
         index=index,
     )
 
-    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(
+        close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly")
+    )
 
     orders = pf.orders.records_readable
     third_bar = _orders_on(orders, "2024-01-03")
     sides_by_symbol = {row["Column"]: row["Side"] for _, row in third_bar.iterrows()}
-    assert sides_by_symbol == {(SINGLE_CANDIDATE_ID, "A"): "Sell", (SINGLE_CANDIDATE_ID, "B"): "Buy"}
+    assert sides_by_symbol == {
+        (SINGLE_CANDIDATE_ID, "A"): "Sell",
+        (SINGLE_CANDIDATE_ID, "B"): "Buy",
+    }
     assert pf.assets.iloc[2][(SINGLE_CANDIDATE_ID, "A")] == pytest.approx(0.0)
     assert pf.assets.iloc[2][(SINGLE_CANDIDATE_ID, "B")] > 0
 
@@ -175,7 +186,9 @@ def test_band_breach_trades_to_interior_destination_fraction() -> None:
 def test_symmetric_directional_band_holds_at_inclusive_boundary() -> None:
     index = pd.date_range("2024-01-01", periods=4)
     boundary_price = 2600.0 / 24.0
-    close = pd.DataFrame({"A": [100.0, boundary_price, boundary_price, boundary_price]}, index=index)
+    close = pd.DataFrame(
+        {"A": [100.0, boundary_price, boundary_price, boundary_price]}, index=index
+    )
     allocations = pd.DataFrame({"A": [0.5, 0.5, np.nan, np.nan]}, index=index)
     config = make_portfolio_config(
         fees=0,
@@ -271,9 +284,7 @@ def test_instrument_bands_gate_each_symbol_independently() -> None:
     assert set(second_bar["Column"]) == {(SINGLE_CANDIDATE_ID, spy)}
     assert set(second_bar["Side"]) == {"Buy"}
     realized_before_gate = (50.0 * 110.0) / (50.0 * 110.0 + 5_000.0)
-    realized = pf.get_allocations(group_by=None).loc[
-        index[1], (SINGLE_CANDIDATE_ID, es)
-    ]
+    realized = pf.get_allocations(group_by=None).loc[index[1], (SINGLE_CANDIDATE_ID, es)]
     assert realized == pytest.approx(gate(realized_before_gate, 0.5, 0.03, 0.03))
 
 
@@ -323,9 +334,7 @@ def test_shortonly_drift_resizes_short_to_target_through_shared_gate() -> None:
                 band_down=band,
             ),
         )
-        realized = pf.get_allocations(group_by=None).loc[
-            index[1], (SINGLE_CANDIDATE_ID, "A")
-        ]
+        realized = pf.get_allocations(group_by=None).loc[index[1], (SINGLE_CANDIDATE_ID, "A")]
         return realized, _order_dates(pf.orders.records_readable)
 
     # Wide band: enters the short at bar 0, then holds bar 1's drift. The held
@@ -355,7 +364,9 @@ def test_replay_does_not_liquidate_held_positions_at_data_end() -> None:
         index=index,
     )
 
-    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(
+        close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly")
+    )
 
     final_assets = pf.assets.iloc[-1]
     assert final_assets[(SINGLE_CANDIDATE_ID, "A")] > 0.0
@@ -378,7 +389,9 @@ def test_batched_three_candidate_run_preserves_candidate_identity_in_pfo_columns
     allocations.loc[index[0], :] = 0.5
 
     pf = simulate_portfolio_batch(
-        close, allocations, ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
+        close,
+        allocations,
+        ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
         periods_per_year=252,
     )
 
@@ -386,9 +399,12 @@ def test_batched_three_candidate_run_preserves_candidate_identity_in_pfo_columns
     assert list(candidate_index) == ["cand-a", "cand-b", "cand-c"]
     pf_columns = pf.wrapper.columns
     assert set(pf_columns) == {
-        ("cand-a", "A"), ("cand-a", "B"),
-        ("cand-b", "A"), ("cand-b", "B"),
-        ("cand-c", "A"), ("cand-c", "B"),
+        ("cand-a", "A"),
+        ("cand-a", "B"),
+        ("cand-b", "A"),
+        ("cand-b", "B"),
+        ("cand-c", "A"),
+        ("cand-c", "B"),
     }
 
 
@@ -458,9 +474,7 @@ def test_batch_rejects_longonly_candidate_with_a_negative_weight() -> None:
     allocations.loc[index[0], ("cand-has-short", "A")] = 0.5
     allocations.loc[index[0], ("cand-has-short", "B")] = -0.5
 
-    config = make_portfolio_config(
-        fees=0, slippage=0, direction="longonly"
-    )
+    config = make_portfolio_config(fees=0, slippage=0, direction="longonly")
     with pytest.raises(ValueError, match="longonly"):
         simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
@@ -479,9 +493,7 @@ def test_batch_accepts_valid_market_neutral_book_within_contract() -> None:
     allocations.loc[index[0], ("cand-neutral", "A")] = 0.5
     allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
 
-    config = make_portfolio_config(
-        fees=0, slippage=0, direction="both"
-    )
+    config = make_portfolio_config(fees=0, slippage=0, direction="both")
     pf = simulate_portfolio_batch(close, allocations, ResolvedBook(config), periods_per_year=252)
 
     assert isinstance(pf, vbt.Portfolio)
@@ -498,9 +510,7 @@ def test_single_portfolio_rejects_book_breaching_gross_cap() -> None:
         index=index,
     )
 
-    config = make_portfolio_config(
-        fees=0, slippage=0, direction="longonly"
-    )
+    config = make_portfolio_config(fees=0, slippage=0, direction="longonly")
     with pytest.raises(ValueError, match="gross_cap"):
         make_single_book_portfolio(close, allocations, config)
 
@@ -540,7 +550,9 @@ def test_default_longonly_run_holds_only_long_positions() -> None:
         index=index,
     )
 
-    pf = make_single_book_portfolio(close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly"))
+    pf = make_single_book_portfolio(
+        close, allocations, make_portfolio_config(fees=0, slippage=0, direction="longonly")
+    )
 
     assets = pf.assets
     assert (assets.iloc[1] >= 0).all()
@@ -556,9 +568,7 @@ def test_expand_market_frame_to_candidate_columns_preserves_candidate_symbol_ord
         names=["candidate_id", "symbol"],
     )
 
-    expanded = expand_market_frame_to_candidate_columns(
-        close, target_columns, feature_name="Close"
-    )
+    expanded = expand_market_frame_to_candidate_columns(close, target_columns, feature_name="Close")
 
     assert expanded.columns.equals(target_columns)
     assert expanded[("candidate-b", "SYN")].tolist() == close["SYN"].tolist()
@@ -598,9 +608,7 @@ def test_long_only_book_is_byte_for_byte_unchanged_with_carry_on_by_default() ->
         ),
     )
 
-    pd.testing.assert_series_equal(
-        carry_on.value, carry_off.value
-    )
+    pd.testing.assert_series_equal(carry_on.value, carry_off.value)
     assert _total_return(carry_on) == _total_return(carry_off)
 
 
@@ -652,9 +660,7 @@ def test_short_leg_carry_drops_return_and_long_leg_is_never_charged() -> None:
 def test_levered_long_book_pays_margin_interest_on_negative_group_cash() -> None:
     """Guards VBT's leveraged-buy cash semantics: cash drops by full notional."""
     rate = 0.36
-    index = pd.DatetimeIndex(
-        np.array(["2024-01-05", "2024-01-08"], dtype="datetime64[us]")
-    )
+    index = pd.DatetimeIndex(np.array(["2024-01-05", "2024-01-08"], dtype="datetime64[us]"))
     close = pd.DataFrame({"A": [100.0, 100.0]}, index=index)
     allocations = pd.DataFrame({"A": [1.5, np.nan]}, index=index)
     config = make_portfolio_config(
@@ -676,9 +682,7 @@ def test_levered_pure_futures_book_pays_no_margin_interest() -> None:
     """Futures marked value is added back to raw cash before debit interest."""
     rate = 0.36
     es = InstrumentId.from_str("ES.XCME")
-    index = pd.DatetimeIndex(
-        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
-    )
+    index = pd.DatetimeIndex([pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")])
     close = pd.DataFrame({es: [100.0, 100.0]}, index=index)
     allocations = pd.DataFrame({es: [1.5, np.nan]}, index=index)
     config = make_portfolio_config(
@@ -702,9 +706,7 @@ def test_mixed_spot_and_futures_book_charges_only_spot_cash_deficit() -> None:
     rate = 0.36
     spy = InstrumentId.from_str("SPY.ARCA")
     es = InstrumentId.from_str("ES.XCME")
-    index = pd.DatetimeIndex(
-        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
-    )
+    index = pd.DatetimeIndex([pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")])
     close = pd.DataFrame({spy: [100.0, 100.0], es: [100.0, 100.0]}, index=index)
     allocations = pd.DataFrame({spy: [1.2, np.nan], es: [0.5, np.nan]}, index=index)
     config = make_portfolio_config(
@@ -726,9 +728,7 @@ def test_mixed_spot_and_futures_book_charges_only_spot_cash_deficit() -> None:
 
 def test_all_false_futures_mask_is_a_margin_interest_noop() -> None:
     rate = 0.36
-    index = pd.DatetimeIndex(
-        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
-    )
+    index = pd.DatetimeIndex([pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")])
     close = pd.DataFrame({"A": [100.0, 100.0]}, index=index)
     allocations = pd.DataFrame({"A": [1.5, np.nan]}, index=index)
     config = make_portfolio_config(
@@ -750,9 +750,7 @@ def test_all_false_futures_mask_is_a_margin_interest_noop() -> None:
 
 
 def test_explicit_zero_margin_interest_rate_charges_nothing() -> None:
-    index = pd.DatetimeIndex(
-        [pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")]
-    )
+    index = pd.DatetimeIndex([pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")])
     close = pd.DataFrame({"A": [100.0, 100.0]}, index=index)
     allocations = pd.DataFrame({"A": [1.5, np.nan]}, index=index)
     config = make_portfolio_config(
@@ -845,9 +843,7 @@ def test_distribution_cash_dividends_converts_non_base_cash() -> None:
         amount=2.00,
         currency="USD",
     )
-    conversion = CurrencyConversion(
-        {instrument_id: pd.Series([0.90, 0.95], index=index[[0, 2]])}
-    )
+    conversion = CurrencyConversion({instrument_id: pd.Series([0.90, 0.95], index=index[[0, 2]])})
 
     cash = distribution_cash_dividends(
         close,
@@ -1009,10 +1005,9 @@ def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
     allocations.loc[index[0], ("cand-neutral", "B")] = -0.5
 
     pf = simulate_portfolio_batch(
-        close, allocations,
-        ResolvedBook(
-            make_portfolio_config(fees=0, slippage=0, direction="both")
-        ),
+        close,
+        allocations,
+        ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="both")),
         periods_per_year=252,
     )
     assert isinstance(pf, vbt.Portfolio)
@@ -1021,7 +1016,7 @@ def test_batch_fail_closed_nocash_guard_passes_on_clean_book() -> None:
 def test_batch_nocash_tripwire_is_invoked_and_error_propagates(monkeypatch) -> None:
     # The NoCash tripwire is called exactly once during simulate_portfolio_batch
     # and its ValueError propagates to the caller.
-    import research.aegis_research.optimization.window_evaluation._simulation as portfolios_module
+    import research.aegis_research.optimization.portfolio_simulation._simulation as portfolios_module
 
     index = pd.date_range("2024-01-01", periods=4)
     close = pd.DataFrame(
@@ -1080,9 +1075,7 @@ def test_batch_of_one_candidate_equals_single_group_by_true() -> None:
     )
     config = make_portfolio_config(fees=0, slippage=0, direction="longonly")
 
-    pf_single = make_single_book_portfolio(
-        close, allocations, config, periods_per_year=252
-    )
+    pf_single = make_single_book_portfolio(close, allocations, config, periods_per_year=252)
 
     columns = pd.MultiIndex.from_product(
         [[SINGLE_CANDIDATE_ID], close.columns],
@@ -1095,7 +1088,9 @@ def test_batch_of_one_candidate_equals_single_group_by_true() -> None:
     alloc_mi.loc[index[10], (SINGLE_CANDIDATE_ID, "B")] = 0.8
 
     pf_batch = simulate_portfolio_batch(
-        close, alloc_mi, ResolvedBook(config),
+        close,
+        alloc_mi,
+        ResolvedBook(config),
         periods_per_year=252,
     )
 
@@ -1167,7 +1162,9 @@ def test_same_close_fill_timing_fills_at_current_bar_close() -> None:
     )
 
     first_order = _first_order(pf.orders.records_readable)
-    assert first_order[_order_time_column(pf.orders.records_readable)] == pd.Timestamp("2024-01-01")  # bar 0, no shift
+    assert first_order[_order_time_column(pf.orders.records_readable)] == pd.Timestamp(
+        "2024-01-01"
+    )  # bar 0, no shift
     assert first_order["Price"] == pytest.approx(10.0)  # bar 0's own close
 
 
@@ -1182,7 +1179,9 @@ def test_next_open_fill_timing_without_open_prices_raises() -> None:
         make_single_book_portfolio(
             close,
             allocations,
-            make_portfolio_config(fees=0, slippage=0, direction="longonly", fill_timing="next_open"),
+            make_portfolio_config(
+                fees=0, slippage=0, direction="longonly", fill_timing="next_open"
+            ),
             # open_ omitted -> next_open cannot resolve a fill price
         )
 
@@ -1194,7 +1193,11 @@ def test_batch_exposure_gate_names_the_breaching_candidate() -> None:
     index = pd.date_range("2024-01-01", periods=2)
     close = pd.DataFrame({"A": [10.0, 10.0], "B": [20.0, 20.0]}, index=index)
     columns = pd.MultiIndex.from_tuples(
-        [(candidate, symbol) for candidate in ("candidate-a", "candidate-b") for symbol in ("A", "B")],
+        [
+            (candidate, symbol)
+            for candidate in ("candidate-a", "candidate-b")
+            for symbol in ("A", "B")
+        ],
         names=["candidate_id", "symbol"],
     )
     # candidate-a stays at gross 1.0; candidate-b breaches (Σ|wᵢ| = 1.5).

@@ -65,6 +65,7 @@ def _registry():
         ),
         ExtractorSpec(
             read=lambda portfolio, report: None,
+            contract_version=1,
             scale="percent",
             range_factory=lambda report: lambda portfolio, **bounds: None,
         ),
@@ -318,6 +319,10 @@ def test_evidence_publishes_only_authoritative_admissible_ranks() -> None:
     [
         (("replay_protocol", "fill_timing", "vbt_effective_delay_bars"), 2),
         (("metric_protocol", "extractors", "total_return", "kind"), "other"),
+        (
+            ("metric_protocol", "extractors", "total_return", "contract_version"),
+            2,
+        ),
         (
             ("metric_protocol", "extractors", "total_return", "boundary_semantics"),
             "other",

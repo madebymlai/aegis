@@ -94,9 +94,7 @@ def _canonical_block_metrics(
     metrics: Mapping[Any, Mapping[str, float | None]],
 ) -> dict[str, dict[str, float | None]]:
     return {
-        str(block): {
-            str(metric): _optional_float(value) for metric, value in values.items()
-        }
+        str(block): {str(metric): _optional_float(value) for metric, value in values.items()}
         for block, values in metrics.items()
     }
 

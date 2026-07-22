@@ -135,7 +135,7 @@ def _left_tail_budget(stream: np.ndarray, horizon: int) -> float:
     The loss side of convexity's net tail payoff, alone: how much the sleeve
     gives back when its multi-month windows go badly, on the horizon a
     short-gamma unwind actually develops over. A window floor keeps the decile
-    mean stable on a held-out split. The result stays in capital-budget units:
+    mean stable on a finite Development path. The result stays in capital-budget units:
     -0.08 means an 8% loss over the stated horizon, not an annualized projection.
     """
     windows = _rolling_compound(stream, horizon)
@@ -378,7 +378,9 @@ CONVERGENT_INCOME_UTILITY_DEFINITION = MetricDefinition(
     required_gate_input=False,
     metadata={"risk_aversion": DEFAULT_RISK_AVERSION, "risk_free": 0.0},
 )
-CONVERGENT_INCOME_UTILITY_EXTRACTOR = ExtractorSpec(_make_stream_read(_convergent_income_utility))
+CONVERGENT_INCOME_UTILITY_EXTRACTOR = ExtractorSpec(
+    _make_stream_read(_convergent_income_utility), contract_version=1
+)
 
 CONVERGENT_TAIL_BUDGET_DEFINITION = MetricDefinition(
     id=CONVERGENT_TAIL_BUDGET_ID,
@@ -397,7 +399,9 @@ CONVERGENT_TAIL_BUDGET_DEFINITION = MetricDefinition(
     required_gate_input=False,
     metadata={"horizon_band_days": list(_HORIZON_BAND), "tail_quantile": _TAIL_QUANTILE},
 )
-CONVERGENT_TAIL_BUDGET_EXTRACTOR = ExtractorSpec(_make_stream_read(_convergent_tail_budget))
+CONVERGENT_TAIL_BUDGET_EXTRACTOR = ExtractorSpec(
+    _make_stream_read(_convergent_tail_budget), contract_version=1
+)
 
 CONVERGENT_DOWNSIDE_LSKEW_DEFINITION = MetricDefinition(
     id=CONVERGENT_DOWNSIDE_LSKEW_ID,
@@ -416,7 +420,9 @@ CONVERGENT_DOWNSIDE_LSKEW_DEFINITION = MetricDefinition(
     required_gate_input=False,
     metadata={"horizon_band_days": list(_HORIZON_BAND), "estimator": "l_moment_tau3"},
 )
-CONVERGENT_DOWNSIDE_LSKEW_EXTRACTOR = ExtractorSpec(_make_stream_read(_convergent_downside_lskew))
+CONVERGENT_DOWNSIDE_LSKEW_EXTRACTOR = ExtractorSpec(
+    _make_stream_read(_convergent_downside_lskew), contract_version=1
+)
 
 
 __all__ = [

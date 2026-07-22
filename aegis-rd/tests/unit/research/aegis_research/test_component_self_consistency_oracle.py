@@ -45,6 +45,7 @@ _N_CANDIDATES = 3
 
 # ── Registry built from fixture components ────────────────────────────────
 
+
 def _fixture_component_root() -> Path:
     this_file = Path(__file__).resolve()
     # tests/unit/research/aegis_research/ -> go up to repo/worktree root
@@ -73,6 +74,7 @@ def _fixture_component_ids() -> list[Any]:
 
 # ── Synthetic data ────────────────────────────────────────────────────────
 
+
 def _make_data(
     n_dates: int = _N_BARS,
     instrument_ids: list[InstrumentId] | None = None,
@@ -92,6 +94,7 @@ def _make_data(
 
 
 # ── Parameter generators per component ────────────────────────────────────
+
 
 def _param_lists_for(definition: Any) -> dict[str, list[Any]]:
     """Return a dict of param_name -> list[value] with _N_CANDIDATES entries."""
@@ -120,6 +123,7 @@ def _param_lists_for(definition: Any) -> dict[str, list[Any]]:
 
 
 # ── Oracle core ───────────────────────────────────────────────────────────
+
 
 def _assert_indicator_batch_equals_stitched(
     definition: Any,
@@ -153,14 +157,11 @@ def _assert_indicator_batch_equals_stitched(
 
     for name in batch:
         assert np.array_equal(batch[name], stitched[name], equal_nan=True), (
-            f"Indicator {definition.id!r} output {name!r}: "
-            f"batch != stitched single-candidate"
+            f"Indicator {definition.id!r} output {name!r}: batch != stitched single-candidate"
         )
 
 
-def _find_producer(
-    output_name: str, registry: FrozenComponentRegistry
-) -> Any:
+def _find_producer(output_name: str, registry: FrozenComponentRegistry) -> Any:
     """Return the ComponentDefinition for the indicator that produces *output_name*."""
     for ind_id in registry.ids("indicators"):
         ind_def = registry.definitions["indicators"][ind_id]
@@ -190,9 +191,7 @@ def _assert_strategy_batch_equals_stitched(
         producer = _find_producer(output_name, registry)
         producer_run = producer.load_callable()
         producer_params = _param_lists_for(producer)
-        producer_result = producer_run(
-            data, n_candidates=n_candidates, **producer_params
-        )
+        producer_result = producer_run(data, n_candidates=n_candidates, **producer_params)
         indicator_outputs[output_name] = producer_result[output_name]
 
     run = definition.load_callable()
@@ -204,15 +203,12 @@ def _assert_strategy_batch_equals_stitched(
         n_symbols=S,
         metadata={},
     )
-    batch = np.asarray(
-        run(batch_inputs, n_candidates=n_candidates, **param_lists)
-    )
+    batch = np.asarray(run(batch_inputs, n_candidates=n_candidates, **param_lists))
 
     stitched = np.full((T, n_candidates * S), np.nan)
     for i in range(n_candidates):
         single_indicators = {
-            name: arr[:, i * S : (i + 1) * S]
-            for name, arr in indicator_outputs.items()
+            name: arr[:, i * S : (i + 1) * S] for name, arr in indicator_outputs.items()
         }
         single_inputs = ComponentStrategyInputs(
             data=data,
@@ -222,9 +218,7 @@ def _assert_strategy_batch_equals_stitched(
             metadata={},
         )
         single_params = {k: [v[i]] for k, v in param_lists.items()}
-        single_arr = np.asarray(
-            run(single_inputs, n_candidates=1, **single_params)
-        )
+        single_arr = np.asarray(run(single_inputs, n_candidates=1, **single_params))
         stitched[:, i * S : (i + 1) * S] = single_arr
 
     assert np.array_equal(batch, stitched, equal_nan=True), (
@@ -234,6 +228,7 @@ def _assert_strategy_batch_equals_stitched(
 
 # ── Parametrised test ─────────────────────────────────────────────────────
 
+
 @pytest.mark.parametrize("definition", _fixture_component_ids())
 def test_fixture_component_is_batch_self_consistent(definition: Any) -> None:
     """Every fixture Component: batch ``run`` == stitched single-candidate ``run``."""
@@ -242,9 +237,7 @@ def test_fixture_component_is_batch_self_consistent(definition: Any) -> None:
     n_candidates = _N_CANDIDATES
 
     if definition.family == "indicators":
-        _assert_indicator_batch_equals_stitched(
-            definition, data, n_candidates, param_lists
-        )
+        _assert_indicator_batch_equals_stitched(definition, data, n_candidates, param_lists)
     else:
         _assert_strategy_batch_equals_stitched(
             definition, data, _FIXTURE_REGISTRY, n_candidates, param_lists
@@ -291,9 +284,7 @@ def _setup_batch_dependent(
     comp_path.parent.mkdir(parents=True, exist_ok=True)
     comp_path.write_text(_TOY_BATCH_DEPENDENT_SOURCE)
 
-    registry = discover_component_registry(
-        root=tmp_path / "components", repo_root=tmp_path
-    )
+    registry = discover_component_registry(root=tmp_path / "components", repo_root=tmp_path)
     defin = registry.definitions["indicators"]["toy.batch_dependent"]
     data = _make_data(
         n_dates=20,
@@ -313,9 +304,7 @@ def test_batch_dependent_component_fails_oracle(tmp_path: Path) -> None:
     """
     defin, data = _setup_batch_dependent(tmp_path)
     with pytest.raises(AssertionError, match="batch != stitched"):
-        _assert_indicator_batch_equals_stitched(
-            defin, data, n_candidates=3, param_lists={}
-        )
+        _assert_indicator_batch_equals_stitched(defin, data, n_candidates=3, param_lists={})
 
 
 def test_batch_dependent_component_single_candidate_passes_trivially(

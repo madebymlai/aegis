@@ -78,6 +78,7 @@ def test_interrupted_error_is_json_without_flag(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """KeyboardInterrupt emits JSON error envelope without --json flag."""
+
     def interrupt():
         raise KeyboardInterrupt
 
@@ -175,9 +176,9 @@ def test_run_success_payload_is_the_emitted_json_contract(
                 "strategy": {"id": "demo.strategy"},
                 "indicators": [],
                 "ranking": {"metric": "total_return"},
-                    "optimization": {
-                        "search": "grid",
-                        "observation_block_bars": 20,
+                "optimization": {
+                    "search": "grid",
+                    "observation_block_bars": 20,
                 },
             },
             sort_keys=False,
@@ -299,9 +300,7 @@ def test_run_rejects_unknown_portfolio_direction(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "run.yaml"
-    config_path.write_text(
-        yaml.safe_dump(_signed_book_run_config("sideways"), sort_keys=False)
-    )
+    config_path.write_text(yaml.safe_dump(_signed_book_run_config("sideways"), sort_keys=False))
 
     assert cli.main(["run", str(config_path), "--run-id", "bad-dir"]) == 6
 
@@ -362,12 +361,9 @@ def _run_candidate_returns(
         )
     )
     assert cli.main(["run", str(config_path), "--run-id", run_id]) == 0
-    artifact = json.loads(
-        (tmp_path / "runs" / run_id / "strategy_run.json").read_text()
-    )
+    artifact = json.loads((tmp_path / "runs" / run_id / "strategy_run.json").read_text())
     return [
-        candidate["complete_period_metrics"]["total_return"]
-        for candidate in artifact["candidates"]
+        candidate["complete_period_metrics"]["total_return"] for candidate in artifact["candidates"]
     ]
 
 
@@ -445,10 +441,7 @@ def test_output_helper_normalizes_nonstandard_json_numbers(
 ) -> None:
     from research.aegis_research.cli_support.output import CommandResult, write_success
 
-    assert (
-        write_success(CommandResult(command="test", payload={"value": float("nan")}))
-        == 0
-    )
+    assert write_success(CommandResult(command="test", payload={"value": float("nan")})) == 0
 
     assert json.loads(capsys.readouterr().out)["value"] is None
 
@@ -493,9 +486,7 @@ def test_run_refs_resolves_relative_paths_against_cwd(
     from research.aegis_research.cli_support.output import run_refs
 
     monkeypatch.chdir(tmp_path)
-    block = run_refs(
-        {"run_id": "x", "run_dir": "runs/x", "manifest_path": "runs/x/manifest.json"}
-    )
+    block = run_refs({"run_id": "x", "run_dir": "runs/x", "manifest_path": "runs/x/manifest.json"})
     assert block["run_dir"] == str(tmp_path / "runs" / "x")
     assert block["manifest_path"] == str(tmp_path / "runs" / "x" / "manifest.json")
 
@@ -618,9 +609,6 @@ def test_show_config_schema_literal_catalogs_interpolated(
     assert "Signal Policies" in guide
     assert "Signal Execution Timings" in guide
 
-    # Reserved execute keys
-    assert "Reserved `optimization.execute` Keys" in guide
-
 
 def test_show_config_schema_points_at_components_and_internal_block_policy(
     capsys: pytest.CaptureFixture[str],
@@ -669,12 +657,8 @@ def test_show_config_schema_continuous_future_example_validates(
 ) -> None:
     """The embedded continuous-future YAML validates through the real validation coordinator."""
     monkeypatch.chdir(tmp_path)
-    write_indicator_component(
-        tmp_path / "research" / "components" / "indicators" / "returns.py"
-    )
-    write_strategy_component(
-        tmp_path / "research" / "components" / "strategies" / "strategy.py"
-    )
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
 
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
@@ -705,12 +689,8 @@ def test_show_config_schema_embedded_example_validates(
     """The embedded example Run Config YAML validates through the real
     validation coordinator with wired demo components."""
     monkeypatch.chdir(tmp_path)
-    write_indicator_component(
-        tmp_path / "research" / "components" / "indicators" / "returns.py"
-    )
-    write_strategy_component(
-        tmp_path / "research" / "components" / "strategies" / "strategy.py"
-    )
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
 
     from research.aegis_research.configuration import (
         CONFIG_SCHEMA_VERSION,
@@ -735,9 +715,9 @@ def test_show_config_schema_embedded_example_validates(
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "sharpe_ratio"},
-            "optimization": {
-                "search": "grid",
-                "observation_block_bars": 63,
+        "optimization": {
+            "search": "grid",
+            "observation_block_bars": 63,
         },
     }
 
@@ -772,12 +752,8 @@ def test_show_config_schema_coherence_optimization_required(
 
     # Side B: config omitting optimization fails validation
     monkeypatch.chdir(tmp_path)
-    write_indicator_component(
-        tmp_path / "research" / "components" / "indicators" / "returns.py"
-    )
-    write_strategy_component(
-        tmp_path / "research" / "components" / "strategies" / "strategy.py"
-    )
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
 
     raw_no_optimization = {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -902,9 +878,8 @@ def test_show_indicator_schema_example_round_trips_through_registry(
     from research.aegis_research.component_registry.registry import (
         discover_component_registry,
     )
-    example_src = Path(
-        "research/aegis_research/component_registry/indicator_example.py"
-    )
+
+    example_src = Path("research/aegis_research/component_registry/indicator_example.py")
     dest = tmp_path / "research" / "components" / "indicators" / "example_ma.py"
     dest.parent.mkdir(parents=True)
     shutil.copy(example_src, dest)
@@ -936,7 +911,7 @@ def test_show_indicator_schema_guide_embeds_example_source(
     # The example source is embedded as a code block
     assert "## Complete Example" in markdown
     # Key lines from the example
-    assert 'COMPONENT_MANIFEST = {' in markdown
+    assert "COMPONENT_MANIFEST = {" in markdown
     assert '"family": "indicators"' in markdown
     assert '"id": "example.ma"' in markdown
     assert "def run(data, *, n_candidates, **param_lists):" in markdown
@@ -1093,9 +1068,7 @@ def test_show_strategy_schema_example_round_trips_through_registry(
         discover_component_registry,
     )
 
-    example_src = Path(
-        "research/aegis_research/component_registry/strategy_example.py"
-    )
+    example_src = Path("research/aegis_research/component_registry/strategy_example.py")
     dest = tmp_path / "research" / "components" / "strategies" / "example_ma_cross.py"
     dest.parent.mkdir(parents=True)
     shutil.copy(example_src, dest)
@@ -1129,7 +1102,7 @@ def test_show_strategy_schema_guide_embeds_example_source(
     # The example source is embedded as a code block
     assert "## Complete Example" in markdown
     # Key lines from the example
-    assert 'COMPONENT_MANIFEST = {' in markdown
+    assert "COMPONENT_MANIFEST = {" in markdown
     assert '"family": "strategies"' in markdown
     assert '"id": "example.ma_cross"' in markdown
     assert "def run(inputs, *, n_candidates, **param_lists):" in markdown
@@ -1169,12 +1142,8 @@ def test_authoring_story_round_trip(
     )
 
     # Copy both packaged examples into the component tree
-    indicator_src = Path(
-        "research/aegis_research/component_registry/indicator_example.py"
-    )
-    strategy_src = Path(
-        "research/aegis_research/component_registry/strategy_example.py"
-    )
+    indicator_src = Path("research/aegis_research/component_registry/indicator_example.py")
+    strategy_src = Path("research/aegis_research/component_registry/strategy_example.py")
     indicator_dest = tmp_path / "research" / "components" / "indicators" / "example_ma.py"
     strategy_dest = tmp_path / "research" / "components" / "strategies" / "example_ma_cross.py"
     indicator_dest.parent.mkdir(parents=True)
@@ -1197,9 +1166,9 @@ def test_authoring_story_round_trip(
         "strategy": {"id": "example.ma_cross"},
         "indicators": [{"id": "example.ma"}],
         "ranking": {"metric": "sharpe_ratio"},
-            "optimization": {
-                "search": "grid",
-                "observation_block_bars": 63,
+        "optimization": {
+            "search": "grid",
+            "observation_block_bars": 63,
         },
     }
 
@@ -1289,12 +1258,6 @@ def test_config_schema_guide_states_missing_policies() -> None:
     """Drift: the missing-index policy catalog is interpolated from code."""
     guide = _render_guide("config-schema")
     assert "Missing-Index Policy" in guide
-
-
-def test_config_schema_guide_states_reserved_execute_keys() -> None:
-    """Drift: reserved optimization.execute keys are interpolated from code."""
-    guide = _render_guide("config-schema")
-    assert "Reserved `optimization.execute` Keys" in guide
 
 
 def test_config_schema_guide_marks_optimization_required() -> None:

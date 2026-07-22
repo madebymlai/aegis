@@ -52,7 +52,7 @@ def _read_calmar_ratio(pf: Any, config: ReportConfig) -> pd.Series:
     return annualized / max_drawdown.replace(0.0, np.nan)
 
 
-CALMAR_RATIO_EXTRACTOR = ExtractorSpec(_read_calmar_ratio)
+CALMAR_RATIO_EXTRACTOR = ExtractorSpec(_read_calmar_ratio, contract_version=1)
 
 __all__ = [
     "CALMAR_RATIO_DEFINITION",

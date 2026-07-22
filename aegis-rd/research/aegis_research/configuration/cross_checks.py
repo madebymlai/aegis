@@ -69,9 +69,7 @@ def _full_cross_checks(
     for i, ind_def in ind_defs:
         _check_params(f"indicators[{i}]", config.indicators[i], ind_def, issues)
 
-    _check_metric_membership(
-        config.ranking.metric, issues, metric_registry=metric_registry
-    )
+    _check_metric_membership(config.ranking.metric, issues, metric_registry=metric_registry)
     for i, metric in enumerate(config.report.metrics):
         _check_metric_membership(
             metric, issues, metric_registry=metric_registry, path=f"report.metrics[{i}]"
@@ -91,9 +89,7 @@ def _check_strategy_membership(
     if not isinstance(strategy_config, RunSourceRefConfig):
         return None
     if strategy_config.id == "all":
-        issues.append(
-            ConfigValidationIssue("strategy.id", "must select one component id")
-        )
+        issues.append(ConfigValidationIssue("strategy.id", "must select one component id"))
         return None
     from research.aegis_research.component_registry import (
         ComponentRegistryError,
@@ -101,13 +97,9 @@ def _check_strategy_membership(
     )
 
     try:
-        return component_registry.get(
-            ComponentSelection("strategies", strategy_config.id)
-        )
+        return component_registry.get(ComponentSelection("strategies", strategy_config.id))
     except ComponentRegistryError:
-        issues.append(
-            ConfigValidationIssue("strategy.id", "unknown strategy component id")
-        )
+        issues.append(ConfigValidationIssue("strategy.id", "unknown strategy component id"))
         return None
 
 
@@ -142,21 +134,13 @@ def _check_indicators_membership(
             )
         seen_ids.add(config.id)
         if config.id == "all":
-            issues.append(
-                ConfigValidationIssue(
-                    f"{item_path}.id", "must select one component id"
-                )
-            )
+            issues.append(ConfigValidationIssue(f"{item_path}.id", "must select one component id"))
             continue
         try:
-            definition = component_registry.get(
-                ComponentSelection("indicators", config.id)
-            )
+            definition = component_registry.get(ComponentSelection("indicators", config.id))
         except ComponentRegistryError:
             issues.append(
-                ConfigValidationIssue(
-                    f"{item_path}.id", "unknown indicator component id"
-                )
+                ConfigValidationIssue(f"{item_path}.id", "unknown indicator component id")
             )
             continue
         result.append((i, definition))
@@ -277,16 +261,12 @@ def _raw_best_effort_checks(
     if isinstance(strategy_raw, dict) and "id" in strategy_raw:
         sid = strategy_raw.get("id")
         if sid == "all":
-            issues.append(
-                ConfigValidationIssue("strategy.id", "must select one component id")
-            )
+            issues.append(ConfigValidationIssue("strategy.id", "must select one component id"))
         elif isinstance(sid, str) and sid:
             try:
                 component_registry.get(ComponentSelection("strategies", sid))
             except ComponentRegistryError:
-                issues.append(
-                    ConfigValidationIssue("strategy.id", "unknown strategy component id")
-                )
+                issues.append(ConfigValidationIssue("strategy.id", "unknown strategy component id"))
 
     # Indicators
     indicators_raw = raw.get("indicators")
@@ -309,18 +289,14 @@ def _raw_best_effort_checks(
             seen.add(iid)
             if iid == "all":
                 issues.append(
-                    ConfigValidationIssue(
-                        f"indicators[{i}].id", "must select one component id"
-                    )
+                    ConfigValidationIssue(f"indicators[{i}].id", "must select one component id")
                 )
                 continue
             try:
                 component_registry.get(ComponentSelection("indicators", iid))
             except ComponentRegistryError:
                 issues.append(
-                    ConfigValidationIssue(
-                        f"indicators[{i}].id", "unknown indicator component id"
-                    )
+                    ConfigValidationIssue(f"indicators[{i}].id", "unknown indicator component id")
                 )
 
     # Ranking metric

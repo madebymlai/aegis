@@ -51,7 +51,13 @@ def default_metadata(
             effective_arrays=arrays,
         ),
         arrays=[
-            ArrayDescriptor(name=name, required=True, loaded=True, observed=True, ohlc=name in {"Close", "Open", "High", "Low", "Volume"})
+            ArrayDescriptor(
+                name=name,
+                required=True,
+                loaded=True,
+                observed=True,
+                ohlc=name in {"Close", "Open", "High", "Low", "Volume"},
+            )
             for name in arrays
         ],
         coverage=CoverageFacet(instrument_ids=ids, rows=rows, start=start, end=end),

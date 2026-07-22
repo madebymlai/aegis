@@ -386,24 +386,12 @@ class RankingConfig:
     min_trades: NonNegativeInt = 0
 
 
-OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
-    {
-        "random_subset",
-        "seed",
-        "merge_func",
-        "raise_no_results",
-        "filter_results",
-    }
-)
-
-
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class OptimizationConfig:
     search: Literal["grid", "random"]
     observation_block_bars: PositiveInt
     random_subset: PositiveInt | None = None
     seed: NonNegativeInt | None = None
-    execute: dict[str, Any] = field(default_factory=dict)
 
     @model_validator(mode="after")
     def _random_needs_subset_and_seed(self):
@@ -417,18 +405,6 @@ class OptimizationConfig:
                 )
         if self.search == "grid" and self.random_subset is not None:
             raise ValueError("random_subset is only valid when optimization.search is 'random'")
-        return self
-
-    @model_validator(mode="after")
-    def _execute_no_reserved_keys(self):
-        reserved = sorted(set(self.execute) & OPTIMIZATION_EXECUTE_RESERVED_KEYS)
-        if reserved:
-            raise ValueError(
-                f"reserved keys {reserved} are managed by Aegis's optimization "
-                "layer and must not be passed through optimization.execute, which "
-                "forwards raw vbt.parameterized engine kwargs only "
-                "(e.g. chunking, engine, progress)"
-            )
         return self
 
 

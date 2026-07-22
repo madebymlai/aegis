@@ -56,9 +56,7 @@ def test_window_can_use_output_specific_deduped_candidate_index() -> None:
         outputs={"sig": arr},
         candidate_index={("A", 1): 0, ("A", 2): 1, ("B", 1): 2, ("B", 2): 3},
         n_symbols=n_symbols,
-        output_candidate_index={
-            "sig": {("A", 1): 0, ("A", 2): 0, ("B", 1): 1, ("B", 2): 1}
-        },
+        output_candidate_index={"sig": {("A", 1): 0, ("A", 2): 0, ("B", 1): 1, ("B", 2): 1}},
     )
 
     window = store.window(slice(1, 3), [("A", 2), ("B", 1), ("A", 1)])
@@ -200,10 +198,12 @@ def test_invalid_keys_store_with_no_candidates_returns_empty_set() -> None:
 
 def test_invalid_keys_all_finite_blocks_returns_empty_set() -> None:
     # 2 rows, 2 candidates x 2 symbols = 4 cols.  Candidate A cols 0:2, B cols 2:4.
-    outputs = np.array([
-        [1.0, 2.0, 3.0, 4.0],
-        [5.0, 6.0, 7.0, 8.0],
-    ])
+    outputs = np.array(
+        [
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+        ]
+    )
     store = _invalid_keys_store(
         outputs={"mom": outputs},
         n_symbols=2,
@@ -214,10 +214,12 @@ def test_invalid_keys_all_finite_blocks_returns_empty_set() -> None:
 
 def test_invalid_keys_one_all_non_finite_block_returns_that_key() -> None:
     """Candidate B (cols 2:4) is all-NaN; A (cols 0:2) is finite."""
-    outputs = np.array([
-        [1.0, 2.0, np.nan, np.nan],
-        [3.0, 4.0, np.nan, np.nan],
-    ])
+    outputs = np.array(
+        [
+            [1.0, 2.0, np.nan, np.nan],
+            [3.0, 4.0, np.nan, np.nan],
+        ]
+    )
     store = _invalid_keys_store(
         outputs={"mom": outputs},
         n_symbols=2,
@@ -232,16 +234,20 @@ def test_invalid_keys_any_output_non_finite_makes_candidate_invalid() -> None:
     """Two outputs; Candidate A is finite in 'mom' but all-NaN in 'vol'."""
     # Candidate A (position 0, col 0): finite in mom, NaN in vol
     # Candidate B (position 1, col 1): finite in both
-    mom = np.array([
-        [1.0, 2.0],
-        [3.0, 4.0],
-        [5.0, 6.0],
-    ])
-    vol = np.array([
-        [np.nan, 1.0],
-        [np.nan, 2.0],
-        [np.nan, 3.0],
-    ])
+    mom = np.array(
+        [
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ]
+    )
+    vol = np.array(
+        [
+            [np.nan, 1.0],
+            [np.nan, 2.0],
+            [np.nan, 3.0],
+        ]
+    )
     store = _invalid_keys_store(
         outputs={"mom": mom, "vol": vol},
         n_symbols=1,
@@ -253,10 +259,12 @@ def test_invalid_keys_any_output_non_finite_makes_candidate_invalid() -> None:
 
 def test_invalid_keys_all_inf_block_is_non_finite() -> None:
     """An all-inf block should be treated the same as all-NaN."""
-    outputs = np.array([
-        [1.0, np.inf],
-        [2.0, np.inf],
-    ])
+    outputs = np.array(
+        [
+            [1.0, np.inf],
+            [2.0, np.inf],
+        ]
+    )
     store = _invalid_keys_store(
         outputs={"sig": outputs},
         n_symbols=1,
@@ -278,10 +286,12 @@ def test_invalid_keys_multiple_candidates_all_invalid() -> None:
 def test_invalid_keys_respects_output_candidate_index_dedup() -> None:
     """When output_candidate_index maps multiple full keys to the same block,
     the non-finite check still operates correctly on the deduped column block."""
-    outputs = np.array([
-        [np.nan, 1.0],   # position 0 all-NaN, position 1 finite
-        [np.nan, 2.0],
-    ])
+    outputs = np.array(
+        [
+            [np.nan, 1.0],  # position 0 all-NaN, position 1 finite
+            [np.nan, 2.0],
+        ]
+    )
     full_index = build_candidate_index({"x": [1, 2, 3], "y": [10, 10, 10]})
     # sorted names x, y -> (1,10):0, (2,10):1, (3,10):2 in the full index; the
     # indicator deduped y (always 10) so (1,10) and (2,10) share block 0.
@@ -298,10 +308,12 @@ def test_invalid_keys_respects_output_candidate_index_dedup() -> None:
 
 def test_invalid_keys_is_cached_across_reads() -> None:
     """The scan runs once: repeat access returns the identical cached set object."""
-    outputs = np.array([
-        [1.0, np.nan],
-        [2.0, np.nan],
-    ])
+    outputs = np.array(
+        [
+            [1.0, np.nan],
+            [2.0, np.nan],
+        ]
+    )
     store = _invalid_keys_store(
         outputs={"sig": outputs},
         n_symbols=1,

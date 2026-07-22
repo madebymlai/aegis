@@ -215,9 +215,7 @@ def test_artifact_registry_persists_the_manifest_on_every_mutation(
         config={},
     )
     persist_calls: list[bool] = []
-    registry = ArtifactRegistry(
-        manifest, tmp_path, persist=lambda: persist_calls.append(True)
-    )
+    registry = ArtifactRegistry(manifest, tmp_path, persist=lambda: persist_calls.append(True))
     artifact_path = tmp_path / "report.json"
 
     registry.plan_artifact(

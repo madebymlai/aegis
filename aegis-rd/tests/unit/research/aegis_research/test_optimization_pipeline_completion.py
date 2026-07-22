@@ -45,6 +45,7 @@ from tests.support.research.aegis_research.test_doubles import (
 
 def _candidate_rows() -> list[dict[str, Any]]:
     """Build three role-tagged candidate rows matching the publishing-stage output."""
+
     def candidate(fast: int, slow: int, score: float) -> EvaluatedCandidate:
         return EvaluatedCandidate(
             params={"fast": fast, "slow": slow},
@@ -190,9 +191,7 @@ def test_completion_returns_result_and_marks_completed(
     # candidate_key_for_role resolves PUBLICATION_ACTIVE rows only.
     with CandidateStore(store_path) as store:
         stored = [
-            store.candidate_by_key(
-                store.candidate_key_for_role(run_id, role), run_id=run_id
-            )
+            store.candidate_by_key(store.candidate_key_for_role(run_id, role), run_id=run_id)
             for role in ("best", "median", "worst")
         ]
     scores = [row["candidate"]["mean_rank"] for row in stored]

@@ -19,7 +19,7 @@ from research.aegis_research.configuration import (
     resolve_run_config,
 )
 from research.aegis_research.market_data.adapters import catalog as catalog_adapter
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.optimization.portfolio_simulation._simulation import (
     VBT_STATICIZED_CACHE_ENV,
 )
 from research.aegis_research.run_pipeline import run_strategy_sweep

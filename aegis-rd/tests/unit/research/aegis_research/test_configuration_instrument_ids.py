@@ -38,12 +38,6 @@ def test_declared_marking_resolver_marks_exchange_legs_mid_by_section_membership
 
     resolver = declared_marking_resolver(config)
 
-    assert resolver.resolve(
-        InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D"
-    ).mode is MarkMode.MID
-    assert resolver.resolve(
-        InstrumentId.from_str("UEQC.XETR"), "1D"
-    ).mode is MarkMode.QUOTE
-    assert resolver.resolve(
-        InstrumentId.from_str("VUSA.XLON"), "1D"
-    ).mode is MarkMode.LAST
+    assert resolver.resolve(InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D").mode is MarkMode.MID
+    assert resolver.resolve(InstrumentId.from_str("UEQC.XETR"), "1D").mode is MarkMode.QUOTE
+    assert resolver.resolve(InstrumentId.from_str("VUSA.XLON"), "1D").mode is MarkMode.LAST

@@ -107,9 +107,7 @@ def result_from_load(
     """
     requested = config.effective_arrays
     required = merge_data_arrays(requested, required_arrays or ())
-    observation, diagnostics = _observe.observe_source(
-        config, source, requested_arrays=requested
-    )
+    observation, diagnostics = _observe.observe_source(config, source, requested_arrays=requested)
     quality = _judge.evaluate(
         config,
         diagnostics,

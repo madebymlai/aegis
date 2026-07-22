@@ -159,12 +159,8 @@ def test_unavailable_failure_wire_shape_is_pinned() -> None:
     assert result.metadata.provenance.source_metadata["error_type"] == (
         "MarketDataUnavailableError"
     )
-    assert "missing=" in result.metadata.provenance.source_metadata[
-        "error_summary"
-    ]
-    assert result.metadata.provenance.index_evidence["source"] == (
-        QUALITY_DATA_UNAVAILABLE
-    )
+    assert "missing=" in result.metadata.provenance.source_metadata["error_summary"]
+    assert result.metadata.provenance.index_evidence["source"] == (QUALITY_DATA_UNAVAILABLE)
     assert result.metadata.provenance.port_metadata == {}
     assert result.metadata.provenance.update_supported is False
     assert result.metadata.provenance.source_class is None

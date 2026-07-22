@@ -10,7 +10,7 @@ def test_active_cli_docs_use_aerd_contract() -> None:
     assert "aerd run --train" not in docs
     assert "aerd play" not in docs
     assert "aerd exp" not in docs
-    assert "Both run configs require explicit config paths" in docs
+    assert "Run configs require explicit config paths" in docs
     assert "| `execution_failure` | 10 |" in docs
     assert "aegis-research run" not in docs
     assert "python -m research.aegis_research.cli" not in docs

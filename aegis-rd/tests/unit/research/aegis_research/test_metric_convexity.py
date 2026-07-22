@@ -65,7 +65,10 @@ def _stub_portfolio() -> _StubPortfolio:
         [groups, ["SPY", "TLT"]], names=["candidate_id", SYMBOL_LEVEL]
     )
     close = pd.DataFrame(
-        {col: (spy_close if col[1] == "SPY" else pd.Series(50.0, index=index)) for col in close_columns}
+        {
+            col: (spy_close if col[1] == "SPY" else pd.Series(50.0, index=index))
+            for col in close_columns
+        }
     )
     close.columns = close_columns
     return _StubPortfolio(value, close)
@@ -173,7 +176,9 @@ def test_unavailable_benchmark_degrades_to_nan_not_error(monkeypatch: pytest.Mon
     assert vals[QUARTERLY_RETURN_SKEW_ID]["convex"] > 0.0
 
 
-def test_lazy_benchmark_close_conforms_tz_to_a_tz_aware_target(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lazy_benchmark_close_conforms_tz_to_a_tz_aware_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The lazily-pulled benchmark must carry the target index's tz.
 
     yf-sourced panels have a tz-aware (UTC) value index. The pulled close is reindexed onto that

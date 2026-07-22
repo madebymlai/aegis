@@ -2,6 +2,11 @@
 
 Status: accepted
 
+Amended 2026-07-22: continuous Candidate replay replaced Window Evaluation. The
+portfolio engine and `ResolvedBook` remain one deep internal module, now named
+`optimization/portfolio_simulation/`. Historical design language below describes the
+module that existed when this decision was accepted.
+
 Window Evaluation is the deep module that turns one Candidate chunk over one split window
 into a metric frame, yet before this work its single production call into the portfolio
 simulation module crossed an 11-argument seam and its own construction took 9 fields. Five
@@ -34,7 +39,7 @@ run-constant book facts are one value.
   `periods_per_year` deliberately stays on `ReportConfig`: one home, read by both metrics
   and carry.
 - **The absorb is a privacy change, not a textual merge.** Window Evaluation is the
-  `optimization/window_evaluation/` subpackage; its `__init__` exports exactly
+  `optimization/portfolio_simulation/` subpackage; its `__init__` exports exactly
   `WindowEvaluator` and `ResolvedBook`, pinned by a facade-surface test (the market-data
   facade precedent). The simulation keeps its own submodule (`_simulation`) and single
   responsibility — VBT engine wiring, drift-band gating, short financing carry, margin
@@ -80,7 +85,7 @@ run-constant book facts are one value.
 
 - **Amends root ADR-0008 (Exposure Validation)**: research's one mandated wiring test
   through `simulate_portfolio_batch` now crosses Window Evaluation's internal simulation
-  seam; the gate call site is `window_evaluation/_simulation.py`. The kernel-side surface
+  seam; the gate call site is `portfolio_simulation/_simulation.py`. The kernel-side surface
   is untouched. Root ADR-0008 carries an amendment note.
 - **Extends ADR-0024's lesson one layer up**: one constructor, coherence by construction,
   threaded parameters die. ADR-0024 carries a back-reference.

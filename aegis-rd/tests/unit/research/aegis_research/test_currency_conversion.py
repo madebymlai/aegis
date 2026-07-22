@@ -49,12 +49,8 @@ def test_rate_for_returns_aligned_native_to_base_rate_or_identity() -> None:
     rate = pd.Series([0.90, 0.95], index=bars[[0, 2]])
     conversion = CurrencyConversion({_USD_LEG: rate})
 
-    assert conversion.rate_for(_USD_LEG, bars).tolist() == pytest.approx(
-        [0.90, 0.90, 0.95, 0.95]
-    )
-    assert conversion.rate_for(_BASE_LEG, bars).tolist() == pytest.approx(
-        [1.0, 1.0, 1.0, 1.0]
-    )
+    assert conversion.rate_for(_USD_LEG, bars).tolist() == pytest.approx([0.90, 0.90, 0.95, 0.95])
+    assert conversion.rate_for(_BASE_LEG, bars).tolist() == pytest.approx([1.0, 1.0, 1.0, 1.0])
 
 
 def test_apply_fails_loud_when_the_rate_starts_after_the_first_bar() -> None:

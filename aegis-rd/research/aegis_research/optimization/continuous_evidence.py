@@ -26,15 +26,15 @@ from research.aegis_research.optimization.observation_blocks import (
     observation_block_protocol,
     observation_block_ranking_protocol,
 )
-from research.aegis_research.optimization.preflight import OptimizationPreflight
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.optimization.portfolio_simulation._simulation import (
     PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,
 )
+from research.aegis_research.optimization.preflight import OptimizationPreflight
 
 CONTINUOUS_SELECTION_EVIDENCE_SCHEMA_VERSION = "continuous_selection_evidence.v1"
 CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION = "continuous_selection_identity.v1"
 MATRIX_EVIDENCE_SCHEMA_VERSION = "candidate_block_matrix.v1"
-METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION = "bounds_metric_extractors.v1"
+METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION = "bounds_metric_extractors.v2"
 
 
 @dataclass(frozen=True)
@@ -341,6 +341,7 @@ def _metric_protocol(registry: FrozenMetricRegistry) -> dict[str, Any]:
                     else "canonical_full_path_primitives"
                 ),
                 "source_type": definition.source_type,
+                "contract_version": registry.extractors[metric_id].contract_version,
                 "boundary_semantics": definition.boundary_semantics,
                 "scale": registry.extractors[metric_id].scale,
                 "absolute": registry.extractors[metric_id].abs_,

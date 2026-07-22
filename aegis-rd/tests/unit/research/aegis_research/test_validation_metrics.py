@@ -47,7 +47,7 @@ def _component_registry(tmp_path: Path):
         "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
         "}\n"
         "\n# %% main compute\n"
-        "def run(bundle):\n    \"\"\"Fixture strategy, never executed.\"\"\"\n"
+        'def run(bundle):\n    """Fixture strategy, never executed."""\n'
         "    raise RuntimeError('not executed during config tests')\n"
     )
     return discover_component_registry(root=root, repo_root=tmp_path)
@@ -114,9 +114,7 @@ def test_ranking_construction_rejects_float_min_trades() -> None:
 
 def test_ranking_construction_rejects_unknown_key() -> None:
     with pytest.raises(ValidationError) as e:
-        _RANKING_ADAPTER.validate_python(
-            {"metric": "sharpe_ratio", "bogus": 42}
-        )
+        _RANKING_ADAPTER.validate_python({"metric": "sharpe_ratio", "bogus": 42})
     assert any(err["type"] == "unexpected_keyword_argument" for err in e.value.errors())
 
 
@@ -136,7 +134,9 @@ def test_ranking_not_a_dict_fails(tmp_path: Path) -> None:
     }
     with pytest.raises(ConfigValidationError) as e:
         resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-    assert any(i.path == "ranking" and "Input should be a dictionary" in i.message for i in e.value.issues)
+    assert any(
+        i.path == "ranking" and "Input should be a dictionary" in i.message for i in e.value.issues
+    )
 
 
 # ── no duplicate issues ──────────────────────────────────────────────────────
@@ -161,16 +161,27 @@ def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:
 
 # ── report.metrics: opt-in extra reported metrics beside the ranker ────────────
 
+
 def test_requested_metric_ids_unions_ranking_and_report_metrics() -> None:
     from research.aegis_research.configuration.resolution import _requested_metric_ids
 
     raw = {
         "ranking": {"metric": "convergent_income_utility"},
-        "report": {"metrics": ["convergent_tail_budget", "convergent_downside_lskew", "convergent_income_utility"]},
+        "report": {
+            "metrics": [
+                "convergent_tail_budget",
+                "convergent_downside_lskew",
+                "convergent_income_utility",
+            ]
+        },
     }
     ids = _requested_metric_ids(raw)
     # Ranker first, then report extras, de-duplicated (income appears once).
-    assert ids == ("convergent_income_utility", "convergent_tail_budget", "convergent_downside_lskew")
+    assert ids == (
+        "convergent_income_utility",
+        "convergent_tail_budget",
+        "convergent_downside_lskew",
+    )
 
 
 def _resolve_with_report(ranking: dict[str, Any], report: dict[str, Any], *, tmp_path: Path):
@@ -195,8 +206,15 @@ def test_report_metrics_pull_custom_metrics_into_the_effective_registry(tmp_path
         tmp_path=tmp_path,
     )
     ids = set(resolved.metric_registry.ids())
-    assert {"convergent_income_utility", "convergent_tail_budget", "convergent_downside_lskew"} <= ids
-    assert list(resolved.config.report.metrics) == ["convergent_tail_budget", "convergent_downside_lskew"]
+    assert {
+        "convergent_income_utility",
+        "convergent_tail_budget",
+        "convergent_downside_lskew",
+    } <= ids
+    assert list(resolved.config.report.metrics) == [
+        "convergent_tail_budget",
+        "convergent_downside_lskew",
+    ]
 
 
 def test_unknown_report_metric_fails_closed_at_its_path(tmp_path: Path) -> None:

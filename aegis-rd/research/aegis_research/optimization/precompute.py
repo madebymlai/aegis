@@ -116,9 +116,7 @@ def _prefix_comparison_bounds(range_: slice, full_len: int) -> tuple[int, int]:
 def _non_negative_slice_bound(value, name: str) -> int:
     bound = operator_index(value)
     if bound < 0:
-        raise ValueError(
-            f"precompute no-look-ahead validation requires non-negative {name} bounds"
-        )
+        raise ValueError(f"precompute no-look-ahead validation requires non-negative {name} bounds")
     return bound
 
 
@@ -166,9 +164,7 @@ class IndicatorPrecompute:
     n_symbols: int
     output_candidate_index: Mapping[str, CandidateIndex] | None = None
 
-    def window(
-        self, range_: slice, keys: Sequence[CandidateKey]
-    ) -> dict[str, np.ndarray]:
+    def window(self, range_: slice, keys: Sequence[CandidateKey]) -> dict[str, np.ndarray]:
         """Rows in ``range_`` by the candidate-major columns for ``keys``, in order."""
         windowed: dict[str, np.ndarray] = {}
         for name, array in self.outputs.items():
@@ -228,9 +224,7 @@ def _has_finite_value(values: Any) -> bool:
     return bool(np.isfinite(values).any())
 
 
-def empty_precompute(
-    close, n_candidates: int, **param_lists: Sequence
-) -> IndicatorPrecompute:
+def empty_precompute(close, n_candidates: int, **param_lists: Sequence) -> IndicatorPrecompute:
     """Store with no indicator outputs, for strategy-only sources (no indicators).
 
     The simulate stage ignores the (empty) windowed outputs and computes

@@ -58,7 +58,13 @@ def _read_sharpe_ratio(pf: Any, config: ReportConfig) -> pd.Series:
     )
 
 
-def _native_range_factory(metric_id: str):
+def _continuous_path_range_factory(metric_id: str):
+    """Build an Observation-Block read over one uninterrupted Portfolio path.
+
+    Return and drawdown deliberately reduce their full native streams: bounded
+    VBT calls rebase the first return and reset inherited high-water state.
+    """
+
     def factory(config: ReportConfig):
         def extractor(pf: Any, *, sim_start: int, sim_end: int) -> pd.Series:
             kwargs = {
@@ -87,9 +93,7 @@ def _native_range_factory(metric_id: str):
             if metric_id == "total_trades":
                 return _to_series(pf.get_exit_trades(**kwargs).count())
             if metric_id == "win_rate":
-                return _to_series(
-                    pf.get_exit_trades(**kwargs).status_closed.get_win_rate()
-                )
+                return _to_series(pf.get_exit_trades(**kwargs).status_closed.get_win_rate())
             if metric_id == "total_fees_paid":
                 return _to_series(pf.get_orders(**kwargs).fees.sum())
             raise KeyError(metric_id)
@@ -102,30 +106,36 @@ def _native_range_factory(metric_id: str):
 BUILTIN_EXTRACTORS: dict[str, ExtractorSpec] = {
     "total_return": ExtractorSpec(
         _read_total_return,
+        contract_version=1,
         scale="percent",
-        range_factory=_native_range_factory("total_return"),
+        range_factory=_continuous_path_range_factory("total_return"),
     ),
     "max_dd": ExtractorSpec(
         _read_max_dd,
+        contract_version=1,
         scale="percent",
         abs_=True,
-        range_factory=_native_range_factory("max_dd"),
+        range_factory=_continuous_path_range_factory("max_dd"),
     ),
     "total_trades": ExtractorSpec(
         _read_total_trades,
-        range_factory=_native_range_factory("total_trades"),
+        contract_version=1,
+        range_factory=_continuous_path_range_factory("total_trades"),
     ),
     "win_rate": ExtractorSpec(
         _read_win_rate,
+        contract_version=1,
         scale="percent",
-        range_factory=_native_range_factory("win_rate"),
+        range_factory=_continuous_path_range_factory("win_rate"),
     ),
     "total_fees_paid": ExtractorSpec(
         _read_total_fees_paid,
-        range_factory=_native_range_factory("total_fees_paid"),
+        contract_version=1,
+        range_factory=_continuous_path_range_factory("total_fees_paid"),
     ),
     "sharpe_ratio": ExtractorSpec(
         _read_sharpe_ratio,
-        range_factory=_native_range_factory("sharpe_ratio"),
+        contract_version=1,
+        range_factory=_continuous_path_range_factory("sharpe_ratio"),
     ),
 }

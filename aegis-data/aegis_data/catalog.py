@@ -608,6 +608,7 @@ def catalog_data_port(
     return CatalogBackedDataPort(
         catalog,
         provider=provider,
+        distribution_provider=provider,
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),

@@ -20,6 +20,7 @@ from research.aegis_research.optimization.evidence_ledger import (
 )
 from research.aegis_research.optimization.observation_blocks import ObservationBlockAnalysis
 from research.aegis_research.optimization.pipeline.setup import SetupResult
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.preflight import (
     OptimizationPreflight,
     PreflightError,
@@ -30,7 +31,6 @@ from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
 
 
 @dataclass(frozen=True)

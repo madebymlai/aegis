@@ -59,15 +59,15 @@ from research.aegis_research.optimization.observation_blocks import (
     observation_block_protocol,
 )
 from research.aegis_research.optimization.pipeline.setup import SetupResult
-from research.aegis_research.optimization.run_data_contract import (
-    DataArrayContract,
-    RunDataFacts,
-)
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
+from research.aegis_research.optimization.portfolio_simulation._simulation import (
     _build_portfolio,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
+)
+from research.aegis_research.optimization.run_data_contract import (
+    DataArrayContract,
+    RunDataFacts,
 )
 from tests.support.research.aegis_research.test_doubles import FakeDataResult
 
@@ -182,7 +182,6 @@ def make_optimization_config(**overrides: Any) -> OptimizationConfig:
         "observation_block_bars": 20,
         "random_subset": None,
         "seed": None,
-        "execute": {},
     }
     defaults.update(overrides)
     return OptimizationConfig(**defaults)

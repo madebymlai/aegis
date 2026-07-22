@@ -44,7 +44,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
         ComponentSpec(
             family="indicators",
             component_id="tests.export_indicator",
-            module="aegis_exec_tests_export_strategy_cand_3a9.indicator_0",
+            module="aegis_exec_tests_export_strategy_cand_98f.indicator_0",
             input_names=("Close",),
             output_names=("signal",),
             params={"window": 5},
@@ -53,7 +53,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
     assert artifact.plan.strategy == ComponentSpec(
         family="strategies",
         component_id="tests.export_strategy",
-        module="aegis_exec_tests_export_strategy_cand_3a9.strategy",
+        module="aegis_exec_tests_export_strategy_cand_98f.strategy",
         input_names=("Close",),
         output_names=(),
         params={"holding_period": 2},
@@ -65,13 +65,7 @@ def test_export_rejects_module_level_research_import(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _locked_workspace(tmp_path)
-    strategy_path = (
-        workspace
-        / "research"
-        / "components"
-        / "strategies"
-        / "export_strategy.py"
-    )
+    strategy_path = workspace / "research" / "components" / "strategies" / "export_strategy.py"
     strategy_path.write_text(
         "from vectorbtpro import vbt\n" + strategy_path.read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -90,17 +84,11 @@ def test_export_requires_every_component_to_declare_warmup_bars(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _locked_workspace(tmp_path)
-    strategy_path = (
-        workspace
-        / "research"
-        / "components"
-        / "strategies"
-        / "export_strategy.py"
-    )
+    strategy_path = workspace / "research" / "components" / "strategies" / "export_strategy.py"
     source = strategy_path.read_text(encoding="utf-8")
     strategy_path.write_text(
         source.replace(
-            '# %% lookback\ndef lookback(**params):\n'
+            "# %% lookback\ndef lookback(**params):\n"
             '    """Return the strategy holding-period warmup."""\n'
             '    return int(params["holding_period"])\n\n\n',
             "",

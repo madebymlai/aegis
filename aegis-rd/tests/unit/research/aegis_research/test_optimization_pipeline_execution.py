@@ -14,8 +14,8 @@ from research.aegis_research.optimization.evidence_ledger import (
     RunEvidence,
 )
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.source import OptimizationSource, OptimizationSourceError
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
 from tests.support.research.aegis_research.factories import make_setup_result
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,

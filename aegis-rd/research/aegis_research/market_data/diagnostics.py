@@ -66,9 +66,7 @@ def observe_source(
     and diagnosed."""
     if source.failure is not None:
         return empty_observation(), unavailable_diagnostics(config)
-    observation = observe(
-        config, native_data=source.native_data, requested_arrays=requested_arrays
-    )
+    observation = observe(config, native_data=source.native_data, requested_arrays=requested_arrays)
     return observation, diagnose(config, observation)
 
 

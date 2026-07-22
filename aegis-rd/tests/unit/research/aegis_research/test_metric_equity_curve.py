@@ -61,7 +61,9 @@ def test_from_portfolio_normalizes_a_series_to_a_frame() -> None:
         {("only", "SPY"): [10.0, 11.0, 10.5]},
         index=index,
     )
-    close.columns = pd.MultiIndex.from_tuples([("only", "SPY")], names=["candidate_id", SYMBOL_LEVEL])
+    close.columns = pd.MultiIndex.from_tuples(
+        [("only", "SPY")], names=["candidate_id", SYMBOL_LEVEL]
+    )
     curve = EquityCurve.from_portfolio(_StubPortfolio(series, close))
     assert isinstance(curve.value, pd.DataFrame)
     assert list(curve.value.columns) == ["only"]

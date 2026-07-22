@@ -191,8 +191,12 @@ def _store_with_candidate(
 
 def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
     store = CandidateStore(tmp_path / "candidates.sqlite3")
-    fast_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window")
-    slow_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window")
+    fast_key = encode(
+        ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window"
+    )
+    slow_key = encode(
+        ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window"
+    )
     window_key = encode(ComponentRef("indicators", "demo.mom", "demo.mom"), "window")
     result = OptimizationResult(
         best=_candidate({fast_key: 2, slow_key: 10, window_key: 20}, 0.30),
@@ -230,8 +234,12 @@ def _candidate(params: dict[str, object], score: float) -> EvaluatedCandidate:
 
 
 def _candidate_rows(data_identity: dict[str, object]) -> list[dict[str, object]]:
-    fast_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window")
-    slow_key = encode(ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window")
+    fast_key = encode(
+        ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window"
+    )
+    slow_key = encode(
+        ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window"
+    )
     window_key = encode(ComponentRef("indicators", "demo.mom", "demo.mom"), "window")
     winner = _candidate({fast_key: 2, slow_key: 10, window_key: 20}, 0.30)
     result = OptimizationResult(best=winner, median=winner, worst=winner)
@@ -271,10 +279,12 @@ def _source_evidence(*, drop_indicator_runtime: bool = False) -> dict[str, objec
             "fixed_params": {},
             "param_keys": {
                 "fast_window": encode(
-                    ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "fast_window"
+                    ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"),
+                    "fast_window",
                 ),
                 "slow_window": encode(
-                    ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"), "slow_window"
+                    ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"),
+                    "slow_window",
                 ),
             },
         },

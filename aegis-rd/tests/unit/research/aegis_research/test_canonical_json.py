@@ -41,8 +41,7 @@ def test_to_builtin_is_shared_canonical_dataclass_converter() -> None:
         "values": ["alpha", 3],
     }
     assert canonical_json_bytes(payload) == (
-        b'{"name":"demo","nested":{"enabled":true,"threshold":0.25},'
-        b'"values":["alpha",3]}'
+        b'{"name":"demo","nested":{"enabled":true,"threshold":0.25},"values":["alpha",3]}'
     )
 
 

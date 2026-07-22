@@ -226,9 +226,7 @@ def seed_catalog_ohlcv(
     end_ts = start_ts + pd.Timedelta(days=periods)
     start_text = start_ts.date().isoformat()
     end_text = end_ts.date().isoformat()
-    seed_catalog_frames(
-        catalog_path, frames, start=start_text, end=end_text, currency=currency
-    )
+    seed_catalog_frames(catalog_path, frames, start=start_text, end=end_text, currency=currency)
     return start_text, end_text
 
 

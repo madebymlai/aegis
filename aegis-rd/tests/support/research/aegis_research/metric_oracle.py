@@ -67,9 +67,7 @@ def _raw_sources(pf: Any, config: ReportConfig) -> tuple[Any, Any]:
     return stats, sharpe
 
 
-def _select_headline(
-    metric: dict[str, Any], title: str, stats: Any, sharpe: Any
-) -> float | None:
+def _select_headline(metric: dict[str, Any], title: str, stats: Any, sharpe: Any) -> float | None:
     if metric["source_method"] == "stats":
         raw = _headline_from_values(_stat_value_map(stats, title))
     else:

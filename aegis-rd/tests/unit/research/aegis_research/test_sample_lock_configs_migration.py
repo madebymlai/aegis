@@ -94,9 +94,7 @@ def test_sample_lock_config_loads_and_validates(config_name: str, registry) -> N
 
 
 @pytest.mark.parametrize("config_name", sorted(_FROZEN))
-def test_sample_lock_config_has_no_per_component_lock_reference(
-    config_name: str, registry
-) -> None:
+def test_sample_lock_config_has_no_per_component_lock_reference(config_name: str, registry) -> None:
     # ADR-0006 (aegis-rd-396.4): the per-Component lock reference surface is gone from
     # the schema entirely — so the migrated configs cannot carry one.
     config = load_run_config(_config_path(config_name), component_registry=registry).config
@@ -109,9 +107,7 @@ def test_sample_lock_config_has_no_per_component_lock_reference(
 
 
 @pytest.mark.parametrize("config_name", sorted(_FROZEN))
-def test_sample_lock_config_inlines_frozen_component_params(
-    config_name: str, registry
-) -> None:
+def test_sample_lock_config_inlines_frozen_component_params(config_name: str, registry) -> None:
     frozen_id, frozen_params = _FROZEN[config_name]
     config = load_run_config(_config_path(config_name), component_registry=registry).config
     frozen = next(ref for ref in config.indicators if ref.id == frozen_id)
@@ -131,9 +127,7 @@ def test_sample_lock_config_freezes_only_the_previously_locked_component(
         component_registry=registry,
         data=_market_data_bundle(),
     )
-    modes = {
-        ind["id"]: ind["param_mode"] for ind in source.evidence["indicators"]
-    }
+    modes = {ind["id"]: ind["param_mode"] for ind in source.evidence["indicators"]}
     modes[source.evidence["strategy"]["id"]] = source.evidence["strategy"]["param_mode"]
     assert modes[frozen_id] == "fixed"
     for component_id, mode in modes.items():

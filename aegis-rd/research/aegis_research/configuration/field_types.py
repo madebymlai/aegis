@@ -25,6 +25,7 @@ def _validate_timedelta_str(value: str) -> str:
         raise ValueError("must be a pandas Timedelta string (e.g. '1D')") from None
     return value
 
+
 StrictFloat = Annotated[float, Field(strict=True)]
 PositiveCash = Annotated[float, Field(strict=True, gt=0)]
 NonNegativeCash = Annotated[float, Field(strict=True, ge=0)]

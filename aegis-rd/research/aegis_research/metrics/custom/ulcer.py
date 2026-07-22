@@ -61,10 +61,12 @@ def _read_ulcer_performance_index(pf: Any, config: ReportConfig) -> pd.Series:
     The single ``get_value`` accessor call (in ``EquityCurve.from_portfolio``) is what honours the
     one-read-per-batch contract.
     """
-    return ulcer_performance_index_from_curve(EquityCurve.from_portfolio(pf), config.periods_per_year)
+    return ulcer_performance_index_from_curve(
+        EquityCurve.from_portfolio(pf), config.periods_per_year
+    )
 
 
-ULCER_PERFORMANCE_INDEX_EXTRACTOR = ExtractorSpec(_read_ulcer_performance_index)
+ULCER_PERFORMANCE_INDEX_EXTRACTOR = ExtractorSpec(_read_ulcer_performance_index, contract_version=1)
 
 __all__ = [
     "ULCER_PERFORMANCE_INDEX_DEFINITION",

@@ -21,6 +21,7 @@ from research.aegis_research.optimization.continuous_replay import (
     ContinuousReplayResult,
     replay_candidates,
 )
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.precompute import (
     CandidateKey,
     candidate_keys,
@@ -30,7 +31,6 @@ from research.aegis_research.optimization.source import (
     OPTIMIZATION_PARAM_RESERVED_NAMES,
     OptimizationSource,
 )
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
 
 
 class CandidatePathError(ValueError):
@@ -126,9 +126,7 @@ def build_development_paths(
 ) -> DevelopmentPaths:
     """Build every fixed Candidate path before any observational analysis."""
     if ranking_metric not in metric_registry:
-        raise CandidatePathError(
-            f"ranking metric {ranking_metric!r} is not in the metric registry"
-        )
+        raise CandidatePathError(f"ranking metric {ranking_metric!r} is not in the metric registry")
     signal_close = arrays.signal.array("Close")
     resolved_plan = (
         plan
@@ -228,9 +226,7 @@ def _resolve_lookbacks(
 
     resolved_warmup = max(candidate_warmups)
     if resolved_warmup >= row_count:
-        raise CandidatePathError(
-            "resolved Component lookback leaves no scored Development rows"
-        )
+        raise CandidatePathError("resolved Component lookback leaves no scored Development rows")
     return CandidateLookbacks(
         by_candidate=tuple(by_candidate),
         candidate_warmup_bars=tuple(candidate_warmups),

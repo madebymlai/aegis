@@ -26,6 +26,7 @@ COMPONENT_MANIFEST = {
     "owns_portfolio": False,
 }
 
+
 # %% instrument sleeves
 def _id(value):
     return InstrumentId.from_str(value)
@@ -161,9 +162,13 @@ def _defensive_weights(momentum_def, top_k):
 
 
 def _compute_target_weights(
-    mom_row, vol_row, regime,
-    offensive_idx, defensive_idx,
-    top_n, top_k_defensive,
+    mom_row,
+    vol_row,
+    regime,
+    offensive_idx,
+    defensive_idx,
+    top_n,
+    top_k_defensive,
 ):
     """Compute target weights for a single bar given the regime."""
 
@@ -249,9 +254,13 @@ def run(inputs, *, n_candidates, **param_lists):
             regime_changed = prev_regime is not None and regime != prev_regime
 
             weights = _compute_target_weights(
-                mom_2d[t], vol_2d[t], regime,
-                offensive_idx, defensive_idx,
-                tn, tk,
+                mom_2d[t],
+                vol_2d[t],
+                regime,
+                offensive_idx,
+                defensive_idx,
+                tn,
+                tk,
             )
 
             first_bar = prev_regime is None

@@ -2,10 +2,10 @@ from pathlib import Path
 
 from aegis_runtime import debit_interest, gate
 
-from research.aegis_research.optimization.window_evaluation import (
+from research.aegis_research.optimization.portfolio_simulation import (
     _callbacks as portfolio_callbacks,
 )
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.optimization.portfolio_simulation._simulation import (
     VBT_STATICIZED_CACHE_ENV,
     _band_pre_order_segment_nb,
     _vbt_staticized_cache_dir,

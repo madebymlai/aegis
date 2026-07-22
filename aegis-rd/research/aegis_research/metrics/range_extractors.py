@@ -42,9 +42,7 @@ def custom_range_factory(read: Callable[..., Any]) -> Callable[[ReportConfig], C
     """Adapt a custom full-path reader to the exact bounds extractor interface."""
 
     def factory(config: ReportConfig) -> Callable[..., Any]:
-        def extractor(
-            primitives: FullPathPrimitives, *, sim_start: int, sim_end: int
-        ) -> Any:
+        def extractor(primitives: FullPathPrimitives, *, sim_start: int, sim_end: int) -> Any:
             return read(primitives.for_bounds(sim_start, sim_end), config)
 
         return extractor

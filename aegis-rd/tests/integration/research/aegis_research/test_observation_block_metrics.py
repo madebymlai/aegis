@@ -12,7 +12,7 @@ from research.aegis_research.optimization.observation_blocks import (
     ObservationBlocks,
     apply_registered_metric_to_blocks,
 )
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_report_config,
@@ -83,45 +83,61 @@ def test_native_and_custom_metrics_match_continuous_path_semantics() -> None:
     blocks = ObservationBlocks.from_bounds(portfolio.wrapper.index, [(1, 4), (4, 8)])
     primitives = FullPathPrimitives.from_portfolio(portfolio)
 
-    matrices = {
-        metric_id: apply_registered_metric_to_blocks(
-            blocks,
-            portfolio,
-            primitives,
-            registry.get(metric_id),
-            registry.extractors[metric_id],
-            report,
-            candidate_index,
-        )
-        for metric_id in ("total_return", "max_dd", "sharpe_ratio", "ulcer_performance_index")
-    }
-
-    returns = primitives.canonical_returns
-    expected_first_return = ((1.0 + returns.iloc[1:4].fillna(0.0)).prod() - 1.0) * 100.0
-    np.testing.assert_allclose(
-        matrices["total_return"].iloc[:, 0], expected_first_return, rtol=1e-12
+    total_return = apply_registered_metric_to_blocks(
+        blocks,
+        portfolio,
+        primitives,
+        registry.get("total_return"),
+        registry.extractors["total_return"],
+        report,
+        candidate_index,
     )
-    cumulative = (1.0 + returns.fillna(0.0)).cumprod()
-    expected_drawdown = (cumulative / cumulative.cummax() - 1.0).iloc[4:8].min().abs() * 100.0
-    np.testing.assert_allclose(matrices["max_dd"].iloc[:, 1], expected_drawdown, rtol=1e-12)
-    native_sharpe = portfolio.get_sharpe_ratio(
-        sim_start=4,
-        sim_end=8,
-        rec_sim_range=False,
-        freq=pd.Timedelta(report.freq),
-        year_freq=pd.Timedelta(report.year_freq),
+    max_dd = apply_registered_metric_to_blocks(
+        blocks,
+        portfolio,
+        primitives,
+        registry.get("max_dd"),
+        registry.extractors["max_dd"],
+        report,
+        candidate_index,
     )
-    np.testing.assert_allclose(matrices["sharpe_ratio"].iloc[:, 1], native_sharpe, rtol=1e-12)
+    sharpe_ratio = apply_registered_metric_to_blocks(
+        blocks,
+        portfolio,
+        primitives,
+        registry.get("sharpe_ratio"),
+        registry.extractors["sharpe_ratio"],
+        report,
+        candidate_index,
+    )
+    ulcer_performance = apply_registered_metric_to_blocks(
+        blocks,
+        portfolio,
+        primitives,
+        registry.get("ulcer_performance_index"),
+        registry.extractors["ulcer_performance_index"],
+        report,
+        candidate_index,
+    )
 
-    block_returns = returns.iloc[4:8]
-    annualized = (1.0 + block_returns.fillna(0.0)).prod() ** (
-        report.periods_per_year / len(block_returns)
-    ) - 1.0
-    inherited_drawdown = (cumulative / cumulative.cummax() - 1.0).iloc[4:8]
-    ulcer = np.sqrt((inherited_drawdown**2).mean())
     np.testing.assert_allclose(
-        matrices["ulcer_performance_index"].iloc[:, 1],
-        annualized / ulcer,
+        total_return.to_numpy(),
+        [[16.56664627673854, -3.499485569102845e-05], [8.283333333333353, -3.8979529013390857]],
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        max_dd.to_numpy(),
+        [[6.672012977575403, 26.688043749880286], [3.7053505261597564, 14.82140210463908]],
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        sharpe_ratio.to_numpy(),
+        [[5.773550774826662, 0.8713601880923124], [5.445579593973149, -1.8155061328376416]],
+        rtol=1e-12,
+    )
+    np.testing.assert_allclose(
+        ulcer_performance.to_numpy(),
+        [[10150681.389950285, -0.00012065699730236059], [37352.91230874136, -8.614869090555858]],
         rtol=1e-12,
     )
 

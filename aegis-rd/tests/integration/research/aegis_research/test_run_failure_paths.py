@@ -272,8 +272,7 @@ def _write_run_config(
             _run_config_payload(
                 strategy=strategy or {"id": strategy_id},
                 indicators=[],
-                optimization=optimization
-                or {"search": "grid", "observation_block_bars": 20},
+                optimization=optimization or {"search": "grid", "observation_block_bars": 20},
                 catalog_path=tmp_path / "catalog",
             ),
             sort_keys=False,

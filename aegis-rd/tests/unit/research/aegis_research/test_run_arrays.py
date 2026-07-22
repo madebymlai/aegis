@@ -57,9 +57,7 @@ def _frame(
 
 def _result(**overrides: Any) -> MarketDataResult:
     defaults: dict[str, Any] = {
-        "native_data": _Native(
-            {"Close": _frame(_SIGNAL_CLOSE), "Open": _frame(_SIGNAL_OPEN)}
-        ),
+        "native_data": _Native({"Close": _frame(_SIGNAL_CLOSE), "Open": _frame(_SIGNAL_OPEN)}),
         "metadata": default_metadata(instrument_ids=[_AAPL]),
         "diagnostics": (),
         "quality": MarketDataQuality(state="healthy"),
@@ -89,9 +87,7 @@ def test_single_series_pnl_frames_are_the_signal_frames() -> None:
 
 
 def test_dual_series_conversion_applies_to_both_views() -> None:
-    conversion = CurrencyConversion(
-        rate_by_instrument={_AAPL: pd.Series(2.0, index=_INDEX)}
-    )
+    conversion = CurrencyConversion(rate_by_instrument={_AAPL: pd.Series(2.0, index=_INDEX)})
 
     arrays = prepare_run_arrays(_dual_result(currency_conversion=conversion))
 
@@ -191,9 +187,7 @@ def test_unusable_market_data_fails_construction() -> None:
 
 def test_conversion_and_distributions_are_carried_on_the_value() -> None:
     conversion = CurrencyConversion(rate_by_instrument={})
-    distribution = Distribution.from_ex_date(
-        _AAPL, "2024-01-02", amount=0.42, currency="USD"
-    )
+    distribution = Distribution.from_ex_date(_AAPL, "2024-01-02", amount=0.42, currency="USD")
 
     arrays = prepare_run_arrays(
         _result(currency_conversion=conversion, distributions=(distribution,))
@@ -204,9 +198,7 @@ def test_conversion_and_distributions_are_carried_on_the_value() -> None:
 
 
 def test_instrument_size_increment_is_not_an_array_coherence_fact() -> None:
-    arrays = prepare_run_arrays(
-        _result(size_increment_by_instrument={_AAPL: 0.01})
-    )
+    arrays = prepare_run_arrays(_result(size_increment_by_instrument={_AAPL: 0.01}))
 
     assert not hasattr(arrays, "size_increment_by_instrument")
 

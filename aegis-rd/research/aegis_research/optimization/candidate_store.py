@@ -333,9 +333,7 @@ def _stable_candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
     so a candidate that fills several roles must persist an identical payload to
     pass the duplicate-payload guard.
     """
-    return {
-        key: value for key, value in row.items() if key not in ("role", "ordinal_rank")
-    }
+    return {key: value for key, value in row.items() if key not in ("role", "ordinal_rank")}
 
 
 def _validate_continuous_protocol(
