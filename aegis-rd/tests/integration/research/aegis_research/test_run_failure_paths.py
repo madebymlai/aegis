@@ -13,7 +13,6 @@ from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     encode,
 )
-from research.aegis_research.optimization.pipeline import completion
 from research.aegis_research.provenance.manifest import RunStatus
 from tests.support.research.aegis_research.market_data_fixtures import (
     DEFAULT_INSTRUMENT_ID_VALUES,
@@ -34,13 +33,8 @@ def test_component_optimization_uses_component_native_candidate_grid(
     assert cli.main(["run", str(config_path), "--run-id", "component-boundary"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    artifact = json.loads(
-        (tmp_path / "runs" / "component-boundary" / "strategy_run.json").read_text()
-    )
     manifest = json.loads((tmp_path / "runs" / "component-boundary" / "manifest.json").read_text())
-    artifact_record = next(
-        record for record in manifest["artifacts"] if record["id"] == "strategy.run"
-    )
+    optimization = manifest["evidence"]["optimization"]
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
     fast_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "fast_window")
     slow_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "slow_window")
@@ -57,34 +51,29 @@ def test_component_optimization_uses_component_native_candidate_grid(
     )
     assert run_block["started_at"] is not None
     assert run_block["finished_at"] is not None
-    assert payload["artifacts"]["strategy_artifact_path"] == str(
-        tmp_path / "runs" / "component-boundary" / "strategy_run.json"
-    )
+    assert "artifacts" not in payload
     assert payload["candidate_store"]["path"] == str(store_path)
-    assert artifact["schema_version"] == "optimization_artifact.v2"
-    assert artifact_record["role"] == "optimization_evidence"
-    assert artifact_record["schema_version"] == "optimization_artifact.v2"
-    assert artifact["strategy"]["family"] == "strategies"
-    assert artifact["strategy"]["id"] == "demo.ma_opt"
-    assert [candidate["role"] for candidate in artifact["candidates"]] == [
+    assert not (tmp_path / "runs" / "component-boundary" / "strategy_run.json").exists()
+    assert optimization["source"]["strategy"]["family"] == "strategies"
+    assert optimization["source"]["strategy"]["id"] == "demo.ma_opt"
+    assert [candidate["role"] for candidate in payload["candidates"]] == [
         "best",
         "median",
         "worst",
     ]
-    assert artifact["preflight"]["candidate_param_names"] == [
+    assert optimization["preflight"]["candidate_param_names"] == [
         fast_key,
         slow_key,
     ]
-    assert artifact["preflight"]["sampled_combinations"] == 4
-    assert artifact["candidates"]
-    assert set(artifact["candidates"][0]["params"]) == {fast_key, slow_key}
-    assert artifact["candidate_store"]["path"] == ".candidate_store/candidates.sqlite3"
+    assert optimization["preflight"]["sampled_combinations"] == 4
+    assert payload["candidates"]
+    assert set(payload["candidates"][0]["params"]) == {fast_key, slow_key}
     assert store_path.exists()
     with CandidateStore(store_path) as store:
         best_key = store.candidate_key_for_role("component-boundary", "best")
-    assert best_key == artifact["candidates"][0]["candidate_key"]
+    assert best_key == payload["candidates"][0]["candidate_key"]
     # ADR-0006 (aegis-rd-396.4): per-Component lock records are retired.
-    assert "locks" not in artifact
+    assert "locks" not in optimization
     assert "locks" not in payload
 
 
@@ -137,35 +126,6 @@ def test_component_optimization_candidate_publish_failure_preserves_run_evidence
     )
 
 
-def test_component_optimization_artifact_write_failure_leaves_candidates_pending(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
-    config_path = _write_run_config(tmp_path)
-
-    def fail_write(*_args: object, **_kwargs: object) -> None:
-        raise OSError("strategy artifact write failed")
-
-    monkeypatch.setattr(completion, "write_strategy_artifact", fail_write)
-
-    assert cli.main(["run", str(config_path), "--run-id", "artifact-failure"]) == 10
-
-    payload = _last_json_line(capsys.readouterr().err)
-    manifest = json.loads((tmp_path / "runs" / "artifact-failure" / "manifest.json").read_text())
-    store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
-
-    assert payload["error"]["category"] == "execution_failure"
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    with (
-        CandidateStore(store_path) as store,
-        pytest.raises(CandidateStoreError, match="unknown role"),
-    ):
-        store.candidate_key_for_role("artifact-failure", "best")
-
-
 def test_component_optimization_completion_failure_leaves_candidates_pending(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -214,9 +174,6 @@ def test_component_optimization_activation_failure_fails_closed(
     assert cli.main(["run", str(config_path), "--run-id", "activation-failure"]) == 10
 
     payload = _last_json_line(capsys.readouterr().err)
-    artifact = json.loads(
-        (tmp_path / "runs" / "activation-failure" / "strategy_run.json").read_text()
-    )
     manifest = json.loads((tmp_path / "runs" / "activation-failure" / "manifest.json").read_text())
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
 
@@ -224,7 +181,7 @@ def test_component_optimization_activation_failure_fails_closed(
     assert "candidate_store_activation_failed" not in payload["error"]["message"]
     assert manifest["run"]["status"] == RunStatus.FAILED
     # Activation failed closed: the run's candidates remain pending and unqueryable.
-    assert "locks" not in artifact
+    assert "locks" not in manifest["evidence"]["optimization"]
     with (
         CandidateStore(store_path) as store,
         pytest.raises(CandidateStoreError, match="unknown role"),

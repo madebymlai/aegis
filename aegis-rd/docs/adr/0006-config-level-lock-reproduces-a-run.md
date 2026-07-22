@@ -76,3 +76,9 @@ lock: 20260527T000603791760Z_etf_momentum:median   # non-best representative
 
 This makes the ADR's "no separate storage" principle hold *better*: the ergonomic handle is a
 pure query over rankings the Run already persists.
+
+**Amendment (2026-07-23).** `strategy_run.json` is deleted. CandidateStore is the durable authority
+for Candidate rows, roles, activation, Candidate Keys, and Lock resolution; its provenance no
+longer names a strategy artifact. The CLI still returns representative Candidate summaries and
+copy-paste Lock handles directly from the completed in-memory result. Lock resolution and exact
+Candidate reproduction therefore depend only on the authority this ADR established.

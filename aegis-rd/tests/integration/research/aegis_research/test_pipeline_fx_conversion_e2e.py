@@ -68,8 +68,10 @@ def _run(tmp_path: Path, capsys: pytest.CaptureFixture[str], config: dict, run_i
     exit_code = cli.main(["run", str(config_path), "--run-id", run_id])
     output = capsys.readouterr()
     assert exit_code == 0, f"CLI failed for {run_id}: {output.err}"
-    assert json.loads(output.out)["status"] == "success"
-    return json.loads((tmp_path / "runs" / run_id / "strategy_run.json").read_text())
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert not (tmp_path / "runs" / run_id / "strategy_run.json").exists()
+    return payload
 
 
 def test_foreign_currency_book_converts_and_charges_the_fx_surcharge_e2e(

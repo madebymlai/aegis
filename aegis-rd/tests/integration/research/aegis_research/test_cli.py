@@ -190,7 +190,6 @@ def test_run_success_payload_is_the_emitted_json_contract(
         )
     )
     long_base = tmp_path.joinpath(*(f"long-path-segment-{i:02d}" for i in range(35)))
-    artifact_path = long_base / "strategy_run.json"
     store_path = long_base / ".candidate_store" / "candidates.sqlite3"
 
     def stub_run_strategy_sweep(*_args: object, **kwargs: object) -> dict[str, object]:
@@ -201,8 +200,6 @@ def test_run_success_payload_is_the_emitted_json_contract(
             "manifest_path": str(long_base / "manifest.json"),
             "started_at": "2026-06-12T00:00:00Z",
             "finished_at": "2026-06-12T00:01:00Z",
-            "strategy_artifact_id": "strategy.run",
-            "strategy_artifact_path": str(artifact_path),
             "candidate_store_path": str(store_path),
             "optimization": {"total": 4, "protocol": "continuous_future_in_past"},
             "candidates": [{"role": "best", "lock": kwargs["run_id"]}],
@@ -227,10 +224,7 @@ def test_run_success_payload_is_the_emitted_json_contract(
         "started_at": "2026-06-12T00:00:00Z",
         "finished_at": "2026-06-12T00:01:00Z",
     }
-    assert payload["artifacts"] == {
-        "strategy_artifact_id": "strategy.run",
-        "strategy_artifact_path": str(artifact_path.resolve(strict=False)),
-    }
+    assert "artifacts" not in payload
     assert payload["candidate_store"] == {
         "path": str(store_path.resolve(strict=False)),
     }
@@ -353,7 +347,10 @@ def _carry_run_config(
 
 
 def _run_candidate_returns(
-    tmp_path: Path, short_borrow_rate: float | None, run_id: str
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    short_borrow_rate: float | None,
+    run_id: str,
 ) -> list[object]:
     config_path = tmp_path / f"{run_id}.yaml"
     config_path.write_text(
@@ -366,9 +363,9 @@ def _run_candidate_returns(
         )
     )
     assert cli.main(["run", str(config_path), "--run-id", run_id]) == 0
-    artifact = json.loads((tmp_path / "runs" / run_id / "strategy_run.json").read_text())
+    payload = json.loads(capsys.readouterr().out)
     return [
-        candidate["complete_period_metrics"]["total_return"] for candidate in artifact["candidates"]
+        candidate["complete_period_metrics"]["total_return"] for candidate in payload["candidates"]
     ]
 
 
@@ -385,9 +382,12 @@ def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
     write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
     seed_catalog_ohlcv(tmp_path / "catalog", ["SYN.XNAS"], periods=120)
 
-    carry_on = _run_candidate_returns(tmp_path, short_borrow_rate=None, run_id="carry-on")
-    carry_off = _run_candidate_returns(tmp_path, short_borrow_rate=0.0, run_id="carry-off")
-    capsys.readouterr()
+    carry_on = _run_candidate_returns(
+        tmp_path, capsys, short_borrow_rate=None, run_id="carry-on"
+    )
+    carry_off = _run_candidate_returns(
+        tmp_path, capsys, short_borrow_rate=0.0, run_id="carry-off"
+    )
 
     assert carry_on == carry_off
 

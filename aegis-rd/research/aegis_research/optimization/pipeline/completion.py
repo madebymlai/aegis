@@ -1,8 +1,4 @@
-"""Pipeline completion stage.
-
-Writes the strategy artifact, marks the run as completed, activates
-the candidate run in the store, and returns the final run result.
-"""
+"""Complete the Run, activate its Candidates, and return the in-memory result."""
 
 from __future__ import annotations
 
@@ -10,28 +6,15 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.configuration import (
-    RunConfig,
-    lock_handle,
-    to_builtin,
-)
+from research.aegis_research.configuration import RunConfig, lock_handle
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.candidate_store_identity import (
-    candidate_store_namespace,
-)
 from research.aegis_research.optimization.evidence_ledger import (
     EvidenceFailureStage,
     RunEvidence,
 )
 from research.aegis_research.optimization.pipeline.publishing import PublishingResult
 from research.aegis_research.optimization.pipeline.setup import SetupResult
-from research.aegis_research.optimization.run_artifacts import (
-    build_strategy_artifact_payload,
-    write_strategy_artifact,
-)
-from research.aegis_research.optimization.run_data_contract import DataArrayContract
 from research.aegis_research.provenance.recorder import RunRecorder
-from research.aegis_research.run_data import RunData
 
 
 def run_pipeline_completion(
@@ -40,44 +23,17 @@ def run_pipeline_completion(
     publishing: PublishingResult,
     config: RunConfig,
     recorder: RunRecorder,
-    run_data: RunData,
-    array_contract: DataArrayContract,
-    metric_registry_fingerprint: str | None,
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
-    """Write the strategy artifact, complete the run, and activate candidates.
+    """Complete the Run, activate Candidates, and return the final result.
 
-    Returns the final run result dict with run refs, artifact metadata,
-    candidate store path, optimization summary, and the three representative
-    candidates.
+    The result carries Run refs, CandidateStore path, optimization accounting,
+    and the representative Candidate summaries directly from memory.
     """
     try:
         optimization_evidence = run_evidence.optimization()
         execution = dict(optimization_evidence.get("execution", {}))
         preflight = dict(optimization_evidence["preflight"])
-        store_namespace = candidate_store_namespace()
-        artifact_payload = build_strategy_artifact_payload(
-            strategy_evidence=setup.strategy_evidence,
-            run_data=run_data,
-            array_contract=array_contract,
-            metric_registry_fingerprint=metric_registry_fingerprint,
-            ranking={
-                "metric": config.ranking.metric,
-            },
-            portfolio=to_builtin(config.portfolio),
-            optimization=to_builtin(config.optimization),
-            selection_metadata={
-                "protocol": "continuous_future_in_past",
-                "observation_block_bars": preflight["observation_block_bars"],
-                "observation_block_bounds": preflight["observation_block_bounds"],
-            },
-            preflight=preflight,
-            execution=execution,
-            candidates=[to_builtin(record) for record in publishing.candidate_rows],
-            candidate_store_path=store_namespace["path"],
-            candidate_store_provenance=publishing.candidate_store_provenance,
-        )
-        write_strategy_artifact(recorder, artifact_payload)
         recorder.mark_run_completed()
         with CandidateStore(setup.store_path) as candidate_store:
             candidate_store.activate_run(recorder.manifest.run_id)
@@ -106,8 +62,6 @@ def _completion_result(
     ranking_metric = config.ranking.metric
     return {
         **recorder.run_refs(),
-        "strategy_artifact_id": "strategy.run",
-        "strategy_artifact_path": str(recorder.run_dir / "strategy_run.json"),
         "candidate_store_path": str(store_path),
         "optimization": {
             "ranking_metric": ranking_metric,

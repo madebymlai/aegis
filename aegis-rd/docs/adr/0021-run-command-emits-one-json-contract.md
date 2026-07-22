@@ -80,3 +80,8 @@ details keep their clipping behavior.
 `--rerun-mode`, `--parent-run-id`, and `--supersedes-run-id` are removed rather than accepted as
 no-ops. The Manifest likewise drops mode, lineage, and the duplicate Run label; the resolved Run
 Config remains the sole home of the configured name.
+
+The same 2026-07-23 contract removes the `artifacts` block and strategy artifact path from Run
+success output. The command returns only live references: Run lifecycle refs, Manifest path,
+CandidateStore path, optimization accounting, and representative Candidate summaries. No
+placeholder or renamed report projection replaces the deleted file.

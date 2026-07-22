@@ -60,7 +60,6 @@ def test_pipeline_setup_returns_setup_result(
     # Typed fields — constructor is the contract.
     assert result.store_path == candidate_store_path(config)
     assert result.optimization_source is not None
-    assert isinstance(result.strategy_evidence, dict)
     assert result.run_data is not None
     assert not hasattr(result, "split_result")
 
@@ -90,8 +89,6 @@ def test_pipeline_setup_evidence_baseline_shape(
     assert "param_names" in evidence
     assert evidence["open_prices_available"] is True
     assert "resolved_locks" not in evidence
-    # strategy_evidence is derived from optimization_source — same object.
-    assert result.strategy_evidence is result.optimization_source.evidence["strategy"]
 
 
 def test_pipeline_setup_store_path_matches_candidate_store(

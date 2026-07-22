@@ -13,7 +13,7 @@ from research.aegis_research.optimization.run_data_contract import (
 from research.aegis_research.run_data import RunData
 
 CANDIDATE_STORE_RELATIVE_PATH = Path(".candidate_store") / "candidates.sqlite3"
-CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION = "candidate_store_provenance.v2"
+CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION = "candidate_store_provenance.v3"
 
 
 def candidate_store_path(config: Any) -> Path:
@@ -40,7 +40,6 @@ def build_candidate_store_provenance(
     return {
         "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
         "run_id": recorder.manifest.run_id,
-        "strategy_artifact_id": "strategy.run",
         "source": optimization_source,
         "data": candidate_data_identity(run_data, array_contract),
         "portfolio": to_builtin(config.portfolio),

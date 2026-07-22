@@ -29,17 +29,13 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
-from research.aegis_research.optimization.run_data_contract import DataArrayContract
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_run_config,
-    make_run_data,
     make_selection_identity,
     make_setup_result,
 )
 from tests.support.research.aegis_research.test_doubles import FakeRecorder
-
-_ARRAY_CONTRACT = DataArrayContract(("Close", "Open"), pipeline_required_arrays=("Close", "Open"))
 
 
 def _candidate_rows() -> list[dict[str, Any]]:
@@ -119,26 +115,11 @@ def test_completion_returns_result_and_marks_completed(
         persist=lambda: None,
     )
 
-    # Mock write_strategy_artifact to avoid filesystem side-effects while
-    # capturing the payload that would have been written.
-    captured_artifact: dict[str, Any] = {}
-
-    def _capture_write(_rec: object, payload: dict[str, Any]) -> None:
-        captured_artifact.update(payload)
-
-    monkeypatch.setattr(
-        "research.aegis_research.optimization.pipeline.completion.write_strategy_artifact",
-        _capture_write,
-    )
-
     result = run_pipeline_completion(
         setup=setup,
         publishing=publishing,
         config=config,
         recorder=recorder,
-        run_data=make_run_data(),
-        array_contract=_ARRAY_CONTRACT,
-        metric_registry_fingerprint="test-fp",
         run_evidence=run_evidence,
     )
 
@@ -146,8 +127,8 @@ def test_completion_returns_result_and_marks_completed(
     assert result["run_id"] == run_id
     assert result["run_dir"] == str(run_dir)
     assert result["manifest_path"] == str(run_dir / "manifest.json")
-    assert result["strategy_artifact_id"] == "strategy.run"
-    assert result["strategy_artifact_path"] == str(run_dir / "strategy_run.json")
+    assert "strategy_artifact_id" not in result
+    assert "strategy_artifact_path" not in result
     assert result["candidate_store_path"] == str(store_path)
     assert result["status"] == "completed"
     assert result["started_at"] == "2025-01-01T00:00:00Z"
@@ -193,10 +174,3 @@ def test_completion_returns_result_and_marks_completed(
         ]
     scores = [row["candidate"]["mean_rank"] for row in stored]
     assert scores == pytest.approx([0.30, 0.20, 0.10])
-
-    # Assert artifact payload structure
-    assert "schema_version" in captured_artifact
-    assert "strategy" in captured_artifact
-    assert len(captured_artifact["candidates"]) == 3
-    assert captured_artifact["candidate_store"]["path"] == ".candidate_store/candidates.sqlite3"
-    assert captured_artifact["metric_registry_fingerprint"] == "test-fp"

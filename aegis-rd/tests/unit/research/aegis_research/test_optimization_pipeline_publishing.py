@@ -175,3 +175,5 @@ def test_publishing_persists_three_candidates_to_store(tmp_path: Path) -> None:
         0.20,
         0.10,
     ]
+    assert stored[0]["provenance"]["schema_version"] == "candidate_store_provenance.v3"
+    assert "strategy_artifact_id" not in stored[0]["provenance"]

@@ -494,7 +494,7 @@ def test_candidate_store_rejects_stale_and_mismatched_selection_evidence(tmp_pat
         selection_identity=published.selection_identity,
     )
     provenance = {
-        "schema_version": "candidate_store_provenance.v2",
+        "schema_version": "candidate_store_provenance.v3",
         "source": {"strategy": {"id": "demo"}},
         "selection_identity": published.selection_identity,
     }
@@ -539,7 +539,7 @@ def test_candidate_store_rejects_row_params_that_disagree_with_identity(tmp_path
     )
     rows[0]["params"] = {"window": 999}
     provenance = {
-        "schema_version": "candidate_store_provenance.v2",
+        "schema_version": "candidate_store_provenance.v3",
         "selection_identity": published.selection_identity,
     }
 

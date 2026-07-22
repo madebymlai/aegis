@@ -108,10 +108,6 @@ def _run_payload(
     return {
         "selection": selection_evidence.manifest(),
         "run": run_refs(result),
-        "artifacts": {
-            "strategy_artifact_id": result["strategy_artifact_id"],
-            "strategy_artifact_path": real_path_text(result["strategy_artifact_path"]),
-        },
         "candidate_store": {
             "path": real_path_text(result["candidate_store_path"]),
         },

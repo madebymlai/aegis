@@ -27,3 +27,9 @@ Landing is two mechanical steps, each with the same oracle. Step 1 names the han
 - **Amended by [ADR-0024](0024-run-arrays-one-constructor-for-both-views.md)**: `SetupResult`'s field enumeration is now four — the `close`/`open_` frames (which had further drifted to include `pnl_close`/`pnl_open`) are replaced by the single `arrays: RunArrays` product of the market-data preparation constructor. The field-admission rule and the stage seams are unchanged.
 - **Amended by [ADR-0025](0025-run-data-facts-one-value-behind-the-data-projections.md)**: the revisit trigger is discharged — the co-traveling trio `data_result` + `array_contract` + `metric_registry_fingerprint` becomes the domain-named `RunDataFacts` value in `run_data_contract.py`, carrying its projections as methods. The recorder stays outside that seam; no stage gains ambient authority.
 - **Amended by [ADR-0028](0028-run-data-is-the-single-research-data-interface.md)**: `RunData` now owns the coherent loaded value and travels through the pipeline; `DataArrayContract` remains the pre-load declaration and the Metric Registry fingerprint remains separate optimization provenance. The recorder still stays outside the data seam.
+
+**Amendment (2026-07-23).** Completion no longer builds or writes a strategy artifact. Its honest
+inputs shrink to setup (for the CandidateStore path), publishing (for representative Candidates),
+config, recorder, and RunEvidence. It marks the Run complete, activates the CandidateStore rows,
+and returns lifecycle refs, optimization accounting, and Candidate summaries directly in memory.
+The artifact-only `SetupResult.strategy_evidence` projection is deleted.

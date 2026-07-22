@@ -32,7 +32,7 @@ def _data_identity(instrument_id: str = "SYN.XNAS") -> dict[str, object]:
 
 def _provenance(run_id: str = "run-a") -> dict[str, object]:
     return {
-        "schema_version": "candidate_store_provenance.v2",
+        "schema_version": "candidate_store_provenance.v3",
         "run_id": run_id,
         "selection_identity": make_selection_identity(),
     }

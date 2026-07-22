@@ -9,6 +9,7 @@ import yaml
 
 from research.aegis_research import cli
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
+from research.aegis_research.optimization.candidate_store import CandidateStore
 from tests.support.research.aegis_research.market_data_fixtures import (
     ETF_INSTRUMENT_ID_VALUES,
     native_data_config_payload,
@@ -80,12 +81,9 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     payload = json.loads(output.out)
     assert payload["status"] == "success"
 
-    artifact_path = tmp_path / "runs" / "pipeline-e2e" / "strategy_run.json"
-    assert artifact_path.exists()
-    artifact = json.loads(artifact_path.read_text())
-
     manifest_path = tmp_path / "runs" / "pipeline-e2e" / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
+    assert not (tmp_path / "runs" / "pipeline-e2e" / "strategy_run.json").exists()
     assert not (tmp_path / "runs" / "pipeline-e2e" / "data_metadata.json").exists()
     assert all(artifact["id"] != "data.metadata" for artifact in manifest["artifacts"])
     data_evidence = manifest["evidence"]["data"]
@@ -96,13 +94,12 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     optimization_evidence = manifest["evidence"]["optimization"]
     assert optimization_evidence["source"]["schema_version"] == "component_optimization_source.v2"
     assert optimization_evidence["schema_version"] == "optimization_route.v2"
-    assert artifact["schema_version"] == "optimization_artifact.v2"
-    assert "selection" in artifact
-    assert "split" not in artifact
-    execution = artifact["execution"]
+    assert "selection" in optimization_evidence
+    assert "split" not in optimization_evidence
+    execution = optimization_evidence["execution"]
     assert execution["schema_version"] == "continuous_selection_evidence.v1"
     serialized_public_evidence = json.dumps(
-        {"execution": execution, "candidates": artifact["candidates"]}
+        {"execution": execution, "candidates": optimization_evidence["candidates"]}
     ).lower()
     assert "held_out" not in serialized_public_evidence
     assert "optimism_gap" not in serialized_public_evidence
@@ -116,7 +113,7 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
         "total_trades",
         "win_rate",
     }
-    best, median, worst = artifact["candidates"]
+    best, median, worst = optimization_evidence["candidates"]
     assert best["role"] == "best"
     assert median["role"] == "median"
     assert worst["role"] == "worst"
@@ -126,7 +123,9 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     assert best["identity"]["schema_version"] == "candidate_identity.v5"
     assert median["identity"]["schema_version"] == "candidate_identity.v5"
     assert worst["identity"]["schema_version"] == "candidate_identity.v5"
-    assert (
-        artifact["candidate_store"]["provenance"]["schema_version"]
-        == "candidate_store_provenance.v2"
-    )
+    store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
+    with CandidateStore(store_path) as store:
+        best_key = store.candidate_key_for_role("pipeline-e2e", "best")
+        provenance = store.candidate_by_key(best_key, run_id="pipeline-e2e")["provenance"]
+    assert provenance["schema_version"] == "candidate_store_provenance.v3"
+    assert "strategy_artifact_id" not in provenance

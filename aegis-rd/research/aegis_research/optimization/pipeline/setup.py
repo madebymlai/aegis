@@ -53,23 +53,12 @@ class SetupResult:
 
     The store path is an identity all stages must agree on; the optimization
     source is the product of Lock resolution and Component construction; and
-    Arrays are the coherent two-view market value consumed by replay. Strategy
-    evidence is derived from the source, so divergence is unrepresentable.
+    Arrays are the coherent two-view market value consumed by replay.
     """
 
     store_path: Path
     optimization_source: OptimizationSource
     run_data: RunData
-
-    @property
-    def strategy_evidence(self) -> Mapping[str, Any]:
-        """Strategy evidence derived from the optimization source.
-
-        Divergence between this view and the origin is unrepresentable —
-        there is no separate stored copy.
-        """
-        return self.optimization_source.evidence["strategy"]
-
 
 def run_pipeline_setup(
     *,

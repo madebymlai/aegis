@@ -186,8 +186,5 @@ def _run_optimization_strategy_sweep(
         publishing=publishing,
         config=config,
         recorder=recorder,
-        run_data=run_data,
-        array_contract=array_contract,
-        metric_registry_fingerprint=metric_registry.fingerprint,
         run_evidence=run_evidence,
     )

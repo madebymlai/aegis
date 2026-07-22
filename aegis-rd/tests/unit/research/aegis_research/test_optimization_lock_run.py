@@ -179,7 +179,7 @@ def _store_with_candidate(
         run_id="run-a",
         candidate_rows=candidates,
         provenance={
-            "schema_version": "candidate_store_provenance.v2",
+            "schema_version": "candidate_store_provenance.v3",
             "run_id": "run-a",
             "source": _source_evidence(drop_indicator_runtime=drop_indicator_runtime),
             "data": identity,
@@ -215,7 +215,7 @@ def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
         run_id="run-a",
         candidate_rows=rows,
         provenance={
-            "schema_version": "candidate_store_provenance.v2",
+            "schema_version": "candidate_store_provenance.v3",
             "run_id": "run-a",
             "source": _source_evidence(),
             "selection_identity": make_selection_identity(),

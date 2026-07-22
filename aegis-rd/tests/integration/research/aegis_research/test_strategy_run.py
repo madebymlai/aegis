@@ -97,13 +97,15 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert cli.main(["run", str(config_path), "--run-id", "component-opt"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    artifact = json.loads((tmp_path / "runs" / "component-opt" / "strategy_run.json").read_text())
+    manifest = json.loads((tmp_path / "runs" / "component-opt" / "manifest.json").read_text())
+    optimization = manifest["evidence"]["optimization"]
 
     assert payload["status"] == "success"
-    assert artifact["strategy"]["family"] == "strategies"
-    assert artifact["strategy"]["id"] == "demo.cross"
-    assert artifact["preflight"]["candidate_param_names"] == [FIXED_CANDIDATE_PARAM]
-    assert [candidate["role"] for candidate in artifact["candidates"]] == [
+    assert not (tmp_path / "runs" / "component-opt" / "strategy_run.json").exists()
+    assert optimization["source"]["strategy"]["family"] == "strategies"
+    assert optimization["source"]["strategy"]["id"] == "demo.cross"
+    assert optimization["preflight"]["candidate_param_names"] == [FIXED_CANDIDATE_PARAM]
+    assert [candidate["role"] for candidate in payload["candidates"]] == [
         "best",
         "median",
         "worst",
@@ -113,11 +115,11 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     # Completion threads the *exact* exclusion accounting from the execution
     # Evidence (never a preflight estimate) into the optimization summary, so the
     # terminal can render the researched/total ratio.
-    accounting = artifact["execution"]["candidate_accounting"]
+    accounting = optimization["execution"]["candidate_accounting"]
     assert payload["optimization"]["total"] == accounting["total"]
     assert payload["optimization"]["excluded_invalid"] == accounting["excluded_invalid"]
     assert payload["optimization"]["excluded_degenerate"] == accounting["excluded_degenerate"]
-    for summary, candidate in zip(payload["candidates"], artifact["candidates"], strict=True):
+    for summary, candidate in zip(payload["candidates"], optimization["candidates"], strict=True):
         assert summary["role"] == candidate["role"]
         assert summary["ordinal_rank"] == candidate["ordinal_rank"]
         assert summary["candidate_key"] == candidate["candidate_key"]
@@ -125,8 +127,8 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
         assert summary["mean_rank"] == candidate["mean_rank"]
         assert summary["complete_period_metrics"] == candidate["complete_period_metrics"]
         assert summary["observation_block_metrics"] == candidate["observation_block_metrics"]
-    assert len(artifact["candidates"]) == 3
-    assert len({candidate["candidate_key"] for candidate in artifact["candidates"]}) == 1
+    assert len(optimization["candidates"]) == 3
+    assert len({candidate["candidate_key"] for candidate in optimization["candidates"]}) == 1
 
 
 def test_strategy_run_always_emits_json_with_lock_handles(
@@ -194,14 +196,13 @@ def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
 
     assert cli.main(["run", str(config_path), "--run-id", "component-locks"]) == 0
 
-    capsys.readouterr()
-    artifact = json.loads((tmp_path / "runs" / "component-locks" / "strategy_run.json").read_text())
+    payload = json.loads(capsys.readouterr().out)
     manifest = json.loads((tmp_path / "runs" / "component-locks" / "manifest.json").read_text())
     source = manifest["evidence"]["optimization"]["source"]
 
-    assert "locks" not in artifact
-    assert "resolved_locks" not in artifact
+    assert not (tmp_path / "runs" / "component-locks" / "strategy_run.json").exists()
     assert "locks" not in manifest["evidence"]["optimization"]
+    assert "locks" not in payload
 
     indicator = next(ind for ind in source["indicators"] if ind["id"] == "demo.ma")
     assert indicator["fixed_params"] == {"window": 2}
