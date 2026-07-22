@@ -13,6 +13,10 @@ from aegis_runtime import validate_bare_root
 from pydantic import AfterValidator, Field
 
 IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.-]+$"
+RUN_NAME_PATTERN = (
+    r"^(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*|"
+    r"\.[A-Za-z0-9_-][A-Za-z0-9_.-]*|\.\.[A-Za-z0-9_.-]+)$"
+)
 
 
 def _validate_timedelta_str(value: str) -> str:
@@ -29,12 +33,6 @@ def has_data_array_token_shape(value: str) -> bool:
     return bool(value) and value.strip() == value and not any(char in "\t\n\r" for char in value)
 
 
-def _validate_run_name(value: str) -> str:
-    if value in {".", ".."}:
-        raise ValueError("run name must not be '.' or '..'")
-    return value
-
-
 PositiveCash = Annotated[float, Field(strict=True, gt=0)]
 NonNegativeCash = Annotated[float, Field(strict=True, ge=0)]
 NonNegativeRate = Annotated[float, Field(strict=True, ge=0)]
@@ -42,12 +40,7 @@ UnitInterval = Annotated[float, Field(strict=True, ge=0, le=1)]
 ComponentIdStr = Annotated[str, Field(min_length=1, pattern=IDENTIFIER_PATTERN)]
 RunName = Annotated[
     str,
-    Field(
-        min_length=1,
-        pattern=IDENTIFIER_PATTERN,
-        json_schema_extra={"not": {"enum": [".", ".."]}},
-    ),
-    AfterValidator(_validate_run_name),
+    Field(pattern=RUN_NAME_PATTERN),
 ]
 NonEmptyStr = Annotated[str, Field(min_length=1)]
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]

@@ -1265,8 +1265,9 @@ def test_config_schema_guide_marks_schema_version_required_and_exact() -> None:
 def test_config_schema_guide_derives_run_name_constraints() -> None:
     guide = _render_guide("config-schema")
     assert (
-        "| `name` | `str` | yes | — | minimum length `1`; "
-        "must match `^[A-Za-z0-9_.-]+$`; must not be `.`, `..` |"
+        "| `name` | `str` | yes | — | "
+        "must match `^(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\."
+        "[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\.\\.[A-Za-z0-9_.-]+)$` |"
         in guide
     )
 

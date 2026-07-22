@@ -401,7 +401,9 @@ def test_run_rejects_dot_only_name_from_the_model(tmp_path: Path) -> None:
         )
 
     assert str(error.value) == (
-        "Invalid run config: name: Value error, run name must not be '.' or '..'"
+        "Invalid run config: name: String should match pattern "
+        "'^(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\.[A-Za-z0-9_-]"
+        "[A-Za-z0-9_.-]*|\\.\\.[A-Za-z0-9_.-]+)$'"
     )
 
 
