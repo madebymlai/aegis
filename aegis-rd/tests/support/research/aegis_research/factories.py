@@ -429,7 +429,7 @@ def make_candidate_portfolio(
 ) -> vbt.Portfolio:
     """Simulate a Candidate batch for metrics tests.
 
-    Wraps the Window Evaluation internal simulation seam so tests that only
+    Wraps the Portfolio Simulation internal seam so tests that only
     need a Portfolio to extract metrics from never name the sim module
     (mirrors ``make_run_arrays``). ``config`` defaults to the factory
     PortfolioConfig.

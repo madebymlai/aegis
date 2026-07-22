@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cached_property
 from operator import index as operator_index
 from typing import Any
 
@@ -182,7 +181,7 @@ class IndicatorPrecompute:
             return self.candidate_index
         return self.output_candidate_index.get(name, self.candidate_index)
 
-    @cached_property
+    @property
     def invalid_keys(self) -> set[CandidateKey]:
         """Keys of the store's candidates whose indicator output is Invalid.
 
@@ -193,8 +192,6 @@ class IndicatorPrecompute:
         being classified. The scan ranges over the store's own ``candidate_index``:
         the store is the authority on which candidates it holds.
 
-        Cached because the verdict is a pure function of the store's immutable
-        outputs and every reader in the continuous batch wants the same set.
         """
         if not self.outputs or self.n_symbols < 1:
             return set()

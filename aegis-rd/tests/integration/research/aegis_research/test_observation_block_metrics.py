@@ -57,23 +57,6 @@ def _apply_total_return(
     )
 
 
-def _assert_replay_state_unchanged(
-    before: tuple[pd.Series | pd.DataFrame, ...], replay: Any
-) -> None:
-    current_state = (
-        replay.values,
-        replay.positions,
-        replay.cash,
-        replay.orders,
-        replay.trades,
-    )
-    for original, current in zip(before, current_state, strict=True):
-        if isinstance(original, pd.Series):
-            pd.testing.assert_series_equal(original, current)
-        else:
-            pd.testing.assert_frame_equal(original, current)
-
-
 def test_native_and_custom_metrics_match_continuous_path_semantics() -> None:
     replay = _continuous_portfolio()
     portfolio = replay.portfolio
@@ -144,17 +127,19 @@ def test_native_and_custom_metrics_match_continuous_path_semantics() -> None:
 
 def test_moving_analysis_boundary_does_not_change_continuous_records_or_state() -> None:
     replay = _continuous_portfolio()
-    before = (
-        replay.values.copy(),
-        replay.positions.copy(),
-        replay.cash.copy(),
-        replay.orders.copy(),
-        replay.trades.copy(),
-    )
+    values_before = replay.values.copy()
+    positions_before = replay.positions.copy()
+    cash_before = replay.cash.copy()
+    orders_before = replay.orders.copy()
+    trades_before = replay.trades.copy()
     registry = make_metric_registry_for(())
     candidate_index = pd.MultiIndex.from_tuples([("a",), ("b",)], names=["candidate"])
     primitives = FullPathPrimitives.from_portfolio(replay.portfolio)
     _apply_total_return(replay, primitives, registry, candidate_index, [(1, 4), (4, 8)])
     _apply_total_return(replay, primitives, registry, candidate_index, [(1, 5), (5, 8)])
 
-    _assert_replay_state_unchanged(before, replay)
+    pd.testing.assert_frame_equal(replay.values, values_before)
+    pd.testing.assert_frame_equal(replay.positions, positions_before)
+    pd.testing.assert_frame_equal(replay.cash, cash_before)
+    pd.testing.assert_frame_equal(replay.orders, orders_before)
+    pd.testing.assert_frame_equal(replay.trades, trades_before)

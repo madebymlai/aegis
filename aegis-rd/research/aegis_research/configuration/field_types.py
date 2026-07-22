@@ -26,7 +26,6 @@ def _validate_timedelta_str(value: str) -> str:
     return value
 
 
-StrictFloat = Annotated[float, Field(strict=True)]
 PositiveCash = Annotated[float, Field(strict=True, gt=0)]
 NonNegativeCash = Annotated[float, Field(strict=True, ge=0)]
 NonNegativeRate = Annotated[float, Field(strict=True, ge=0)]

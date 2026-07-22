@@ -305,20 +305,3 @@ def test_invalid_keys_respects_output_candidate_index_dedup() -> None:
     # Block 0 (shared by (1,10) and (2,10)) is all-NaN, block 1 is finite
     assert store.invalid_keys == {(1, 10), (2, 10)}
 
-
-def test_invalid_keys_is_cached_across_reads() -> None:
-    """The scan runs once: repeat access returns the identical cached set object."""
-    outputs = np.array(
-        [
-            [1.0, np.nan],
-            [2.0, np.nan],
-        ]
-    )
-    store = _invalid_keys_store(
-        outputs={"sig": outputs},
-        n_symbols=1,
-        param_lists={"p": [1, 2]},
-    )
-    first = store.invalid_keys
-    assert first == {(2,)}
-    assert store.invalid_keys is first  # cached_property caches on the frozen store

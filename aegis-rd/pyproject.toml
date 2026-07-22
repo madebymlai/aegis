@@ -33,8 +33,6 @@ include = ["research*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-filterwarnings = [
-]
 
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }
