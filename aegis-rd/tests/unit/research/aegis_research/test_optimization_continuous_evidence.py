@@ -9,6 +9,7 @@ import pytest
 
 from research.aegis_research.metrics import MetricRegistry
 from research.aegis_research.metrics.contracts import ExtractorSpec, MetricDefinition
+from research.aegis_research.optimization import continuous_evidence as continuous_evidence_module
 from research.aegis_research.optimization.candidate_evidence import (
     candidate_rows_from_result,
 )
@@ -25,9 +26,7 @@ from research.aegis_research.optimization.candidate_validity import Verdicts
 from research.aegis_research.optimization.continuous_evidence import (
     CONTINUOUS_SELECTION_EVIDENCE_SCHEMA_VERSION,
     build_continuous_evidence,
-    matrix_from_evidence,
     matrix_to_evidence,
-    observation_blocks_from_evidence,
 )
 from research.aegis_research.optimization.observation_blocks import (
     ObservationBlockAnalysis,
@@ -148,8 +147,8 @@ def _case(candidate_count: int = 2, *, resolved_warmup_bars: int | None = None):
 
 
 @pytest.mark.parametrize("candidate_count", [1, 2])
-def test_continuous_evidence_round_trips_protocol_and_matrix(candidate_count: int) -> None:
-    index, preflight, analysis = _case(candidate_count)
+def test_continuous_evidence_publishes_protocol_and_matrix_payload(candidate_count: int) -> None:
+    _index, preflight, analysis = _case(candidate_count)
     published = build_continuous_evidence(
         analysis=analysis,
         preflight=preflight,
@@ -188,13 +187,20 @@ def test_continuous_evidence_round_trips_protocol_and_matrix(candidate_count: in
     assert evidence["warmup"]["resolved_warmup_bars"] == candidate_count
     assert evidence["warmup"]["maximum_drivers"][0]["candidate_position"] == candidate_count - 1
 
-    restored_blocks = observation_blocks_from_evidence(index, evidence)
-    restored_matrix = matrix_from_evidence(evidence["raw_metric_matrices"]["total_return"])
-    assert restored_blocks.index.equals(analysis.blocks.index)
-    assert restored_blocks.bounds == analysis.blocks.bounds
-    assert restored_blocks.labels == analysis.blocks.labels
-    pd.testing.assert_frame_equal(restored_matrix, analysis.metric_matrices["total_return"])
-    assert restored_matrix.shape == (candidate_count, 2)
+    assert protocol["bounds"] == [
+        {"label": "block-000", "start": candidate_count, "end": 6},
+        {"label": "block-001", "start": 6, "end": 10},
+    ]
+    assert evidence["raw_metric_matrices"]["total_return"] == {
+        "schema_version": "candidate_block_matrix.v1",
+        "orientation": "candidate_by_observation_block",
+        "candidate_index": {
+            "names": ["window"],
+            "values": {1: [[1]], 2: [[1], [2]]}[candidate_count],
+        },
+        "observation_blocks": protocol["bounds"],
+        "values": {1: [[10.0, 5.0]], 2: [[10.0, 5.0], [9.0, 6.0]]}[candidate_count],
+    }
 
 
 def test_candidate_identity_and_key_change_with_selection_protocol() -> None:
@@ -368,7 +374,7 @@ def test_candidate_key_changes_for_each_pinned_execution_contract(
     assert original[0]["candidate_key"] != changed[0]["candidate_key"]
 
 
-def test_matrix_round_trip_restores_timestamp_and_tuple_candidate_params() -> None:
+def test_matrix_writer_canonicalizes_timestamp_and_tuple_candidate_params() -> None:
     index = pd.MultiIndex.from_tuples(
         [(pd.Timestamp("2024-01-01T12:30:00Z"), ("fast", 5))],
         names=["at", "settings"],
@@ -379,9 +385,30 @@ def test_matrix_round_trip_restores_timestamp_and_tuple_candidate_params() -> No
     )
     matrix = pd.DataFrame([[1.0, 2.0]], index=index, columns=columns)
 
-    restored = matrix_from_evidence(matrix_to_evidence(matrix))
+    assert matrix_to_evidence(matrix) == {
+        "schema_version": "candidate_block_matrix.v1",
+        "orientation": "candidate_by_observation_block",
+        "candidate_index": {
+            "names": ["at", "settings"],
+            "values": [
+                [
+                    {"kind": "timestamp", "value": "2024-01-01T12:30:00+00:00"},
+                    ["fast", 5],
+                ]
+            ],
+        },
+        "observation_blocks": [
+            {"label": "block-000", "start": 0, "end": 2},
+            {"label": "block-001", "start": 2, "end": 4},
+        ],
+        "values": [[1.0, 2.0]],
+    }
 
-    pd.testing.assert_frame_equal(restored, matrix)
+
+def test_continuous_evidence_has_no_rehydration_surface() -> None:
+    for decoder in ("matrix_from_evidence", "observation_blocks_from_evidence"):
+        assert decoder not in continuous_evidence_module.__all__
+        assert not hasattr(continuous_evidence_module, decoder)
 
 
 def test_maximum_lookback_change_moves_scored_interval_and_replay_identity() -> None:
