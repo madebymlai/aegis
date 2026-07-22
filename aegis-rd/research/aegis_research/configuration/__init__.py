@@ -6,6 +6,7 @@ package-private and not part of this surface.
 """
 
 from research.aegis_research.canonical_json import to_builtin
+from research.aegis_research.configuration.env_references import resolve_env_refs
 from research.aegis_research.configuration.field_types import (
     ComponentIdStr,
     NonEmptyStr,
@@ -88,6 +89,7 @@ __all__ = [
     "load_run_config",
     "lock_handle",
     "merge_data_arrays",
+    "resolve_env_refs",
     "resolve_run_config",
     "to_builtin",
     "with_run_config_selection",

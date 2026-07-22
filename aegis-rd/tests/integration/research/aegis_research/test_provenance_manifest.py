@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from research.aegis_research.atomic_write import hash_file
-from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
+from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.capture import (
     canonical_hash,
-    capture_config_evidence,
+    capture_environment_evidence,
+    capture_git_evidence,
+    capture_run_start_evidence,
 )
 from research.aegis_research.provenance.manifest import (
     ArtifactStatus,
@@ -310,15 +313,72 @@ def test_manifest_validation_rejects_completed_aggregate_with_incomplete_child(
         validate_manifest(manifest.to_dict(), run_dir=tmp_path)
 
 
-def test_config_evidence_preserves_the_published_shape_and_hashes(tmp_path: Path) -> None:
+def test_environment_evidence_is_allowlist_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LANG", "C.UTF-8")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "do-not-capture")
+
+    evidence = capture_environment_evidence()
+
+    assert evidence["variables"]["LANG"] == "C.UTF-8"
+    assert "do-not-capture" not in json.dumps(evidence)
+    assert "AWS_SECRET_ACCESS_KEY" not in json.dumps(evidence)
+
+
+def test_git_evidence_excludes_raw_diff() -> None:
+    evidence = capture_git_evidence(Path.cwd())
+
+    if evidence["available"]:
+        assert "diff" not in evidence
+        assert "diff_hash" in evidence
+        assert "changed_files" in evidence
+
+
+def test_git_evidence_includes_staged_and_untracked_content_identity(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(
+        tmp_path,
+        "-c",
+        "user.name=Aegis",
+        "-c",
+        "user.email=aegis@example.test",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+    )
+    clean = capture_git_evidence(tmp_path)
+
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("tracked\n")
+    _git(tmp_path, "add", "tracked.txt")
+    staged = capture_git_evidence(tmp_path)
+
+    assert staged["dirty"] is True
+    assert "tracked.txt" in staged["changed_files"]
+    assert staged["diff_hash"] != clean["diff_hash"]
+
+    untracked = tmp_path / "untracked.txt"
+    untracked.write_text("one\n")
+    first_untracked = capture_git_evidence(tmp_path)
+    untracked.write_text("two\n")
+    second_untracked = capture_git_evidence(tmp_path)
+
+    assert "untracked.txt" in second_untracked["changed_files"]
+    assert second_untracked["diff_hash"] != first_untracked["diff_hash"]
+
+
+def test_run_start_evidence_hashes_raw_config(tmp_path: Path) -> None:
+    from research.aegis_research.canonical_json import to_builtin
+
     config = build_resolved_run_config(tmp_path)
 
-    evidence = capture_config_evidence(config)
+    evidence = capture_run_start_evidence(config, repo_path=Path.cwd())
 
-    assert evidence == {
-        "schema_version": config.config.schema_version,
-        "source_path": config.source_path,
-        "authored_config_hash": canonical_hash(config.authored_config),
-        "resolved_config_hash": canonical_hash(to_builtin(config.config)),
-        "raw_config_identity": {"hash": config.raw_config_hash},
-    }
+    assert evidence["config"]["authored_config_hash"] == canonical_hash(config.authored_config)
+    assert evidence["config"]["resolved_config_hash"] == canonical_hash(to_builtin(config.config))
+    assert "visibility" not in evidence["config"]["raw_config_identity"]
+    assert evidence["environment"]["variables"] == capture_environment_evidence()["variables"]
+
+
+def _git(repo_path: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo_path, check=True, capture_output=True)

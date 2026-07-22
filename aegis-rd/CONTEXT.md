@@ -69,7 +69,7 @@ A top-level **Run Config** reference that reproduces one **Candidate** from a pr
 _Avoid_: promotion, lock token, per-component lock, lock_id
 
 **Manifest**:
-The immutable audit record of a **Run**. Records lifecycle status, config evidence, artifact hashes, and stage outcomes.
+The immutable audit record of a **Run**. Records lifecycle status, config evidence, environment state, artifact hashes, and stage outcomes.
 _Avoid_: log, report, receipt
 
 **Evidence**:

@@ -39,6 +39,35 @@ class ContinuousReplayResult:
     scored_start: int
     sim_end: int
 
+    @property
+    def values(self) -> pd.Series | pd.DataFrame:
+        return self.portfolio.value
+
+    @property
+    def returns(self) -> pd.Series | pd.DataFrame:
+        return self.portfolio.returns
+
+    @property
+    def positions(self) -> pd.DataFrame:
+        return self.portfolio.assets
+
+    @property
+    def cash(self) -> pd.Series | pd.DataFrame:
+        return self.portfolio.cash
+
+    @property
+    def orders(self) -> pd.DataFrame:
+        return self.portfolio.orders.records_readable
+
+    @property
+    def costs(self) -> pd.Series:
+        orders = self.orders
+        return orders["Fees"].copy()
+
+    @property
+    def trades(self) -> pd.DataFrame:
+        return self.portfolio.trades.records_readable
+
 
 def continuous_replay_protocol(
     *,

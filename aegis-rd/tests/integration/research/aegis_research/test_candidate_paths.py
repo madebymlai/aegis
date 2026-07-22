@@ -85,7 +85,10 @@ def _source(
         simulate=simulate,
         resolve_lookbacks=lookbacks,
         params=candidate_params,
+        output_name="allocation",
         evidence={},
+        diagnostics={},
+        metadata={},
     )
 
 
@@ -128,7 +131,7 @@ def test_development_paths_resolve_one_common_start_from_the_sampled_grid() -> N
     assert paths.lookbacks.scored_start == 3
     assert paths.replay.scored_start == 3
     assert paths.allocations.index.equals(index)
-    assert paths.replay.portfolio.value.index.equals(index)
+    assert paths.replay.values.index.equals(index)
     assert list(paths.full_period_metrics.index) == list(paths.candidates.keys)
     assert paths.verdicts.under_traded == set(paths.candidates.keys)
 

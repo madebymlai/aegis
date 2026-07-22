@@ -33,7 +33,10 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
         simulate=lambda *args, **kwargs: pytest.fail("Portfolio must not run"),
         resolve_lookbacks=lambda params: {"component": 0},
         params={"window": vbt.Param([1])},
+        output_name="allocation",
         evidence={"strategy": {}},
+        diagnostics={},
+        metadata={},
     )
     setup = make_setup_result(
         store_path=tmp_path / "store.sqlite3",

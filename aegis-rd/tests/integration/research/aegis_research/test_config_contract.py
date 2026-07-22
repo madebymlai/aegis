@@ -11,6 +11,7 @@ from research.aegis_research.configuration import (
     OHLCV_ARRAYS,
     ConfigValidationError,
     load_run_config,
+    resolve_env_refs,
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
@@ -293,6 +294,13 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
 
     assert "data" in str(error.value)
     assert "duplicate mapping key" in str(error.value)
+
+
+def test_env_refs_are_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("BINANCE_API_KEY", "super-secret-token")
+    resolved_kwargs = resolve_env_refs({"api_key": {"env": "BINANCE_API_KEY"}})
+
+    assert resolved_kwargs == {"api_key": "super-secret-token"}
 
 
 def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:

@@ -22,6 +22,7 @@ from research.aegis_research.optimization.continuous_replay import (
 from research.aegis_research.optimization.observation_blocks import (
     OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
     ObservationBlockAnalysis,
+    ObservationBlocks,
     observation_block_protocol,
     observation_block_ranking_protocol,
 )
@@ -169,6 +170,30 @@ def matrix_to_evidence(matrix: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def matrix_from_evidence(payload: Mapping[str, Any]) -> pd.DataFrame:
+    """Decode and validate a canonical Candidate-by-Observation-Block matrix."""
+    if payload.get("schema_version") != MATRIX_EVIDENCE_SCHEMA_VERSION:
+        raise ValueError("unsupported Candidate block matrix schema_version")
+    if payload.get("orientation") != "candidate_by_observation_block":
+        raise ValueError("unsupported Candidate block matrix orientation")
+    index_payload = payload["candidate_index"]
+    index = pd.MultiIndex.from_tuples(
+        [tuple(_restore_canonical(item) for item in value) for value in index_payload["values"]],
+        names=index_payload["names"],
+    )
+    columns = pd.MultiIndex.from_tuples(
+        [
+            (block["label"], int(block["start"]), int(block["end"]))
+            for block in payload["observation_blocks"]
+        ],
+        names=["observation_block", "start", "end"],
+    )
+    result = pd.DataFrame(payload["values"], index=index, columns=columns, dtype="float64")
+    if result.shape != (len(index), len(columns)):
+        raise ValueError("Candidate block matrix values do not match declared shape")
+    return result
+
+
 def table_to_evidence(table: pd.DataFrame) -> dict[str, Any]:
     """Encode complete-period Metric values in canonical Candidate-row orientation."""
     if not isinstance(table.index, pd.MultiIndex):
@@ -183,6 +208,26 @@ def table_to_evidence(table: pd.DataFrame) -> dict[str, Any]:
         "metrics": [str(column) for column in table.columns],
         "values": [[_optional_float(value) for value in row] for row in table.to_numpy().tolist()],
     }
+
+
+def observation_blocks_from_evidence(
+    index: pd.Index, execution: Mapping[str, Any]
+) -> ObservationBlocks:
+    """Reproduce labeled half-open bounds from published execution Evidence."""
+    identity = execution.get("selection_identity")
+    if not isinstance(identity, Mapping):
+        raise TypeError("continuous Evidence has no selection identity")
+    protocol = identity.get("observation_block_protocol")
+    if not isinstance(protocol, Mapping):
+        raise TypeError("continuous Evidence has no Observation Block protocol")
+    blocks = protocol.get("bounds")
+    if not isinstance(blocks, list):
+        raise TypeError("Observation Block Evidence has no bounds")
+    return ObservationBlocks.from_bounds(
+        index,
+        [(int(block["start"]), int(block["end"])) for block in blocks],
+        labels=[str(block["label"]) for block in blocks],
+    )
 
 
 def validate_selection_identity(identity: Mapping[str, Any]) -> None:
@@ -352,11 +397,35 @@ def _as_tuple(value: Any) -> tuple[Any, ...]:
     return value if isinstance(value, tuple) else (value,)
 
 
+def _restore_canonical(value: Any) -> Any:
+    """Restore hashable Candidate coordinate values from canonical Evidence."""
+    if isinstance(value, list):
+        return tuple(_restore_canonical(item) for item in value)
+    if not isinstance(value, Mapping):
+        return value
+    kind = value.get("kind")
+    if kind == "timestamp":
+        return pd.Timestamp(value["value"])
+    if kind == "timedelta":
+        return pd.Timedelta(value["value"])
+    if kind == "nan":
+        return float("nan")
+    if kind == "infinity":
+        return float("inf") if int(value["sign"]) > 0 else float("-inf")
+    if kind == "enum":
+        return _restore_canonical(value["value"])
+    if kind == "repr":
+        return str(value["value"])
+    return tuple((str(key), _restore_canonical(item)) for key, item in sorted(value.items()))
+
+
 __all__ = [
     "CONTINUOUS_SELECTION_EVIDENCE_SCHEMA_VERSION",
     "CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION",
     "ContinuousEvidence",
     "build_continuous_evidence",
+    "matrix_from_evidence",
     "matrix_to_evidence",
+    "observation_blocks_from_evidence",
     "validate_selection_identity",
 ]
