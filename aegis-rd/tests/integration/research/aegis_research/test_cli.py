@@ -529,8 +529,8 @@ def test_show_config_schema_exits_zero_and_prints_markdown(
     assert "## Component IDs" in guide
     assert "## Example Run Config" in guide
 
-    assert "optimization`** — required" in guide
-    assert "schema_version`** — required and exactly `11`" in guide
+    assert "| `optimization` | `OptimizationConfig` | yes | — | — |" in guide
+    assert "| `schema_version` | `11` | yes | — | exactly `11` |" in guide
 
     # Pointers to other show subcommands
     assert "`aerd show components`" in guide
@@ -567,8 +567,8 @@ def test_show_config_schema_marks_model_required_fields(
 
     guide = capsys.readouterr().out
 
-    assert "optimization`** — required" in guide
-    assert "schema_version`** — required and exactly `11`" in guide
+    assert "| `optimization` | `OptimizationConfig` | yes | — | — |" in guide
+    assert "| `schema_version` | `11` | yes | — | exactly `11` |" in guide
 
 
 def test_show_config_schema_literal_catalogs_interpolated(
@@ -740,7 +740,7 @@ def test_show_config_schema_coherence_optimization_required(
     # Side A: guide states optimization required
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
-    assert "optimization`** — required" in guide
+    assert "| `optimization` | `OptimizationConfig` | yes | — | — |" in guide
 
     # Side B: config omitting optimization fails validation
     monkeypatch.chdir(tmp_path)
@@ -1253,13 +1253,22 @@ def test_config_schema_guide_states_missing_policies() -> None:
 def test_config_schema_guide_marks_optimization_required() -> None:
     """Drift: the validating model requires optimization."""
     guide = _render_guide("config-schema")
-    assert "optimization`** — required" in guide
+    assert "| `optimization` | `OptimizationConfig` | yes | — | — |" in guide
 
 
 def test_config_schema_guide_marks_schema_version_required_and_exact() -> None:
     """Drift: the validating model requires schema version 11."""
     guide = _render_guide("config-schema")
-    assert "schema_version`** — required and exactly `11`" in guide
+    assert "| `schema_version` | `11` | yes | — | exactly `11` |" in guide
+
+
+def test_config_schema_guide_derives_run_name_constraints() -> None:
+    guide = _render_guide("config-schema")
+    assert (
+        "| `name` | `str` | yes | — | minimum length `1`; "
+        "must match `^[A-Za-z0-9_.-]+$`; must not be `.`, `..` |"
+        in guide
+    )
 
 
 def test_config_schema_guide_states_native_data_contract() -> None:

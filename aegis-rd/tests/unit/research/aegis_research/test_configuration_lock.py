@@ -149,7 +149,9 @@ def test_mapping_lock_empty_run_id_fails_validation(registry) -> None:
             component_registry=registry,
         )
 
-    assert any(issue.path == "lock.run_id" for issue in excinfo.value.issues)
+    assert str(excinfo.value) == (
+        "Invalid run config: lock.run_id: String should have at least 1 character"
+    )
 
 
 def test_config_without_lock_has_none_lock(registry) -> None:

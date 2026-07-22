@@ -86,6 +86,10 @@ def _get_issues(path: str, error: ValidationError) -> list[dict[str, Any]]:
     return [e for e in error.errors() if e["loc"] == tuple(path.split("."))]
 
 
+def _issue_paths(error: ConfigValidationError) -> set[str]:
+    return {issue.path for issue in error.issues}
+
+
 # ── smoke tests (constants, defaults, calculator) ────────────────────────────
 
 
@@ -287,9 +291,10 @@ def test_typed_band_override_and_registry_issues_are_combined(tmp_path: Path) ->
             strategy_id="missing.strategy",
         )
 
-    paths = {issue.path for issue in e.value.issues}
-    assert "portfolio.band_overrides" in paths
-    assert "strategy.id" in paths
+    assert _issue_paths(e.value) == {
+        "portfolio.band_overrides",
+        "strategy.id",
+    }
 
 
 def test_resolved_config_carries_margin_interest_default(tmp_path: Path) -> None:

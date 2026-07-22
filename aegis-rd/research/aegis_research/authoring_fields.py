@@ -6,7 +6,6 @@ It must not depend on either authoring surface.
 
 from __future__ import annotations
 
-import re
 from typing import Annotated
 
 import pandas as pd
@@ -14,7 +13,6 @@ from aegis_runtime import validate_bare_root
 from pydantic import AfterValidator, Field
 
 IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.-]+$"
-IDENTIFIER_RE = re.compile(IDENTIFIER_PATTERN)
 
 
 def _validate_timedelta_str(value: str) -> str:
@@ -44,7 +42,11 @@ UnitInterval = Annotated[float, Field(strict=True, ge=0, le=1)]
 ComponentIdStr = Annotated[str, Field(min_length=1, pattern=IDENTIFIER_PATTERN)]
 RunName = Annotated[
     str,
-    Field(min_length=1, pattern=IDENTIFIER_PATTERN),
+    Field(
+        min_length=1,
+        pattern=IDENTIFIER_PATTERN,
+        json_schema_extra={"not": {"enum": [".", ".."]}},
+    ),
     AfterValidator(_validate_run_name),
 ]
 NonEmptyStr = Annotated[str, Field(min_length=1)]

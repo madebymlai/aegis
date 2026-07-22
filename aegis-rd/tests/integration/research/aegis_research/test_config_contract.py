@@ -18,6 +18,13 @@ from research.aegis_research.configuration import resolution as resolution_modul
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
 
 
+def _prevent_component_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_discovery() -> None:
+        raise AssertionError("component discovery must not run for structurally invalid input")
+
+    monkeypatch.setattr(resolution_module, "discover_component_registry", fail_discovery)
+
+
 def test_public_config_exports_only_run_config_contract() -> None:
     removed = {
         "ExperimentConfig",
@@ -65,17 +72,17 @@ def test_resolve_accepts_programmatic_mapping_input(tmp_path: Path) -> None:
 def test_structural_failure_does_not_discover_component_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail_discovery() -> None:
-        raise AssertionError("component discovery must not run for structurally invalid input")
-
-    monkeypatch.setattr(resolution_module, "discover_component_registry", fail_discovery)
+    _prevent_component_discovery(monkeypatch)
     raw = _run_config()
     raw["optimization"] = None
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw)
 
-    assert any(issue.path == "optimization" for issue in error.value.issues)
+    assert str(error.value) == (
+        "Invalid run config: optimization: "
+        "Input should be a dictionary or an instance of OptimizationConfig"
+    )
 
 
 def test_registry_discovery_failure_remains_a_setup_error(
@@ -348,52 +355,39 @@ def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
     assert "Unexpected keyword argument" in str(error.value)
 
 
-def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
+def test_run_requires_native_optimization_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    _prevent_component_discovery(monkeypatch)
     raw = _run_config()
     raw.pop("optimization")
 
     with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
+        resolve_run_config(raw)
 
-    assert any(
-        issue.path == "optimization" and issue.message == "Field required"
-        for issue in error.value.issues
-    )
+    assert str(error.value) == "Invalid run config: optimization: Field required"
 
 
-def test_run_requires_schema_version_from_the_model(tmp_path: Path) -> None:
+def test_run_requires_schema_version_from_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    _prevent_component_discovery(monkeypatch)
     raw = _run_config()
     raw.pop("schema_version")
 
     with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
+        resolve_run_config(raw)
 
-    assert any(
-        issue.path == "schema_version" and issue.message == "Field required"
-        for issue in error.value.issues
-    )
+    assert str(error.value) == "Invalid run config: schema_version: Field required"
 
 
-def test_run_rejects_other_schema_version_from_the_model(tmp_path: Path) -> None:
+def test_run_rejects_other_schema_version_from_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prevent_component_discovery(monkeypatch)
     raw = _run_config()
-    raw["schema_version"] = CONFIG_SCHEMA_VERSION + 1
+    raw["schema_version"] = 12
 
     with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
+        resolve_run_config(raw)
 
-    assert any(
-        issue.path == "schema_version" and issue.message == "Input should be 11"
-        for issue in error.value.issues
-    )
+    assert str(error.value) == "Invalid run config: schema_version: Input should be 11"
 
 
 def test_run_rejects_dot_only_name_from_the_model(tmp_path: Path) -> None:
@@ -406,23 +400,9 @@ def test_run_rejects_dot_only_name_from_the_model(tmp_path: Path) -> None:
             component_registry=_component_registry(tmp_path),
         )
 
-    assert any(
-        issue.path == "name" and "run name must not be" in issue.message
-        for issue in error.value.issues
+    assert str(error.value) == (
+        "Invalid run config: name: Value error, run name must not be '.' or '..'"
     )
-
-
-def test_run_rejects_null_optimization_contract(tmp_path: Path) -> None:
-    raw = _run_config()
-    raw["optimization"] = None
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(
-            raw,
-            component_registry=_component_registry(tmp_path),
-        )
-
-    assert any(issue.path == "optimization" for issue in error.value.issues)
 
 
 def test_run_accepts_grid_optimization_with_observation_blocks(tmp_path: Path) -> None:

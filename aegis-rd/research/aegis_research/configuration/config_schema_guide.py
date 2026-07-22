@@ -17,7 +17,9 @@ from collections.abc import Sequence
 from dataclasses import MISSING
 from dataclasses import Field as DcField
 from dataclasses import fields as dc_fields
-from typing import Any, Literal, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin, get_type_hints
+
+from pydantic import TypeAdapter
 
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
@@ -108,26 +110,11 @@ def _render_structural_contract() -> str:
         "## Structural Contract",
     ]
 
-    lines.append(
-        f"- **`schema_version`** — required and exactly `{CONFIG_SCHEMA_VERSION}`."
-    )
-    lines.append(
-        "- **`optimization`** — required. Every Run declares its search policy and "
-        "Observation Block length."
-    )
-
     # removed fields
     lines.append(
         "- **Removed fields** — `data.source`, `data.symbols`, `data.provider`, "
         "`data.fx_provider`, `labeler`, `train`, `model`, and any key not listed in "
         "this guide are rejected as unknown."
-    )
-
-    # schema_version
-    lines.append(
-        f"\nThe accepted Run Config schema version is **{CONFIG_SCHEMA_VERSION}**. "
-        "Older or newer schema versions are rejected. The `schema_version` field is "
-        "required at the top level with this exact value."
     )
 
     return "\n".join(lines)
@@ -246,9 +233,9 @@ def _render_report_section() -> str:
 
 def _render_optimization_section() -> str:
     lines = [
-        "### `optimization` (required)",
+        "### `optimization`",
         "",
-        "Every Run must declare an optimization section.",
+        "Defines the Run's search policy and Observation Block length.",
         "",
     ]
     lines.append(_render_field_table(OptimizationConfig))
@@ -493,17 +480,17 @@ def _walk_dataclass_fields(cls: Any) -> list[FieldDef]:
 
     Excludes internal/sentinel fields (names starting with underscore).
     """
+    annotations = get_type_hints(cls, include_extras=True)
     result: list[FieldDef] = []
     for f in dc_fields(cls):
         if f.name.startswith("_"):
             continue
-        result.append(_field_def(f))
+        result.append(_field_def(f, annotation=annotations[f.name]))
     return result
 
 
-def _field_def(field: DcField[Any]) -> FieldDef:
+def _field_def(field: DcField[Any], *, annotation: Any) -> FieldDef:
     name = field.name
-    annotation = field.type
 
     # Unwrap typing constructs
     type_str = _render_type(annotation)
@@ -527,7 +514,25 @@ def _field_def(field: DcField[Any]) -> FieldDef:
         type_str=type_str,
         is_required=is_required,
         default_str=default_str,
+        notes=_render_constraints(annotation),
     )
+
+
+def _render_constraints(annotation: Any) -> str | None:
+    """Render structural constraints from the field's Pydantic JSON Schema."""
+    schema = TypeAdapter(annotation).json_schema()
+    constraints: list[str] = []
+    if "const" in schema:
+        constraints.append(f"exactly `{schema['const']}`")
+    if "minLength" in schema:
+        constraints.append(f"minimum length `{schema['minLength']}`")
+    if "pattern" in schema:
+        constraints.append(f"must match `{schema['pattern']}`")
+    excluded = schema.get("not", {}).get("enum")
+    if excluded:
+        values = ", ".join(f"`{value}`" for value in excluded)
+        constraints.append(f"must not be {values}")
+    return "; ".join(constraints) or None
 
 
 def _render_type(annotation: Any) -> str:
