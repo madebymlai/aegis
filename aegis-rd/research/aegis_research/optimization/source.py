@@ -68,15 +68,11 @@ class OptimizationSource:
     owns its own configuration. The fixed field set is what enforces that
     boundary; signal ``params`` names must avoid
     ``OPTIMIZATION_PARAM_RESERVED_NAMES`` (the runner re-checks this at the
-    simulation boundary) and ``output_name`` is constrained where the producing
-    Component's manifest is built.
+    simulation boundary).
     """
 
     precompute: Callable[..., IndicatorPrecompute]
     simulate: Callable[..., Any]
     resolve_lookbacks: Callable[[Mapping[str, Any]], Mapping[str, int]]
     params: dict[str, vbt.Param]
-    output_name: str
     evidence: dict[str, Any]
-    diagnostics: dict[str, Any]
-    metadata: dict[str, Any]

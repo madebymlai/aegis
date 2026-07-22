@@ -98,10 +98,20 @@ def test_replay_has_no_terminal_liquidation() -> None:
         periods_per_year=252,
     )
 
-    assert result.positions.iloc[-1, 0] > 0.0
-    assert result.orders["Fill Index"].tolist() == [close.index[1]]
-    assert result.returns.index.equals(close.index)
-    assert result.values.index.equals(close.index)
+    for forwarding_property in (
+        "values",
+        "returns",
+        "positions",
+        "cash",
+        "orders",
+        "costs",
+        "trades",
+    ):
+        assert not hasattr(type(result), forwarding_property)
+    assert result.portfolio.assets.iloc[-1, 0] > 0.0
+    assert result.portfolio.orders.records_readable["Fill Index"].tolist() == [close.index[1]]
+    assert result.portfolio.returns.index.equals(close.index)
+    assert result.portfolio.value.index.equals(close.index)
 
 
 def test_replay_rejects_same_close_for_close_dependent_allocations() -> None:
@@ -142,12 +152,20 @@ def test_future_suffix_mutation_leaves_earlier_path_unchanged() -> None:
         periods_per_year=252,
     )
 
-    pd.testing.assert_series_equal(original.values.iloc[:3], mutated.values.iloc[:3])
-    pd.testing.assert_series_equal(original.returns.iloc[:3], mutated.returns.iloc[:3])
-    pd.testing.assert_frame_equal(original.positions.iloc[:3], mutated.positions.iloc[:3])
+    pd.testing.assert_series_equal(
+        original.portfolio.value.iloc[:3], mutated.portfolio.value.iloc[:3]
+    )
+    pd.testing.assert_series_equal(
+        original.portfolio.returns.iloc[:3], mutated.portfolio.returns.iloc[:3]
+    )
     pd.testing.assert_frame_equal(
-        original.orders[original.orders["Fill Index"] < close.index[3]].reset_index(drop=True),
-        mutated.orders[mutated.orders["Fill Index"] < close.index[3]].reset_index(drop=True),
+        original.portfolio.assets.iloc[:3], mutated.portfolio.assets.iloc[:3]
+    )
+    original_orders = original.portfolio.orders.records_readable
+    mutated_orders = mutated.portfolio.orders.records_readable
+    pd.testing.assert_frame_equal(
+        original_orders[original_orders["Fill Index"] < close.index[3]].reset_index(drop=True),
+        mutated_orders[mutated_orders["Fill Index"] < close.index[3]].reset_index(drop=True),
     )
 
 
@@ -188,16 +206,24 @@ def test_candidate_batch_matches_sequential_continuous_paths() -> None:
     }
 
     for candidate, replay in sequential.items():
-        pd.testing.assert_series_equal(batch.values[candidate], replay.values, check_names=False)
-        pd.testing.assert_series_equal(batch.returns[candidate], replay.returns, check_names=False)
-        pd.testing.assert_frame_equal(batch.positions.loc[:, [candidate]], replay.positions)
-        batch_orders = batch.orders[batch.orders["Column"].map(lambda value: value[0]) == candidate]
+        pd.testing.assert_series_equal(
+            batch.portfolio.value[candidate], replay.portfolio.value, check_names=False
+        )
+        pd.testing.assert_series_equal(
+            batch.portfolio.returns[candidate], replay.portfolio.returns, check_names=False
+        )
+        pd.testing.assert_frame_equal(
+            batch.portfolio.assets.loc[:, [candidate]], replay.portfolio.assets
+        )
+        batch_orders = batch.portfolio.orders.records_readable
+        batch_orders = batch_orders[batch_orders["Column"].map(lambda value: value[0]) == candidate]
         pd.testing.assert_series_equal(
             batch_orders["Fees"].reset_index(drop=True),
-            replay.costs.reset_index(drop=True),
+            replay.portfolio.orders.records_readable["Fees"].reset_index(drop=True),
             check_names=False,
         )
-        assert len(batch_orders) == len(replay.orders)
+        assert len(batch_orders) == len(replay.portfolio.orders.records_readable)
+        batch_trades = batch.portfolio.trades.records_readable
         assert len(
-            batch.trades[batch.trades["Column"].map(lambda value: value[0]) == candidate]
-        ) == len(replay.trades)
+            batch_trades[batch_trades["Column"].map(lambda value: value[0]) == candidate]
+        ) == len(replay.portfolio.trades.records_readable)

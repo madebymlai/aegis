@@ -23,7 +23,6 @@ from research.aegis_research.configuration import (
 from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.param_namespace import (
     FIXED_CANDIDATE_PARAM,
-    PARAM_KEY_PREFIX,
     ComponentRef,
     encode,
 )
@@ -204,17 +203,7 @@ class _ComposedSource:
             simulate=self.simulate,
             resolve_lookbacks=self.resolve_lookbacks,
             params=self.params,
-            output_name=self.strategy.definition.allocation_output_name(),
             evidence=_source_evidence(self.strategy, self.indicators, self.params),
-            diagnostics={
-                "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
-                "candidate_param_count": len(self.params),
-                "uses_fixed_candidate_param": list(self.params) == [FIXED_CANDIDATE_PARAM],
-            },
-            metadata={
-                "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
-                "param_namespace": PARAM_KEY_PREFIX,
-            },
         )
 
 
