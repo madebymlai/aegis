@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -13,6 +15,7 @@ from research.aegis_research.run_data import (
     RunDataUnavailable,
 )
 from research.aegis_research.run_pipeline import run_strategy_sweep
+from tests.support.research.aegis_research.factories import make_run_data
 from tests.support.research.aegis_research.run_config_fixtures import build_resolved_run_config
 
 
@@ -35,7 +38,7 @@ def test_run_recorder_starts_and_completes_manifest(tmp_path: Path) -> None:
     assert "failure" not in completed_manifest["run"]
 
 
-def test_run_store_new_mode_rejects_existing_run_id(tmp_path: Path) -> None:
+def test_run_store_rejects_existing_run_id(tmp_path: Path) -> None:
     store = RunStore(tmp_path)
     store.start_run(
         config={"schema_version": 1},
@@ -49,6 +52,40 @@ def test_run_store_new_mode_rejects_existing_run_id(tmp_path: Path) -> None:
             config={"schema_version": 1},
             run_id="fixed-run",
         )
+
+
+def test_run_store_claims_duplicate_run_id_atomically(tmp_path: Path) -> None:
+    contenders = 16
+    barrier = Barrier(contenders)
+
+    def start_run() -> RunRecorder | BaseException:
+        barrier.wait()
+        try:
+            return RunStore(tmp_path).start_run(
+                config={"schema_version": 1},
+                run_id="contended-run",
+            )
+        except BaseException as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=contenders) as executor:
+        results = list(executor.map(lambda _index: start_run(), range(contenders)))
+
+    assert sum(isinstance(result, RunRecorder) for result in results) == 1
+    assert sum(isinstance(result, RunCollisionError) for result in results) == contenders - 1
+    assert json.loads((tmp_path / "contended-run.json").read_text())["run"]["id"] == (
+        "contended-run"
+    )
+
+
+def test_run_store_does_not_misreport_invalid_root_as_run_collision(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    root.write_text("not a directory")
+
+    with pytest.raises(FileExistsError) as exc_info:
+        RunStore(root).start_run(config={"schema_version": 1}, run_id="run-1")
+
+    assert type(exc_info.value) is FileExistsError
 
 
 @pytest.mark.parametrize("run_id", ["../escape", "/tmp/escape", "nested/escape", "bad id"])
@@ -193,6 +230,36 @@ def test_strategy_run_marks_failed_when_on_run_refs_callback_fails(
         "error_type": "RuntimeError",
         "message": "callback failed",
     }
+
+
+def test_strategy_run_records_interruption_at_active_optimization_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    resolved = build_resolved_run_config(tmp_path)
+
+    def interrupt_setup(**_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "research.aegis_research.run_pipeline.run_pipeline_setup",
+        interrupt_setup,
+    )
+    monkeypatch.setattr(
+        "research.aegis_research.run_pipeline.load_run_data",
+        lambda *_args, **_kwargs: make_run_data(),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_strategy_sweep(
+            resolved,
+            component_registry=resolved.component_registry,
+            run_id="setup-interrupted-run",
+        )
+
+    manifest = json.loads((tmp_path / "runs" / "setup-interrupted-run.json").read_text())
+    assert manifest["run"]["failure"]["stage"] == "setup"
 
 
 def test_failed_run_diagnostic_is_length_clipped_not_redacted(

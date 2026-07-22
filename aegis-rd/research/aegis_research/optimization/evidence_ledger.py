@@ -5,13 +5,13 @@ from enum import StrEnum
 from typing import Any
 
 from research.aegis_research.canonical_json import to_builtin
+from research.aegis_research.provenance.manifest import RunStage
 
 OPTIMIZATION_ROUTE_SCHEMA_VERSION = "optimization_route.v2"
 _SUPPORTED_OPTIMIZATION_SCHEMA_VERSIONS = {None, OPTIMIZATION_ROUTE_SCHEMA_VERSION}
 
 __all__ = [
     "OPTIMIZATION_ROUTE_SCHEMA_VERSION",
-    "EvidenceFailureStage",
     "EvidenceSection",
     "RunEvidence",
 ]
@@ -21,14 +21,6 @@ class EvidenceSection(StrEnum):
     PREFLIGHT = "preflight"
     EXECUTION = "execution"
     CANDIDATES = "candidates"
-
-
-class EvidenceFailureStage(StrEnum):
-    SETUP = "setup"
-    PREFLIGHT = "preflight"
-    EXECUTION = "execution"
-    PUBLISHING = "publishing"
-    COMPLETION = "completion"
 
 
 class RunEvidence:
@@ -59,7 +51,7 @@ class RunEvidence:
         self._manifest_evidence.clear()
         self._manifest_evidence.update(manifest_payload)
         self._optimization = optimization_payload
-        self._failure_stage: EvidenceFailureStage | None = None
+        self._active_stage = RunStage.RUN
 
     def initialize_optimization(self, payload: Mapping[str, Any]) -> None:
         """Replace the optimization evidence baseline while keeping manifest identity."""
@@ -79,15 +71,17 @@ class RunEvidence:
         """Return a detached builtin copy of the optimization evidence."""
         return to_builtin(self._optimization)
 
-    def fail(self, stage: EvidenceFailureStage, err: BaseException) -> None:
-        if not isinstance(stage, EvidenceFailureStage):
-            raise TypeError("stage must be an EvidenceFailureStage")
-        self._failure_stage = stage
+    def enter_stage(self, stage: RunStage) -> None:
+        if not isinstance(stage, RunStage):
+            raise TypeError("stage must be a RunStage")
+        self._active_stage = stage
+
+    def persist_partial(self) -> None:
         self._persist()
 
     @property
-    def failure_stage(self) -> EvidenceFailureStage | None:
-        return self._failure_stage
+    def active_stage(self) -> RunStage:
+        return self._active_stage
 
     def snapshot(self) -> dict[str, Any]:
         return to_builtin(self._manifest_evidence)

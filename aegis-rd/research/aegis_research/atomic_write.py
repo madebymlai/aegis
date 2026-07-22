@@ -1,7 +1,7 @@
 """Durable, content-addressed file I/O for artifact persistence.
 
-``write_json``: serialize a payload to stable JSON and atomically write it to
-a path (command).
+``write_json`` / ``write_new_json``: serialize a payload to stable JSON and
+atomically replace or exclusively create a path (commands).
 ``hash_file``: return the hex-encoded SHA-256 digest of a file (query).
 """
 
@@ -27,6 +27,14 @@ def write_json(path: str | Path, payload: dict[str, Any]) -> None:
     _atomic_write(target, json_bytes)
 
 
+def write_new_json(path: str | Path, payload: dict[str, Any]) -> None:
+    """Atomically create a canonical JSON file without replacing an existing path."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    json_bytes = canonical_json_bytes(payload, indent=2)
+    _atomic_create(target, json_bytes)
+
+
 def hash_file(path: str | Path) -> str:
     """Return the hex-encoded SHA-256 digest of the file at *path*."""
     digest = hashlib.sha256()
@@ -44,6 +52,27 @@ def _atomic_write(target: Path, data: bytes) -> None:
     the parent directory.  On failure the temp file is removed and
     *target* is left intact.
     """
+    temp_path = _write_temp_file(target, data)
+    try:
+        temp_path.replace(target)
+        _fsync_parent(target)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def _atomic_create(target: Path, data: bytes) -> None:
+    """Publish complete bytes at an unclaimed path, failing if it already exists."""
+    temp_path = _write_temp_file(target, data)
+    try:
+        os.link(temp_path, target)
+        _fsync_parent(target)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def _write_temp_file(target: Path, data: bytes) -> Path:
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -58,11 +87,12 @@ def _atomic_write(target: Path, data: bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        temp_path.replace(target)
-        _fsync_parent(target)
-    finally:
+    except BaseException:
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()
+        raise
+    else:
+        return temp_path
 
 
 def _fsync_parent(path: Path) -> None:

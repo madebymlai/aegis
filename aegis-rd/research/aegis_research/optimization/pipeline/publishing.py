@@ -25,7 +25,6 @@ from research.aegis_research.optimization.candidate_store_identity import (
     candidate_store_namespace,
 )
 from research.aegis_research.optimization.evidence_ledger import (
-    EvidenceFailureStage,
     EvidenceSection,
     RunEvidence,
 )
@@ -35,6 +34,7 @@ from research.aegis_research.optimization.run_data_contract import (
     candidate_data_identity,
 )
 from research.aegis_research.optimization.source import OptimizationSource
+from research.aegis_research.provenance.manifest import RunStage
 from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.run_data import RunData
 
@@ -60,6 +60,7 @@ def run_pipeline_publishing(
     store_path: Path,
 ) -> PublishingResult:
     """Build the three candidate rows and publish them to the candidate store."""
+    run_evidence.enter_stage(RunStage.PUBLISHING)
     try:
         store_namespace = candidate_store_namespace()
         candidate_rows = candidate_rows_from_result(
@@ -87,8 +88,8 @@ def run_pipeline_publishing(
                 provenance=candidate_store_provenance,
                 publication_state=PUBLICATION_PENDING,
             )
-    except Exception as error:
-        run_evidence.fail(EvidenceFailureStage.PUBLISHING, error)
+    except Exception:
+        run_evidence.persist_partial()
         raise
 
     return PublishingResult(

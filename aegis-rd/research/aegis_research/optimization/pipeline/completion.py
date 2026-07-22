@@ -8,12 +8,10 @@ from typing import Any
 
 from research.aegis_research.configuration import RunConfig, lock_handle
 from research.aegis_research.optimization.candidate_store import CandidateStore
-from research.aegis_research.optimization.evidence_ledger import (
-    EvidenceFailureStage,
-    RunEvidence,
-)
+from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.publishing import PublishingResult
 from research.aegis_research.optimization.pipeline.setup import SetupResult
+from research.aegis_research.provenance.manifest import RunStage
 from research.aegis_research.provenance.recorder import RunRecorder
 
 
@@ -30,6 +28,7 @@ def run_pipeline_completion(
     The result carries Run refs, CandidateStore path, optimization accounting,
     and the representative Candidate summaries directly from memory.
     """
+    run_evidence.enter_stage(RunStage.COMPLETION)
     try:
         optimization_evidence = run_evidence.optimization()
         execution = dict(optimization_evidence.get("execution", {}))
@@ -45,8 +44,8 @@ def run_pipeline_completion(
             store_path=setup.store_path,
             execution=execution,
         )
-    except Exception as error:
-        run_evidence.fail(EvidenceFailureStage.COMPLETION, error)
+    except Exception:
+        run_evidence.persist_partial()
         raise
 
 

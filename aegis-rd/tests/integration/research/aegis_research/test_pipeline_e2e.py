@@ -19,7 +19,7 @@ from tests.support.research.aegis_research.market_data_fixtures import (
 COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
 
 
-def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
+def test_pipeline_produces_valid_manifest_and_candidate_store_with_intree_components(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

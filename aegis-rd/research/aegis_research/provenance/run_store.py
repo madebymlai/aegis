@@ -39,12 +39,14 @@ class RunStore:
                 config=config,
             )
         except FileExistsError as error:
-            raise RunCollisionError(f"Run already exists: {manifest_path}") from error
+            if manifest_path.exists():
+                raise RunCollisionError(f"Run already exists: {manifest_path}") from error
+            raise
 
 
-def _new_run_id(run_label: str) -> str:
+def _new_run_id(run_name: str) -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    return f"{timestamp}_{run_label}"
+    return f"{timestamp}_{run_name}"
 
 
 def _validate_run_id(run_id: str) -> str:

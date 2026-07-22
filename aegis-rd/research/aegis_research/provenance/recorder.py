@@ -4,9 +4,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.atomic_write import write_json
+from research.aegis_research.atomic_write import write_json, write_new_json
 from research.aegis_research.provenance.manifest import (
+    RunFailure,
     RunManifest,
+    RunStage,
     RunStatus,
 )
 
@@ -28,14 +30,12 @@ class RunRecorder:
     ) -> RunRecorder:
         path = Path(manifest_path)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if path.exists():
-            raise FileExistsError(f"Run already exists: {path}")
         manifest = RunManifest.new(
             run_id=run_id,
             config=config,
         )
         recorder = cls(manifest, path)
-        recorder.persist()
+        write_new_json(path, manifest.to_dict())
         return recorder
 
     def persist(self) -> None:
@@ -49,7 +49,7 @@ class RunRecorder:
     def mark_run_failed(
         self,
         *,
-        stage: str,
+        stage: RunStage,
         error: BaseException,
     ) -> None:
         self.manifest.failure = _terminal_failure(stage, error)
@@ -60,7 +60,7 @@ class RunRecorder:
     def mark_run_interrupted(
         self,
         *,
-        stage: str,
+        stage: RunStage,
         error: BaseException,
     ) -> None:
         self.manifest.failure = _terminal_failure(stage, error)
@@ -82,12 +82,12 @@ class RunRecorder:
         return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _terminal_failure(stage: str, error: BaseException) -> dict[str, str]:
+def _terminal_failure(stage: RunStage, error: BaseException) -> RunFailure:
     message = str(error)
     if isinstance(error, KeyboardInterrupt) and not message:
         message = "interrupted"
-    return {
-        "stage": stage,
-        "error_type": type(error).__name__,
-        "message": message[:_FAILURE_MESSAGE_LIMIT],
-    }
+    return RunFailure(
+        stage=stage,
+        error_type=type(error).__name__,
+        message=message[:_FAILURE_MESSAGE_LIMIT],
+    )

@@ -5,10 +5,10 @@ from typing import Any
 import pytest
 
 from research.aegis_research.optimization.evidence_ledger import (
-    EvidenceFailureStage,
     EvidenceSection,
     RunEvidence,
 )
+from research.aegis_research.provenance.manifest import RunStage
 
 
 def test_run_evidence_seeds_manifest_and_records_optimization_sections() -> None:
@@ -55,7 +55,7 @@ def test_run_evidence_seeds_manifest_and_records_optimization_sections() -> None
     assert manifest_evidence["optimization"]["preflight"] == {"eligible_candidate_count": 3}
 
 
-def test_run_evidence_failure_stage_is_transient_and_persists_partial_evidence() -> None:
+def test_run_evidence_active_stage_is_transient_and_partial_evidence_can_persist() -> None:
     manifest_evidence: dict[str, Any] = {}
     persisted: list[bool] = []
     ledger = RunEvidence(
@@ -66,10 +66,11 @@ def test_run_evidence_failure_stage_is_transient_and_persists_partial_evidence()
         persist=lambda: persisted.append(True),
     )
 
-    ledger.fail(EvidenceFailureStage.PUBLISHING, RuntimeError("candidate store unavailable"))
+    ledger.enter_stage(RunStage.PUBLISHING)
+    ledger.persist_partial()
 
     assert persisted == [True]
-    assert ledger.failure_stage is EvidenceFailureStage.PUBLISHING
+    assert ledger.active_stage is RunStage.PUBLISHING
     assert "publishing_failure" not in manifest_evidence["optimization"]
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from research.aegis_research.atomic_write import hash_file, write_json
+from research.aegis_research.atomic_write import hash_file, write_json, write_new_json
 from research.aegis_research.canonical_json import canonical_json_bytes
 
 
@@ -51,6 +51,17 @@ def test_write_json_chmod_restricted(tmp_path: Path) -> None:
 
     group_other_bits = target.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO)
     assert group_other_bits == 0, f"expected no group/other permissions, got {group_other_bits:#o}"
+
+
+def test_write_new_json_claims_path_without_replacing_existing_bytes(tmp_path: Path) -> None:
+    target = tmp_path / "run.json"
+    write_new_json(target, {"owner": "first"})
+
+    with pytest.raises(FileExistsError):
+        write_new_json(target, {"owner": "second"})
+
+    assert json.loads(target.read_text()) == {"owner": "first"}
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_hash_file_is_sha256_hexdigest(tmp_path: Path) -> None:

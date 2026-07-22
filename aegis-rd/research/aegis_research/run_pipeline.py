@@ -14,10 +14,7 @@ from research.aegis_research.configuration import (
     RunConfig,
 )
 from research.aegis_research.metrics.registry import FrozenMetricRegistry
-from research.aegis_research.optimization.evidence_ledger import (
-    EvidenceFailureStage,
-    RunEvidence,
-)
+from research.aegis_research.optimization.evidence_ledger import RunEvidence
 from research.aegis_research.optimization.pipeline.completion import (
     run_pipeline_completion,
 )
@@ -31,6 +28,7 @@ from research.aegis_research.optimization.run_data_contract import (
     run_data_evidence_payload,
 )
 from research.aegis_research.provenance.capture import capture_config_evidence
+from research.aegis_research.provenance.manifest import RunStage
 from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_data import RunData, RunDataUnavailable, load_run_data
@@ -79,11 +77,10 @@ def run_strategy_sweep(
         recorder.manifest.evidence["config"] = capture_config_evidence(resolved_config)
     recorder.persist()
 
-    failure_stage = "run"
     try:
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
-        failure_stage = "data"
+        run_evidence.enter_stage(RunStage.DATA)
         array_contract.assert_configured()
         try:
             run_data = load_run_data(
@@ -104,6 +101,7 @@ def run_strategy_sweep(
             array_contract,
         )
         recorder.persist()
+        run_evidence.enter_stage(RunStage.SETUP)
         metric_registry = resolved_config.metric_registry
         book = ResolvedBook.resolve(config.portfolio, run_data)
         return _run_optimization_strategy_sweep(
@@ -118,7 +116,7 @@ def run_strategy_sweep(
         )
     except KeyboardInterrupt as error:
         recorder.mark_run_interrupted(
-            stage=(run_evidence.failure_stage.value if run_evidence.failure_stage else failure_stage),
+            stage=run_evidence.active_stage,
             error=error,
         )
         if on_run_refs is not None:
@@ -126,12 +124,13 @@ def run_strategy_sweep(
         raise
     except Exception as error:
         recorder.mark_run_failed(
-            stage=(run_evidence.failure_stage.value if run_evidence.failure_stage else failure_stage),
+            stage=run_evidence.active_stage,
             error=error,
         )
         if on_run_refs is not None:
             on_run_refs(recorder.run_refs())
         raise
+
 
 def _run_optimization_strategy_sweep(
     config: RunConfig,
@@ -145,6 +144,7 @@ def _run_optimization_strategy_sweep(
     run_evidence: RunEvidence,
 ) -> dict[str, Any]:
     # Stage 1: Setup — resolve locks, build optimization source and evidence baseline
+    run_evidence.enter_stage(RunStage.SETUP)
     try:
         setup = run_pipeline_setup(
             config=config,
@@ -154,8 +154,8 @@ def _run_optimization_strategy_sweep(
             metric_registry_fingerprint=metric_registry.fingerprint,
             run_evidence=run_evidence,
         )
-    except Exception as error:
-        run_evidence.fail(EvidenceFailureStage.SETUP, error)
+    except Exception:
+        run_evidence.persist_partial()
         raise
 
     # Stage 2: Execution — preflight gate, two-phase optimization sweep
@@ -180,7 +180,7 @@ def _run_optimization_strategy_sweep(
         store_path=setup.store_path,
     )
 
-    # Stage 4: Completion — artifact, completion, activation, result
+    # Stage 4: Completion — lifecycle completion, activation, result
     return run_pipeline_completion(
         setup=setup,
         publishing=publishing,

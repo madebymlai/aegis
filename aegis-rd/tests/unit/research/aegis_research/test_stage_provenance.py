@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from research.aegis_research.provenance.manifest import RunStatus
+from research.aegis_research.provenance.manifest import RunFailure, RunStage, RunStatus
 from research.aegis_research.provenance.recorder import RunRecorder
 from tests.support.research.aegis_research.factories import make_run_data
 
@@ -45,10 +45,11 @@ def test_recorder_run_refs_reflects_failed_and_interrupted_terminal_states(
         run_id="run-failed",
         config={"schema_version": 1},
     )
-    failed.mark_run_failed(stage="run", error=RuntimeError("boom"))
+    failed.mark_run_failed(stage=RunStage.RUN, error=RuntimeError("boom"))
     refs = failed.run_refs()
     assert refs["status"] == RunStatus.FAILED
     assert refs["finished_at"] is not None
+    assert isinstance(failed.manifest.failure, RunFailure)
 
     # Interrupted
     interrupted = RunRecorder.start(
@@ -56,7 +57,7 @@ def test_recorder_run_refs_reflects_failed_and_interrupted_terminal_states(
         run_id="run-int",
         config={"schema_version": 1},
     )
-    interrupted.mark_run_interrupted(stage="run", error=KeyboardInterrupt())
+    interrupted.mark_run_interrupted(stage=RunStage.RUN, error=KeyboardInterrupt())
     refs = interrupted.run_refs()
     assert refs["status"] == RunStatus.INTERRUPTED
     assert refs["finished_at"] is not None

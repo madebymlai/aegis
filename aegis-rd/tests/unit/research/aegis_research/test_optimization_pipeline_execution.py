@@ -11,12 +11,12 @@ from vectorbtpro import vbt
 from research.aegis_research.metrics.registry import empty_metric_registry
 from research.aegis_research.optimization.evidence_ledger import (
     OPTIMIZATION_ROUTE_SCHEMA_VERSION,
-    EvidenceFailureStage,
     RunEvidence,
 )
 from research.aegis_research.optimization.pipeline.execution import run_pipeline_execution
 from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
 from research.aegis_research.optimization.source import OptimizationSource, OptimizationSourceError
+from research.aegis_research.provenance.manifest import RunStage
 from tests.support.research.aegis_research.factories import make_setup_result
 from tests.support.research.aegis_research.run_config_fixtures import (
     build_resolved_run_config,
@@ -65,5 +65,5 @@ def test_pipeline_execution_persists_and_raises_on_preflight_failure(
     assert preflight["loaded_rows"] == 2
     assert preflight["scored_rows"] == 2
     assert preflight["observation_block_bars"] == 20
-    assert run_evidence.failure_stage is EvidenceFailureStage.PREFLIGHT
+    assert run_evidence.active_stage is RunStage.PREFLIGHT
     assert "preflight_failure" not in manifest_evidence["optimization"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from research.aegis_research.canonical_json import to_builtin
@@ -14,6 +15,23 @@ class RunStatus:
     COMPLETED = "completed"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+
+
+class RunStage(StrEnum):
+    RUN = "run"
+    DATA = "data"
+    SETUP = "setup"
+    PREFLIGHT = "preflight"
+    EXECUTION = "execution"
+    PUBLISHING = "publishing"
+    COMPLETION = "completion"
+
+
+@dataclass(frozen=True)
+class RunFailure:
+    stage: RunStage
+    error_type: str
+    message: str
 
 
 class ManifestValidationError(ValueError):
@@ -31,7 +49,7 @@ class RunManifest:
     status: str = RunStatus.RUNNING
     started_at: str = field(default_factory=_utc_now)
     finished_at: str | None = None
-    failure: dict[str, str] | None = None
+    failure: RunFailure | None = None
     evidence: dict[str, Any] = field(default_factory=dict)
 
     @classmethod

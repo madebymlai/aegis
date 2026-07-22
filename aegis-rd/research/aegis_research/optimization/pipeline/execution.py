@@ -14,7 +14,6 @@ from research.aegis_research.optimization.continuous_evidence import (
     build_continuous_evidence,
 )
 from research.aegis_research.optimization.evidence_ledger import (
-    EvidenceFailureStage,
     EvidenceSection,
     RunEvidence,
 )
@@ -31,6 +30,7 @@ from research.aegis_research.optimization.runner import execute_optimization
 from research.aegis_research.optimization.source import (
     OptimizationSourceError,
 )
+from research.aegis_research.provenance.manifest import RunStage
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,7 @@ def run_pipeline_execution(
     run_evidence: RunEvidence,
 ) -> ExecutionResult:
     """Validate exact geometry, replay Candidates, and rank Observation Blocks."""
+    run_evidence.enter_stage(RunStage.PREFLIGHT)
     try:
         preflight = build_preflight(
             source=setup.optimization_source,
@@ -68,9 +69,10 @@ def run_pipeline_execution(
         run_evidence.record(EvidenceSection.PREFLIGHT, preflight.diagnostics)
     except PreflightError as error:
         run_evidence.record(EvidenceSection.PREFLIGHT, error.diagnostics)
-        run_evidence.fail(EvidenceFailureStage.PREFLIGHT, error)
+        run_evidence.persist_partial()
         raise OptimizationSourceError(str(error)) from error
 
+    run_evidence.enter_stage(RunStage.EXECUTION)
     try:
         analysis = execute_optimization(
             run_data=setup.run_data,
@@ -94,8 +96,8 @@ def run_pipeline_execution(
             data_start=config.data.start,
         )
         run_evidence.record(EvidenceSection.EXECUTION, continuous_evidence.execution)
-    except Exception as error:
-        run_evidence.fail(EvidenceFailureStage.EXECUTION, error)
+    except Exception:
+        run_evidence.persist_partial()
         raise
 
     return ExecutionResult(
