@@ -5,10 +5,8 @@ hybrid template: field tables and literal catalogs are interpolated from the
 validating pydantic models and code constants at render time; semantics prose
 is hand-curated.
 
-The rendered guide states the **forward contract**, not the raw pydantic model:
-the prepass overlay (``optimization`` required, ``schema_version`` pinned to the
-current ``CONFIG_SCHEMA_VERSION``) is applied so the
-documented requiredness matches the enforced requiredness (ADR-0019, ADR-0012).
+The validating model is the structural authoring contract. Curated prose adds
+domain semantics that field metadata cannot express (ADR-0019, ADR-0012).
 """
 
 from __future__ import annotations
@@ -25,14 +23,11 @@ from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     DATA_ARRAY_SHORTCUTS,
     DEFAULT_LOCK_ROLE,
-    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     LOCK_ROLES,
     MISSING_POLICIES,
     OHLCV_ARRAYS,
     OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
-    PREPASS_CONST_FIELDS,
-    PREPASS_REQUIRED_FIELDS,
     SIGNAL_EXECUTION_TIMINGS,
     SIGNAL_POLICIES,
     DataConfig,
@@ -46,10 +41,6 @@ from research.aegis_research.configuration.schema import (
     RunSourceRefConfig,
     SignalConfig,
 )
-
-# Forward-contract overlay (PREPASS_REQUIRED_FIELDS / PREPASS_CONST_FIELDS) is
-# owned by schema.py and shared with the validation prepass, so the documented
-# requiredness cannot fork from the enforced requiredness (ADR-0019).
 
 GUIDE_SCHEMA_VERSION = "config_schema_guide.v1"
 """Payload schema version for the ``aerd show config-schema`` JSON envelope."""
@@ -80,7 +71,7 @@ def render_config_schema_guide() -> str:
     """Render the Run Config forward-contract authoring guide as markdown."""
     sections: list[str] = [
         _render_header(),
-        _render_forward_contract(),
+        _render_structural_contract(),
         _render_top_level_fields(),
         _render_data_section(),
         _render_portfolio_section(),
@@ -107,27 +98,23 @@ def _render_header() -> str:
     # Run Config Forward Contract
 
     The YAML Run Config is the sole authoring surface for `aerd run`. This guide
-    documents the **forward contract** — the exact shape `aerd run` accepts — not
-    the raw pydantic model. Where the model has defaults or optional fields the
-    forward contract overrides, the overridden rule is stated first.""")
+    documents the exact structural shape `aerd run` accepts. Requiredness and
+    literal constraints come from the validating pydantic model.""")
 
 
-def _render_forward_contract() -> str:
-    """The prepass overlay: rules that amend the raw pydantic model."""
+def _render_structural_contract() -> str:
+    """Render top-level structural rules and removed authoring fields."""
     lines = [
-        "## Forward-Contract Overrides",
-        "",
-        "These rules amend the pydantic model for the forward contract. A config that",
-        "satisfies the model alone but not these overrides is **rejected** by `aerd run`.",
-        "",
+        "## Structural Contract",
     ]
 
-    # schema_version const
-    ver = PREPASS_CONST_FIELDS["schema_version"]
-    lines.append(f"- **`schema_version`** — must be present and exactly `{ver}`.")
-
-    # optimization required
-    lines.append(f"- **`optimization`** — required. {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE}")
+    lines.append(
+        f"- **`schema_version`** — required and exactly `{CONFIG_SCHEMA_VERSION}`."
+    )
+    lines.append(
+        "- **`optimization`** — required. Every Run declares its search policy and "
+        "Observation Block length."
+    )
 
     # removed fields
     lines.append(
@@ -158,15 +145,6 @@ def _render_top_level_fields() -> str:
     for fdef in _walk_dataclass_fields(RunConfig):
         required = "yes" if fdef.is_required else "no"
         default = fdef.default_str or "—"
-
-        if fdef.name in PREPASS_REQUIRED_FIELDS:
-            required = "yes"
-            if fdef.name == "optimization":
-                default = f"*required* (model default `None` ignored; {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE})"
-
-        if fdef.name in PREPASS_CONST_FIELDS:
-            required = "yes"
-            default = f"*const* `{PREPASS_CONST_FIELDS[fdef.name]}`"
 
         notes = fdef.notes or "—"
         lines.append(f"| `{fdef.name}` | `{fdef.type_str}` | {required} | {default} | {notes} |")
@@ -268,10 +246,9 @@ def _render_report_section() -> str:
 
 def _render_optimization_section() -> str:
     lines = [
-        "### `optimization` (required per forward contract)",
+        "### `optimization` (required)",
         "",
-        "**Note**: the raw model declares `optimization` optional but the forward "
-        "contract requires it. Every run must declare an optimization section.",
+        "Every Run must declare an optimization section.",
         "",
     ]
     lines.append(_render_field_table(OptimizationConfig))

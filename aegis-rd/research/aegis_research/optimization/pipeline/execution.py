@@ -56,9 +56,6 @@ def run_pipeline_execution(
     run_evidence: RunEvidence,
 ) -> ExecutionResult:
     """Validate exact geometry, replay Candidates, and rank Observation Blocks."""
-    # The public entry point rejects runs without an optimization block, so by the
-    # time execution runs the optimization config is guaranteed present.
-    assert config.optimization is not None
     try:
         preflight = build_preflight(
             source=setup.optimization_source,

@@ -128,3 +128,23 @@ and **`builders.py` dissolves** into the models. The serialized type stays a dat
   `data`, `lock`, `metrics`, `optimization`, `portfolio`) — the `validation/` package collapses
   to its coordinator. If the tree does not shrink to roughly this, something leaked.
   `env_references.py` and `configuration/__init__.py` are untouched.
+
+## Amendment — 2026-07-22: the model is the structural authoring contract
+
+The accepted forward contract now makes `schema_version` and `optimization` required,
+keyword-only model fields. `schema_version` is the current-version Literal and
+`optimization` is non-null, so every constructed `RunConfig` represents an executable
+Run. Run-name syntax and scalar Lock-handle shape are likewise owned by Pydantic authoring
+types and validators.
+
+This supersedes the earlier decision to give those fields model defaults and enforce
+their presence with a raw prepass. The prepass constants, special missing-optimization
+message, post-construction name/Lock checks, and downstream null-optimization guards are
+removed. Structural wording is Pydantic's verbatim wording through the existing
+`ConfigValidationIssue` adapter.
+
+The shared Pydantic field vocabulary also moves from the configuration package to a
+neutral Aegis RD authoring leaf consumed by both Run Config schema and Component
+manifests. This removes their import cycle without creating a compatibility surface.
+Registry orchestration and structural-versus-registry co-reporting are addressed
+separately by the ADR-0014 amendment.

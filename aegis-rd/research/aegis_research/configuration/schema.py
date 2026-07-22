@@ -19,6 +19,7 @@ from research.aegis_research.authoring_fields import (
     PositiveCash,
     PositiveInt,
     RootSymbol,
+    RunName,
     TimedeltaStr,
     UnitInterval,
     has_data_array_token_shape,
@@ -26,7 +27,8 @@ from research.aegis_research.authoring_fields import (
 
 # v11 (aegis-rd-ui1m): portfolio.gross_cap / portfolio.net_cap removed — the
 # exposure envelope is the fixed unit-gross sleeve contract, not config.
-CONFIG_SCHEMA_VERSION = 11
+RunConfigSchemaVersion = Literal[11]
+CONFIG_SCHEMA_VERSION: int = get_args(RunConfigSchemaVersion)[0]
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
@@ -47,29 +49,6 @@ MISSING_POLICIES = set(get_args(MissingPolicy))
 # config load. aegis-data's marking seam owns the grammar and the resolution.
 MarkModeName = Literal["LAST", "MID", "QUOTE"]
 MARK_MODES = set(get_args(MarkModeName))
-FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
-    "is required; fixed/non-optimized strategy runs are removed from the forward "
-    "run contract; use optimization.search and optimization.observation_block_bars"
-)
-
-# ── Forward-contract prepass overlay ──────────────────────────────────────────
-# Rules that amend the raw pydantic model for the forward contract: pydantic
-# alone declares ``optimization`` optional and gives ``schema_version`` a
-# default, but the validation prepass requires both. This is the single home
-# consumed by BOTH the prepass (``validation._prepass_raw_config``) and the
-# config-schema guide renderer, so the documented requiredness cannot fork from
-# the enforced requiredness (ADR-0019).
-PREPASS_REQUIRED_FIELDS: dict[str, str] = {
-    "optimization": FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
-}
-"""Top-level fields the prepass requires regardless of the model default,
-mapped to the validation-issue message emitted when the field is absent."""
-
-PREPASS_CONST_FIELDS: dict[str, object] = {
-    "schema_version": CONFIG_SCHEMA_VERSION,
-}
-"""Top-level fields whose value the prepass fixes (const)."""
-
 OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
 
 
@@ -436,7 +415,7 @@ class Lock:
     ``lock: run_id[:role]`` lands here with the role keyword (default ``best``).
     """
 
-    run_id: str
+    run_id: NonEmptyStr
     candidate_id: NonEmptyStr
 
     @model_validator(mode="before")
@@ -445,6 +424,11 @@ class Lock:
         """Normalize a scalar ``run_id[:role]`` handle to the mapping shape."""
         if isinstance(data, str):
             run_id, _, role = data.partition(":")
+            if not run_id:
+                raise ValueError("run_id must not be empty")
+            if role and role not in LOCK_ROLES:
+                roles_label = ", ".join(LOCK_ROLES)
+                raise ValueError(f"role must be one of: {roles_label} (got {role!r})")
             return {"run_id": run_id, "candidate_id": role or DEFAULT_LOCK_ROLE}
         return data
 
@@ -454,23 +438,22 @@ class RunConfig:
     """Whole-tree pydantic dataclass: one ``TypeAdapter(RunConfig).validate_python(raw)``
     validates the entire run config and accumulates all structural errors across sections.
 
-    Top-level prepass (removed-training-field tombstones, portfolio tombstones,
-    ``schema_version`` presence check) lives in the resolution coordinator so custom
-    messages survive (``@model_validator`` loses dotted paths).
+    The model is the structural authoring contract. Runtime registry and whole-config
+    selection checks run only after this value has been constructed.
     """
 
-    name: str
+    name: RunName
     strategy: RunSourceRefConfig
     indicators: list[RunIndicatorSourceConfig]
     ranking: RankingConfig
-    schema_version: int = CONFIG_SCHEMA_VERSION
+    schema_version: RunConfigSchemaVersion = field(kw_only=True)
     # Required (keyword-only so they can sit among defaulted fields): a run must declare
     # its data (which requires explicit arrays — no silent OHLCV default) and its
     # portfolio (which requires an explicit direction — no silently long-only default).
     data: DataConfig = field(kw_only=True)
     portfolio: PortfolioConfig = field(kw_only=True)
     report: ReportConfig = field(default_factory=ReportConfig)
-    optimization: OptimizationConfig | None = None
+    optimization: OptimizationConfig = field(kw_only=True)
     lock: Lock | None = None
     output_dir: str = "runs"
 

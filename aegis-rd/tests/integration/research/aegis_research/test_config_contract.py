@@ -319,8 +319,71 @@ def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "optimization" in str(error.value)
-    assert "fixed/non-optimized strategy runs are removed" in str(error.value)
+    assert any(
+        issue.path == "optimization" and issue.message == "Field required"
+        for issue in error.value.issues
+    )
+
+
+def test_run_requires_schema_version_from_the_model(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw.pop("schema_version")
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert any(
+        issue.path == "schema_version" and issue.message == "Field required"
+        for issue in error.value.issues
+    )
+
+
+def test_run_rejects_other_schema_version_from_the_model(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["schema_version"] = CONFIG_SCHEMA_VERSION + 1
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert any(
+        issue.path == "schema_version" and issue.message == "Input should be 11"
+        for issue in error.value.issues
+    )
+
+
+def test_run_rejects_dot_only_name_from_the_model(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["name"] = "."
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert any(
+        issue.path == "name" and "run name must not be" in issue.message
+        for issue in error.value.issues
+    )
+
+
+def test_run_rejects_null_optimization_contract(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["optimization"] = None
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(
+            raw,
+            component_registry=_component_registry(tmp_path),
+        )
+
+    assert any(issue.path == "optimization" for issue in error.value.issues)
 
 
 def test_run_accepts_grid_optimization_with_observation_blocks(tmp_path: Path) -> None:

@@ -256,7 +256,7 @@ def test_strategy_run_reports_config_validation_failure(
     output = capsys.readouterr()
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
-    assert "fixed/non-optimized strategy runs are removed" in payload["error"]["message"]
+    assert "optimization: Field required" in payload["error"]["message"]
     assert "<redacted>" not in output.err
 
 
@@ -382,7 +382,7 @@ def _assert_missing_optimization_config_error(
     payload = json.loads(output.err)
     assert payload["error"]["category"] == "config_validation"
     assert "optimization" in payload["error"]["message"]
-    assert "fixed/non-optimized strategy runs are removed" in payload["error"]["message"]
+    assert "optimization: Field required" in payload["error"]["message"]
     assert not (tmp_path / "runs" / run_id).exists()
 
 

@@ -10,9 +10,6 @@ from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
 )
 from research.aegis_research.configuration import (
-    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
-    ConfigValidationError,
-    ConfigValidationIssue,
     ResolvedRunConfig,
     RunConfig,
 )
@@ -65,15 +62,6 @@ def run_strategy_sweep(
     failure as its ``__context__``. (ADR-0016)
     """
     config = resolved_config.config
-    if config.optimization is None:
-        raise ConfigValidationError(
-            [
-                ConfigValidationIssue(
-                    "optimization",
-                    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
-                )
-            ]
-        )
     array_contract = build_run_data_array_contract(config, component_registry)
 
     recorder = RunStore(config.output_dir).start_run(

@@ -140,7 +140,7 @@ def test_optimization_section_is_required(tmp_path: Path) -> None:
         _resolve(None, tmp_path=tmp_path)
 
     assert any(
-        issue.path == "optimization" and "is required" in issue.message
+        issue.path == "optimization" and issue.message == "Field required"
         for issue in error.value.issues
     )
 

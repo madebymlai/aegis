@@ -253,7 +253,7 @@ def make_run_config(**overrides: Any) -> RunConfig:
         "data": make_data_config(),
         "portfolio": make_portfolio_config(),
         "report": make_report_config(),
-        "optimization": None,
+        "optimization": make_optimization_config(),
         "lock": None,
         "output_dir": "runs",
     }

@@ -522,16 +522,15 @@ def test_show_config_schema_exits_zero_and_prints_markdown(
     guide = output.out
 
     assert "# Run Config Forward Contract" in guide
-    assert "## Forward-Contract Overrides" in guide
+    assert "## Structural Contract" in guide
     assert "## Top-Level Fields" in guide
     assert "## Literal Catalogs" in guide
     assert "observation_block_bars" in guide
     assert "## Component IDs" in guide
     assert "## Example Run Config" in guide
 
-    # Prepass overlay: optimization required, schema_version const 11
     assert "optimization`** — required" in guide
-    assert "schema_version`** — must be present and exactly `11`" in guide
+    assert "schema_version`** — required and exactly `11`" in guide
 
     # Pointers to other show subcommands
     assert "`aerd show components`" in guide
@@ -556,24 +555,20 @@ def test_show_config_schema_json_envelope(
     assert isinstance(content, str)
     assert len(content) > 1000  # Full guide, not clipped
     assert "# Run Config Forward Contract" in content
-    assert "## Forward-Contract Overrides" in content
+    assert "## Structural Contract" in content
     assert "## Literal Catalogs" in content
 
 
-def test_show_config_schema_marks_optimization_required_and_schema_version_const(
+def test_show_config_schema_marks_model_required_fields(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The rendered guide states the forward contract, not the raw model."""
+    """The rendered guide states requiredness from the validating model."""
     assert cli.main(["show", "config-schema"]) == 0
 
     guide = capsys.readouterr().out
 
-    # optimization is marked required (model default is None)
     assert "optimization`** — required" in guide
-    assert "forward contract requires" in guide.lower()
-
-    # schema_version is const 11 (model default is CONFIG_SCHEMA_VERSION)
-    assert "schema_version`** — must be present and exactly `11`" in guide
+    assert "schema_version`** — required and exactly `11`" in guide
 
 
 def test_show_config_schema_literal_catalogs_interpolated(
@@ -735,12 +730,9 @@ def test_show_config_schema_coherence_optimization_required(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Coherence: a config omitting optimization fails validation AND the
-    rendered guide states it required — both driven by the single overlay
-    constant in schema.py, so requiredness cannot fork (ADR-0019)."""
+    """The guide and validation both expose model-owned requiredness."""
     from research.aegis_research.configuration import (
         CONFIG_SCHEMA_VERSION,
-        PREPASS_REQUIRED_FIELDS,
         ConfigValidationError,
         resolve_run_config,
     )
@@ -768,10 +760,8 @@ def test_show_config_schema_coherence_optimization_required(
     with pytest.raises(ConfigValidationError) as exc_info:
         resolve_run_config(raw_no_optimization)
 
-    # The enforced message is the exact one carried by the shared overlay — the
-    # validator reads schema.PREPASS_REQUIRED_FIELDS, not a private copy.
     issues = {i.path: i.message for i in exc_info.value.issues}
-    assert issues["optimization"] == PREPASS_REQUIRED_FIELDS["optimization"]
+    assert issues["optimization"] == "Field required"
 
 
 # ── indicator-schema ────────────────────────────────────────────────────────
@@ -1261,16 +1251,15 @@ def test_config_schema_guide_states_missing_policies() -> None:
 
 
 def test_config_schema_guide_marks_optimization_required() -> None:
-    """Drift: the forward contract requires optimization (not optional)."""
+    """Drift: the validating model requires optimization."""
     guide = _render_guide("config-schema")
     assert "optimization`** — required" in guide
-    assert "forward contract requires" in guide.lower()
 
 
-def test_config_schema_guide_marks_schema_version_const() -> None:
-    """Drift: schema_version is marked as const 11 (not a model default)."""
+def test_config_schema_guide_marks_schema_version_required_and_exact() -> None:
+    """Drift: the validating model requires schema version 11."""
     guide = _render_guide("config-schema")
-    assert "schema_version`** — must be present and exactly `11`" in guide
+    assert "schema_version`** — required and exactly `11`" in guide
 
 
 def test_config_schema_guide_states_native_data_contract() -> None:

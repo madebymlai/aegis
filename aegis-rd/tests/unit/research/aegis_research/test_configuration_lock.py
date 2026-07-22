@@ -142,6 +142,16 @@ def test_scalar_lock_empty_run_id_fails_validation(registry) -> None:
     assert any(issue.path == "lock" and "run_id" in issue.message for issue in excinfo.value.issues)
 
 
+def test_mapping_lock_empty_run_id_fails_validation(registry) -> None:
+    with pytest.raises(ConfigValidationError) as excinfo:
+        resolve_run_config(
+            _raw_config(lock={"run_id": "", "candidate_id": "candidate-key"}),
+            component_registry=registry,
+        )
+
+    assert any(issue.path == "lock.run_id" for issue in excinfo.value.issues)
+
+
 def test_config_without_lock_has_none_lock(registry) -> None:
     resolved = resolve_run_config(_raw_config(), component_registry=registry)
     assert resolved.config.lock is None

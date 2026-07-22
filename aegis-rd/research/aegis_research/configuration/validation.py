@@ -4,11 +4,8 @@ With ``RunConfig`` as a whole-tree pydantic dataclass, one
 ``TypeAdapter(RunConfig).validate_python(raw)`` validates the entire tree
 and accumulates all structural errors natively.
 
-The coordinator owns:
-- Top-level prepass: ``schema_version`` presence/version check.
-- Whole-tree pydantic ``validate_python`` call + error-to-issue adapter.
-- Name check and lock shape check.
-- One unconditional call to the registry cross-checks module.
+The coordinator owns the whole-tree pydantic call, its error-to-issue adapter,
+the typed whole-config checks, and registry cross-check orchestration.
 
 Returns ``(RunConfig | None, list[ConfigValidationIssue])`` so the caller
 can inspect whether pydantic construction succeeded while still seeing all
@@ -21,17 +18,9 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from research.aegis_research.authoring_fields import IDENTIFIER_RE
 from research.aegis_research.component_registry import FrozenComponentRegistry
 from research.aegis_research.configuration.cross_checks import cross_check_registries
-from research.aegis_research.configuration.schema import (
-    LOCK_ROLES,
-    PREPASS_CONST_FIELDS,
-    PREPASS_REQUIRED_FIELDS,
-    ConfigValidationIssue,
-    Lock,
-    RunConfig,
-)
+from research.aegis_research.configuration.schema import ConfigValidationIssue, RunConfig
 from research.aegis_research.metrics import FrozenMetricRegistry
 
 # Built once at import: TypeAdapter construction compiles the whole-tree core
@@ -55,9 +44,6 @@ def validate_run_config(
 
     issues: list[ConfigValidationIssue] = []
 
-    # ── Prepass: tombstones, schema_version, and removed fields ──
-    _prepass_raw_config(raw, issues)
-
     # ── Whole-tree pydantic validation ────────────────────────────────────
     config = None
     try:
@@ -67,8 +53,6 @@ def validate_run_config(
 
     # ── Post-pydantic checks (need runtime state) ─────────────────────────
     if config is not None:
-        _post_validate_name(config.name, issues)
-        _check_lock_shape(config.lock, raw.get("lock"), issues)
         _check_portfolio_band_overrides(config, issues)
 
     # ── Registry cross-checks (always run, even when pydantic failed) ─────
@@ -82,28 +66,6 @@ def validate_run_config(
     )
 
     return config, issues
-
-
-# ── prepass ──────────────────────────────────────────────────────────────────
-
-
-def _prepass_raw_config(raw: dict[str, Any], issues: list[ConfigValidationIssue]) -> None:
-    """Raw-dict checks that must run before (or regardless of) pydantic validation.
-
-    Removed legacy fields carry no tombstones: they fall through to
-    ``extra="forbid"``'s unknown-key rejection like any field that never existed.
-    """
-    # Forward-contract overlay: const + required top-level fields. These checks
-    # read the same PREPASS_* constants that drive the config-schema guide, so
-    # what ``aerd run`` enforces here cannot fork from what the guide documents
-    # (ADR-0019).
-    for field_name, const_value in PREPASS_CONST_FIELDS.items():
-        if raw.get(field_name) != const_value:
-            issues.append(ConfigValidationIssue(field_name, f"must be {const_value}"))
-
-    for field_name, required_message in PREPASS_REQUIRED_FIELDS.items():
-        if field_name not in raw:
-            issues.append(ConfigValidationIssue(field_name, required_message))
 
 
 # ── error adapter ────────────────────────────────────────────────────────────
@@ -138,22 +100,6 @@ def _validation_error_to_issues_whole_tree(
     return issues
 
 
-# ── post-pydantic checks ────────────────────────────────────────────────────
-
-
-def _post_validate_name(
-    name: str,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    if not IDENTIFIER_RE.fullmatch(name) or name in {".", ".."}:
-        issues.append(
-            ConfigValidationIssue(
-                "name",
-                "must contain only letters, numbers, dots, underscores, and hyphens",
-            )
-        )
-
-
 def _check_portfolio_band_overrides(
     config: RunConfig,
     issues: list[ConfigValidationIssue],
@@ -169,26 +115,5 @@ def _check_portfolio_band_overrides(
                 "unknown tradeable keys "
                 f"{unknown}; expected keys from data.instruments or data.futures: "
                 f"{sorted(allowed)}",
-            )
-        )
-
-
-def _check_lock_shape(
-    lock: Lock | None,
-    lock_raw: Any,
-    issues: list[ConfigValidationIssue],
-) -> None:
-    """Reject empty run_id and unknown role keywords (shape check, not registry check)."""
-    if lock is None:
-        return
-    was_handle = isinstance(lock_raw, str)
-    if not lock.run_id:
-        issues.append(ConfigValidationIssue("lock", "run_id must not be empty"))
-    if was_handle and lock.candidate_id not in LOCK_ROLES:
-        roles_label = ", ".join(LOCK_ROLES)
-        issues.append(
-            ConfigValidationIssue(
-                "lock",
-                f"role must be one of: {roles_label} (got {lock.candidate_id!r})",
             )
         )

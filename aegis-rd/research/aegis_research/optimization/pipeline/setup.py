@@ -81,9 +81,6 @@ def run_pipeline_setup(
     run_evidence: RunEvidence,
 ) -> SetupResult:
     """Resolve the Lock, build the optimization source, and construct the evidence baseline."""
-    # The public entry point rejects runs without an optimization block, so by the
-    # time setup executes the optimization config is guaranteed present.
-    assert config.optimization is not None
     store_path = candidate_store_path(config)
     lock_run = _resolve_lock_run(config, store_path=store_path)
     if lock_run is not None:

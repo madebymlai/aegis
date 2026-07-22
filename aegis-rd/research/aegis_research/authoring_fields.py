@@ -31,11 +31,22 @@ def has_data_array_token_shape(value: str) -> bool:
     return bool(value) and value.strip() == value and not any(char in "\t\n\r" for char in value)
 
 
+def _validate_run_name(value: str) -> str:
+    if value in {".", ".."}:
+        raise ValueError("run name must not be '.' or '..'")
+    return value
+
+
 PositiveCash = Annotated[float, Field(strict=True, gt=0)]
 NonNegativeCash = Annotated[float, Field(strict=True, ge=0)]
 NonNegativeRate = Annotated[float, Field(strict=True, ge=0)]
 UnitInterval = Annotated[float, Field(strict=True, ge=0, le=1)]
 ComponentIdStr = Annotated[str, Field(min_length=1, pattern=IDENTIFIER_PATTERN)]
+RunName = Annotated[
+    str,
+    Field(min_length=1, pattern=IDENTIFIER_PATTERN),
+    AfterValidator(_validate_run_name),
+]
 NonEmptyStr = Annotated[str, Field(min_length=1)]
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
