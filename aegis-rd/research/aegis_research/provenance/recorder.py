@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 from research.aegis_research.atomic_write import write_json
-from research.aegis_research.provenance.artifacts import ArtifactRegistry
 from research.aegis_research.provenance.manifest import (
     RunManifest,
     RunStatus,
@@ -19,7 +18,6 @@ class RunRecorder:
         self.manifest = manifest
         self.run_dir = manifest.run_dir
         self.manifest_path = self.run_dir / "manifest.json"
-        self.artifacts = ArtifactRegistry(manifest, self.run_dir, persist=self.persist)
 
     @classmethod
     def start(

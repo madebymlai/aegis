@@ -18,7 +18,7 @@ from tests.support.research.aegis_research.golden import (
 
 def _manifest(**overrides: object) -> dict:
     base: dict = {
-        "schema_version": 4,
+        "schema_version": 6,
         "run": {
             "id": "oracle",
             "status": "completed",
@@ -30,8 +30,6 @@ def _manifest(**overrides: object) -> dict:
             "environment": {"python": "3.13.1", "platform": "Linux-x", "packages": {}},
             "optimization": {"total": 30},
         },
-        "stages": [{"id": "optimize", "status": "completed", "updated_at": "2026-06-10T08:00:05Z"}],
-        "artifacts": [{"id": "manifest", "hash": "abc123", "updated_at": "2026-06-10T08:00:09Z"}],
     }
     base.update(overrides)
     return base
@@ -50,8 +48,6 @@ def test_masked_bytes_identical_when_only_volatile_fields_differ() -> None:
             "environment": {"python": "3.99.0", "platform": "Darwin-y", "packages": {"numpy": "9"}},
             "optimization": {"total": 30},
         },
-        stages=[{"id": "optimize", "status": "completed", "updated_at": "2027-01-01T00:00:05Z"}],
-        artifacts=[{"id": "manifest", "hash": "abc123", "updated_at": "2027-01-01T11:11:11Z"}],
     )
 
     assert masked_canonical_manifest(earlier) == masked_canonical_manifest(later)
@@ -59,9 +55,7 @@ def test_masked_bytes_identical_when_only_volatile_fields_differ() -> None:
 
 def test_masked_bytes_differ_when_substantive_field_moves() -> None:
     baseline = _manifest()
-    drifted = _manifest(
-        artifacts=[{"id": "manifest", "hash": "DRIFTED", "updated_at": "2026-06-10T08:00:09Z"}]
-    )
+    drifted = _manifest(evidence={"optimization": {"total": 31}})
 
     assert masked_canonical_manifest(baseline) != masked_canonical_manifest(drifted)
 

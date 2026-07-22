@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from research.aegis_research.atomic_write import hash_file
-from research.aegis_research.provenance.manifest import ArtifactStatus, RunStatus
+from research.aegis_research.provenance.manifest import RunStatus
 from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.provenance.run_store import RunCollisionError, RunStore
 from research.aegis_research.run_data import (
@@ -229,35 +228,3 @@ def test_failed_run_diagnostic_is_length_clipped_not_redacted(
     assert diagnostic["message"] == long_message[:1000]
     assert "<redacted>" not in diagnostic["message"]
     assert diagnostic["message"].startswith("provider returned super-secret-token")
-
-
-def test_artifact_registry_persists_planned_and_writing_transitions(tmp_path: Path) -> None:
-    recorder = RunRecorder.start(
-        run_dir=tmp_path / "run-1",
-        run_id="run-1",
-        config={"schema_version": 1},
-    )
-
-    recorder.artifacts.plan_artifact(
-        artifact_id="report.survival",
-        role="survival_report",
-        artifact_type="json",
-        producer_stage="report",
-        path="survival_report.json",
-        schema_version="survival_report.v1",
-    )
-    planned = json.loads(recorder.manifest_path.read_text())
-    assert planned["artifacts"][0]["status"] == "planned"
-
-    recorder.artifacts.begin_artifact_write("report.survival")
-    writing = json.loads(recorder.manifest_path.read_text())
-    assert writing["artifacts"][0]["status"] == "writing"
-
-    artifact_path = recorder.run_dir / "survival_report.json"
-    artifact_path.write_text("{}\n")
-    recorder.artifacts.complete_existing_file("report.survival")
-    completed = json.loads(recorder.manifest_path.read_text())
-    artifact = completed["artifacts"][0]
-    assert artifact["status"] == ArtifactStatus.COMPLETED
-    assert artifact["hash"] == hash_file(artifact_path)
-    assert artifact["size"] == artifact_path.stat().st_size

@@ -4,8 +4,8 @@
 (wall-clock timestamps, host environment evidence) with fixed placeholders and
 re-serializes the document in Canonical Form, so two Runs of the same config
 on different machines produce identical bytes. Everything substantive — config
-evidence, optimization evidence, candidate rows, stage outcomes, artifact
-hashes — passes through unmasked.
+evidence, optimization evidence, and candidate rows — passes through
+unmasked.
 
 ``assert_matches_golden`` compares those bytes against a committed golden
 file. Regenerating a golden is a deliberate act::
@@ -36,9 +36,6 @@ def masked_canonical_manifest(payload: dict[str, Any]) -> bytes:
     for field in ("started_at", "finished_at"):
         if field in run:
             run[field] = _MASKED
-    for record in (*doc.get("stages", []), *doc.get("artifacts", [])):
-        if "updated_at" in record:
-            record["updated_at"] = _MASKED
     evidence = doc.get("evidence", {})
     if "environment" in evidence:
         evidence["environment"] = _MASKED

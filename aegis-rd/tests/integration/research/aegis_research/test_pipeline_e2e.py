@@ -85,7 +85,7 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     manifest = json.loads(manifest_path.read_text())
     assert not (tmp_path / "runs" / "pipeline-e2e" / "strategy_run.json").exists()
     assert not (tmp_path / "runs" / "pipeline-e2e" / "data_metadata.json").exists()
-    assert all(artifact["id"] != "data.metadata" for artifact in manifest["artifacts"])
+    assert "artifacts" not in manifest
     data_evidence = manifest["evidence"]["data"]
     assert data_evidence["schema_version"] == "run_data.v1"
     assert data_evidence["requested_instrument_ids"] == list(ETF_INSTRUMENT_ID_VALUES)
