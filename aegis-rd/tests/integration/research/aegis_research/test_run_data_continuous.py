@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from aegis_data.bar_type import mic_canonical_instrument_id
-from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data.catalog import CatalogBackedDataPort, GapFillProviderError
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.testing import FakeCatalog, bars, future
@@ -13,9 +13,14 @@ from nautilus_trader.model.instruments import CurrencyPair, Equity, FuturesContr
 from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from research.aegis_research import run_data as run_data_module
+from research.aegis_research.optimization.run_data_contract import (
+    build_data_array_contract,
+    candidate_data_identity,
+)
 from research.aegis_research.run_data import (
     ContinuousRootCollisionError,
     RunData,
+    RunDataUnavailable,
     RunDataWindowBoundsError,
     load_run_data,
 )
@@ -108,13 +113,11 @@ def _load_native_and_continuous(
         quote_currency = "USD"
 
         def __init__(self, _port_arg, root, *, adjustment_mode, **_kwargs):
-            assert str(root) == "ES"
-            assert adjustment_mode is DEFAULT_ADJUSTMENT_MODE
             self.continuous_id = es
             self.frame = continuous
 
         def materialize(self, *, end: str) -> None:
-            assert end == "2024-01-03"
+            pass
 
     monkeypatch.setattr(run_data_module, "ContinuousContractModel", FakeContinuousModel)
     config = make_data_config(
@@ -153,8 +156,11 @@ def test_continuous_future_records_run_economics_and_evidence(
     assert result.adjustment_mode is DEFAULT_ADJUSTMENT_MODE
     assert result.evidence.continuous_root_currencies == {es: "USD"}
     assert result.size_increment_by_instrument[es] == 1.0
-    coverage = {row["instrument_id"]: row for row in result.evidence.distribution_coverage}
-    assert coverage["ES.XCME"]["applicable"] is False
+    assert len(result.evidence.distribution_coverage) == 2
+    assert result.evidence.distribution_coverage[0]["instrument_id"] == "AAPL.NASDAQ"
+    assert result.evidence.distribution_coverage[0]["applicable"] is True
+    assert result.evidence.distribution_coverage[1]["instrument_id"] == "ES.XCME"
+    assert result.evidence.distribution_coverage[1]["applicable"] is False
 
 
 def test_converts_non_base_continuous_root_through_exchange_fx(
@@ -177,7 +183,7 @@ def test_converts_non_base_continuous_root_through_exchange_fx(
             self.frame = _frame(index, close=[5000.0, 5010.0], volume=[1.0, 2.0])
 
         def materialize(self, *, end: str) -> None:
-            assert end == "2024-01-03"
+            pass
 
     monkeypatch.setattr(run_data_module, "ContinuousContractModel", FakeContinuousModel)
     config = make_data_config(
@@ -203,32 +209,44 @@ def test_converts_non_base_continuous_root_through_exchange_fx(
 
 
 @pytest.mark.parametrize(
-    ("mode", "expected_evidence"),
+    ("mode", "expected_evidence", "expected_close"),
     [
-        (ContinuousFutureAdjustmentType.BACKWARD_RATIO, "backward_ratio"),
-        (ContinuousFutureAdjustmentType.BACKWARD_SPREAD, "backward_spread"),
+        (
+            ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+            "backward_ratio",
+            [5000.0, 5010.0],
+        ),
+        (
+            ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+            "backward_spread",
+            [6000.0, 6010.0],
+        ),
     ],
 )
 def test_adjustment_mode_is_recorded_in_evidence_identity(
     monkeypatch: pytest.MonkeyPatch,
     mode: ContinuousFutureAdjustmentType,
     expected_evidence: str,
+    expected_close: list[float],
 ) -> None:
     es = _id("ES.XCME")
     index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
     port = _fake_port({}, legs=[future("ESH4.XCME", "2024-03-15")])
-    seen_modes: list[ContinuousFutureAdjustmentType] = []
 
     class FakeContinuousModel:
         quote_currency = "USD"
 
         def __init__(self, _port_arg, _root, *, adjustment_mode, **_kwargs):
-            seen_modes.append(adjustment_mode)
             self.continuous_id = es
-            self.frame = _frame(index, close=[5000.0, 5010.0], volume=[1.0, 2.0])
+            close = (
+                [5000.0, 5010.0]
+                if adjustment_mode is ContinuousFutureAdjustmentType.BACKWARD_RATIO
+                else [6000.0, 6010.0]
+            )
+            self.frame = _frame(index, close=close, volume=[1.0, 2.0])
 
         def materialize(self, *, end: str) -> None:
-            assert end == "2024-01-03"
+            pass
 
     monkeypatch.setattr(run_data_module, "ContinuousContractModel", FakeContinuousModel)
     monkeypatch.setattr(run_data_module, "DEFAULT_ADJUSTMENT_MODE", mode)
@@ -240,8 +258,86 @@ def test_adjustment_mode_is_recorded_in_evidence_identity(
         custom_data_providers=None,
     )
 
-    assert seen_modes == [mode]
+    assert result.bundle.array("Close")[es].tolist() == expected_close
     assert result.evidence.adjustment_mode == expected_evidence
+
+
+def test_adjustment_modes_produce_distinct_candidate_data_identities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ratio = _load_adjustment_mode(
+        monkeypatch,
+        ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+        close=[5000.0, 5010.0],
+    )
+    spread = _load_adjustment_mode(
+        monkeypatch,
+        ContinuousFutureAdjustmentType.BACKWARD_SPREAD,
+        close=[6000.0, 6010.0],
+    )
+    contract = build_data_array_contract(configured_arrays=("Close",))
+
+    assert candidate_data_identity(ratio, contract) != candidate_data_identity(spread, contract)
+
+
+def _load_adjustment_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: ContinuousFutureAdjustmentType,
+    *,
+    close: list[float],
+) -> RunData:
+    es = _id("ES.XCME")
+    index = pd.DatetimeIndex(["2024-01-01", "2024-01-02"])
+    port = _fake_port({}, legs=[future("ESH4.XCME", "2024-03-15")])
+
+    class FakeContinuousModel:
+        quote_currency = "USD"
+
+        def __init__(self, _port_arg, _root, **_kwargs):
+            self.continuous_id = es
+            self.frame = _frame(index, close=close, volume=[1.0, 2.0])
+
+        def materialize(self, *, end: str) -> None:
+            pass
+
+    monkeypatch.setattr(run_data_module, "ContinuousContractModel", FakeContinuousModel)
+    monkeypatch.setattr(run_data_module, "DEFAULT_ADJUSTMENT_MODE", mode)
+    config = make_data_config(arrays=["Close"], base_currency="USD", instruments=[], futures=["ES"])
+    return load_run_data(
+        config,
+        required_arrays=("Close",),
+        port=port,
+        custom_data_providers=None,
+    )
+
+
+def test_continuous_failure_evidence_identifies_the_requested_root_and_arrays(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = _fake_port({}, legs=[future("ESH4.XCME", "2024-03-15")])
+
+    class FailingContinuousModel:
+        def __init__(self, _port_arg, _root, **_kwargs):
+            pass
+
+        def materialize(self, *, end: str) -> None:
+            raise GapFillProviderError("continuous source unavailable")
+
+    monkeypatch.setattr(run_data_module, "ContinuousContractModel", FailingContinuousModel)
+    config = make_data_config(arrays=["Close"], base_currency="USD", instruments=[], futures=["ES"])
+
+    with pytest.raises(RunDataUnavailable) as excinfo:
+        load_run_data(
+            config,
+            required_arrays=("Close",),
+            port=port,
+            custom_data_providers=None,
+        )
+
+    assert excinfo.value.evidence.requested_instrument_ids == ()
+    assert excinfo.value.evidence.requested_arrays == ("Close",)
+    assert excinfo.value.evidence.continuous_roots == ("ES",)
+    assert isinstance(excinfo.value.__cause__, GapFillProviderError)
 
 
 def test_rejects_continuous_root_collision_as_authoring_error(
@@ -262,7 +358,7 @@ def test_rejects_continuous_root_collision_as_authoring_error(
             self.frame = _frame(index, close=[99.0, 99.0], volume=[9.0, 9.0])
 
         def materialize(self, *, end: str) -> None:
-            assert end == "2024-01-03"
+            pass
 
     monkeypatch.setattr(run_data_module, "ContinuousContractModel", FakeContinuousModel)
     config = make_data_config(

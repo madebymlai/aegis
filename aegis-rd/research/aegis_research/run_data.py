@@ -80,9 +80,12 @@ class ContinuousRootCollisionError(RunDataValidationError):
 class RunDataFailureEvidence:
     schema_version: str
     requested_instrument_ids: tuple[InstrumentId, ...]
+    requested_arrays: tuple[str, ...]
+    continuous_roots: tuple[str, ...]
     timeframe: str
     start: str
     end: str
+    catalog_path: str | None
     error_type: str
     message: str
     source: str
@@ -374,9 +377,12 @@ def _raise_unavailable(
         RunDataFailureEvidence(
             schema_version="run_data_failure.v1",
             requested_instrument_ids=requested_ids,
+            requested_arrays=config.effective_arrays,
+            continuous_roots=tuple(config.futures),
             timeframe=config.timeframe,
             start=start,
             end=end,
+            catalog_path=config.path,
             error_type=type(error).__name__,
             message=str(error),
             source="nautilus_catalog",

@@ -44,7 +44,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
         ComponentSpec(
             family="indicators",
             component_id="tests.export_indicator",
-            module="aegis_exec_tests_export_strategy_cand_f9e.indicator_0",
+            module="aegis_exec_tests_export_strategy_cand_991.indicator_0",
             input_names=("Close",),
             output_names=("signal",),
             params={"window": 5},
@@ -53,7 +53,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
     assert artifact.plan.strategy == ComponentSpec(
         family="strategies",
         component_id="tests.export_strategy",
-        module="aegis_exec_tests_export_strategy_cand_f9e.strategy",
+        module="aegis_exec_tests_export_strategy_cand_991.strategy",
         input_names=("Close",),
         output_names=(),
         params={"holding_period": 2},
