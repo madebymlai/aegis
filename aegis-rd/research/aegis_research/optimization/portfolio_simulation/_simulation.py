@@ -452,16 +452,9 @@ def _size_granularity(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
 
     if book.size_increment_by_instrument is None:
         return np.full((1, len(columns)), np.nan, dtype=float)
-    symbols = tuple(
-        cast(InstrumentId, symbol)
-        for symbol in columns.get_level_values(SYMBOL_LEVEL)
-    )
+    symbols = tuple(cast(InstrumentId, symbol) for symbol in columns.get_level_values(SYMBOL_LEVEL))
     missing = sorted(
-        {
-            symbol.value
-            for symbol in symbols
-            if symbol not in book.size_increment_by_instrument
-        }
+        {symbol.value for symbol in symbols if symbol not in book.size_increment_by_instrument}
     )
     if missing:
         raise ValueError(

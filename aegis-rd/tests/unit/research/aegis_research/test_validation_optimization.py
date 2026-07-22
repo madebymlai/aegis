@@ -130,8 +130,7 @@ def test_execute_is_rejected_as_a_removed_field(tmp_path: Path) -> None:
         _resolve(_optimization(execute={"seed": 1}), tmp_path=tmp_path)
 
     assert any(
-        issue.path == "optimization.execute"
-        and issue.message == "Unexpected keyword argument"
+        issue.path == "optimization.execute" and issue.message == "Unexpected keyword argument"
         for issue in error.value.issues
     )
 

@@ -123,6 +123,7 @@ class DataConfig:
     timeframe: str = "1D"
     path: str | None = None
     missing_index: MissingPolicy = "raise"
+
     @property
     def effective_arrays(self) -> tuple[str, ...]:
         return expand_data_arrays(self.arrays)
@@ -136,10 +137,7 @@ class DataConfig:
         """Build the run's marking policy from its explicit declarations."""
         return DeclaredMarkingResolver(
             declared={
-                **{
-                    InstrumentId.from_str(value): MarkMode.MID
-                    for value in self.exchange
-                },
+                **{InstrumentId.from_str(value): MarkMode.MID for value in self.exchange},
                 **{
                     InstrumentId.from_str(value): MarkMode(mode)
                     for value, mode in self.mark_modes.items()

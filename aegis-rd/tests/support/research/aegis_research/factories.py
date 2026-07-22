@@ -380,9 +380,7 @@ def make_run_data(**overrides: Any) -> RunData:
             continuous_root_currencies={},
             size_increment_by_instrument=increments,
             distribution_coverage=(),
-            adjustment_mode=(
-                adjustment_mode.value if adjustment_mode is not None else None
-            ),
+            adjustment_mode=(adjustment_mode.value if adjustment_mode is not None else None),
         ),
     )
     defaults: dict[str, Any] = {

@@ -137,9 +137,7 @@ def load_run_data(
             adjustment_mode=adjustment_mode,
         )
         continuous_coverage = (
-            port.distribution_coverage_report(
-                tuple(continuous_frames), start=start, end=end
-            )
+            port.distribution_coverage_report(tuple(continuous_frames), start=start, end=end)
             if continuous_frames
             else ()
         )
@@ -230,9 +228,7 @@ def _catalog_currency_conversion(
             )
             for instrument_id in exchange_ids
         },
-        fx_close={
-            instrument_id: frames[instrument_id]["Close"] for instrument_id in exchange_ids
-        },
+        fx_close={instrument_id: frames[instrument_id]["Close"] for instrument_id in exchange_ids},
         base_currency=config.base_currency,
     )
 
