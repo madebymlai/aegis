@@ -86,6 +86,13 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
 
     manifest_path = tmp_path / "runs" / "pipeline-e2e" / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
+    assert not (tmp_path / "runs" / "pipeline-e2e" / "data_metadata.json").exists()
+    assert all(artifact["id"] != "data.metadata" for artifact in manifest["artifacts"])
+    data_evidence = manifest["evidence"]["data"]
+    assert data_evidence["schema_version"] == "run_data.v1"
+    assert data_evidence["requested_instrument_ids"] == list(ETF_INSTRUMENT_ID_VALUES)
+    assert data_evidence["loaded_arrays"] == ["Open", "High", "Low", "Close", "Volume"]
+    assert data_evidence["array_contract"]["contract_required_arrays"] == ["Close", "Open"]
     optimization_evidence = manifest["evidence"]["optimization"]
     assert optimization_evidence["source"]["schema_version"] == "component_optimization_source.v2"
     assert optimization_evidence["schema_version"] == "optimization_route.v2"

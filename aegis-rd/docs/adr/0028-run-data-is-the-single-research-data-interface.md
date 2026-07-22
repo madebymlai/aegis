@@ -61,3 +61,9 @@ value. No old-schema reader or compatibility projection is provided.
 - Historical artifacts and ADR text remain historical. Current code and docs
   refer to `RunData`; previous Candidate identities are intentionally not
   translated forward.
+
+**Amendment (2026-07-23).** The Manifest is the only durable RunData audit projection.
+`data_metadata.json`, its artifact record, and its planning/write/failure choreography are deleted
+because they duplicated `evidence.data` and had no production reader. Successful and unavailable
+loads retain their existing RunData Evidence; loading, instrument resolution, adjustments, and
+Array validation are unchanged.

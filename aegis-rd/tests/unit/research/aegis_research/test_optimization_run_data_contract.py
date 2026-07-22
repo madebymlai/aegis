@@ -8,7 +8,6 @@ from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
     build_run_required_arrays,
     candidate_data_identity,
-    data_metadata_artifact_payload,
     run_data_evidence_payload,
 )
 from tests.support.research.aegis_research.factories import make_run_data
@@ -140,18 +139,3 @@ def test_evidence_payload_omits_the_mode_key_without_futures(
     payload = run_data_evidence_payload(make_run_data(), contract)
 
     assert payload["adjustment_mode"] is None
-
-
-def test_metadata_artifact_payload_merges_metadata_and_contract(
-    tmp_path: pytest.TempPathFactory,
-) -> None:
-    """The data metadata artifact payload is the serialised metadata plus contract facts."""
-    resolved = build_resolved_run_config(tmp_path)
-    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
-
-    payload = data_metadata_artifact_payload(make_run_data(), contract)
-
-    assert payload["schema_version"] == "run_data.v1"
-    assert payload["timeframe"] == "1D"
-    assert payload["loaded_arrays"] == ["Close", "Open"]
-    assert payload["array_contract"]["contract_required_arrays"] == ["Close", "Open"]

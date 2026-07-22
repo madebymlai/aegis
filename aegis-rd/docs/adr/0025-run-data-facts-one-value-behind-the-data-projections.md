@@ -25,3 +25,9 @@ Landing is one step. ADR-0015 needed two because it curated fields while naming 
 - Every projection of the pair's schema — evidence payload, candidate identity, metadata artifact payload — lives in exactly one module; `provenance/data_artifacts.py` keeps the write (recorder coupling stays in provenance) but loses the payload knowledge.
 - **Amends ADR-0015**: its revisit trigger is discharged; the bundle carries a domain name, the recorder stays outside the seam, and no stage gains ambient authority.
 - `manifest.json` and `strategy_run.json` are byte-identical — the regression oracle for the whole change.
+
+**Amendment (2026-07-23).** The `data_metadata.json` projection and its writer are deleted. The
+projection had become byte-for-byte equivalent to RunData Evidence and had no production reader.
+RunData identity, provenance, adjustment, and Array-contract facts now persist only under the
+Manifest's `evidence.data` section; Candidate identity remains independently owned by
+CandidateStore.

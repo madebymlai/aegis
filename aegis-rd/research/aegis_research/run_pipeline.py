@@ -31,7 +31,6 @@ from research.aegis_research.optimization.run_data_contract import (
     run_data_evidence_payload,
 )
 from research.aegis_research.provenance.capture import capture_config_evidence
-from research.aegis_research.provenance.data_artifacts import write_data_metadata_artifact
 from research.aegis_research.provenance.recorder import RunRecorder
 from research.aegis_research.provenance.run_store import RunStore
 from research.aegis_research.run_data import RunData, RunDataUnavailable, load_run_data
@@ -106,7 +105,6 @@ def run_strategy_sweep(
         )
         recorder.persist()
         metric_registry = resolved_config.metric_registry
-        write_data_metadata_artifact(recorder, run_data, array_contract)
         book = ResolvedBook.resolve(config.portfolio, run_data)
         return _run_optimization_strategy_sweep(
             config,

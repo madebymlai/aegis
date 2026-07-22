@@ -107,14 +107,6 @@ def candidate_data_identity(
     )
 
 
-def data_metadata_artifact_payload(
-    run_data: RunData,
-    array_contract: DataArrayContract,
-) -> dict[str, Any]:
-    """Project the data artifact without a parallel loader-metadata description."""
-    return run_data_evidence_payload(run_data, array_contract)
-
-
 def build_data_array_contract(
     *,
     configured_arrays: tuple[str, ...],
