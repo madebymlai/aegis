@@ -131,6 +131,11 @@ class MarketDataBundle:
 @dataclass(frozen=True)
 @with_config(BUNDLE_TYPE_CONFIG)
 class DataContract:
+    # The declared universe, and therefore the rebalance-target set: every id here
+    # is either native or continuous (the two projections below partition this
+    # tuple), and data-only ``exchange`` legs are excluded from it by the
+    # no-overlap rule in ``__post_init__``. Callers take this directly — there is
+    # no narrower target set to derive.
     instrument_ids: tuple[WireInstrumentId, ...]
     required_arrays: tuple[str, ...]
     base_currency: str

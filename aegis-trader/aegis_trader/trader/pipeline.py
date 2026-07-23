@@ -173,7 +173,7 @@ class RebalancePipeline:
         timeframe_by_instrument_id: dict[InstrumentId, str] = {}
         consumer_by_instrument_id: dict[InstrumentId, SleeveName] = {}
         for sleeve_name, bundle in self._sleeves.items():
-            for instrument_id in self._contract_target_ids(bundle.contract):
+            for instrument_id in bundle.contract.instrument_ids:
                 timeframe_by_instrument_id.setdefault(
                     instrument_id, bundle.contract.timeframe
                 )
@@ -451,7 +451,7 @@ class RebalancePipeline:
                 index=pd.DatetimeIndex([bar.ts_event for bar in bars]),
             )
         currency_by_instrument_id: dict[InstrumentId, str] = {}
-        for instrument_id in self._contract_target_ids(contract):
+        for instrument_id in contract.instrument_ids:
             sizing = self._market_data.instrument_sizing(instrument_id)
             if sizing is None:
                 raise ValueError(
@@ -485,24 +485,13 @@ class RebalancePipeline:
             realized_drawdown=self._ledger.current_drawdown(_nav),
         )
 
-    def _contract_target_ids(self, contract: DataContract) -> tuple[InstrumentId, ...]:
-        """A contract's full rebalance-target universe, as declared by the bundle."""
-        target_ids = frozenset(
-            (*contract.native_instrument_ids, *contract.continuous_instrument_ids)
-        )
-        return tuple(
-            instrument_id
-            for instrument_id in contract.instrument_ids
-            if instrument_id in target_ids
-        )
-
     def _bars_for_contract(
         self,
         contract: DataContract,
         period: CompletedRebalancePeriod,
     ) -> dict[InstrumentId, Sequence[MarketBar]] | None:
         needed = contract.lookback_bars + 1
-        target_ids = self._contract_target_ids(contract)
+        target_ids = contract.instrument_ids
         limit = _lookback_limit(contract, target_count=len(target_ids), needed=needed)
         sleeve_bars: dict[InstrumentId, Sequence[MarketBar]] = {}
         for instrument_id in target_ids:
