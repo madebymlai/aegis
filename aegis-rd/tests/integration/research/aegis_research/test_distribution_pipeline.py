@@ -120,7 +120,7 @@ def _pipeline_total_return(
         component_registry=registry,
         run_id=workspace.name,
     )
-    return float(result["candidates"][0]["complete_period_metrics"]["total_return"])
+    return float(result.candidates[0].complete_period_metrics["total_return"])
 
 
 def _run_config(

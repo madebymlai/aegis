@@ -129,19 +129,8 @@ def write_error(
 
 
 def run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
-    """Project a run-identity block with real, resolved absolute paths — no
-    path scrubbing (ADR-0021).
-
-    Consumed by both the success payload and the error envelope so the
-    two run blocks cannot drift.
-    """
-    return {
-        "id": refs.get("run_id") or refs.get("id"),
-        "status": refs.get("status"),
-        "manifest_path": real_path_text(refs.get("manifest_path")),
-        "started_at": refs.get("started_at"),
-        "finished_at": refs.get("finished_at"),
-    }
+    """Project the attempted Run ID shared by success and error envelopes."""
+    return {"id": refs.get("run_id") or refs.get("id")}
 
 
 def real_path_text(value: Any) -> str | None:

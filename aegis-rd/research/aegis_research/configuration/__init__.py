@@ -9,7 +9,6 @@ from research.aegis_research.configuration.resolution import (
     ResolvedRunConfig,
     load_run_config,
     resolve_run_config,
-    with_run_config_selection,
 )
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
@@ -22,7 +21,6 @@ from research.aegis_research.configuration.schema import (
     PORTFOLIO_DIRECTIONS,
     SIGNAL_EXECUTION_TIMINGS,
     SIGNAL_POLICIES,
-    ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
     DataConfig,
@@ -52,7 +50,6 @@ __all__ = [
     "PORTFOLIO_DIRECTIONS",
     "SIGNAL_EXECUTION_TIMINGS",
     "SIGNAL_POLICIES",
-    "ConfigSelectionEvidence",
     "ConfigValidationError",
     "ConfigValidationIssue",
     "DataConfig",
@@ -73,5 +70,4 @@ __all__ = [
     "merge_data_arrays",
     "resolve_run_config",
     "to_builtin",
-    "with_run_config_selection",
 ]

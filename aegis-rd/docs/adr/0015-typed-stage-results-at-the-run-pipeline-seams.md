@@ -33,3 +33,8 @@ inputs shrink to setup (for the CandidateStore path), publishing (for representa
 config, recorder, and RunEvidence. It marks the Run complete, activates the CandidateStore rows,
 and returns lifecycle refs, optimization accounting, and Candidate summaries directly in memory.
 The artifact-only `SetupResult.strategy_evidence` projection is deleted.
+
+**Amendment (2026-07-23) — typed terminal domain result.** The terminal surface is now a typed
+`RunResult`, not a CLI dictionary. `ExecutionResult` flows directly into Candidate Set derivation
+and result construction. The CLI alone serializes `RunResult`. Publishing and completion result
+wrappers are deleted because their stages no longer exist.

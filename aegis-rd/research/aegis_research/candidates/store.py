@@ -7,23 +7,19 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from research.aegis_research.candidates.evidence import (
+from research.aegis_research.candidates.identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+)
+from research.aegis_research.candidates.models import REPRESENTATIVE_ROLES, CandidateSet
+from research.aegis_research.candidates.records import (
     CANDIDATE_EVAL_ROW_SCHEMA_VERSION,
     CANDIDATE_IDENTITY_SCHEMA_VERSION,
     candidate_key_for_identity,
 )
-from research.aegis_research.candidates.identity import (
-    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
-)
 from research.aegis_research.canonical_json import canonical_json_bytes
-from research.aegis_research.optimization.continuous_evidence import (
-    validate_selection_identity,
-)
+from research.aegis_research.optimization.selection_identity import validate_selection_identity
 
-SCHEMA_VERSION = 7
-PUBLICATION_PENDING = "pending"
-PUBLICATION_ACTIVE = "active"
-PUBLICATION_STATES = frozenset({PUBLICATION_PENDING, PUBLICATION_ACTIVE})
+SCHEMA_VERSION = 8
 
 
 class CandidateStoreError(RuntimeError):
@@ -58,105 +54,93 @@ class CandidateStore:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
-    def insert_completed_run(
-        self,
-        *,
-        run_id: str,
-        candidate_rows: Sequence[Mapping[str, Any]],
-        provenance: Mapping[str, Any],
-        publication_state: str = PUBLICATION_ACTIVE,
-    ) -> None:
-        _validate_publication_state(publication_state)
-        if not candidate_rows:
-            raise CandidateStoreError("completed optimization run has no candidate rows to persist")
-        _validate_continuous_protocol(candidate_rows, provenance)
-        candidate_values = [
-            _candidate_insert_values(
+    def commit_candidates(self, candidate_set: CandidateSet) -> None:
+        """Validate and atomically make one complete Candidate Set visible."""
+        run_id = str(candidate_set.run_id)
+        candidate_rows = candidate_set.candidates
+        provenance = candidate_set.provenance
+        _validate_candidate_set(candidate_set)
+        candidate_values_by_key = {
+            str(row["candidate_key"]): _candidate_insert_values(
                 run_id=run_id,
                 row=row,
                 provenance=provenance,
-                publication_state=publication_state,
             )
             for row in candidate_rows
-        ]
-        candidate_payloads = [(value[1], value[4]) for value in candidate_values]
+        }
         ranking_values = [
-            (run_id, str(row["role"]), str(row["candidate_key"]), publication_state)
-            for row in candidate_rows
+            (run_id, str(row["role"]), str(row["candidate_key"])) for row in candidate_rows
         ]
         with self._connection:
+            existing = self._stored_candidate_set(run_id)
+            if existing is not None:
+                incoming = _candidate_set_bytes(candidate_rows, provenance)
+                if existing == incoming:
+                    return
+                raise CandidateStoreError(
+                    f"run {run_id} already has a different committed Candidate Set"
+                )
             self._connection.executemany(
                 """
-                INSERT OR IGNORE INTO candidates (
+                INSERT INTO candidates (
                     run_id,
                     candidate_key,
                     params_json,
                     identity_json,
                     candidate_row_json,
-                    provenance_json,
-                    publication_state
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    provenance_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                candidate_values,
-            )
-            self._assert_candidate_payloads_match(
-                run_id=run_id,
-                candidate_payloads=candidate_payloads,
-            )
-            self._connection.executemany(
-                """
-                UPDATE candidates
-                SET publication_state = ?
-                WHERE run_id = ? AND candidate_key = ?
-                """,
-                ((publication_state, run_id, str(row["candidate_key"])) for row in candidate_rows),
-            )
-            self._connection.execute(
-                "DELETE FROM candidate_rankings WHERE run_id = ?",
-                (run_id,),
+                candidate_values_by_key.values(),
             )
             self._connection.executemany(
                 """
                 INSERT INTO candidate_rankings (
                     run_id,
                     role,
-                    candidate_key,
-                    publication_state
-                ) VALUES (?, ?, ?, ?)
+                    candidate_key
+                ) VALUES (?, ?, ?)
                 """,
                 ranking_values,
             )
 
-    def activate_run(self, run_id: str) -> None:
-        with self._connection:
-            candidate_count = self._connection.execute(
-                "SELECT COUNT(*) FROM candidates WHERE run_id = ?",
-                (run_id,),
-            ).fetchone()[0]
-            if candidate_count == 0:
-                raise CandidateStoreError(f"cannot activate unknown candidate-store run: {run_id}")
-            self._connection.execute(
-                "UPDATE candidates SET publication_state = ? WHERE run_id = ?",
-                (PUBLICATION_ACTIVE, run_id),
-            )
-            self._connection.execute(
-                "UPDATE candidate_rankings SET publication_state = ? WHERE run_id = ?",
-                (PUBLICATION_ACTIVE, run_id),
-            )
+    def _stored_candidate_set(self, run_id: str) -> bytes | None:
+        candidates = self._connection.execute(
+            "SELECT candidate_key, candidate_row_json, provenance_json "
+            "FROM candidates WHERE run_id = ? ORDER BY candidate_key",
+            (run_id,),
+        ).fetchall()
+        if not candidates:
+            return None
+        rankings = self._connection.execute(
+            "SELECT role, candidate_key FROM candidate_rankings WHERE run_id = ? ORDER BY role",
+            (run_id,),
+        ).fetchall()
+        provenances = {row["provenance_json"] for row in candidates}
+        if len(provenances) != 1:
+            raise CandidateStoreError(f"run {run_id} has inconsistent stored provenance")
+        document = {
+            "candidates": {
+                row["candidate_key"]: _json_loads(row["candidate_row_json"]) for row in candidates
+            },
+            "roles": {row["role"]: row["candidate_key"] for row in rankings},
+            "provenance": _json_loads(next(iter(provenances))),
+        }
+        return canonical_json_bytes(document)
 
     def candidate_key_for_role(self, run_id: str, role: str) -> str:
         """Resolve a representative role (best/median/worst) to its candidate_key.
 
         A role is the storage-free handle into a Run's ranked candidates — the
         ``candidate_rankings`` primary key is ``(run_id, role)``. Raises when the run
-        has no active candidate filling that role.
+        has no committed candidate filling that role.
         """
         row = self._connection.execute(
             """
             SELECT candidate_key FROM candidate_rankings
-            WHERE run_id = ? AND role = ? AND publication_state = ?
+            WHERE run_id = ? AND role = ?
             """,
-            (run_id, role, PUBLICATION_ACTIVE),
+            (run_id, role),
         ).fetchone()
         if row is None:
             raise CandidateStoreError(f"unknown role {role!r} for run {run_id!r}")
@@ -209,7 +193,6 @@ class CandidateStore:
                 identity_json TEXT NOT NULL,
                 candidate_row_json TEXT NOT NULL,
                 provenance_json TEXT NOT NULL,
-                publication_state TEXT NOT NULL,
                 PRIMARY KEY (run_id, candidate_key)
             );
             CREATE INDEX IF NOT EXISTS idx_candidates_key ON candidates(candidate_key);
@@ -218,60 +201,21 @@ class CandidateStore:
                 run_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 candidate_key TEXT NOT NULL,
-                publication_state TEXT NOT NULL,
                 PRIMARY KEY (run_id, role),
                 FOREIGN KEY (run_id, candidate_key) REFERENCES candidates(run_id, candidate_key)
             );
             """
         )
 
-    def _assert_candidate_payloads_match(
-        self,
-        *,
-        run_id: str,
-        candidate_payloads: Sequence[tuple[Any, Any]],
-    ) -> None:
-        expected_payloads: dict[str, str] = {}
-        for candidate_key_value, payload_value in candidate_payloads:
-            candidate_key = str(candidate_key_value)
-            payload = str(payload_value)
-            existing_payload = expected_payloads.setdefault(candidate_key, payload)
-            if existing_payload != payload:
-                raise CandidateStoreError(
-                    f"candidate {candidate_key} already exists for run {run_id} with different payload"
-                )
-
-        for candidate_keys in _chunks(tuple(expected_payloads), 500):
-            placeholders = ",".join("?" for _ in candidate_keys)
-            rows = self._connection.execute(
-                f"""
-                SELECT candidate_key, candidate_row_json
-                FROM candidates
-                WHERE run_id = ? AND candidate_key IN ({placeholders})
-                """,
-                (run_id, *candidate_keys),
-            ).fetchall()
-            stored_payloads = {row["candidate_key"]: row["candidate_row_json"] for row in rows}
-            missing = sorted(set(candidate_keys) - set(stored_payloads))
-            if missing:
-                raise CandidateStoreError(
-                    f"candidate rows were not persisted for run {run_id}: {missing[:5]}"
-                )
-            for candidate_key in candidate_keys:
-                if stored_payloads[candidate_key] != expected_payloads[candidate_key]:
-                    raise CandidateStoreError(
-                        f"candidate {candidate_key} already exists for run {run_id} with different payload"
-                    )
-
     def _candidate_lookup(self, candidate_key: str, *, run_id: str | None) -> sqlite3.Row:
         if run_id is None:
             rows = self._connection.execute(
                 """
                 SELECT * FROM candidates
-                WHERE candidate_key = ? AND publication_state = ?
+                WHERE candidate_key = ?
                 ORDER BY run_id ASC
                 """,
-                (candidate_key, PUBLICATION_ACTIVE),
+                (candidate_key,),
             ).fetchall()
             if len(rows) > 1:
                 raise CandidateStoreError(
@@ -282,9 +226,9 @@ class CandidateStore:
             row = self._connection.execute(
                 """
                 SELECT * FROM candidates
-                WHERE run_id = ? AND candidate_key = ? AND publication_state = ?
+                WHERE run_id = ? AND candidate_key = ?
                 """,
-                (run_id, candidate_key, PUBLICATION_ACTIVE),
+                (run_id, candidate_key),
             ).fetchone()
         if row is None:
             raise CandidateStoreError(f"unknown candidate key: {candidate_key}")
@@ -313,7 +257,6 @@ def _candidate_insert_values(
     run_id: str,
     row: Mapping[str, Any],
     provenance: Mapping[str, Any],
-    publication_state: str,
 ) -> tuple[Any, ...]:
     return (
         run_id,
@@ -322,7 +265,6 @@ def _candidate_insert_values(
         _json_dumps(row["identity"]),
         _json_dumps(_stable_candidate_payload(row)),
         _json_dumps(provenance),
-        publication_state,
     )
 
 
@@ -388,11 +330,43 @@ def _validate_continuous_protocol(
             )
 
 
-def _validate_publication_state(value: str) -> None:
-    if value not in PUBLICATION_STATES:
-        raise CandidateStoreError(
-            f"candidate publication_state must be one of {sorted(PUBLICATION_STATES)}; got {value!r}"
-        )
+def _validate_candidate_set(candidate_set: CandidateSet) -> None:
+    candidate_rows = candidate_set.candidates
+    provenance = candidate_set.provenance
+    if provenance.get("run_id") != str(candidate_set.run_id):
+        raise CandidateStoreError("Candidate Set provenance run_id does not match its Run ID")
+    if not candidate_rows:
+        raise CandidateStoreError("completed optimization run has no candidate rows to persist")
+    if len(candidate_rows) != len(REPRESENTATIVE_ROLES):
+        raise CandidateStoreError("Candidate Set requires exactly three representative roles")
+    roles = tuple(str(row.get("role")) for row in candidate_rows)
+    if set(roles) != set(REPRESENTATIVE_ROLES) or len(set(roles)) != len(roles):
+        raise CandidateStoreError("Candidate Set requires unique best, median, and worst roles")
+    ordinals = {str(row["role"]): row.get("ordinal_rank") for row in candidate_rows}
+    expected_ordinals = dict(zip(REPRESENTATIVE_ROLES, (1, 2, 3), strict=True))
+    if ordinals != expected_ordinals:
+        raise CandidateStoreError("Candidate Set representative ordinals are inconsistent")
+    _validate_continuous_protocol(candidate_rows, provenance)
+    _candidate_set_bytes(candidate_rows, provenance)
+
+
+def _candidate_set_bytes(
+    candidate_rows: Sequence[Mapping[str, Any]], provenance: Mapping[str, Any]
+) -> bytes:
+    candidates: dict[str, Mapping[str, Any]] = {}
+    roles: dict[str, str] = {}
+    for row in candidate_rows:
+        candidate_key = str(row["candidate_key"])
+        stable_payload = _stable_candidate_payload(row)
+        existing = candidates.setdefault(candidate_key, stable_payload)
+        if canonical_json_bytes(existing) != canonical_json_bytes(stable_payload):
+            raise CandidateStoreError(
+                f"Candidate {candidate_key} has conflicting representative payloads"
+            )
+        roles[str(row["role"])] = candidate_key
+    return canonical_json_bytes(
+        {"candidates": candidates, "roles": roles, "provenance": provenance}
+    )
 
 
 def _chunks(values: Sequence[str], size: int) -> Iterator[tuple[str, ...]]:

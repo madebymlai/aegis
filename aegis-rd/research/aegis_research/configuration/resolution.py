@@ -15,7 +15,6 @@ from research.aegis_research.component_registry import (
 )
 from research.aegis_research.configuration.cross_checks import cross_check_registries
 from research.aegis_research.configuration.schema import (
-    ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
     RunConfig,
@@ -67,7 +66,6 @@ class ResolvedRunConfig:
     # Resolution always installs an effective registry; direct construction
     # gets the same default rather than admitting None.
     metric_registry: FrozenMetricRegistry = field(default_factory=make_default_metric_registry)
-    selection: ConfigSelectionEvidence | None = None
 
     def authored_config_document(self) -> dict[str, Any]:
         return self.authored_config
@@ -84,25 +82,7 @@ class ResolvedRunConfig:
                 self.component_registry.fingerprint if self.component_registry else None
             ),
             "metric_registry_fingerprint": self.metric_registry.fingerprint,
-            "selection": self.selection.manifest() if self.selection else None,
         }
-
-
-def with_run_config_selection(
-    config: ResolvedRunConfig,
-    selection: ConfigSelectionEvidence,
-    *,
-    source_path: str | None = None,
-) -> ResolvedRunConfig:
-    return ResolvedRunConfig(
-        config=config.config,
-        raw_config_hash=config.raw_config_hash,
-        authored_config=config.authored_config,
-        source_path=config.source_path if source_path is None else source_path,
-        component_registry=config.component_registry,
-        metric_registry=config.metric_registry,
-        selection=selection,
-    )
 
 
 def load_run_config(

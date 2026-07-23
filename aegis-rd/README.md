@@ -5,19 +5,15 @@
 ---
 
 Aegis RD is a research operating system for turning market hypotheses into
-reproducible evidence.
+reproducible Candidates.
 
-It gives every idea the same audit trail: source data, indicator construction,
-strategy allocations, continuous replay, execution assumptions, costs, metrics, and
-promotion evidence. The result is a research process you can rerun, inspect,
-reject, or promote without relying on memory, notebooks, or hand-waved
-assumptions.
+It gives every idea the same execution contract: source data, indicator construction,
+strategy allocations, continuous replay, execution assumptions, costs, Metrics, and
+reproducible Candidate identity.
 
-Each valid run writes one local `<run-id>.json` Manifest under its configured
-Run root. It records lifecycle status plus config, environment, Git, data, and
-optimization Evidence. Failed runs stay inspectable. Optimization replays each
-Candidate once, observes fixed chronological blocks without resetting portfolio
-state, and publishes representative Candidates to the shared Candidate Store.
+Optimization replays each Candidate once, observes fixed chronological blocks without
+resetting portfolio state, and atomically commits the best, median, and worst roles to
+the shared Candidate Store. Failed Runs leave no durable Run or Candidate record.
 
 ## What it does
 
@@ -40,7 +36,7 @@ Each research loop follows one clear contract:
 ## Commands
 
 - **`aerd run <config>`** scores a strategy or research sweep over direct
-  component references, then persists candidate rows and lock refs. A component's
+  component references, then commits a Candidate Set and returns Lock handles. A component's
   `param_space_callable` produces a native VBT parameter grid, while
   `optimization.observation_block_bars` fixes the observational regime length.
   A later run can reuse a result by
@@ -56,16 +52,15 @@ Configs stay inert: YAML selects trusted IDs and parameters only. It cannot
 import Python, execute formulas, point at arbitrary notebooks or scripts, or
 reference generated Run files as reproducible inputs. Stale `lane`, `train`,
 `model`, `label`, `labeler`, or `signals` fields are rejected before a run
-Manifest is created.
+is attempted.
 
 ## Code layout
 
 The `research/aegis_research` package follows domain ownership:
 
-- `run/` owns the Run pipeline, RunData contract, Evidence ledger, and Manifest
-  lifecycle persistence. `run.pipeline` is the orchestration seam; `_stages/`
-  is its internal implementation.
-- `candidates/` owns durable Candidate publication, Candidate Store identity,
+- `run/` owns typed Run orchestration and the RunData contract. `run.pipeline`
+  is the public orchestration seam.
+- `candidates/` owns atomic Candidate commit, Candidate Store identity,
   and Lock resolution across Runs.
 - `optimization/` owns Candidate search and evaluation: precompute, Preflight,
   continuous replay, Observation Blocks, ranking, and the optimizer runner.

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from research.aegis_research.candidates.evidence import candidate_rows_from_result
 from research.aegis_research.candidates.identity import (
     CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
 )
+from research.aegis_research.candidates.models import CandidateSet
+from research.aegis_research.candidates.records import candidate_rows_from_result
 from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.optimization.param_namespace import (
     FIXED_CANDIDATE_PARAM,
@@ -18,6 +19,7 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from research.aegis_research.run.identity import RunId
 from tests.support.research.aegis_research.factories import make_selection_identity
 
 _DATA_IDENTITY = {
@@ -103,39 +105,41 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     with CandidateStore(tmp_path / "candidates.sqlite3") as store:
-        store.insert_completed_run(
-            run_id="stored-decode-run",
-            candidate_rows=rows,
-            provenance={
-                "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
-                "run_id": "stored-decode-run",
-                "selection_identity": selection_identity,
-                "source": {
-                    "schema_version": "component_optimization_source.v2",
-                    "source": "component",
-                    "strategy": {
-                        "family": "strategies",
-                        "slot": "strategy:demo.ma_cross",
-                        "id": "demo.ma_cross",
-                        "version": "1.0.0",
-                        "fixed_params": {},
-                        "param_keys": {
-                            "fast_window": fast_key,
-                            "slow_window": slow_key,
-                        },
-                    },
-                    "indicators": [
-                        {
-                            "family": "indicators",
-                            "slot": "demo.mom",
-                            "id": "demo.mom",
+        store.commit_candidates(
+            CandidateSet.create(
+                run_id=RunId("stored-decode-run"),
+                candidates=rows,
+                provenance={
+                    "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                    "run_id": "stored-decode-run",
+                    "selection_identity": selection_identity,
+                    "source": {
+                        "schema_version": "component_optimization_source.v2",
+                        "source": "component",
+                        "strategy": {
+                            "family": "strategies",
+                            "slot": "strategy:demo.ma_cross",
+                            "id": "demo.ma_cross",
                             "version": "1.0.0",
                             "fixed_params": {},
-                            "param_keys": {"window": window_key},
-                        }
-                    ],
+                            "param_keys": {
+                                "fast_window": fast_key,
+                                "slow_window": slow_key,
+                            },
+                        },
+                        "indicators": [
+                            {
+                                "family": "indicators",
+                                "slot": "demo.mom",
+                                "id": "demo.mom",
+                                "version": "1.0.0",
+                                "fixed_params": {},
+                                "param_keys": {"window": window_key},
+                            }
+                        ],
+                    },
                 },
-            },
+            )
         )
 
         median_key = store.candidate_key_for_role("stored-decode-run", "median")

@@ -19,7 +19,7 @@ from tests.support.research.aegis_research.market_data_fixtures import (
 COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
 
 
-def test_pipeline_produces_valid_manifest_and_candidate_store_with_intree_components(
+def test_pipeline_returns_typed_result_and_commits_candidate_store_with_intree_components(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -81,48 +81,15 @@ def test_pipeline_produces_valid_manifest_and_candidate_store_with_intree_compon
     payload = json.loads(output.out)
     assert payload["status"] == "success"
 
-    manifest_path = tmp_path / "runs" / "pipeline-e2e.json"
-    manifest = json.loads(manifest_path.read_text())
-    assert not (tmp_path / "runs" / "pipeline-e2e" / "strategy_run.json").exists()
-    assert not (tmp_path / "runs" / "pipeline-e2e" / "data_metadata.json").exists()
-    assert "artifacts" not in manifest
-    data_evidence = manifest["evidence"]["data"]
-    assert data_evidence["schema_version"] == "run_data.v1"
-    assert data_evidence["requested_instrument_ids"] == list(ETF_INSTRUMENT_ID_VALUES)
-    assert data_evidence["loaded_arrays"] == ["Open", "High", "Low", "Close", "Volume"]
-    assert data_evidence["array_contract"]["contract_required_arrays"] == ["Close", "Open"]
-    optimization_evidence = manifest["evidence"]["optimization"]
-    assert optimization_evidence["source"]["schema_version"] == "component_optimization_source.v2"
-    assert optimization_evidence["schema_version"] == "optimization_route.v2"
-    assert "selection" in optimization_evidence
-    assert "split" not in optimization_evidence
-    execution = optimization_evidence["execution"]
-    assert execution["schema_version"] == "continuous_selection_evidence.v1"
-    serialized_public_evidence = json.dumps(
-        {"execution": execution, "candidates": optimization_evidence["candidates"]}
-    ).lower()
-    assert "held_out" not in serialized_public_evidence
-    assert "optimism_gap" not in serialized_public_evidence
-    assert "friedman" not in serialized_public_evidence
-    assert "omnibus" not in serialized_public_evidence
-    assert set(execution["raw_metric_matrices"]) == {
-        "max_dd",
-        "sharpe_ratio",
-        "total_fees_paid",
-        "total_return",
-        "total_trades",
-        "win_rate",
-    }
-    best, median, worst = optimization_evidence["candidates"]
+    assert payload["run"] == {"id": "pipeline-e2e"}
+    assert not (tmp_path / "runs" / "pipeline-e2e.json").exists()
+    best, median, worst = payload["candidates"]
     assert best["role"] == "best"
     assert median["role"] == "median"
     assert worst["role"] == "worst"
-    assert best["schema_version"] == "candidate_eval_row.v3"
-    assert median["schema_version"] == "candidate_eval_row.v3"
-    assert worst["schema_version"] == "candidate_eval_row.v3"
-    assert best["identity"]["schema_version"] == "candidate_identity.v5"
-    assert median["identity"]["schema_version"] == "candidate_identity.v5"
-    assert worst["identity"]["schema_version"] == "candidate_identity.v5"
+    assert best["lock"] == "pipeline-e2e"
+    assert median["lock"] == "pipeline-e2e:median"
+    assert worst["lock"] == "pipeline-e2e:worst"
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
     with CandidateStore(store_path) as store:
         best_key = store.candidate_key_for_role("pipeline-e2e", "best")

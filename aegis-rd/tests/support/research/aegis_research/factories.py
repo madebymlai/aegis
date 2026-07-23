@@ -49,16 +49,16 @@ from research.aegis_research.instrument_resolution import (
     InstrumentResolution,
     TradeableInstrument,
 )
-from research.aegis_research.optimization.continuous_evidence import (
-    CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
-    METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
-)
 from research.aegis_research.optimization.continuous_replay import (
     continuous_replay_protocol,
 )
 from research.aegis_research.optimization.observation_blocks import (
     ObservationBlocks,
     observation_block_protocol,
+)
+from research.aegis_research.optimization.selection_identity import (
+    CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
+    METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
 )
 from research.aegis_research.portfolio_simulation import ResolvedBook
 from research.aegis_research.portfolio_simulation._simulation import (

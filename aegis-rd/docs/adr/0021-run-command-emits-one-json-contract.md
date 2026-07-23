@@ -92,3 +92,8 @@ block consequently has five fields (`id`, `status`, `manifest_path`, `started_at
 and no `run_dir`. `manifest_path` remains a real resolved absolute path. Candidate Store output
 continues to name its separate shared database, while Execution Bundle creation remains an
 explicit export command independent of Run storage.
+
+**Amendment (2026-07-23) — serialize Run Result, not lifecycle storage.** Run success JSON is now
+adapted from the typed `RunResult` and contains the Run ID, Candidate Store reference,
+optimization summary, and representative Candidate summaries. Manifest path, status, lifecycle
+timestamps, and Evidence are removed. Failure JSON carries the attempted Run ID when available.

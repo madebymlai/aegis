@@ -10,6 +10,12 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.cli_commands import run as run_command
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
+from research.aegis_research.run.identity import RunId
+from research.aegis_research.run.result import (
+    CandidateSummary,
+    OptimizationSummary,
+    RunResult,
+)
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
     write_strategy_component,
@@ -192,17 +198,33 @@ def test_run_success_payload_is_the_emitted_json_contract(
     long_base = tmp_path.joinpath(*(f"long-path-segment-{i:02d}" for i in range(35)))
     store_path = long_base / ".candidate_store" / "candidates.sqlite3"
 
-    def stub_run_strategy_sweep(*_args: object, **kwargs: object) -> dict[str, object]:
-        return {
-            "run_id": kwargs["run_id"],
-            "status": "completed",
-            "manifest_path": str(long_base / "stubbed-success.json"),
-            "started_at": "2026-06-12T00:00:00Z",
-            "finished_at": "2026-06-12T00:01:00Z",
-            "candidate_store_path": str(store_path),
-            "optimization": {"total": 4, "protocol": "continuous_future_in_past"},
-            "candidates": [{"role": "best", "lock": kwargs["run_id"]}],
-        }
+    def stub_run_strategy_sweep(*_args: object, **kwargs: object) -> RunResult:
+        run_id = RunId(str(kwargs["run_id"]))
+        return RunResult(
+            run_id=run_id,
+            candidate_store_path=store_path,
+            optimization=OptimizationSummary(
+                ranking_metric="total_return",
+                observation_block_bars=20,
+                observation_block_count=2,
+                candidate_count=3,
+                total=4,
+                excluded_invalid=0,
+                excluded_degenerate=0,
+            ),
+            candidates=(
+                CandidateSummary(
+                    role="best",
+                    ordinal_rank=1,
+                    candidate_key="cand_best",
+                    params={},
+                    mean_rank=1.0,
+                    complete_period_metrics={},
+                    observation_block_metrics={},
+                    lock=str(run_id),
+                ),
+            ),
+        )
 
     monkeypatch.setattr(run_command, "run_strategy_sweep", stub_run_strategy_sweep)
 
@@ -211,26 +233,26 @@ def test_run_success_payload_is_the_emitted_json_contract(
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "success"
     assert payload["command"] == "run"
-    assert payload["selection"] == {
-        "source": "explicit",
-        "config_path": str(config_path.resolve()),
-    }
+    assert "selection" not in payload
     assert payload["run"] == {
         "id": "stubbed-success",
-        "status": "completed",
-        "manifest_path": str((long_base / "stubbed-success.json").resolve(strict=False)),
-        "started_at": "2026-06-12T00:00:00Z",
-        "finished_at": "2026-06-12T00:01:00Z",
     }
     assert "artifacts" not in payload
     assert payload["candidate_store"] == {
         "path": str(store_path.resolve(strict=False)),
     }
     assert payload["optimization"] == {
+        "ranking_metric": "total_return",
+        "observation_block_bars": 20,
+        "observation_block_count": 2,
+        "candidate_count": 3,
         "total": 4,
         "protocol": "continuous_future_in_past",
+        "excluded_invalid": 0,
+        "excluded_degenerate": 0,
     }
-    assert payload["candidates"] == [{"role": "best", "lock": "stubbed-success"}]
+    assert payload["candidates"][0]["role"] == "best"
+    assert payload["candidates"][0]["lock"] == "stubbed-success"
 
 
 def test_run_rejects_removed_labeler_without_train_guidance(
@@ -457,53 +479,6 @@ def test_error_details_paths_emit_real_resolved_paths(
 
     assert jsonable_value(Path("runs/example")) == str(tmp_path / "runs" / "example")
     assert jsonable_value(Path("/data/runs/abc")) == "/data/runs/abc"
-
-
-def test_run_refs_emits_absolute_paths_unscrubbed() -> None:
-    """The run-refs projection emits real absolute paths — no scrubbing."""
-    from research.aegis_research.cli_support.output import run_refs
-
-    refs: dict[str, object] = {
-        "run_id": "abc123",
-        "status": "success",
-        "manifest_path": "/data/runs/abc123.json",
-        "started_at": "2026-06-12T00:00:00Z",
-        "finished_at": "2026-06-12T00:01:00Z",
-    }
-    block = run_refs(refs)
-    assert block["id"] == "abc123"
-    assert "run_dir" not in block
-    assert block["manifest_path"] == "/data/runs/abc123.json"
-
-
-def test_run_refs_resolves_relative_paths_against_cwd(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Relative pipeline paths resolve to real absolute paths (ADR-0021)."""
-    from research.aegis_research.cli_support.output import run_refs
-
-    monkeypatch.chdir(tmp_path)
-    block = run_refs({"run_id": "x", "manifest_path": "runs/x.json"})
-    assert "run_dir" not in block
-    assert block["manifest_path"] == str(tmp_path / "runs" / "x.json")
-
-
-def test_run_refs_stringifies_path_values() -> None:
-    """Path-typed refs become strings in the projection, so the success
-    envelope's JSON sanitizer (whose Path branch scrubs) never sees a Path."""
-    from pathlib import Path
-
-    from research.aegis_research.cli_support.output import run_refs
-
-    block = run_refs(
-        {
-            "run_id": "abc123",
-            "manifest_path": Path("/data/runs/abc123.json"),
-        }
-    )
-    assert "run_dir" not in block
-    assert block["manifest_path"] == "/data/runs/abc123.json"
 
 
 # ── config-schema show subcommand ────────────────────────────────────────────

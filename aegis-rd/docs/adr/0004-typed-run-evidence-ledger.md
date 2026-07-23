@@ -34,3 +34,8 @@ renamed to `aegis_research.run_record`. The package now names its concrete respo
 Manifest domain record, lifecycle recorder, Run-path allocation, and config Evidence capture.
 The domain terms **Provenance** and **Evidence** remain unchanged; only the Python package boundary
 was renamed, with no compatibility import shim.
+
+**Amendment (2026-07-23) — Evidence ledger removed.** The last Evidence consumer was the
+Manifest itself. Typed stage values now carry operational facts directly, Candidate Store retains
+only Lock-reproduction provenance, and the ledger, section schema, diagnostic projections, and
+Manifest writer are deleted. No logger-shaped replacement is introduced.

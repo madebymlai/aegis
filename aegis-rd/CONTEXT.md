@@ -5,8 +5,12 @@ A research operating system for turning market hypotheses into reproducible, sco
 ## Language
 
 **Run**:
-A single, reproducible execution of a strategy hypothesis against market data, persisted as one Manifest document named from its Run ID.
+A single attempted reproducible execution of a strategy hypothesis against market data. A Run becomes durable only when its complete Candidate Set commits.
 _Avoid_: research loop, experiment, backtest
+
+**Run ID**:
+A validated identity created before a **Run** begins. It correlates success and failure output and becomes durable only as part of a committed **Candidate Set**.
+_Avoid_: manifest name, run file, reservation
 
 **Component**:
 A versioned, registered Python module that declares inputs, parameters, and outputs. Components come in two families: **Indicators** and **Strategies**.
@@ -25,7 +29,7 @@ A named market-data input series a **Run** loads — the OHLCV set (Open, High, 
 _Avoid_: feature, panel, column, field
 
 **Candidate**:
-A scored parameter combination produced by an optimization **Run**. Each Candidate carries fixed parameters, complete-period **Metrics**, per-**Observation Block** Metrics, mean within-block rank, and provenance. Every Run publishes exactly three representative Candidates: best, median, and worst. These roles are chosen by regime-balanced mean rank over one continuous Development replay.
+A scored parameter combination produced by an optimization **Run**. Each Candidate carries fixed parameters, complete-period **Metrics**, per-**Observation Block** Metrics, mean within-block rank, and provenance. Every successful Run commits exactly three representative roles: best, median, and worst. These roles are chosen by regime-balanced mean rank over one continuous Development replay.
 _Avoid_: trial, result, entry
 
 **Invalid Candidate**:
@@ -41,7 +45,7 @@ The single scored interval shared by every materialized **Candidate**, beginning
 _Avoid_: train set, selection set, in-sample split
 
 **Warmup**:
-The unscored history needed to compute every selected **Component** for every materialized **Candidate**. A **Run** derives one common Warmup from the maximum resolved Component lookback, records its drivers in **Evidence**, and begins every Candidate's Development Period at the same row.
+The unscored history needed to compute every selected **Component** for every materialized **Candidate**. A **Run** derives one common Warmup from the maximum resolved Component lookback and begins every Candidate's Development Period at the same row.
 _Avoid_: burn-in config, training period
 
 **Continuous Future-in-Past Replay**:
@@ -57,27 +61,23 @@ The run-constant terms a **Run's** portfolio simulation trades every **Candidate
 _Avoid_: book facts, portfolio policy, simulation config
 
 **Candidate Store**:
-The durable, cross-**Run** store of published **Candidates** and their **Provenance**. Publishing a **Run's** three representative Candidates into it is what makes them referenceable by later Runs: a **Lock** resolves against the Candidate Store. It is the boundary between results internal to one Run and results visible to all Runs.
+The only durable authority produced by successful **Run** execution: a cross-Run store of committed **Candidates** and their **Provenance**. One atomic commit makes a complete **Candidate Set** referenceable by later Runs; a **Lock** resolves against the Candidate Store.
 _Avoid_: database, candidate cache, results table
+
+**Candidate Set**:
+The complete atomic commit value for one **Run ID**: the best, median, and worst representative Candidate records, their role mappings, and only the Provenance required for Candidate queries and Lock reproduction.
+_Avoid_: publish batch, pending candidates, run record
 
 **Candidate Key**:
 The content-derived identifier that names a **Candidate** across **Runs**, computed from the **Canonical Form** of the Candidate's identity — identical parameters, data, and policy always yield the same key. It is what the **Candidate Store** keys rows by and what a **Lock** role resolves to.
 _Avoid_: candidate token, token, candidate hash, candidate_id
 
 **Lock**:
-A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw **Candidate Key**; `run_id` + a resolved **Candidate Key** together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its **Candidate Key** through the storage-free `candidate_rankings` table, and **Lock** provenance always records the resolved hash. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body (the overridden values are recorded in **Evidence**, never silently dropped).
+A top-level **Run Config** reference that reproduces one **Candidate** from a prior **Run**. Written as a human-friendly scalar `run_id[:role]`: a bare `run_id` locks the **best** **Candidate** (the default), and `:median`/`:worst` pick the other representatives. The precise mapping form `{run_id, candidate_id}` also resolves, where `candidate_id` is a `role` keyword or a raw **Candidate Key**; `run_id` + a resolved **Candidate Key** together *are* the `candidates` primary key, so a Lock needs no separate storage. A `role` resolves to its **Candidate Key** through the storage-free `candidate_rankings` table. A locked Run takes every **Component's** parameters from that Candidate rather than searching for new ones, overriding any `params:` in the config body.
 _Avoid_: promotion, lock token, per-component lock, lock_id
 
-**Manifest**:
-The one immutable audit document for a **Run**, stored as `<run-id>.json` under the configured Run root. Records identity, lifecycle status and timing, an optional terminal failure, the resolved Run Config, and Evidence.
-_Avoid_: log, report, receipt
-
-**Evidence**:
-A structured, schema-versioned fact recorded in a **Manifest** that says what happened and why. Evidence makes a Run's claims inspectable and reproducible. Examples: config selection, data quality diagnostics, and Candidate scoring rows.
-_Avoid_: output, result, log
-
 **Canonical Form**:
-The deterministic, hash-stable byte representation of a value — sorted keys, strict (no NaN/Inf literals), one encoding rule — that makes a **Manifest** hash, an **Evidence** content hash, and a **Candidate Key** reproducible across processes and machines. **Candidate** identity is a richer, schema-versioned canonicalization layered on top of it.
+The deterministic, hash-stable byte representation of a value — sorted keys, strict (no NaN/Inf literals), one encoding rule — that makes a **Candidate Key** reproducible across processes and machines. **Candidate** identity is a richer, schema-versioned canonicalization layered on top of it.
 _Avoid_: serialization, JSON dump, to_builtin
 
 **Metric**:
@@ -154,4 +154,4 @@ _Avoid_: FIGI, InstrumentRef, ListedRef, FuturesRef, Security Master, ISIN, CUSI
 >
 > **Dev**: How do I know the **Run** was honest?
 >
-> **Expert**: Every **Run** writes a **Manifest** with **Evidence** — config hashes, data quality diagnostics, component source hashes. The **Manifest** is immutable once the **Run** completes.
+> **Expert**: A successful **Run** atomically commits its three representative **Candidates** and the Provenance needed to reproduce them. Use the returned **Run ID** and Lock handles to inspect or replay those durable outcomes.

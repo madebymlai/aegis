@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from research.aegis_research.candidates.evidence import (
+from research.aegis_research.candidates.records import (
     candidate_rows_from_result,
 )
 from research.aegis_research.canonical_json import canonical_json_bytes

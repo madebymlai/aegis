@@ -1,1 +1,1 @@
-"""Durable Candidate publication and Lock resolution."""
+"""Durable Candidate commit and Lock resolution."""

@@ -8,15 +8,11 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.canonical_json import canonical_json_bytes
 from research.aegis_research.metrics import make_metric_registry_for
 from research.aegis_research.optimization.candidate_paths import (
     CandidatePathError,
     build_development_paths,
     materialize_candidates,
-)
-from research.aegis_research.optimization.continuous_evidence import (
-    build_continuous_evidence,
 )
 from research.aegis_research.optimization.observation_blocks import (
     ObservationBlockAnalysis,
@@ -31,6 +27,7 @@ from research.aegis_research.optimization.precompute import (
 )
 from research.aegis_research.optimization.preflight import build_preflight
 from research.aegis_research.optimization.runner import execute_optimization
+from research.aegis_research.optimization.selection_identity import build_selection_identity
 from research.aegis_research.optimization.source import OptimizationSource
 from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
@@ -315,12 +312,10 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         "fill_timing": "next_close",
         "data_start": "2024-01-01",
     }
-    batched_evidence = build_continuous_evidence(analysis=batch_analysis, **evidence_kwargs)
-    sequential_evidence = build_continuous_evidence(analysis=sequential_analysis, **evidence_kwargs)
+    batched_identity = build_selection_identity(analysis=batch_analysis, **evidence_kwargs)
+    sequential_identity = build_selection_identity(analysis=sequential_analysis, **evidence_kwargs)
 
-    assert canonical_json_bytes(batched_evidence.execution) == canonical_json_bytes(
-        sequential_evidence.execution
-    )
+    assert batched_identity == sequential_identity
 
 
 def test_development_paths_flow_unchanged_into_observation_analysis() -> None:

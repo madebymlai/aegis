@@ -1,9 +1,8 @@
 """Unit tests for locked-run behavior in the pipeline setup stage.
 
 A Run Config carrying a top-level ``lock: {run_id, candidate_id}`` reproduces one prior
-Candidate: setup resolves every Component's params from that Candidate, performs no
-optimization (a single pinned Candidate, zero free params), and records reproduction
-Evidence that the Run was not a fresh optimization.
+Candidate: setup resolves every Component's params from that Candidate and performs no
+optimization (a single pinned Candidate, zero free params).
 """
 
 from __future__ import annotations
@@ -13,11 +12,12 @@ from typing import Any
 
 import pytest
 
-from research.aegis_research.candidates.evidence import candidate_rows_from_result
 from research.aegis_research.candidates.identity import (
     CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
     candidate_store_path,
 )
+from research.aegis_research.candidates.models import CandidateSet
+from research.aegis_research.candidates.records import candidate_rows_from_result
 from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.configuration import resolve_run_config
 from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
@@ -26,10 +26,7 @@ from research.aegis_research.optimization.ranking import (
     OptimizationResult,
 )
 from research.aegis_research.run._stages.setup import run_pipeline_setup
-from research.aegis_research.run.data_contract import (
-    build_run_data_array_contract,
-)
-from research.aegis_research.run.evidence import RunEvidence
+from research.aegis_research.run.identity import RunId
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
 )
@@ -57,16 +54,6 @@ def _run_data() -> Any:
 
     frame = pd.DataFrame({0: [float(i) for i in range(120)]})
     return make_run_data(close=frame, open_=frame)
-
-
-def _run_evidence() -> RunEvidence:
-    return RunEvidence(
-        {},
-        component_registry_fingerprint="registry-fp",
-        data_arrays={},
-        optimization={},
-        persist=lambda: None,
-    )
 
 
 def _locked_raw_config(candidate_key: str) -> dict[str, Any]:
@@ -107,15 +94,17 @@ def _seed_candidate_store(config: Any) -> str:
     )
     candidate_key = rows[0]["candidate_key"]
     with CandidateStore(store_path) as store:
-        store.insert_completed_run(
-            run_id="run-a",
-            candidate_rows=rows,
-            provenance={
-                "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
-                "run_id": "run-a",
-                "source": _source_evidence(),
-                "selection_identity": selection_identity,
-            },
+        store.commit_candidates(
+            CandidateSet.create(
+                run_id=RunId("run-a"),
+                candidates=rows,
+                provenance={
+                    "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                    "run_id": "run-a",
+                    "source": _source_evidence(),
+                    "selection_identity": selection_identity,
+                },
+            )
         )
     return candidate_key
 
@@ -163,15 +152,10 @@ def test_locked_setup_resolves_every_component_from_candidate(
     """
     resolved = _resolved_locked_config(tmp_path, monkeypatch)
     config = resolved.config
-    array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
         run_data=_run_data(),
-        array_contract=array_contract,
-        metric_registry_fingerprint="metric-fp",
-        run_evidence=_run_evidence(),
     )
 
     evidence = result.optimization_source.evidence
@@ -186,64 +170,14 @@ def test_locked_setup_performs_no_optimization(
 ) -> None:
     resolved = _resolved_locked_config(tmp_path, monkeypatch)
     config = resolved.config
-    array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
     result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
         run_data=_run_data(),
-        array_contract=array_contract,
-        metric_registry_fingerprint="metric-fp",
-        run_evidence=_run_evidence(),
     )
 
     # A locked run pins a single Candidate: no free parameters remain to sweep.
     assert list(result.optimization_source.params) == [FIXED_CANDIDATE_PARAM]
-
-
-def test_locked_setup_records_reproduction_evidence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    resolved = _resolved_locked_config(tmp_path, monkeypatch)
-    config = resolved.config
-    array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
-    run_evidence = _run_evidence()
-    run_pipeline_setup(
-        config=config,
-        component_registry=resolved.component_registry,
-        run_data=_run_data(),
-        array_contract=array_contract,
-        metric_registry_fingerprint="metric-fp",
-        run_evidence=run_evidence,
-    )
-
-    evidence = run_evidence.optimization()
-    lock_evidence = evidence["lock"]
-    assert lock_evidence is not None
-    assert lock_evidence["run_id"] == "run-a"
-    assert lock_evidence["candidate_id"] == config.lock.candidate_id
-    assert lock_evidence["mode"] == "reproduction"
-
-
-def test_unlocked_setup_has_no_lock_evidence(
-    tmp_path: Path,
-) -> None:
-    resolved = build_resolved_run_config(tmp_path)
-    config = resolved.config
-    array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
-    run_evidence = _run_evidence()
-    run_pipeline_setup(
-        config=config,
-        component_registry=resolved.component_registry,
-        run_data=_run_data(),
-        array_contract=array_contract,
-        metric_registry_fingerprint="metric-fp",
-        run_evidence=run_evidence,
-    )
-
-    assert run_evidence.optimization()["lock"] is None
 
 
 def _write_parameterized_strategy(path: Path) -> None:
@@ -307,15 +241,17 @@ def _seed_parameterized_candidate(config: Any) -> str:
     )
     candidate_key = rows[0]["candidate_key"]
     with CandidateStore(store_path) as store:
-        store.insert_completed_run(
-            run_id="run-a",
-            candidate_rows=rows,
-            provenance={
-                "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
-                "run_id": "run-a",
-                "source": _parameterized_source_evidence(),
-                "selection_identity": selection_identity,
-            },
+        store.commit_candidates(
+            CandidateSet.create(
+                run_id=RunId("run-a"),
+                candidates=rows,
+                provenance={
+                    "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                    "run_id": "run-a",
+                    "source": _parameterized_source_evidence(),
+                    "selection_identity": selection_identity,
+                },
+            )
         )
     return candidate_key
 
@@ -337,57 +273,17 @@ def _resolved_locked_overlay_config(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     return resolve_run_config(raw, component_registry=component_registry)
 
 
-def test_locked_setup_records_overridden_params_in_evidence(
+def test_locked_setup_applies_locked_params_over_authored_params(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Lock-wins (ADR-0006): the locked Candidate pins threshold=1.0; the config's
-    # strategy params: {threshold: 2.0} is overridden and recorded fail-loud in Evidence.
+    # Lock-wins (ADR-0006): the locked Candidate pins threshold=1.0 despite the config.
     resolved = _resolved_locked_overlay_config(tmp_path, monkeypatch)
     config = resolved.config
-    array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
-    run_evidence = _run_evidence()
-    run_pipeline_setup(
+    result = run_pipeline_setup(
         config=config,
         component_registry=resolved.component_registry,
         run_data=_run_data(),
-        array_contract=array_contract,
-        metric_registry_fingerprint="metric-fp",
-        run_evidence=run_evidence,
     )
 
-    lock_evidence = run_evidence.optimization()["lock"]
-    assert lock_evidence["overridden_params"] == [
-        {
-            "family": "strategies",
-            "component_id": "demo.strategy",
-            "slot": "strategy",
-            "param_names": ["threshold"],
-            "ignored_values": {"threshold": 2.0},
-        }
-    ]
-    # The lock still wins: the config declared the value, but it is recorded as ignored.
     assert resolved.config.strategy.params == {"threshold": 2.0}
-    assert run_evidence.optimization()["lock"]["mode"] == "reproduction"
-
-
-def test_locked_setup_records_empty_overrides_when_no_params(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A locked config without any per-Component params: records an empty override list,
-    # not a missing key — Evidence always answers "what params: were overridden?".
-    resolved = _resolved_locked_config(tmp_path, monkeypatch)
-    config = resolved.config
-    array_contract = build_run_data_array_contract(config, resolved.component_registry)
-
-    run_evidence = _run_evidence()
-    run_pipeline_setup(
-        config=config,
-        component_registry=resolved.component_registry,
-        run_data=_run_data(),
-        array_contract=array_contract,
-        metric_registry_fingerprint="metric-fp",
-        run_evidence=run_evidence,
-    )
-
-    assert run_evidence.optimization()["lock"]["overridden_params"] == []
+    assert result.optimization_source.evidence["strategy"]["param_mode"] == "locked"

@@ -86,3 +86,8 @@ Candidate reproduction therefore depend only on the authority this ADR establish
 **Amendment (2026-07-23) — Run IDs outlive the directory layout.** A Lock handle continues to use
 the Run ID recorded in Candidate Store; it is no longer described as a folder name. Flattening Run
 storage to `<run-id>.json` changes neither Lock parsing nor Candidate lookup.
+
+**Amendment (2026-07-23) — commit is visibility.** Candidate Store no longer carries pending or
+active publication state. One transaction commits the full Candidate Set and all representative
+role mappings; Lock resolution can use them immediately. Exact recommit is idempotent, while
+divergent reuse of a Run ID fails without changing the original set.

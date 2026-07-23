@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from research.aegis_research import cli
+from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE_PARAM
 from tests.support.research.aegis_research.market_data_fixtures import (
@@ -97,14 +98,17 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     assert cli.main(["run", str(config_path), "--run-id", "component-opt"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    manifest = json.loads((tmp_path / "runs" / "component-opt.json").read_text())
-    optimization = manifest["evidence"]["optimization"]
+    store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
+    with CandidateStore(store_path) as store:
+        best_key = store.candidate_key_for_role("component-opt", "best")
+        stored = store.candidate_by_key(best_key, run_id="component-opt")
+    source = stored["provenance"]["source"]
 
     assert payload["status"] == "success"
-    assert not (tmp_path / "runs" / "component-opt").exists()
-    assert optimization["source"]["strategy"]["family"] == "strategies"
-    assert optimization["source"]["strategy"]["id"] == "demo.cross"
-    assert optimization["preflight"]["candidate_param_names"] == [FIXED_CANDIDATE_PARAM]
+    assert not (tmp_path / "runs" / "component-opt.json").exists()
+    assert source["strategy"]["family"] == "strategies"
+    assert source["strategy"]["id"] == "demo.cross"
+    assert list(stored["params"]) == [FIXED_CANDIDATE_PARAM]
     assert [candidate["role"] for candidate in payload["candidates"]] == [
         "best",
         "median",
@@ -112,23 +116,9 @@ def test_strategy_run_executes_fixed_component_through_native_optimization(
     ]
     assert payload["optimization"]["protocol"] == "continuous_future_in_past"
     assert payload["optimization"]["observation_block_bars"] == 20
-    # Completion threads the *exact* exclusion accounting from the execution
-    # Evidence (never a preflight estimate) into the optimization summary, so the
-    # terminal can render the researched/total ratio.
-    accounting = optimization["execution"]["candidate_accounting"]
-    assert payload["optimization"]["total"] == accounting["total"]
-    assert payload["optimization"]["excluded_invalid"] == accounting["excluded_invalid"]
-    assert payload["optimization"]["excluded_degenerate"] == accounting["excluded_degenerate"]
-    for summary, candidate in zip(payload["candidates"], optimization["candidates"], strict=True):
-        assert summary["role"] == candidate["role"]
-        assert summary["ordinal_rank"] == candidate["ordinal_rank"]
-        assert summary["candidate_key"] == candidate["candidate_key"]
-        assert summary["params"] == candidate["params"]
-        assert summary["mean_rank"] == candidate["mean_rank"]
-        assert summary["complete_period_metrics"] == candidate["complete_period_metrics"]
-        assert summary["observation_block_metrics"] == candidate["observation_block_metrics"]
-    assert len(optimization["candidates"]) == 3
-    assert len({candidate["candidate_key"] for candidate in optimization["candidates"]}) == 1
+    assert payload["optimization"]["total"] == 1
+    assert len(payload["candidates"]) == 3
+    assert len({candidate["candidate_key"] for candidate in payload["candidates"]}) == 1
 
 
 def test_strategy_run_always_emits_json_with_lock_handles(
@@ -155,23 +145,9 @@ def test_strategy_run_always_emits_json_with_lock_handles(
     assert locks["best"] == "lock-handle-run"
     assert locks["median"] == "lock-handle-run:median"
     assert locks["worst"] == "lock-handle-run:worst"
-    # Selection projected from ConfigSelectionEvidence
-    assert payload["selection"] == {
-        "source": "explicit",
-        "config_path": str(config_path.resolve()),
-    }
-    # aegis-rd-gg3.4: run block carries real, resolved absolute paths — no scrubbing
-    run_block = payload["run"]
-    assert run_block["id"] == "lock-handle-run"
-    assert "run_dir" not in run_block
-    assert run_block["manifest_path"] == str(tmp_path / "runs" / "lock-handle-run.json")
-    # aegis-rd-gg3.4: the Manifest's config-selection Evidence records the
-    # resolved absolute config path (asserted at the Manifest seam).
-    manifest = json.loads((tmp_path / "runs" / "lock-handle-run.json").read_text())
-    assert manifest["evidence"]["config"]["selection"] == {
-        "source": "explicit",
-        "config_path": str(config_path.resolve()),
-    }
+    assert "selection" not in payload
+    assert payload["run"] == {"id": "lock-handle-run"}
+    assert not (tmp_path / "runs" / "lock-handle-run.json").exists()
 
 
 def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
@@ -195,11 +171,12 @@ def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
     assert cli.main(["run", str(config_path), "--run-id", "component-locks"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    manifest = json.loads((tmp_path / "runs" / "component-locks.json").read_text())
-    source = manifest["evidence"]["optimization"]["source"]
+    store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
+    with CandidateStore(store_path) as store:
+        best_key = store.candidate_key_for_role("component-locks", "best")
+        source = store.candidate_by_key(best_key, run_id="component-locks")["provenance"]["source"]
 
-    assert not (tmp_path / "runs" / "component-locks").exists()
-    assert "locks" not in manifest["evidence"]["optimization"]
+    assert not (tmp_path / "runs" / "component-locks.json").exists()
     assert "locks" not in payload
 
     indicator = next(ind for ind in source["indicators"] if ind["id"] == "demo.ma")

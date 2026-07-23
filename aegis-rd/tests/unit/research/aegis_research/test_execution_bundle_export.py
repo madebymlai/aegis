@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 from aegis_runtime import ComponentSpec
 
-from research.aegis_research.candidates.evidence import (
-    candidate_rows_from_result,
-)
 from research.aegis_research.candidates.identity import (
     CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+)
+from research.aegis_research.candidates.models import CandidateSet
+from research.aegis_research.candidates.records import (
+    candidate_rows_from_result,
 )
 from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.execution_bundle import assemble_bundle
@@ -18,6 +19,7 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from research.aegis_research.run.identity import RunId
 from tests.support.research.aegis_research.factories import make_selection_identity
 
 _RUN_ID = "export-fixture-run"
@@ -137,15 +139,17 @@ def _seed_candidate_store(store_path: Path) -> None:
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     with CandidateStore(store_path) as store:
-        store.insert_completed_run(
-            run_id=_RUN_ID,
-            candidate_rows=candidate_rows,
-            provenance={
-                "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
-                "run_id": _RUN_ID,
-                "source": _source_evidence(),
-                "selection_identity": selection_identity,
-            },
+        store.commit_candidates(
+            CandidateSet.create(
+                run_id=RunId(_RUN_ID),
+                candidates=candidate_rows,
+                provenance={
+                    "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                    "run_id": _RUN_ID,
+                    "source": _source_evidence(),
+                    "selection_identity": selection_identity,
+                },
+            )
         )
 
 

@@ -82,3 +82,8 @@ callback contract and exception propagation remain unchanged.
 becomes a five-field dict: Run ID, Manifest path, status, started-at, and finished-at. Both callback
 firings still carry live in-memory lifecycle facts after persistence, and no failure path rereads
 the Manifest. The removed Run-directory field has no placeholder or compatibility alias.
+
+**Amendment (2026-07-23) — attempted identity replaces lifecycle refs.** A typed Run ID is created
+before execution and is the only Run fact transported to the CLI failure surface. The callback,
+terminal lifecycle state, timestamps, Manifest reference, and failed-Run persistence are deleted.
+A failure before Candidate commit leaves no durable Run or Candidate record.

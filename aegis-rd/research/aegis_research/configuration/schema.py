@@ -456,15 +456,3 @@ class RunConfig:
     optimization: OptimizationConfig = field(kw_only=True)
     lock: Lock | None = None
     output_dir: str = "runs"
-
-
-@dataclass(frozen=True)
-class ConfigSelectionEvidence:
-    source: str
-    config_path: str | None = None
-
-    def manifest(self) -> dict[str, Any]:
-        return {
-            "source": self.source,
-            "config_path": self.config_path,
-        }

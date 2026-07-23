@@ -1,7 +1,7 @@
 # VectorBT PRO Research Scaffold
 
 Aegis RD turns registered Strategy and Indicator Components into reproducible
-Candidate evidence. Each Candidate is simulated once over one continuous Development
+Candidates. Each Candidate is simulated once over one continuous Development
 Period. Observation Blocks measure the resulting Portfolio without resetting positions,
 cash, costs, or drawdown state.
 
@@ -14,7 +14,8 @@ Historical Store
 -> common Warmup
 -> continuous portfolio replay
 -> Observation-Block Metrics and mean ranks
--> best / median / worst Candidate evidence
+-> best / median / worst Candidate Set
+-> one atomic Candidate Store commit
 ```
 
 The implementation seams are:
@@ -25,7 +26,7 @@ The implementation seams are:
   `ResolvedBook`.
 - `optimization/observation_blocks.py`: applies analysis-only bounds to unchanged
   Portfolios and ranks admissible Candidates.
-- `optimization/continuous_evidence.py`: publishes the exact selection inputs and ranks.
+- `optimization/selection_identity.py`: derives the selection identity carried by Candidates.
 
 ## Current Run Config
 
@@ -108,20 +109,20 @@ it never uses a block to construct, truncate, or reset a Portfolio.
 
 The configured Metric is ranked within each block after Invalid and Degenerate Candidates
 are excluded. Selection uses mean within-block rank, with materialized Candidate position
-as the deterministic equal-score tie-break. Complete-period Metrics are descriptive
-Evidence and do not replace the authoritative block-rank matrix.
+as the deterministic equal-score tie-break. Complete-period Metrics are descriptive and
+do not replace the authoritative block-rank matrix.
 
 Return and drawdown extractors read the uninterrupted full-path streams before reducing
 an Observation Block. This preserves the real first return and inherited high-water mark;
 bounded native VBT calls would rebase those values and change the estimand.
 
-## Evidence
+## Durable Results
 
-Successful Runs record the materialized Candidate grid, Warmup drivers, continuous replay
-contract, Observation Block bounds, Metric extractor contract versions, admissibility
-verdicts, exact rank matrix, representative Candidates, config identity, and artifact
-hashes. Candidate keys therefore move when an identity-bearing execution or Metric
-contract changes.
+Successful Runs commit one Candidate Set containing the best, median, and worst roles plus
+the provenance required for Lock reproduction. The Candidate Store transaction is the
+visibility boundary: all records and role mappings become queryable together, without a
+pending state or activation step. Failed Runs leave no Candidate records or Run document.
+Candidate keys move when an identity-bearing execution or Metric contract changes.
 
 Run locally with:
 

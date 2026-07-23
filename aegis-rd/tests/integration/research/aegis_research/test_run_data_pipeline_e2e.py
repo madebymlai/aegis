@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +10,7 @@ from aegis_data.custom_data import FixtureRecord, ServedCustomData
 from aegis_data.testing import FakeCatalog, future
 from nautilus_trader.model.identifiers import InstrumentId
 
+from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION, resolve_run_config
 from research.aegis_research.portfolio_simulation._simulation import (
@@ -26,7 +26,7 @@ _END = "2024-01-13"
 _PERIODS = 12
 
 
-def test_custom_array_reaches_components_replay_and_evidence(
+def test_custom_array_reaches_components_replay_and_candidate_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -57,13 +57,17 @@ def test_custom_array_reaches_components_replay_and_evidence(
         custom_data_providers={FixtureRecord: (_FixtureProvider(),)},
     )
 
-    manifest = _manifest(tmp_path, "custom-array-e2e")
-    assert result["candidates"][0]["complete_period_metrics"]["total_trades"] > 0
-    assert "FixtureValue" in manifest["evidence"]["data"]["loaded_arrays"]
-    assert manifest["run"]["status"] == "completed"
+    with CandidateStore(result.candidate_store_path) as store:
+        stored = store.candidate_by_key(
+            result.candidates[0].candidate_key,
+            run_id=str(result.run_id),
+        )
+    assert result.candidates[0].complete_period_metrics["total_trades"] > 0
+    assert "FixtureValue" in stored["provenance"]["data"]["loaded_arrays"]
+    assert not (tmp_path / "runs" / "custom-array-e2e.json").exists()
 
 
-def test_continuous_future_reaches_components_replay_and_evidence(
+def test_continuous_future_reaches_components_replay_and_candidate_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,11 +128,16 @@ def test_continuous_future_reaches_components_replay_and_evidence(
         run_id="continuous-future-e2e",
     )
 
-    manifest = _manifest(tmp_path, "continuous-future-e2e")
-    data_evidence = manifest["evidence"]["data"]
-    assert result["candidates"][0]["complete_period_metrics"]["total_trades"] > 0
-    assert data_evidence["tradeables"] == [{"instrument_id": "ES.XCME", "continuous_root": "ES"}]
-    assert data_evidence["adjustment_mode"] == "backward_ratio"
+    with CandidateStore(result.candidate_store_path) as store:
+        stored = store.candidate_by_key(
+            result.candidates[0].candidate_key,
+            run_id=str(result.run_id),
+        )
+    data_identity = stored["provenance"]["data"]
+    assert result.candidates[0].complete_period_metrics["total_trades"] > 0
+    assert data_identity["tradeables"] == [{"instrument_id": "ES.XCME", "continuous_root": "ES"}]
+    assert data_identity["adjustment_mode"] == "backward_ratio"
+    assert not (tmp_path / "runs" / "continuous-future-e2e.json").exists()
 
 
 def _run_config(tmp_path: Path, *, data: dict[str, object]) -> dict[str, object]:
@@ -175,10 +184,6 @@ def _array_strategy_registry(tmp_path: Path, *, input_name: str):
         "    return 0\n"
     )
     return discover_component_registry(root=components, repo_root=tmp_path)
-
-
-def _manifest(tmp_path: Path, run_id: str) -> dict[str, object]:
-    return json.loads((tmp_path / "runs" / f"{run_id}.json").read_text())
 
 
 class _FixtureProvider:

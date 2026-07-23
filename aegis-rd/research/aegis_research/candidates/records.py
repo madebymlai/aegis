@@ -1,4 +1,4 @@
-"""Canonical published rows and identity for representative Candidates."""
+"""Canonical records and identity for representative Candidates."""
 
 from __future__ import annotations
 

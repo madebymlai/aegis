@@ -11,6 +11,7 @@ from research.aegis_research.run.data_contract import (
     DataArrayContract,
     candidate_data_identity,
 )
+from research.aegis_research.run.identity import RunId
 
 CANDIDATE_STORE_RELATIVE_PATH = Path(".candidate_store") / "candidates.sqlite3"
 CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION = "candidate_store_provenance.v3"
@@ -28,7 +29,7 @@ def candidate_store_namespace() -> dict[str, str]:
 
 
 def build_candidate_store_provenance(
-    recorder: Any,
+    run_id: RunId,
     *,
     optimization_source: dict[str, Any],
     run_data: RunData,
@@ -39,7 +40,7 @@ def build_candidate_store_provenance(
 ) -> dict[str, Any]:
     return {
         "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
-        "run_id": recorder.manifest.run_id,
+        "run_id": str(run_id),
         "source": optimization_source,
         "data": candidate_data_identity(run_data, array_contract),
         "portfolio": to_builtin(config.portfolio),

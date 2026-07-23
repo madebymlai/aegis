@@ -13,7 +13,6 @@ from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     encode,
 )
-from research.aegis_research.run.record.manifest import RunStatus
 from tests.support.research.aegis_research.market_data_fixtures import (
     DEFAULT_INSTRUMENT_ID_VALUES,
     native_data_config_payload,
@@ -33,37 +32,21 @@ def test_component_optimization_uses_component_native_candidate_grid(
     assert cli.main(["run", str(config_path), "--run-id", "component-boundary"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    manifest = json.loads((tmp_path / "runs" / "component-boundary.json").read_text())
-    optimization = manifest["evidence"]["optimization"]
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
     fast_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "fast_window")
     slow_key = encode(ComponentRef("strategies", "demo.ma_opt", "strategy"), "slow_window")
 
     assert payload["status"] == "success"
-    # aegis-rd-gg3.4: success payload's run block carries real, resolved
-    # absolute paths — no scrubbing
-    run_block = payload["run"]
-    assert run_block["id"] == "component-boundary"
-    assert run_block["status"] == RunStatus.COMPLETED
-    assert "run_dir" not in run_block
-    assert run_block["manifest_path"] == str(tmp_path / "runs" / "component-boundary.json")
-    assert run_block["started_at"] is not None
-    assert run_block["finished_at"] is not None
+    assert payload["run"] == {"id": "component-boundary"}
     assert "artifacts" not in payload
     assert payload["candidate_store"]["path"] == str(store_path)
     assert not (tmp_path / "runs" / "component-boundary").exists()
-    assert optimization["source"]["strategy"]["family"] == "strategies"
-    assert optimization["source"]["strategy"]["id"] == "demo.ma_opt"
     assert [candidate["role"] for candidate in payload["candidates"]] == [
         "best",
         "median",
         "worst",
     ]
-    assert optimization["preflight"]["candidate_param_names"] == [
-        fast_key,
-        slow_key,
-    ]
-    assert optimization["preflight"]["sampled_combinations"] == 4
+    assert payload["optimization"]["total"] == 4
     assert payload["candidates"]
     assert set(payload["candidates"][0]["params"]) == {fast_key, slow_key}
     assert store_path.exists()
@@ -71,11 +54,11 @@ def test_component_optimization_uses_component_native_candidate_grid(
         best_key = store.candidate_key_for_role("component-boundary", "best")
     assert best_key == payload["candidates"][0]["candidate_key"]
     # ADR-0006 (aegis-rd-396.4): per-Component lock records are retired.
-    assert "locks" not in optimization
     assert "locks" not in payload
+    assert not (tmp_path / "runs" / "component-boundary.json").exists()
 
 
-def test_component_optimization_candidate_publish_failure_preserves_run_evidence(
+def test_candidate_commit_failure_reports_run_id_and_leaves_no_candidates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -84,108 +67,26 @@ def test_component_optimization_candidate_publish_failure_preserves_run_evidence
     _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
     config_path = _write_run_config(tmp_path)
 
-    def fail_publish(
-        self: CandidateStore,
-        **_kwargs: object,
-    ) -> None:
+    def fail_commit(self: CandidateStore, _candidate_set: object) -> None:
         raise OSError("candidate store write failed")
 
-    monkeypatch.setattr(CandidateStore, "insert_completed_run", fail_publish)
+    monkeypatch.setattr(CandidateStore, "commit_candidates", fail_commit)
 
     assert cli.main(["run", str(config_path), "--run-id", "publish-failure"]) == 10
 
     payload = _last_json_line(capsys.readouterr().err)
-    manifest = json.loads((tmp_path / "runs" / "publish-failure.json").read_text())
-    optimization_evidence = manifest["evidence"]["optimization"]
-
     assert payload["error"]["category"] == "execution_failure"
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert [row["role"] for row in optimization_evidence["candidates"]] == [
-        "best",
-        "median",
-        "worst",
-    ]
-    assert optimization_evidence["candidate_count"] == 3
-    assert "locks" not in optimization_evidence
-    assert manifest["run"]["failure"] == {
-        "stage": "publishing",
-        "error_type": "OSError",
-        "message": "candidate store write failed",
-    }
-    assert "publishing_failure" not in optimization_evidence
-    # aegis-rd-gg3.4: error envelope's run block carries real, resolved
-    # absolute paths — no scrubbing
-    run_block = payload["run"]
-    assert run_block["id"] == "publish-failure"
-    assert run_block["status"] == RunStatus.FAILED
-    assert "run_dir" not in run_block
-    assert run_block["manifest_path"] == str(tmp_path / "runs" / "publish-failure.json")
-
-
-def test_component_optimization_completion_failure_leaves_candidates_pending(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from research.aegis_research.run.record.recorder import RunRecorder
-
-    monkeypatch.chdir(tmp_path)
-    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
-    config_path = _write_run_config(tmp_path)
-
-    def fail_completion(self: RunRecorder) -> None:
-        raise OSError("run completion failed")
-
-    monkeypatch.setattr(RunRecorder, "mark_run_completed", fail_completion)
-
-    assert cli.main(["run", str(config_path), "--run-id", "completion-failure"]) == 10
-
-    capsys.readouterr()
-    manifest = json.loads((tmp_path / "runs" / "completion-failure.json").read_text())
+    assert payload["run"] == {"id": "publish-failure"}
+    assert not (tmp_path / "runs" / "publish-failure.json").exists()
     store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
-
-    # The run never activated, so its candidates stay pending and unqueryable.
-    assert manifest["run"]["status"] == RunStatus.FAILED
     with (
         CandidateStore(store_path) as store,
         pytest.raises(CandidateStoreError, match="unknown role"),
     ):
-        store.candidate_key_for_role("completion-failure", "best")
+        store.candidate_key_for_role("publish-failure", "best")
 
 
-def test_component_optimization_activation_failure_fails_closed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    _write_parameterized_strategy_component(tmp_path / "research/components/strategies/ma_opt.py")
-    config_path = _write_run_config(tmp_path)
-
-    def fail_activation(self: CandidateStore, run_id: str) -> None:
-        raise CandidateStoreError(f"activation failed for {run_id}")
-
-    monkeypatch.setattr(CandidateStore, "activate_run", fail_activation)
-
-    assert cli.main(["run", str(config_path), "--run-id", "activation-failure"]) == 10
-
-    payload = _last_json_line(capsys.readouterr().err)
-    manifest = json.loads((tmp_path / "runs" / "activation-failure.json").read_text())
-    store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
-
-    assert "activation failed for activation-failure" in payload["error"]["message"]
-    assert "candidate_store_activation_failed" not in payload["error"]["message"]
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    # Activation failed closed: the run's candidates remain pending and unqueryable.
-    assert "locks" not in manifest["evidence"]["optimization"]
-    with (
-        CandidateStore(store_path) as store,
-        pytest.raises(CandidateStoreError, match="unknown role"),
-    ):
-        store.candidate_key_for_role("activation-failure", "best")
-
-
-def test_component_optimization_runtime_error_records_failure_diagnostics(
+def test_component_optimization_runtime_error_reports_run_id_without_run_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -197,15 +98,12 @@ def test_component_optimization_runtime_error_records_failure_diagnostics(
     exit_code = cli.main(["run", str(config_path), "--run-id", "runtime-failure"])
     assert exit_code != 0
 
-    manifest = json.loads((tmp_path / "runs" / "runtime-failure.json").read_text())
     payload = json.loads(capsys.readouterr().err)
 
     assert payload["error"]["category"] == "execution_failure"
-    assert manifest["run"]["status"] == RunStatus.FAILED
-    assert manifest["run"]["failure"]["stage"] == "execution"
-    assert manifest["run"]["failure"]["error_type"] == "RuntimeError"
-    assert "component optimization failed intentionally" in manifest["run"]["failure"]["message"]
-    assert "execution_failure" not in manifest["evidence"]["optimization"]
+    assert payload["run"] == {"id": "runtime-failure"}
+    assert "component optimization failed intentionally" in payload["error"]["message"]
+    assert not (tmp_path / "runs" / "runtime-failure.json").exists()
 
 
 def _write_run_config(

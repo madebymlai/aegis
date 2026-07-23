@@ -12,11 +12,12 @@ from pathlib import Path
 import pytest
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 
-from research.aegis_research.candidates.evidence import candidate_rows_from_result
 from research.aegis_research.candidates.lock import (
     LockRunResolutionError,
     resolve_lock_run,
 )
+from research.aegis_research.candidates.models import CandidateSet
+from research.aegis_research.candidates.records import candidate_rows_from_result
 from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
@@ -26,6 +27,7 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from research.aegis_research.run.identity import RunId
 from tests.support.research.aegis_research.factories import (
     make_lock,
     make_selection_identity,
@@ -175,16 +177,18 @@ def _store_with_candidate(
     store = CandidateStore(tmp_path / "candidates.sqlite3")
     identity = _DATA_IDENTITY if data_identity is None else data_identity
     candidates = _candidate_rows(identity)
-    store.insert_completed_run(
-        run_id="run-a",
-        candidate_rows=candidates,
-        provenance={
-            "schema_version": "candidate_store_provenance.v3",
-            "run_id": "run-a",
-            "source": _source_evidence(drop_indicator_runtime=drop_indicator_runtime),
-            "data": identity,
-            "selection_identity": make_selection_identity(),
-        },
+    store.commit_candidates(
+        CandidateSet.create(
+            run_id=RunId("run-a"),
+            candidates=candidates,
+            provenance={
+                "schema_version": "candidate_store_provenance.v3",
+                "run_id": "run-a",
+                "source": _source_evidence(drop_indicator_runtime=drop_indicator_runtime),
+                "data": identity,
+                "selection_identity": make_selection_identity(),
+            },
+        )
     )
     return store
 
@@ -211,15 +215,17 @@ def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
-    store.insert_completed_run(
-        run_id="run-a",
-        candidate_rows=rows,
-        provenance={
-            "schema_version": "candidate_store_provenance.v3",
-            "run_id": "run-a",
-            "source": _source_evidence(),
-            "selection_identity": make_selection_identity(),
-        },
+    store.commit_candidates(
+        CandidateSet.create(
+            run_id=RunId("run-a"),
+            candidates=rows,
+            provenance={
+                "schema_version": "candidate_store_provenance.v3",
+                "run_id": "run-a",
+                "source": _source_evidence(),
+                "selection_identity": make_selection_identity(),
+            },
+        )
     )
     return store
 

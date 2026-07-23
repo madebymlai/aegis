@@ -1,1 +1,1 @@
-"""Run orchestration, data, Evidence, and persistence."""
+"""Typed Run orchestration and data access."""
