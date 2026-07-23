@@ -255,6 +255,20 @@ def test_run_success_payload_is_the_emitted_json_contract(
     assert payload["candidates"][0]["lock"] == "stubbed-success"
 
 
+def test_run_missing_config_preserves_explicit_attempted_run_id(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing_config = tmp_path / "missing.yaml"
+
+    exit_code = cli.main(["run", str(missing_config), "--run-id", "early-failure"])
+    output = capsys.readouterr()
+
+    payload = json.loads(output.err)
+    assert exit_code != 0
+    assert payload["run"] == {"id": "early-failure"}
+
+
 def test_run_rejects_removed_labeler_without_train_guidance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -20,7 +20,7 @@ from tests.support.research.aegis_research.run_config_fixtures import (
 def test_pipeline_execution_raises_on_preflight_failure(
     tmp_path: Path,
 ) -> None:
-    """Insufficient post-warmup history persists evidence and fails before execution."""
+    """Insufficient post-warmup history fails before execution."""
     resolved = build_resolved_run_config(tmp_path)
     config = resolved.config
     source = OptimizationSource(
@@ -28,7 +28,7 @@ def test_pipeline_execution_raises_on_preflight_failure(
         simulate=lambda *args, **kwargs: pytest.fail("Portfolio must not run"),
         resolve_lookbacks=lambda params: {"component": 0},
         params={"window": vbt.Param([1])},
-        evidence={"strategy": {}},
+        identity={"strategy": {}},
     )
     setup = make_setup_result(
         store_path=tmp_path / "store.sqlite3",

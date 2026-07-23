@@ -112,8 +112,8 @@ def test_exposes_recorded_adjustment_mode_as_a_typed_fact(tmp_path: Path) -> Non
     assert resolved.adjustment_mode is ContinuousFutureAdjustmentType.BACKWARD_SPREAD
 
 
-def test_missing_adjustment_mode_evidence_resolves_to_none(tmp_path: Path) -> None:
-    # A pre-evidence Run recorded no mode; the typed fact is None and the
+def test_missing_adjustment_mode_identity_resolves_to_none(tmp_path: Path) -> None:
+    # A prior Run recorded no mode; the typed fact is None and the
     # futures-vs-mode decision belongs to export.
     with _store_with_candidate(tmp_path) as store:
         candidate_key = store.candidate_key_for_role("run-a", "best")
@@ -184,7 +184,7 @@ def _store_with_candidate(
             provenance={
                 "schema_version": "candidate_store_provenance.v3",
                 "run_id": "run-a",
-                "source": _source_evidence(drop_indicator_runtime=drop_indicator_runtime),
+                "source": _source_identity(drop_indicator_runtime=drop_indicator_runtime),
                 "data": identity,
                 "selection_identity": make_selection_identity(),
             },
@@ -222,7 +222,7 @@ def _store_with_distinct_roles(tmp_path: Path) -> CandidateStore:
             provenance={
                 "schema_version": "candidate_store_provenance.v3",
                 "run_id": "run-a",
-                "source": _source_evidence(),
+                "source": _source_identity(),
                 "selection_identity": make_selection_identity(),
             },
         )
@@ -259,7 +259,7 @@ def _candidate_rows(data_identity: dict[str, object]) -> list[dict[str, object]]
     )
 
 
-def _source_evidence(*, drop_indicator_runtime: bool = False) -> dict[str, object]:
+def _source_identity(*, drop_indicator_runtime: bool = False) -> dict[str, object]:
     indicators: list[dict[str, object]] = []
     if not drop_indicator_runtime:
         indicators.append(

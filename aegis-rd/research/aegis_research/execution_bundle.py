@@ -248,7 +248,7 @@ def _bundle_contract(
         raise UnrecordedAdjustmentModeError(
             f"this export declares continuous-future roots {sorted(futures)}, but the "
             "locked Run recorded no adjustment mode (it predates adjustment-mode "
-            "evidence). Historical futures frames cannot prove which re-basing "
+            "metadata). Historical futures frames cannot prove which re-basing "
             "algebra they used - re-run the optimization under the current research "
             "code, then re-lock and re-export."
         )

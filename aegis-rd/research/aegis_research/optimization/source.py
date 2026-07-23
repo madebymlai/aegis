@@ -75,4 +75,4 @@ class OptimizationSource:
     simulate: Callable[..., Any]
     resolve_lookbacks: Callable[[Mapping[str, Any]], Mapping[str, int]]
     params: dict[str, vbt.Param]
-    evidence: dict[str, Any]
+    identity: dict[str, Any]

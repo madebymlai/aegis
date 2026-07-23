@@ -82,7 +82,7 @@ def _source(
         simulate=simulate,
         resolve_lookbacks=lookbacks,
         params=candidate_params,
-        evidence={},
+        identity={},
     )
 
 
@@ -302,7 +302,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
             definition=registry.get("total_return"),
         ).result,
     )
-    evidence_kwargs = {
+    identity_kwargs = {
         "preflight": preflight,
         "optimization": optimization,
         "metric_registry": registry,
@@ -312,8 +312,8 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         "fill_timing": "next_close",
         "data_start": "2024-01-01",
     }
-    batched_identity = build_selection_identity(analysis=batch_analysis, **evidence_kwargs)
-    sequential_identity = build_selection_identity(analysis=sequential_analysis, **evidence_kwargs)
+    batched_identity = build_selection_identity(analysis=batch_analysis, **identity_kwargs)
+    sequential_identity = build_selection_identity(analysis=sequential_analysis, **identity_kwargs)
 
     assert batched_identity == sequential_identity
 

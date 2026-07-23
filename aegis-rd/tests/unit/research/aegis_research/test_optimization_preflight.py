@@ -28,7 +28,7 @@ def _source(
         simulate=should_not_execute,
         resolve_lookbacks=resolve,
         params=params,
-        evidence={},
+        identity={},
     )
 
 

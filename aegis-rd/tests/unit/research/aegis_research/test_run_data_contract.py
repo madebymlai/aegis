@@ -8,7 +8,6 @@ from research.aegis_research.run.data_contract import (
     build_run_data_array_contract,
     build_run_required_arrays,
     candidate_data_identity,
-    run_data_evidence_payload,
 )
 from tests.support.research.aegis_research.factories import make_run_data
 from tests.support.research.aegis_research.run_config_fixtures import (
@@ -55,21 +54,6 @@ def test_build_run_required_arrays_collects_strategy_and_indicator_inputs(
     assert len(set(arrays)) == len(arrays)  # no duplicates
 
 
-def test_evidence_payload_extends_contract_payload(
-    tmp_path: pytest.TempPathFactory,
-) -> None:
-    """The run evidence payload includes data array evidence plus runner binding."""
-    resolved = build_resolved_run_config(tmp_path)
-
-    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
-    payload = run_data_evidence_payload(make_run_data(), contract)
-
-    assert payload["schema_version"] == "run_data.v1"
-    assert payload["loaded_arrays"] == ["Close", "Open"]
-    assert "quality_state" not in payload
-    assert payload["array_contract"]["configured_arrays"]
-
-
 def test_candidate_data_identity_captures_instrument_ids_and_contract(
     tmp_path: pytest.TempPathFactory,
 ) -> None:
@@ -114,28 +98,3 @@ def test_candidate_data_identity_omits_the_mode_key_without_futures(
     identity = candidate_data_identity(make_run_data(), contract)
 
     assert identity["adjustment_mode"] is None
-
-
-def test_evidence_payload_records_the_materialised_adjustment_mode(
-    tmp_path: pytest.TempPathFactory,
-) -> None:
-    resolved = build_resolved_run_config(tmp_path)
-    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
-
-    payload = run_data_evidence_payload(
-        make_run_data(adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_SPREAD),
-        contract,
-    )
-
-    assert payload["adjustment_mode"] == "backward_spread"
-
-
-def test_evidence_payload_omits_the_mode_key_without_futures(
-    tmp_path: pytest.TempPathFactory,
-) -> None:
-    resolved = build_resolved_run_config(tmp_path)
-    contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
-
-    payload = run_data_evidence_payload(make_run_data(), contract)
-
-    assert payload["adjustment_mode"] is None

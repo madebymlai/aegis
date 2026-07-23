@@ -56,7 +56,7 @@ class ResolvedLockRun:
     provenance: dict[str, Any]
     # The continuous-futures re-basing mode the locked Run's frames were
     # materialised under, parsed from persisted provenance. ``None`` when the Run
-    # recorded no mode (no futures, or a pre-evidence Run).
+    # recorded no mode (no futures, or a Run from before adjustment identity).
     adjustment_mode: ContinuousFutureAdjustmentType | None = None
 
 

@@ -191,7 +191,7 @@ def test_lock_unknown_field_fails_validation(registry) -> None:
 def test_lock_with_component_params_is_accepted(registry) -> None:
     # Relaxed from the interim reject rule (slice 396.1): a top-level lock: may now
     # overlay a tuning config. The lock wins; the overridden params: are recorded in
-    # Evidence (asserted in the locked-run behaviour tests).
+    # Candidate provenance (asserted in the locked-run behaviour tests).
     resolved = resolve_run_config(
         _raw_config(
             lock={"run_id": "run-a", "candidate_id": "cand_123"},

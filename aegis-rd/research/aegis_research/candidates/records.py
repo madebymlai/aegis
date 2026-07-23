@@ -11,12 +11,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from research.aegis_research.candidates.models import REPRESENTATIVE_ROLE_VALUES
 from research.aegis_research.canonical_json import canonical_json_bytes as _canonical_json_bytes
 from research.aegis_research.optimization.ranking import OptimizationResult
 
 CANDIDATE_IDENTITY_SCHEMA_VERSION = "candidate_identity.v5"
 CANDIDATE_EVAL_ROW_SCHEMA_VERSION = "candidate_eval_row.v3"
-CANDIDATE_ROLES = ("best", "median", "worst")
 _CANDIDATE_KEY_DIGEST_CHARS = 32
 
 
@@ -40,7 +40,7 @@ def candidate_rows_from_result(
     candidates = (result.best, result.median, result.worst)
     rows = []
     for ordinal, (role, candidate) in enumerate(
-        zip(CANDIDATE_ROLES, candidates, strict=True), start=1
+        zip(REPRESENTATIVE_ROLE_VALUES, candidates, strict=True), start=1
     ):
         params = _canonical_mapping(candidate.params)
         identity = _candidate_identity(

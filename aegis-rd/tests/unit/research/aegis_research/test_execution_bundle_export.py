@@ -146,14 +146,14 @@ def _seed_candidate_store(store_path: Path) -> None:
                 provenance={
                     "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
                     "run_id": _RUN_ID,
-                    "source": _source_evidence(),
+                    "source": _source_identity(),
                     "selection_identity": selection_identity,
                 },
             )
         )
 
 
-def _source_evidence() -> dict[str, object]:
+def _source_identity() -> dict[str, object]:
     return {
         "schema_version": "component_optimization_source.v2",
         "source": "component",

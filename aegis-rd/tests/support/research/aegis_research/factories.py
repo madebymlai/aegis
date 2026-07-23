@@ -67,7 +67,7 @@ from research.aegis_research.portfolio_simulation._simulation import (
     simulate_portfolio_batch,
 )
 from research.aegis_research.run._stages.setup import SetupResult
-from research.aegis_research.run.data import RunData, RunDataEvidence
+from research.aegis_research.run.data import RunData, RunDataIdentity
 
 
 def make_data_config(**overrides: Any) -> DataConfig:
@@ -360,9 +360,9 @@ def make_run_data(**overrides: Any) -> RunData:
         dict.fromkeys(resolution.instrument_ids, 1.0),
     )
     adjustment_mode = overrides.pop("adjustment_mode", None)
-    evidence = overrides.pop(
-        "evidence",
-        RunDataEvidence(
+    identity = overrides.pop(
+        "identity",
+        RunDataIdentity(
             schema_version="run_data.v1",
             requested_instrument_ids=resolution.instrument_ids,
             tradeables=resolution.tradeables,
@@ -390,7 +390,7 @@ def make_run_data(**overrides: Any) -> RunData:
         "distributions": (),
         "size_increment_by_instrument": increments,
         "adjustment_mode": adjustment_mode,
-        "evidence": evidence,
+        "identity": identity,
     }
     defaults.update(overrides)
     return RunData(**defaults)
@@ -415,7 +415,7 @@ def make_setup_result(**overrides: Any) -> SetupResult:
 class _FakeOptimizationSource:
     def __init__(self) -> None:
         self.params: dict[str, Any] = {}
-        self.evidence: dict[str, Any] = {"strategy": {}}
+        self.identity: dict[str, Any] = {"strategy": {}}
 
 
 def _fake_optimization_source() -> Any:

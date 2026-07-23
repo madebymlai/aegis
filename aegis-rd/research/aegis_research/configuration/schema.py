@@ -24,6 +24,7 @@ from research.aegis_research.authoring_fields import (
     UnitInterval,
     has_data_array_token_shape,
 )
+from research.aegis_research.candidates.models import REPRESENTATIVE_ROLE_VALUES
 
 # v11 (aegis-rd-ui1m): portfolio.gross_cap / portfolio.net_cap removed — the
 # exposure envelope is the fixed unit-gross sleeve contract, not config.
@@ -376,17 +377,15 @@ class OptimizationConfig:
             if self.seed is None:
                 raise ValueError(
                     "seed is required when optimization.search is 'random' "
-                    "so sampled evidence is deterministic"
+                    "so the sampled grid is deterministic"
                 )
         if self.search == "grid" and self.random_subset is not None:
             raise ValueError("random_subset is only valid when optimization.search is 'random'")
         return self
 
 
-# The representative roles a Lock handle may name, in rank order. These mirror the
-# roles evidence emits for every Run (candidate_evidence.CANDIDATE_ROLES); the config
-# layer keeps its own copy because it must not depend up on the optimization layer.
-LOCK_ROLES: tuple[str, ...] = ("best", "median", "worst")
+# The representative roles a Lock handle may name, in rank order.
+LOCK_ROLES = REPRESENTATIVE_ROLE_VALUES
 DEFAULT_LOCK_ROLE = "best"
 
 

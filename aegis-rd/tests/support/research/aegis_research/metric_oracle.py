@@ -12,7 +12,7 @@ between the two guards against unit/sign drift (percent scaling, drawdown
 magnitude) and positional-index mistakes in the grouped sweep path.
 
 This is test support, not a production surface — it deliberately drops the
-evidence/availability/diagnostics scaffolding and returns only the value keys.
+availability/diagnostics scaffolding and returns only the value keys.
 """
 
 from __future__ import annotations

@@ -127,8 +127,8 @@ def test_sample_lock_config_freezes_only_the_previously_locked_component(
         component_registry=registry,
         data=_market_data_bundle(),
     )
-    modes = {ind["id"]: ind["param_mode"] for ind in source.evidence["indicators"]}
-    modes[source.evidence["strategy"]["id"]] = source.evidence["strategy"]["param_mode"]
+    modes = {ind["id"]: ind["param_mode"] for ind in source.identity["indicators"]}
+    modes[source.identity["strategy"]["id"]] = source.identity["strategy"]["param_mode"]
     assert modes[frozen_id] == "fixed"
     for component_id, mode in modes.items():
         if component_id == frozen_id:

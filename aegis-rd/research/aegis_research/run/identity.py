@@ -7,6 +7,10 @@ from datetime import UTC, datetime
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
+class InvalidRunIdError(ValueError):
+    """A supplied Run ID is outside the supported identity grammar."""
+
+
 @dataclass(frozen=True, order=True)
 class RunId:
     """Validated identity for one attempted Run."""
@@ -15,7 +19,7 @@ class RunId:
 
     def __post_init__(self) -> None:
         if not RUN_ID_PATTERN.fullmatch(self.value) or self.value in {".", ".."}:
-            raise ValueError(
+            raise InvalidRunIdError(
                 "run_id must contain only letters, numbers, dots, underscores, and hyphens"
             )
 
@@ -30,4 +34,4 @@ class RunId:
         return self.value
 
 
-__all__ = ["RunId"]
+__all__ = ["InvalidRunIdError", "RunId"]

@@ -36,6 +36,14 @@ class ExecutionResult:
     def optimization_result(self) -> OptimizationResult:
         return self.analysis.result
 
+    @property
+    def observation_block_bars(self) -> int:
+        return int(self.preflight.diagnostics["observation_block_bars"])
+
+    @property
+    def observation_block_count(self) -> int:
+        return len(self.preflight.blocks.bounds)
+
 
 def run_pipeline_execution(
     *,

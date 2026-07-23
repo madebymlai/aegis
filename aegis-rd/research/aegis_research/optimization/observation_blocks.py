@@ -159,7 +159,7 @@ class ObservationBlockRanking:
 
 
 def observation_block_protocol(blocks: ObservationBlocks) -> dict[str, Any]:
-    """Return the one versioned protocol used by execution and Evidence identity."""
+    """Return the one versioned protocol used by execution and Candidate identity."""
     return {
         "schema_version": OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
         "remainder_policy": OBSERVATION_BLOCK_REMAINDER_POLICY,

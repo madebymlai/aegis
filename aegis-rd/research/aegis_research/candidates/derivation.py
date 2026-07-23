@@ -24,7 +24,7 @@ def derive_candidate_set(
 ) -> CandidateSet:
     candidates = candidate_rows_from_result(
         execution.optimization_result,
-        source_identity=setup.optimization_source.evidence,
+        source_identity=setup.optimization_source.identity,
         data_identity=candidate_data_identity(setup.run_data, array_contract),
         selection_identity=execution.selection_identity,
         book_settings=to_builtin(config.portfolio),
@@ -32,7 +32,7 @@ def derive_candidate_set(
     )
     provenance = build_candidate_store_provenance(
         run_id,
-        optimization_source=setup.optimization_source.evidence,
+        optimization_source=setup.optimization_source.identity,
         run_data=setup.run_data,
         array_contract=array_contract,
         config=config,

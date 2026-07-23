@@ -1,7 +1,7 @@
 """Run data contract.
 
 Owns the pre-load Array contract and the pure projections from the one loaded
-``RunData`` value into evidence, Candidate identity, and store artifacts.
+``RunData`` value into Candidate identity and store artifacts.
 """
 
 from __future__ import annotations
@@ -59,24 +59,16 @@ class DataArrayContract:
         }
 
 
-def run_data_evidence_payload(
-    run_data: RunData,
-    array_contract: DataArrayContract,
-) -> dict[str, Any]:
-    """Project compact success Evidence directly from RunData."""
-    return to_builtin(run_data.evidence) | {"array_contract": array_contract.metadata()}
-
-
 def candidate_data_identity(
     run_data: RunData,
     array_contract: DataArrayContract,
 ) -> dict[str, Any]:
     """Project the structural data identity hashed into every Candidate key."""
-    evidence = run_data.evidence
+    identity = run_data.identity
     return to_builtin(
         {
             "schema_version": "candidate_data_identity.v4",
-            "requested_instrument_ids": evidence.requested_instrument_ids,
+            "requested_instrument_ids": identity.requested_instrument_ids,
             "tradeables": [
                 {
                     "instrument_id": tradeable.instrument_id,
@@ -86,22 +78,22 @@ def candidate_data_identity(
                         else {}
                     ),
                 }
-                for tradeable in evidence.tradeables
+                for tradeable in identity.tradeables
             ],
-            "loaded_arrays": evidence.loaded_arrays,
-            "timeframe": evidence.timeframe,
-            "start": evidence.start,
-            "end": evidence.end,
-            "missing_index": evidence.missing_index,
-            "rows": evidence.rows,
-            "index_start": evidence.index_start,
-            "index_end": evidence.index_end,
-            "source": evidence.source,
-            "catalog_path": evidence.catalog_path,
-            "currency_by_instrument_id": evidence.currency_by_instrument_id,
-            "size_increment_by_instrument": evidence.size_increment_by_instrument,
-            "distribution_coverage": evidence.distribution_coverage,
-            "adjustment_mode": evidence.adjustment_mode,
+            "loaded_arrays": identity.loaded_arrays,
+            "timeframe": identity.timeframe,
+            "start": identity.start,
+            "end": identity.end,
+            "missing_index": identity.missing_index,
+            "rows": identity.rows,
+            "index_start": identity.index_start,
+            "index_end": identity.index_end,
+            "source": identity.source,
+            "catalog_path": identity.catalog_path,
+            "currency_by_instrument_id": identity.currency_by_instrument_id,
+            "size_increment_by_instrument": identity.size_increment_by_instrument,
+            "distribution_coverage": identity.distribution_coverage,
+            "adjustment_mode": identity.adjustment_mode,
             "array_contract": array_contract.metadata(),
         }
     )

@@ -1,4 +1,4 @@
-"""Execute continuous Candidate paths and rank their observation-block evidence."""
+"""Execute continuous Candidate paths and rank their Observation Block metrics."""
 
 from __future__ import annotations
 

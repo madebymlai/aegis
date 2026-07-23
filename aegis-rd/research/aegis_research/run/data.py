@@ -77,7 +77,7 @@ class ContinuousRootCollisionError(RunDataValidationError):
 
 
 @dataclass(frozen=True)
-class RunDataFailureEvidence:
+class RunDataFailureContext:
     schema_version: str
     requested_instrument_ids: tuple[InstrumentId, ...]
     requested_arrays: tuple[str, ...]
@@ -94,13 +94,13 @@ class RunDataFailureEvidence:
 class RunDataUnavailable(RuntimeError):
     """The Catalog cannot environmentally serve the requested Run data."""
 
-    def __init__(self, evidence: RunDataFailureEvidence) -> None:
-        self.evidence = evidence
-        super().__init__(evidence.message)
+    def __init__(self, context: RunDataFailureContext) -> None:
+        self.context = context
+        super().__init__(context.message)
 
 
 @dataclass(frozen=True)
-class RunDataEvidence:
+class RunDataIdentity:
     schema_version: str
     requested_instrument_ids: tuple[InstrumentId, ...]
     tradeables: tuple[TradeableInstrument, ...]
@@ -129,7 +129,7 @@ class RunData:
     distributions: tuple[Distribution, ...]
     size_increment_by_instrument: dict[InstrumentId, float]
     adjustment_mode: ContinuousFutureAdjustmentType | None
-    evidence: RunDataEvidence
+    identity: RunDataIdentity
 
     @property
     def replay_index(self) -> pd.Index:
@@ -217,7 +217,7 @@ def load_run_data(
         distributions=window.distributions,
         size_increment_by_instrument=size_increments,
         adjustment_mode=adjustment_mode,
-        evidence=RunDataEvidence(
+        identity=RunDataIdentity(
             schema_version="run_data.v1",
             requested_instrument_ids=requested_ids,
             tradeables=resolution.tradeables,
@@ -374,7 +374,7 @@ def _raise_unavailable(
     end: str,
 ) -> NoReturn:
     raise RunDataUnavailable(
-        RunDataFailureEvidence(
+        RunDataFailureContext(
             schema_version="run_data_failure.v1",
             requested_instrument_ids=requested_ids,
             requested_arrays=config.effective_arrays,

@@ -156,7 +156,7 @@ def test_strategy_run_retires_the_locks_section_and_honors_inline_params(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # ADR-0006 (aegis-rd-396.4): publishing no longer mints per-Component lock records;
-    # the LOCKS Evidence section and the artifact "locks" key are retired. Inline
+    # the retired Lock audit section and artifact "locks" key are gone. Inline
     # values-only params: still freeze a single Component while the rest optimize.
     monkeypatch.chdir(tmp_path)
     _write_indicator_component(tmp_path / "research/components/indicators/ma.py")

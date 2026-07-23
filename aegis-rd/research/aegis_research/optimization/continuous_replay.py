@@ -49,7 +49,7 @@ def continuous_replay_protocol(
 ) -> dict[str, object]:
     """Publish the pinned causal VBT replay protocol from its implementation owner."""
     if fill_timing not in ("next_open", "next_close"):
-        raise ValueError("continuous replay evidence requires next_open or next_close")
+        raise ValueError("continuous replay identity requires next_open or next_close")
     price = VBT_NEXT_OPEN_PRICE if fill_timing == "next_open" else VBT_NEXT_CLOSE_PRICE
     return {
         "schema_version": PORTFOLIO_REPLAY_CONTRACT_SCHEMA_VERSION,

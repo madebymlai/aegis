@@ -147,20 +147,20 @@ def test_materializes_continuous_future_roots_as_tradeable_columns(
     assert result.bundle.array("Volume")[es].tolist() == [1.0, 2.0]
 
 
-def test_continuous_future_records_run_economics_and_evidence(
+def test_continuous_future_records_run_economics_and_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result = _load_native_and_continuous(monkeypatch)
     es = _id("ES.XCME")
 
     assert result.adjustment_mode is DEFAULT_ADJUSTMENT_MODE
-    assert result.evidence.continuous_root_currencies == {es: "USD"}
+    assert result.identity.continuous_root_currencies == {es: "USD"}
     assert result.size_increment_by_instrument[es] == 1.0
-    assert len(result.evidence.distribution_coverage) == 2
-    assert result.evidence.distribution_coverage[0]["instrument_id"] == "AAPL.NASDAQ"
-    assert result.evidence.distribution_coverage[0]["applicable"] is True
-    assert result.evidence.distribution_coverage[1]["instrument_id"] == "ES.XCME"
-    assert result.evidence.distribution_coverage[1]["applicable"] is False
+    assert len(result.identity.distribution_coverage) == 2
+    assert result.identity.distribution_coverage[0]["instrument_id"] == "AAPL.NASDAQ"
+    assert result.identity.distribution_coverage[0]["applicable"] is True
+    assert result.identity.distribution_coverage[1]["instrument_id"] == "ES.XCME"
+    assert result.identity.distribution_coverage[1]["applicable"] is False
 
 
 def test_converts_non_base_continuous_root_through_exchange_fx(
@@ -205,11 +205,11 @@ def test_converts_non_base_continuous_root_through_exchange_fx(
         [5000.0 / 1.25, 5010.0 / 1.20]
     )
     assert result.currency_conversion.currency_by_instrument_id == {es: "USD"}
-    assert result.evidence.continuous_root_currencies == {es: "USD"}
+    assert result.identity.continuous_root_currencies == {es: "USD"}
 
 
 @pytest.mark.parametrize(
-    ("mode", "expected_evidence", "expected_close"),
+    ("mode", "expected_identity", "expected_close"),
     [
         (
             ContinuousFutureAdjustmentType.BACKWARD_RATIO,
@@ -223,10 +223,10 @@ def test_converts_non_base_continuous_root_through_exchange_fx(
         ),
     ],
 )
-def test_adjustment_mode_is_recorded_in_evidence_identity(
+def test_adjustment_mode_is_recorded_in_data_identity(
     monkeypatch: pytest.MonkeyPatch,
     mode: ContinuousFutureAdjustmentType,
-    expected_evidence: str,
+    expected_identity: str,
     expected_close: list[float],
 ) -> None:
     es = _id("ES.XCME")
@@ -259,7 +259,7 @@ def test_adjustment_mode_is_recorded_in_evidence_identity(
     )
 
     assert result.bundle.array("Close")[es].tolist() == expected_close
-    assert result.evidence.adjustment_mode == expected_evidence
+    assert result.identity.adjustment_mode == expected_identity
 
 
 def test_adjustment_modes_produce_distinct_candidate_data_identities(
@@ -311,7 +311,7 @@ def _load_adjustment_mode(
     )
 
 
-def test_continuous_failure_evidence_identifies_the_requested_root_and_arrays(
+def test_continuous_failure_context_identifies_the_requested_root_and_arrays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = _fake_port({}, legs=[future("ESH4.XCME", "2024-03-15")])
@@ -334,9 +334,9 @@ def test_continuous_failure_evidence_identifies_the_requested_root_and_arrays(
             custom_data_providers=None,
         )
 
-    assert excinfo.value.evidence.requested_instrument_ids == ()
-    assert excinfo.value.evidence.requested_arrays == ("Close",)
-    assert excinfo.value.evidence.continuous_roots == ("ES",)
+    assert excinfo.value.context.requested_instrument_ids == ()
+    assert excinfo.value.context.requested_arrays == ("Close",)
+    assert excinfo.value.context.continuous_roots == ("ES",)
     assert isinstance(excinfo.value.__cause__, GapFillProviderError)
 
 

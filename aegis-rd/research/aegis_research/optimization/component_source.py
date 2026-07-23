@@ -203,7 +203,7 @@ class _ComposedSource:
             simulate=self.simulate,
             resolve_lookbacks=self.resolve_lookbacks,
             params=self.params,
-            evidence=_source_evidence(self.strategy, self.indicators, self.params),
+            identity=_source_identity(self.strategy, self.indicators, self.params),
         )
 
 
@@ -530,7 +530,7 @@ def _assert_output_contract(
         )
 
 
-def _source_evidence(
+def _source_identity(
     strategy: _ComponentRuntime,
     indicators: tuple[_ComponentRuntime, ...],
     params: Mapping[str, vbt.Param],
@@ -539,8 +539,8 @@ def _source_evidence(
         "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
         "source": "component",
         "kind": "component_composition",
-        "strategy": _runtime_evidence(strategy),
-        "indicators": [_runtime_evidence(runtime) for runtime in indicators],
+        "strategy": _runtime_identity(strategy),
+        "indicators": [_runtime_identity(runtime) for runtime in indicators],
         "param_names": list(params),
         "fixed_candidate_param": FIXED_CANDIDATE_PARAM
         if list(params) == [FIXED_CANDIDATE_PARAM]
@@ -554,7 +554,7 @@ def _source_evidence(
     }
 
 
-def _runtime_evidence(runtime: _ComponentRuntime) -> dict[str, Any]:
+def _runtime_identity(runtime: _ComponentRuntime) -> dict[str, Any]:
     return {
         "family": runtime.family,
         "slot": runtime.slot,

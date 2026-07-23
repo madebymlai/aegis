@@ -93,7 +93,7 @@ def test_metric_registry_for_registers_only_requested_custom_metrics() -> None:
     """Custom metrics are opt-in per run: present only when a requested id names one.
 
     The no-request registry must be byte-identical to the default one, so runs
-    that never ask for a custom metric keep their Evidence fingerprint.
+    that never ask for a custom metric keep their registry fingerprint.
     """
     from research.aegis_research.metrics import make_metric_registry_for
 
@@ -198,7 +198,7 @@ def test_fingerprint_uses_extractor_contract_version_not_callable_identity() -> 
 def test_default_registry_fingerprint_is_byte_stable() -> None:
     """Golden fingerprint: guards against a silent change to the recorded hash.
 
-    The fingerprint flows into Evidence; if a definition field or its
+    The fingerprint flows into Candidate provenance; if a definition field or its
     serialization ever shifts, this pinned value catches it deterministically.
     """
     assert (

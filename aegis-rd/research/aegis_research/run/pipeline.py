@@ -99,8 +99,8 @@ def _build_run_result(
     result = execution.optimization_result
     summary = OptimizationSummary(
         ranking_metric=config.ranking.metric,
-        observation_block_bars=int(execution.preflight.diagnostics["observation_block_bars"]),
-        observation_block_count=len(execution.preflight.blocks.bounds),
+        observation_block_bars=execution.observation_block_bars,
+        observation_block_count=execution.observation_block_count,
         candidate_count=len({row["candidate_key"] for row in candidate_set.candidates}),
         total=result.total_candidates,
         excluded_invalid=result.excluded_invalid,

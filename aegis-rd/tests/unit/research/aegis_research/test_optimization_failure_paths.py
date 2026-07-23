@@ -61,7 +61,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
         simulate=always_skip,
         resolve_lookbacks=lambda params: {"source": 0},
         params={"fast_window": vbt.Param([2, 5])},
-        evidence={"source": "always_skip"},
+        identity={"source": "always_skip"},
     )
 
     optimization = _optimization_config()
@@ -89,7 +89,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
         simulate=exploding_pipeline,
         resolve_lookbacks=lambda params: {"source": 0},
         params={"fast_window": vbt.Param([2, 5])},
-        evidence={"source": "exploding"},
+        identity={"source": "exploding"},
     )
 
     optimization = _optimization_config()
@@ -120,7 +120,7 @@ def test_preflight_rejects_param_names_reserved_for_result_coordinates(
         simulate=passthrough,
         resolve_lookbacks=lambda params: {"source": 0},
         params={reserved_name: vbt.Param([1, 2])},
-        evidence={"source": "reserved_name"},
+        identity={"source": "reserved_name"},
     )
 
     optimization = _optimization_config()

@@ -22,7 +22,7 @@ from research.aegis_research.configuration import (
     ConfigValidationError,
     load_run_config,
 )
-from research.aegis_research.run.identity import RunId
+from research.aegis_research.run.identity import InvalidRunIdError, RunId
 from research.aegis_research.run.pipeline import run_strategy_sweep
 from research.aegis_research.run.result import RunResult
 
@@ -47,6 +47,8 @@ def _handle_strategy_run(
     config_path: Path,
     **streams: Any,
 ) -> int:
+    explicit_run_id = _explicit_run_id(args.run_id)
+    early_failure_refs = {"run_id": str(explicit_run_id)} if explicit_run_id is not None else None
     try:
         component_registry = discover_component_registry()
         resolved = load_run_config(
@@ -54,11 +56,11 @@ def _handle_strategy_run(
             component_registry=component_registry,
         )
     except (ConfigValidationError, ComponentRegistryError) as error:
-        raise ConfigCliError(str(error)) from error
+        raise ConfigCliError(str(error), run_refs=early_failure_refs) from error
     except OSError as error:
-        raise ConfigCliError(str(error)) from error
+        raise ConfigCliError(str(error), run_refs=early_failure_refs) from error
 
-    attempted_run_id = RunId.create(args.run_id, run_name=resolved.config.name)
+    attempted_run_id = explicit_run_id or RunId.create(None, run_name=resolved.config.name)
     failure_refs = {"run_id": str(attempted_run_id)}
     try:
         result = run_strategy_sweep(
@@ -89,6 +91,15 @@ def _handle_strategy_run(
         ),
         **streams,
     )
+
+
+def _explicit_run_id(value: str | None) -> RunId | None:
+    if value is None:
+        return None
+    try:
+        return RunId(value)
+    except InvalidRunIdError as error:
+        raise ConfigCliError(str(error)) from error
 
 
 def _run_payload(result: RunResult) -> dict[str, Any]:

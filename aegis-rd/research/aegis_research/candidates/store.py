@@ -10,7 +10,7 @@ from typing import Any
 from research.aegis_research.candidates.identity import (
     CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
 )
-from research.aegis_research.candidates.models import REPRESENTATIVE_ROLES, CandidateSet
+from research.aegis_research.candidates.models import CandidateSet
 from research.aegis_research.candidates.records import (
     CANDIDATE_EVAL_ROW_SCHEMA_VERSION,
     CANDIDATE_IDENTITY_SCHEMA_VERSION,
@@ -269,7 +269,7 @@ def _candidate_insert_values(
 
 
 def _stable_candidate_payload(row: Mapping[str, Any]) -> dict[str, Any]:
-    """Candidate evidence stripped of run-specific ranking attributes.
+    """Candidate payload stripped of run-specific ranking attributes.
 
     ``role`` and ``rank`` vary by slot while ``candidate_key`` is identity-stable,
     so a candidate that fills several roles must persist an identical payload to
@@ -326,26 +326,13 @@ def _validate_continuous_protocol(
         } & set(row)
         if retired:
             raise CandidateStoreError(
-                f"candidate row contains retired Split evidence fields: {sorted(retired)}"
+                f"candidate row contains retired Split fields: {sorted(retired)}"
             )
 
 
 def _validate_candidate_set(candidate_set: CandidateSet) -> None:
     candidate_rows = candidate_set.candidates
     provenance = candidate_set.provenance
-    if provenance.get("run_id") != str(candidate_set.run_id):
-        raise CandidateStoreError("Candidate Set provenance run_id does not match its Run ID")
-    if not candidate_rows:
-        raise CandidateStoreError("completed optimization run has no candidate rows to persist")
-    if len(candidate_rows) != len(REPRESENTATIVE_ROLES):
-        raise CandidateStoreError("Candidate Set requires exactly three representative roles")
-    roles = tuple(str(row.get("role")) for row in candidate_rows)
-    if set(roles) != set(REPRESENTATIVE_ROLES) or len(set(roles)) != len(roles):
-        raise CandidateStoreError("Candidate Set requires unique best, median, and worst roles")
-    ordinals = {str(row["role"]): row.get("ordinal_rank") for row in candidate_rows}
-    expected_ordinals = dict(zip(REPRESENTATIVE_ROLES, (1, 2, 3), strict=True))
-    if ordinals != expected_ordinals:
-        raise CandidateStoreError("Candidate Set representative ordinals are inconsistent")
     _validate_continuous_protocol(candidate_rows, provenance)
     _candidate_set_bytes(candidate_rows, provenance)
 

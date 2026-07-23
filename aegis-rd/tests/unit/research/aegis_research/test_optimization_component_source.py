@@ -64,8 +64,8 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
     source = build_component_optimization_source(config, component_registry=registry, data=data)
 
     assert set(source.params) == {_INDICATOR_WINDOW_KEY, _STRATEGY_THRESHOLD_KEY}
-    assert source.evidence["produced_outputs"] == ["trend"]
-    assert source.evidence["consumed_outputs"] == ["trend"]
+    assert source.identity["produced_outputs"] == ["trend"]
+    assert source.identity["consumed_outputs"] == ["trend"]
 
     close = data.array("Close")
     n_candidates = 1
@@ -92,9 +92,9 @@ def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path)
     )
 
     assert list(source.params) == [FIXED_CANDIDATE_PARAM]
-    assert source.evidence["fixed_candidate_param"] == FIXED_CANDIDATE_PARAM
-    assert source.evidence["strategy"]["param_mode"] == "fixed"
-    assert source.evidence["indicators"][0]["param_mode"] == "fixed"
+    assert source.identity["fixed_candidate_param"] == FIXED_CANDIDATE_PARAM
+    assert source.identity["strategy"]["param_mode"] == "fixed"
+    assert source.identity["indicators"][0]["param_mode"] == "fixed"
 
 
 def test_component_source_resolves_lookbacks_from_swept_and_fixed_params(
@@ -146,9 +146,9 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
     )
 
     assert _INDICATOR_WINDOW_KEY not in source.params
-    assert source.evidence["indicators"][0]["param_mode"] == "locked"
-    assert source.evidence["indicators"][0]["fixed_params"] == {"window": 3}
-    assert source.evidence["strategy"]["param_mode"] == "locked"
+    assert source.identity["indicators"][0]["param_mode"] == "locked"
+    assert source.identity["indicators"][0]["fixed_params"] == {"window": 3}
+    assert source.identity["strategy"]["param_mode"] == "locked"
 
 
 def test_component_source_rejects_unresolved_lock_refs(tmp_path: Path) -> None:
@@ -270,7 +270,7 @@ def test_two_output_indicator_outputs_remain_distinct_for_strategy(tmp_path: Pat
     np.testing.assert_array_equal(result.to_numpy(), np.ones_like(result.to_numpy()))
 
 
-def test_component_source_evidence_preserves_manifest_output_order(tmp_path: Path) -> None:
+def test_component_source_identity_preserves_declared_output_order(tmp_path: Path) -> None:
     root = tmp_path / "research" / "components"
     _write_two_output_indicator(root / "indicators" / "trend.py")
     _write_two_output_strategy(root / "strategies" / "strategy.py")
@@ -282,7 +282,7 @@ def test_component_source_evidence_preserves_manifest_output_order(tmp_path: Pat
         data=_data_bundle(),
     )
 
-    assert source.evidence["produced_outputs"] == ["trend", "inverse_trend"]
+    assert source.identity["produced_outputs"] == ["trend", "inverse_trend"]
 
 
 @pytest.mark.parametrize(
@@ -355,7 +355,7 @@ def test_component_optimization_source_schema_version_is_v2(tmp_path: Path) -> N
         data=_data_bundle(),
     )
 
-    assert source.evidence["schema_version"] == "component_optimization_source.v2"
+    assert source.identity["schema_version"] == "component_optimization_source.v2"
 
 
 def _single_candidate_params() -> dict[str, list[object]]:

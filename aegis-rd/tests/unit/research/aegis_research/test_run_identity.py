@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from research.aegis_research.run.identity import RunId
+from research.aegis_research.run.identity import InvalidRunIdError, RunId
 
 
 def test_run_id_owns_validation_and_text_projection() -> None:
@@ -13,5 +13,5 @@ def test_run_id_owns_validation_and_text_projection() -> None:
 
 @pytest.mark.parametrize("value", ["", ".", "..", "contains/slash", "contains space"])
 def test_run_id_rejects_values_outside_the_identity_contract(value: str) -> None:
-    with pytest.raises(ValueError, match="run_id must contain"):
+    with pytest.raises(InvalidRunIdError, match="run_id must contain"):
         RunId(value)

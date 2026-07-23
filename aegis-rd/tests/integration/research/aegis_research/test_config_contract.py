@@ -524,7 +524,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
                 "random_subset": 5,
             },
             "optimization",
-            "Value error, seed is required when optimization.search is 'random' so sampled evidence is deterministic",
+            "Value error, seed is required when optimization.search is 'random' so the sampled grid is deterministic",
         ),
         (
             {

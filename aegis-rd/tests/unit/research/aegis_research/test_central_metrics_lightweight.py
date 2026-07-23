@@ -95,7 +95,7 @@ def test_non_finite_values_land_as_nan_in_a_float64_grid() -> None:
     an object column — so vbt's row_stack concat across windows is dtype-stable
     (an all-None column would trip pandas' deprecated all-NA dtype
     reconciliation, FutureWarning). The None contract lives downstream at the
-    optional_float seam (ranking/Evidence), not inside the grid.
+    optional_float seam (ranking/Candidate projection), not inside the grid.
     """
     index = pd.date_range("2024-01-01", periods=10)
     close = pd.DataFrame({"A": [100.0] * 10}, index=index)

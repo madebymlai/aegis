@@ -91,14 +91,14 @@ def test_load_run_data_returns_an_eager_native_bundle_from_one_catalog_window(
     assert len(run_data.bundle.array("Close").index) == 3
     assert run_data.replay_index.equals(run_data.bundle.array("Close").index)
     assert run_data.instrument_count == 2
-    evidence = to_builtin(run_data.evidence)
-    assert evidence["schema_version"] == "run_data.v1"
-    assert evidence["requested_instrument_ids"] == [
+    identity = to_builtin(run_data.identity)
+    assert identity["schema_version"] == "run_data.v1"
+    assert identity["requested_instrument_ids"] == [
         "MSFT.XNAS",
         "AAPL.XNAS",
         "EUR/USD.IDEALPRO",
     ]
-    assert evidence["loaded_arrays"] == list(OHLCV_ARRAY_NAMES)
+    assert identity["loaded_arrays"] == list(OHLCV_ARRAY_NAMES)
     assert (
         not {
             "healthy",
@@ -107,7 +107,7 @@ def test_load_run_data_returns_an_eager_native_bundle_from_one_catalog_window(
             "unavailable_arrays",
             "skipped_instruments",
         }
-        & evidence.keys()
+        & identity.keys()
     )
 
 
@@ -181,7 +181,7 @@ def test_load_run_data_rejects_mismatching_tradeable_calendars_under_raise(
         )
 
 
-def test_load_run_data_carries_compact_failure_evidence_for_catalog_gaps() -> None:
+def test_load_run_data_carries_compact_failure_context_for_catalog_gaps() -> None:
     config = make_data_config(
         arrays=["Open", "Close"],
         base_currency="USD",
@@ -199,11 +199,11 @@ def test_load_run_data_carries_compact_failure_evidence_for_catalog_gaps() -> No
         )
 
     assert isinstance(excinfo.value.__cause__, CatalogCoverageGapError)
-    evidence = to_builtin(excinfo.value.evidence)
-    assert evidence["schema_version"] == "run_data_failure.v1"
-    assert evidence["requested_instrument_ids"] == ["MSFT.XNAS"]
-    assert evidence["error_type"] == "CatalogCoverageGapError"
-    assert "quality" not in evidence
+    context = to_builtin(excinfo.value.context)
+    assert context["schema_version"] == "run_data_failure.v1"
+    assert context["requested_instrument_ids"] == ["MSFT.XNAS"]
+    assert context["error_type"] == "CatalogCoverageGapError"
+    assert "quality" not in context
 
 
 def test_load_run_data_chains_gap_fill_provider_failures() -> None:
@@ -230,7 +230,7 @@ def test_load_run_data_chains_gap_fill_provider_failures() -> None:
 
     assert isinstance(excinfo.value.__cause__, GapFillProviderError)
     assert isinstance(excinfo.value.__cause__.__cause__, RuntimeError)
-    assert excinfo.value.evidence.error_type == "GapFillProviderError"
+    assert excinfo.value.context.error_type == "GapFillProviderError"
 
 
 def test_load_run_data_keeps_authoring_errors_direct() -> None:
@@ -388,9 +388,9 @@ def test_load_run_data_persists_and_warm_reads_custom_arrays_without_provider_id
     assert cold.bundle.array("FixtureValue")[aapl].tolist() == [0.0, 0.0, 7.0]
     assert cold.bundle.array("FixtureAvailable")[aapl].tolist() == [0.0, 0.0, 1.0]
     assert warm.bundle.array("FixtureValue").equals(cold.bundle.array("FixtureValue"))
-    assert warm.evidence == cold.evidence
+    assert warm.identity == cold.identity
     assert len(provider.requests) == 1
-    assert "credential-must-not-persist" not in str(to_builtin(cold.evidence))
+    assert "credential-must-not-persist" not in str(to_builtin(cold.identity))
 
 
 def test_load_run_data_reports_missing_custom_coverage_as_unavailable(
@@ -407,7 +407,7 @@ def test_load_run_data_reports_missing_custom_coverage_as_unavailable(
         )
 
     assert isinstance(excinfo.value.__cause__, CustomDataCoverageError)
-    assert excinfo.value.evidence.error_type == "CustomDataCoverageError"
+    assert excinfo.value.context.error_type == "CustomDataCoverageError"
 
 
 def test_load_run_data_chains_custom_provider_failures(tmp_path: Path) -> None:

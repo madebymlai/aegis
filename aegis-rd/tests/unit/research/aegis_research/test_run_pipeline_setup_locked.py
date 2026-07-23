@@ -86,7 +86,7 @@ def _seed_candidate_store(config: Any) -> str:
     selection_identity = make_selection_identity()
     rows = candidate_rows_from_result(
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
-        source_identity=_source_evidence(),
+        source_identity=_source_identity(),
         data_identity=_DATA_IDENTITY,
         selection_identity=selection_identity,
         book_settings={"target_exposure_cap": 1.0},
@@ -101,7 +101,7 @@ def _seed_candidate_store(config: Any) -> str:
                 provenance={
                     "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
                     "run_id": "run-a",
-                    "source": _source_evidence(),
+                    "source": _source_identity(),
                     "selection_identity": selection_identity,
                 },
             )
@@ -109,7 +109,7 @@ def _seed_candidate_store(config: Any) -> str:
     return candidate_key
 
 
-def _source_evidence() -> dict[str, Any]:
+def _source_identity() -> dict[str, Any]:
     return {
         "schema_version": "component_optimization_source.v2",
         "source": "component",
@@ -147,7 +147,7 @@ def test_locked_setup_resolves_every_component_from_candidate(
 ) -> None:
     """Locked setup resolves every Component's params from the candidate store.
 
-    Observe Lock application through the optimization source's evidence
+    Observe Lock application through the optimization source identity
     (param_mode == "locked") instead of reading a relayed copy.
     """
     resolved = _resolved_locked_config(tmp_path, monkeypatch)
@@ -158,11 +158,11 @@ def test_locked_setup_resolves_every_component_from_candidate(
         run_data=_run_data(),
     )
 
-    evidence = result.optimization_source.evidence
-    assert evidence["strategy"]["param_mode"] == "locked"
-    assert all(indicator["param_mode"] == "locked" for indicator in evidence["indicators"])
-    assert evidence["strategy"]["id"] == "demo.strategy"
-    assert any(indicator["id"] == "demo.returns" for indicator in evidence["indicators"])
+    identity = result.optimization_source.identity
+    assert identity["strategy"]["param_mode"] == "locked"
+    assert all(indicator["param_mode"] == "locked" for indicator in identity["indicators"])
+    assert identity["strategy"]["id"] == "demo.strategy"
+    assert any(indicator["id"] == "demo.returns" for indicator in identity["indicators"])
 
 
 def test_locked_setup_performs_no_optimization(
@@ -215,11 +215,11 @@ def _write_parameterized_strategy(path: Path) -> None:
     )
 
 
-def _parameterized_source_evidence() -> dict[str, Any]:
+def _parameterized_source_identity() -> dict[str, Any]:
     """Provenance whose strategy runtime pins ``threshold`` as a fixed candidate param."""
-    evidence = _source_evidence()
-    evidence["strategy"]["fixed_params"] = {"threshold": 1.0}
-    return evidence
+    identity = _source_identity()
+    identity["strategy"]["fixed_params"] = {"threshold": 1.0}
+    return identity
 
 
 def _seed_parameterized_candidate(config: Any) -> str:
@@ -233,7 +233,7 @@ def _seed_parameterized_candidate(config: Any) -> str:
     selection_identity = make_selection_identity()
     rows = candidate_rows_from_result(
         OptimizationResult(best=candidate, median=candidate, worst=candidate),
-        source_identity=_parameterized_source_evidence(),
+        source_identity=_parameterized_source_identity(),
         data_identity=_DATA_IDENTITY,
         selection_identity=selection_identity,
         book_settings={"target_exposure_cap": 1.0},
@@ -248,7 +248,7 @@ def _seed_parameterized_candidate(config: Any) -> str:
                 provenance={
                     "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
                     "run_id": "run-a",
-                    "source": _parameterized_source_evidence(),
+                    "source": _parameterized_source_identity(),
                     "selection_identity": selection_identity,
                 },
             )
@@ -286,4 +286,4 @@ def test_locked_setup_applies_locked_params_over_authored_params(
     )
 
     assert resolved.config.strategy.params == {"threshold": 2.0}
-    assert result.optimization_source.evidence["strategy"]["param_mode"] == "locked"
+    assert result.optimization_source.identity["strategy"]["param_mode"] == "locked"

@@ -7,7 +7,11 @@ from typing import Any
 
 import pytest
 
-from research.aegis_research.candidates.models import CandidateSet
+from research.aegis_research.candidates.models import (
+    Candidate,
+    CandidateSet,
+    InvalidCandidateSetError,
+)
 from research.aegis_research.candidates.records import candidate_rows_from_result
 from research.aegis_research.candidates.store import (
     SCHEMA_VERSION,
@@ -50,6 +54,12 @@ def _candidate_set(
         candidates=candidates,
         provenance=provenance or _provenance(run_id),
     )
+
+
+def test_candidate_set_contains_typed_candidates() -> None:
+    candidate_set = _candidate_set(_candidate_rows())
+
+    assert all(isinstance(candidate, Candidate) for candidate in candidate_set.candidates)
 
 
 def test_candidate_store_persists_three_candidates_and_queries_by_run(tmp_path: Path) -> None:
@@ -220,7 +230,7 @@ def test_candidate_store_rejects_superseded_schema_version(tmp_path: Path) -> No
 
 def test_candidate_store_rejects_conflicting_duplicate_candidate_payload(tmp_path: Path) -> None:
     candidates = _candidate_rows()
-    # Same candidate_key (identity unchanged) but a different evidence payload.
+    # Same candidate_key (identity unchanged) but a different Candidate payload.
     changed = [dict(candidates[0], mean_rank=99.0), *candidates[1:]]
 
     with CandidateStore(tmp_path / "candidates.sqlite3") as store:
@@ -231,15 +241,8 @@ def test_candidate_store_rejects_conflicting_duplicate_candidate_payload(tmp_pat
 
 
 def test_candidate_store_raises_on_empty_candidate_rows(tmp_path: Path) -> None:
-    with (
-        CandidateStore(tmp_path / "candidates.sqlite3") as store,
-        pytest.raises(CandidateStoreError, match="no candidate rows"),
-    ):
-        store.commit_candidates(
-            CandidateSet.create(
-                run_id=RunId("run-a"), candidates=[], provenance={"run_id": "run-a"}
-            )
-        )
+    with pytest.raises(InvalidCandidateSetError, match="no candidate rows"):
+        CandidateSet.create(run_id=RunId("run-a"), candidates=[], provenance={"run_id": "run-a"})
 
 
 def test_candidate_store_exact_recommit_is_idempotent(tmp_path: Path) -> None:
@@ -258,35 +261,24 @@ def test_candidate_store_exact_recommit_is_idempotent(tmp_path: Path) -> None:
 def test_candidate_store_rejects_incomplete_representative_set(tmp_path: Path) -> None:
     candidates = _candidate_rows()[:2]
 
-    with (
-        CandidateStore(tmp_path / "candidates.sqlite3") as store,
-        pytest.raises(CandidateStoreError, match="exactly three representative roles"),
-    ):
-        store.commit_candidates(_candidate_set(candidates))
+    with pytest.raises(InvalidCandidateSetError, match="exactly three representative roles"):
+        _candidate_set(candidates)
 
 
 def test_candidate_store_rejects_duplicate_representative_role(tmp_path: Path) -> None:
     candidates = _candidate_rows()
     duplicated = [candidates[0], dict(candidates[1], role="best"), candidates[2]]
 
-    with (
-        CandidateStore(tmp_path / "candidates.sqlite3") as store,
-        pytest.raises(CandidateStoreError, match="unique best, median, and worst"),
-    ):
-        store.commit_candidates(_candidate_set(duplicated))
+    with pytest.raises(InvalidCandidateSetError, match="unique best, median, and worst"):
+        _candidate_set(duplicated)
 
 
 def test_candidate_store_rejects_provenance_for_another_run(tmp_path: Path) -> None:
-    candidate_set = _candidate_set(
-        _candidate_rows(),
-        provenance=_provenance("another-run"),
-    )
-
-    with (
-        CandidateStore(tmp_path / "candidates.sqlite3") as store,
-        pytest.raises(CandidateStoreError, match="provenance run_id"),
-    ):
-        store.commit_candidates(candidate_set)
+    with pytest.raises(InvalidCandidateSetError, match="provenance run_id"):
+        _candidate_set(
+            _candidate_rows(),
+            provenance=_provenance("another-run"),
+        )
 
 
 def test_candidate_store_rejects_group_or_other_readable_directory(tmp_path: Path) -> None:

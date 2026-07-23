@@ -28,7 +28,7 @@ def make_metric_registry_for(metric_ids: tuple[str, ...]) -> FrozenMetricRegistr
     """Default registry plus only the optional custom metrics actually requested.
 
     Custom metrics are opt-in per run: a registry (and its fingerprint, which
-    flows into Evidence) carries a custom metric only when a requested metric
+    flows into Candidate identity) carries a custom metric only when a requested metric
     id names one. Unknown ids are not an error here — config validation
     cross-checks the requested metric against the built registry and fails
     closed there.

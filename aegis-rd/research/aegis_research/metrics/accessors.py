@@ -56,7 +56,7 @@ def central_metrics_from_grouped_accessors(
     # all-NA dtype reconciliation fires (FutureWarning) when vbt row-stacks it
     # with the float64 frames from other windows (incl. the runner's all-invalid
     # NaN frame). Downstream consumers read values through optional_float, so
-    # NaN-vs-None inside the grid is invisible to ranking and Evidence.
+    # NaN-vs-None inside the grid is invisible to ranking and Candidate identity.
     return pd.DataFrame(rows, index=index, dtype="float64")
 
 
