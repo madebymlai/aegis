@@ -10,6 +10,7 @@ base-currency value of a held position must match a real Nautilus backtest's
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from aegis_runtime.currency import build_currency_conversion
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 
@@ -20,6 +21,8 @@ from tests.support.research.aegis_research.market_data_fixtures import (
 from tests.support.research.aegis_research.nautilus_fx_oracle import (
     nautilus_base_value_curve,
 )
+
+pytestmark = pytest.mark.filterwarnings("error::pandas.errors.Pandas4Warning")
 
 _QTY = 100
 _AAPL = InstrumentId(symbol=Symbol("AAPL"), venue=Venue("SIM"))
