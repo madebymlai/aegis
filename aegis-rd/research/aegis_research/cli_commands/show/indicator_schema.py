@@ -32,7 +32,7 @@ def handle_show_indicator_schema(
     **streams: Any,
 ) -> int:
     json_mode = args.json
-    from research.aegis_research.component_registry.indicator_guide import (
+    from research.aegis_research.component_registry.authoring.indicator_guide import (
         GUIDE_SCHEMA_VERSION,
         render_indicator_schema_guide,
     )

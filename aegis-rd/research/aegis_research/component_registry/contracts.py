@@ -1,10 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
+from pydantic import (
+    AfterValidator,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    model_validator,
+)
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+from research.aegis_research.authoring_fields import (
+    ComponentIdStr,
+    NonEmptyStr,
+    has_data_array_token_shape,
+)
 from research.aegis_research.canonical_json import to_builtin
 
 ComponentFamily = Literal["indicators", "strategies"]
@@ -30,6 +44,45 @@ class ComponentRegistryError(ValueError):
     pass
 
 
+# ── Authored manifest vocabulary ───────────────────────────────────────────
+#
+# A manifest is authored as a dict literal and validated straight into the
+# frozen types below (ADR-0012: the model validates *and* constructs). Authors
+# write lists; the domain type holds tuples, so an authored list is converted
+# up front and every other sequence shape — notably an unordered set, whose
+# iteration order would leak into the registry fingerprint — is left for strict
+# tuple validation to reject.
+
+
+def _validate_array_token(token: str) -> str:
+    """Pydantic item-validator: Array names must be VBT feature names."""
+    if not has_data_array_token_shape(token):
+        raise ValueError(
+            "must be a VBT feature name without surrounding whitespace or control characters"
+        )
+    return token
+
+
+def _tuple_from_authored_list(value: Any) -> Any:
+    """Accept the authored list form; hand anything else to strict validation."""
+    return tuple(value) if type(value) is list else value
+
+
+ArrayName = Annotated[NonEmptyStr, AfterValidator(_validate_array_token)]
+AuthoredArrayNames = Annotated[
+    tuple[ArrayName, ...],
+    BeforeValidator(_tuple_from_authored_list),
+    Field(strict=True),
+]
+AuthoredParamNames = Annotated[
+    tuple[NonEmptyStr, ...],
+    BeforeValidator(_tuple_from_authored_list),
+    Field(strict=True),
+]
+
+MANIFEST_CONFIG = ConfigDict(extra="forbid")
+
+
 @dataclass(frozen=True)
 class ComponentSelection:
     family: ComponentFamily
@@ -48,25 +101,51 @@ class ComponentSourceIdentity:
         }
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=MANIFEST_CONFIG)
 class ComponentManifest:
     family: ComponentFamily
-    id: str
-    version: str
+    id: ComponentIdStr
+    version: NonEmptyStr
+    param_names: AuthoredParamNames = ()
+    defaults: Mapping[str, Any] = field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _reject_dot_ids(self) -> ComponentManifest:
+        if self.id in {".", ".."}:
+            raise ValueError("component id must not be '.' or '..'")
+        return self
+
+    @model_validator(mode="after")
+    def _check_defaults_in_params(self) -> ComponentManifest:
+        unknown = sorted(set(self.defaults) - set(self.param_names))
+        if unknown:
+            raise ValueError(f"defaults keys must be declared in param_names; unknown: {unknown}")
+        return self
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=MANIFEST_CONFIG)
 class IndicatorManifest(ComponentManifest):
-    input_names: tuple[str, ...]
-    param_names: tuple[str, ...]
-    output_names: tuple[str, ...]
-    defaults: Mapping[str, Any]
-    bar_aligned: bool = True
+    family: Literal["indicators"]
+    # Keyword-only so a required field can sit among the base's defaulted ones.
+    input_names: AuthoredArrayNames = field(kw_only=True)
+    output_names: AuthoredArrayNames = field(kw_only=True)
+    bar_aligned: Literal[True] = True
 
     @property
     def consumes_outputs(self) -> tuple[str, ...]:
         """Indicators consume no strategy outputs — uniform query surface."""
         return ()
+
+    @model_validator(mode="after")
+    def _check_output_names(self) -> IndicatorManifest:
+        if not self.output_names:
+            raise ValueError("output_names must not be empty")
+        duplicates = sorted(
+            {name for name in self.output_names if self.output_names.count(name) > 1}
+        )
+        if duplicates:
+            raise ValueError(f"output_names must be unique; duplicates: {duplicates}")
+        return self
 
     def public_fields(self) -> dict[str, Any]:
         """Family-specific facts contributed to ``ComponentDefinition.public_snapshot()``."""
@@ -76,7 +155,7 @@ class IndicatorManifest(ComponentManifest):
         }
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=MANIFEST_CONFIG)
 class StrategyManifest(ComponentManifest):
     """Strategy component manifest.
 
@@ -87,17 +166,26 @@ class StrategyManifest(ComponentManifest):
     signal pairs are rejected.
     """
 
-    input_names: tuple[str, ...]
-    param_names: tuple[str, ...]
-    output_name: str
-    consumes_outputs: tuple[str, ...]
-    defaults: Mapping[str, Any]
-    owns_portfolio: bool = False
+    family: Literal["strategies"]
+    # Keyword-only so a required field can sit among the base's defaulted ones.
+    input_names: AuthoredArrayNames = field(kw_only=True)
+    output_name: NonEmptyStr = field(kw_only=True)
+    consumes_outputs: AuthoredParamNames = ()
+    owns_portfolio: Literal[False] = False
 
     @property
     def output_names(self) -> tuple[str, ...]:
         """Strategies produce no indicator outputs — uniform query surface."""
         return ()
+
+    @model_validator(mode="after")
+    def _check_output_name_allowed(self) -> StrategyManifest:
+        if self.output_name not in STRATEGY_ALLOCATION_OUTPUTS:
+            raise ValueError(
+                f"unsupported allocation output {self.output_name!r}; "
+                f"registered shapes are {sorted(STRATEGY_ALLOCATION_OUTPUTS)}"
+            )
+        return self
 
     def public_fields(self) -> dict[str, Any]:
         """Family-specific facts contributed to ``ComponentDefinition.public_snapshot()``."""

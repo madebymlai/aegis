@@ -855,7 +855,7 @@ def test_show_indicator_schema_example_round_trips_through_registry(
         discover_component_registry,
     )
 
-    example_src = Path("research/aegis_research/component_registry/indicator_example.py")
+    example_src = Path("research/aegis_research/component_registry/authoring/indicator_example.py")
     dest = tmp_path / "research" / "components" / "indicators" / "example_ma.py"
     dest.parent.mkdir(parents=True)
     shutil.copy(example_src, dest)
@@ -1044,7 +1044,7 @@ def test_show_strategy_schema_example_round_trips_through_registry(
         discover_component_registry,
     )
 
-    example_src = Path("research/aegis_research/component_registry/strategy_example.py")
+    example_src = Path("research/aegis_research/component_registry/authoring/strategy_example.py")
     dest = tmp_path / "research" / "components" / "strategies" / "example_ma_cross.py"
     dest.parent.mkdir(parents=True)
     shutil.copy(example_src, dest)
@@ -1118,8 +1118,10 @@ def test_authoring_story_round_trip(
     )
 
     # Copy both packaged examples into the component tree
-    indicator_src = Path("research/aegis_research/component_registry/indicator_example.py")
-    strategy_src = Path("research/aegis_research/component_registry/strategy_example.py")
+    indicator_src = Path(
+        "research/aegis_research/component_registry/authoring/indicator_example.py"
+    )
+    strategy_src = Path("research/aegis_research/component_registry/authoring/strategy_example.py")
     indicator_dest = tmp_path / "research" / "components" / "indicators" / "example_ma.py"
     strategy_dest = tmp_path / "research" / "components" / "strategies" / "example_ma_cross.py"
     indicator_dest.parent.mkdir(parents=True)
@@ -1166,10 +1168,10 @@ def test_authoring_story_round_trip(
 
 def _render_guide(subcommand: str) -> str:
     """Render a schema guide and return the markdown output."""
-    from research.aegis_research.component_registry.indicator_guide import (
+    from research.aegis_research.component_registry.authoring.indicator_guide import (
         render_indicator_schema_guide,
     )
-    from research.aegis_research.component_registry.strategy_guide import (
+    from research.aegis_research.component_registry.authoring.strategy_guide import (
         render_strategy_schema_guide,
     )
     from research.aegis_research.configuration.config_schema_guide import (

@@ -23,4 +23,4 @@ optimization:
 
 Removed fields are now unknown to the forward schema: `strategy.source`, indicator `source`, indicator `ids`, top-level `split`, and `candidate_grid`. Migrate reviewed signal logic into `research/components/` and use component-owned `vbt.Param` spaces instead of candidate-axis execution.
 
-Public component examples live under `research/aegis_research/component_registry/indicator_example.py` and `research/aegis_research/component_registry/strategy_example.py`.
+Public component examples live under `research/aegis_research/component_registry/authoring/indicator_example.py` and `research/aegis_research/component_registry/authoring/strategy_example.py`.

@@ -467,7 +467,7 @@ def test_strategy_manifest_rejects_legacy_signal_outputs_field(tmp_path) -> None
     with pytest.raises(ComponentRegistryError) as excinfo:
         discover_component_registry(root=root, repo_root=tmp_path)
     message = str(excinfo.value)
-    assert "Extra inputs are not permitted" in message
+    assert "Unexpected keyword argument" in message
     assert "signal_outputs" in message
 
 
@@ -502,7 +502,7 @@ def test_strategy_manifest_rejects_forbidden_gross_cap_key(tmp_path) -> None:
     with pytest.raises(ComponentRegistryError) as excinfo:
         discover_component_registry(root=root, repo_root=tmp_path)
     message = str(excinfo.value)
-    assert "Extra inputs are not permitted" in message
+    assert "Unexpected keyword argument" in message
     assert "gross_cap" in message
 
 
@@ -545,7 +545,7 @@ def test_manifest_payload_errors_accumulate_per_file(tmp_path) -> None:
     assert "String should match pattern" in message
     assert "String should have at least 1 character" in message
     assert "must be a VBT feature name without surrounding whitespace" in message
-    assert "Extra inputs are not permitted" in message
+    assert "Unexpected keyword argument" in message
     # All errors for one file in one message (separated by "; ")
     assert message.count("; ") >= 3
 
@@ -640,7 +640,7 @@ def test_manifest_rejects_unknown_callable_plumbing_key(tmp_path, family, plumbi
         discover_component_registry(root=root, repo_root=tmp_path)
     message = str(excinfo.value)
     assert plumbing_key in message
-    assert "Extra inputs are not permitted" in message
+    assert "Unexpected keyword argument" in message
 
 
 def test_component_with_lookback_entrypoint_has_lookback_true(tmp_path) -> None:

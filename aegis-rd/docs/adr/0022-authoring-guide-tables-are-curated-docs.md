@@ -2,7 +2,7 @@
 
 Status: accepted
 
-The manifest field tables in `component_registry/strategy_guide.py` and
+The manifest field tables in `component_registry/authoring/strategy_guide.py` and
 `indicator_guide.py` (`_manifest_field_table()`) are deliberately hand-authored
 markdown, *not* introspected from the `StrategyManifest` / `IndicatorManifest`
 dataclasses — unlike `configuration/config_schema_guide.py`, which interpolates its

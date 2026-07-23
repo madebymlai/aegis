@@ -47,8 +47,8 @@ def test_component_roots_track_live_files_and_ignore_archive_files() -> None:
 
 def test_component_readme_placeholders_point_to_examples_and_warn_about_archive_files() -> None:
     for family, example in {
-        "indicators": "research/aegis_research/component_registry/indicator_example.py",
-        "strategies": "research/aegis_research/component_registry/strategy_example.py",
+        "indicators": "research/aegis_research/component_registry/authoring/indicator_example.py",
+        "strategies": "research/aegis_research/component_registry/authoring/strategy_example.py",
     }.items():
         readme = Path(f"research/components/{family}/README.md").read_text()
 

@@ -4,30 +4,17 @@ import ast
 import hashlib
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Any
 
-from pydantic import (
-    AfterValidator,
-    BaseModel,
-    ConfigDict,
-    Field,
-    TypeAdapter,
-    model_validator,
-)
+from pydantic import TypeAdapter
 from pydantic import (
     ValidationError as PydanticValidationError,
 )
 
-from research.aegis_research.authoring_fields import (
-    ComponentIdStr,
-    NonEmptyStr,
-    has_data_array_token_shape,
-)
 from research.aegis_research.component_registry.contracts import (
     COMPONENT_ENTRYPOINT,
     COMPONENT_LOOKBACK_ENTRYPOINT,
     COMPONENT_PARAM_SPACE_ENTRYPOINT,
-    STRATEGY_ALLOCATION_OUTPUTS,
     ComponentDefinition,
     ComponentFamily,
     ComponentRegistryError,
@@ -74,13 +61,9 @@ def build_manifest(
 ) -> IndicatorManifest | StrategyManifest:
     if not isinstance(payload, dict):
         raise ComponentRegistryError(f"{path}: {COMPONENT_MANIFEST_NAME} must be a literal mapping")
-    payload = dict(payload)
+    adapter = _INDICATOR_ADAPTER if expected_family == "indicators" else _STRATEGY_ADAPTER
     try:
-        if expected_family == "indicators":
-            indicator = _INDICATOR_ADAPTER.validate_python(payload, strict=True)
-            return _build_indicator_manifest(indicator)
-        strategy = _STRATEGY_ADAPTER.validate_python(payload, strict=True)
-        return _build_strategy_manifest(strategy)
+        return adapter.validate_python(dict(payload))
     except PydanticValidationError as e:
         raise ComponentRegistryError(_format_manifest_errors(e, path)) from e
 
@@ -140,27 +123,6 @@ def _literal_value(path: Path, name: str, node: ast.AST) -> Any:
         raise ComponentRegistryError(f"{path}: {name} must be a Python literal") from error
 
 
-# ── Pydantic manifest payload models ──────────────────────────────────────
-
-
-def _validate_manifest_input_name(token: str) -> str:
-    """Pydantic item-validator: input_names must be VBT feature names."""
-    if not has_data_array_token_shape(token):
-        raise ValueError(
-            "must be a VBT feature name without surrounding whitespace or control characters"
-        )
-    return token
-
-
-def _validate_manifest_output_name(token: str) -> str:
-    """Pydantic item-validator: output_names must be VBT feature names."""
-    if not has_data_array_token_shape(token):
-        raise ValueError(
-            "must be a VBT feature name without surrounding whitespace or control characters"
-        )
-    return token
-
-
 def _format_manifest_errors(
     error: PydanticValidationError,
     path: Path,
@@ -177,115 +139,8 @@ def _format_manifest_errors(
     return "; ".join(messages)
 
 
-_ManifestInputName = Annotated[
-    str,
-    Field(min_length=1),
-    AfterValidator(_validate_manifest_input_name),
-]
-
-_ManifestOutputName = Annotated[
-    str,
-    Field(min_length=1),
-    AfterValidator(_validate_manifest_output_name),
-]
-
-
-class _BaseManifestPayload(BaseModel):
-    """Common pydantic model for indicator and strategy manifest payloads."""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    family: ComponentFamily
-    id: ComponentIdStr
-    version: NonEmptyStr
-    input_names: list[_ManifestInputName]
-    param_names: list[NonEmptyStr] = []
-    defaults: dict[str, Any] = {}
-
-    @model_validator(mode="after")
-    def _reject_dot_ids(self) -> _BaseManifestPayload:
-        if self.id in {".", ".."}:
-            raise ValueError("component id must not be '.' or '..'")
-        return self
-
-    @model_validator(mode="after")
-    def _check_defaults_in_params(self) -> _BaseManifestPayload:
-        unknown = sorted(set(self.defaults) - set(self.param_names))
-        if unknown:
-            raise ValueError(f"defaults keys must be declared in param_names; unknown: {unknown}")
-        return self
-
-
-class _IndicatorManifestPayload(_BaseManifestPayload):
-    """Pydantic model for indicator manifest payload validation."""
-
-    family: Literal["indicators"]
-    output_names: list[_ManifestOutputName]
-    bar_aligned: Literal[True] = True
-
-    @model_validator(mode="after")
-    def _check_output_names(self) -> _IndicatorManifestPayload:
-        if not self.output_names:
-            raise ValueError("output_names must not be empty")
-        duplicates = sorted(
-            {name for name in self.output_names if self.output_names.count(name) > 1}
-        )
-        if duplicates:
-            raise ValueError(f"output_names must be unique; duplicates: {duplicates}")
-        return self
-
-
-class _StrategyManifestPayload(_BaseManifestPayload):
-    """Pydantic model for strategy manifest payload validation."""
-
-    family: Literal["strategies"]
-    output_name: NonEmptyStr
-    consumes_outputs: list[NonEmptyStr] = []
-    owns_portfolio: Literal[False] = False
-
-    @model_validator(mode="after")
-    def _check_output_name_allowed(self) -> _StrategyManifestPayload:
-        if self.output_name not in STRATEGY_ALLOCATION_OUTPUTS:
-            raise ValueError(
-                f"unsupported allocation output {self.output_name!r}; "
-                f"registered shapes are {sorted(STRATEGY_ALLOCATION_OUTPUTS)}"
-            )
-        return self
-
-
-_INDICATOR_ADAPTER = TypeAdapter(_IndicatorManifestPayload)
-_STRATEGY_ADAPTER = TypeAdapter(_StrategyManifestPayload)
-
-
-def _build_indicator_manifest(
-    validated: _IndicatorManifestPayload,
-) -> IndicatorManifest:
-    return IndicatorManifest(
-        family="indicators",
-        id=validated.id,
-        version=validated.version,
-        input_names=tuple(validated.input_names),
-        param_names=tuple(validated.param_names),
-        output_names=tuple(validated.output_names),
-        defaults=dict(validated.defaults),
-        bar_aligned=True,
-    )
-
-
-def _build_strategy_manifest(
-    validated: _StrategyManifestPayload,
-) -> StrategyManifest:
-    return StrategyManifest(
-        family="strategies",
-        id=validated.id,
-        version=validated.version,
-        input_names=tuple(validated.input_names),
-        param_names=tuple(validated.param_names),
-        output_name=validated.output_name,
-        consumes_outputs=tuple(validated.consumes_outputs),
-        defaults=dict(validated.defaults),
-        owns_portfolio=False,
-    )
+_INDICATOR_ADAPTER = TypeAdapter(IndicatorManifest)
+_STRATEGY_ADAPTER = TypeAdapter(StrategyManifest)
 
 
 def _source_identity(path: Path, *, repo_root: Path, source_hash: str) -> ComponentSourceIdentity:

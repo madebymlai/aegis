@@ -161,3 +161,43 @@ When construction succeeds, the coordinator's typed band-override universe issue
 combined with typed Component and Metric registry issues. Registry discovery and integrity
 failures remain separate setup errors because there is no trustworthy registry against
 which authoring selections can be checked.
+
+## Amendment — 2026-07-23: Component manifests collapse onto the same rule
+
+The manifest layer now follows the decision this ADR made for Run Config: the model
+validates *and* constructs. `IndicatorManifest`, `StrategyManifest`, and their
+`ComponentManifest` base become `@pydantic_dataclass(frozen=True, extra="forbid")` in
+`component_registry/contracts.py`, carrying the field constraints and
+`@model_validator`s directly. The private `_BaseManifestPayload` /
+`_IndicatorManifestPayload` / `_StrategyManifestPayload` mirror models and both
+`_build_*_manifest` builders are **deleted** — `manifests.py` was still running the
+`builders.py` pattern this ADR dissolved everywhere else, so a manifest field had three
+homes (payload model, domain dataclass, builder) instead of one.
+
+- **Strict stays per-field, as this ADR already requires.** Re-confirmed against pydantic
+  2.13.4: `strict=True` on a dataclass config — or passed to `validate_python` — rejects
+  dict input outright with `dataclass_exact_type` ("Input should be an instance of
+  IndicatorManifest"). The payload models could carry model-level
+  `ConfigDict(strict=True)` because they were `BaseModel`s; the domain dataclasses cannot.
+- **Authored lists, domain tuples.** Authors write `"input_names": ["Close"]`; the frozen
+  type holds a tuple. `AuthoredArrayNames`/`AuthoredParamNames` pair a `BeforeValidator`
+  that converts *only* the authored `list` form with `Field(strict=True)` on the tuple, so
+  every other sequence shape is rejected. This is load-bearing rather than cosmetic: plain
+  lax tuple validation accepts a `set`, which `ast.literal_eval` can produce, and its
+  iteration order would leak through `public_snapshot()` into the registry fingerprint.
+- **Unknown-key wording follows the dataclass, as it did for Run Config.** Manifests now
+  report `"Unexpected keyword argument"` instead of the `BaseModel` phrasing `"Extra inputs
+  are not permitted"`; four assertions in `test_component_registry.py` are updated. Both
+  authoring surfaces now word unknown keys identically. Error accumulation is unaffected —
+  field errors and the unexpected-keyword error still surface together in one
+  `ComponentRegistryError`.
+- **Construction now validates, and that immediately paid.** A test stub was building an
+  Indicator with `output_names=()` — a state the parser has always rejected but the
+  unvalidated dataclass allowed. Making the illegal state unrepresentable surfaced it.
+- **Byte-invisible.** `public_snapshot()` still emits lists via `to_builtin`, so no golden
+  hash moves.
+
+The two families keep their split for a real reason, not a mirroring one: `param_names`
+and `defaults` are common and live on the base with the shared
+`defaults ⊆ param_names` validator; the family-specific required fields are `kw_only`
+so they can sit among the base's defaulted fields — the `DataConfig.arrays` pattern.

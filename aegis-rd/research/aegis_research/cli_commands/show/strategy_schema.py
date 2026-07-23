@@ -32,7 +32,7 @@ def handle_show_strategy_schema(
     **streams: Any,
 ) -> int:
     json_mode = args.json
-    from research.aegis_research.component_registry.strategy_guide import (
+    from research.aegis_research.component_registry.authoring.strategy_guide import (
         GUIDE_SCHEMA_VERSION,
         render_strategy_schema_guide,
     )

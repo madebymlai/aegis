@@ -31,4 +31,4 @@ Run `aerd show indicator-schema` or `aerd show strategy-schema` for the single s
 
 Local component files are ignored by git by default except placeholder READMEs. Ignored files are not secret management; do not store credentials in local research code.
 
-Packaged component examples live under `research/aegis_research/component_registry/indicator_example.py` and `research/aegis_research/component_registry/strategy_example.py`. These are the single authorable references — round-tripped through the real registry parser.
+Packaged component examples live under `research/aegis_research/component_registry/authoring/indicator_example.py` and `research/aegis_research/component_registry/authoring/strategy_example.py`. These are the single authorable references — round-tripped through the real registry parser.

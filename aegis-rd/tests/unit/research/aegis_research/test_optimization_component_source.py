@@ -762,7 +762,8 @@ def _stub_runtime(
     param_keys: dict[str, str] | None = None,
     param_space: dict[str, vbt.Param] | None = None,
     fixed_params: dict[str, object] | None = None,
-    output_names: tuple[str, ...] = (),
+    # An Indicator with no outputs is unrepresentable, so the default declares one.
+    output_names: tuple[str, ...] = ("value",),
     consumes_outputs: tuple[str, ...] = (),
     input_names: tuple[str, ...] = ("Close",),
 ) -> _ComponentRuntime:
