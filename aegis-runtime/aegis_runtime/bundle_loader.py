@@ -1,28 +1,26 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Mapping
 from importlib import resources
 from typing import Any
 
-from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
-from nautilus_trader.model.identifiers import InstrumentId
+from pydantic import ConfigDict, TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from aegis_runtime.bundle import (
-    SUPPORTED_ADJUSTMENT_MODES,
+    DataContractError,
     BundleManifest,
-    ComponentSpec,
     DataContract,
     ExecutionBundle,
     LockedExecutionPlan,
 )
-from aegis_runtime.drift_band import DriftBand
 
 # v5 (aegis-rd-ui1m): the plan no longer carries gross_cap/net_cap — unit gross
 # is the fixed sleeve contract (bundle.SLEEVE_GROSS_LIMIT), not a locked number.
 BUNDLE_PAYLOAD_SCHEMA_VERSION = "execution_bundle.v5"
-
-_ADJUSTMENT_MODE_BY_VALUE = {mode.value: mode for mode in SUPPORTED_ADJUSTMENT_MODES}
 
 
 class BundlePayloadError(ValueError):
@@ -37,113 +35,79 @@ class BundlePayloadFieldError(BundlePayloadError):
     """The serialized bundle payload is missing a required field."""
 
 
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class _BundlePayload:
+    """The wire envelope: the three bundle parts under a schema version.
+
+    Its fields carry their own wire form (see `bundle.WireInstrumentId` and
+    friends), so this one declaration serves both directions — there is no
+    hand-mirrored dumper to keep in step with the loader.
+    """
+
+    schema_version: str
+    contract: DataContract
+    manifest: BundleManifest
+    plan: LockedExecutionPlan
+
+
+_PAYLOAD_ADAPTER = TypeAdapter(_BundlePayload)
+
+# Derived from the types themselves, so a new bundle field is mandatory on the
+# wire the moment it is declared — there is no second list to update. Computed
+# fields (init=False, e.g. the plan's exposure limits) never travel.
+_PAYLOAD_SECTION_FIELDS: dict[str, frozenset[str]] = {
+    section: frozenset(f.name for f in dataclasses.fields(part_type) if f.init)
+    for section, part_type in (
+        ("contract", DataContract),
+        ("manifest", BundleManifest),
+        ("plan", LockedExecutionPlan),
+    )
+}
+
+
 def dump_bundle_payload(
     *,
     contract: DataContract,
     manifest: BundleManifest,
     plan: LockedExecutionPlan,
 ) -> dict[str, Any]:
-    contract_payload: dict[str, Any] = {
-        "instrument_ids": [_dump_instrument_id(item) for item in contract.instrument_ids],
-        "required_arrays": list(contract.required_arrays),
-        "base_currency": contract.base_currency,
-        "timeframe": contract.timeframe,
-        "missing_index": contract.missing_index.value,
-        "lookback_bars": contract.lookback_bars,
-        "futures": list(contract.futures),
-        "exchange": [_dump_instrument_id(item) for item in contract.exchange],
-        # Only the mark travels (aegis-rd-tggo.3); the research fill/sim
-        # projection is never serialized.
-        "mark_modes": {
-            _dump_instrument_id(instrument_id): mode
-            for instrument_id, mode in contract.mark_modes.items()
-        },
-    }
-    if contract.adjustment_mode is not None:
-        contract_payload["adjustment_mode"] = contract.adjustment_mode.value
-    return {
-        "schema_version": BUNDLE_PAYLOAD_SCHEMA_VERSION,
-        "contract": contract_payload,
-        "manifest": {
-            "run_id": manifest.run_id,
-            "role": manifest.role,
-            "candidate_key": manifest.candidate_key,
-            "component_source_hashes": dict(manifest.component_source_hashes),
-            "instrument_ids": [_dump_instrument_id(item) for item in manifest.instrument_ids],
-        },
-        "plan": {
-            "strategy": _dump_component_spec(plan.strategy),
-            "indicators": [_dump_component_spec(spec) for spec in plan.indicators],
-            "instrument_bands": _dump_instrument_bands(plan.instrument_bands),
-            "direction": plan.direction,
-        },
-    }
+    payload = _BundlePayload(
+        schema_version=BUNDLE_PAYLOAD_SCHEMA_VERSION,
+        contract=contract,
+        manifest=manifest,
+        plan=plan,
+    )
+    dumped = _PAYLOAD_ADAPTER.dump_python(payload, mode="json")
+    # `adjustment_mode` is absent, not null, when a bundle declares no futures.
+    if dumped["contract"].get("adjustment_mode") is None:
+        dumped["contract"].pop("adjustment_mode", None)
+    return dumped
 
 
 def load_bundle_payload(payload: Mapping[str, Any]) -> ExecutionBundle:
+    # Version negotiation precedes field validation: an unreadable schema is a
+    # different failure from a malformed field, and keeps its own error type.
     schema_version = _required_schema_version(payload)
     if schema_version != BUNDLE_PAYLOAD_SCHEMA_VERSION:
         raise BundlePayloadSchemaError(
             "bundle payload schema_version must be "
             f"{BUNDLE_PAYLOAD_SCHEMA_VERSION!r}; got {schema_version!r}"
         )
-    contract_payload = _required_mapping(payload, "contract", "bundle payload")
-    manifest_payload = _required_mapping(payload, "manifest", "bundle payload")
-    plan_payload = _required_mapping(payload, "plan", "bundle payload")
-    contract = DataContract(
-        instrument_ids=tuple(
-            _load_instrument_id(item)
-            for item in _required_sequence(contract_payload, "instrument_ids", "DataContract")
-        ),
-        required_arrays=tuple(
-            _required_sequence(contract_payload, "required_arrays", "DataContract")
-        ),
-        base_currency=_required_value(contract_payload, "base_currency", "DataContract"),
-        timeframe=_required_value(contract_payload, "timeframe", "DataContract"),
-        missing_index=_required_value(contract_payload, "missing_index", "DataContract"),
-        lookback_bars=_required_value(contract_payload, "lookback_bars", "DataContract"),
-        futures=tuple(_required_sequence(contract_payload, "futures", "DataContract")),
-        exchange=tuple(
-            _load_instrument_id(item)
-            for item in _required_sequence(contract_payload, "exchange", "DataContract")
-        ),
-        # Wire decoding only: presence/type/known-value. The present-iff-futures
-        # semantic is DataContract's own construction rule.
-        adjustment_mode=_load_adjustment_mode(contract_payload),
-        # Absent on pre-tggo.3 payloads: nothing recorded. Live's recorded-marking
-        # resolver fails closed per instrument, so an old wheel cannot silently
-        # default a thin leg to a sparse LAST feed.
-        mark_modes={
-            _load_instrument_id(key): value
-            for key, value in _ensure_mapping(
-                contract_payload.get("mark_modes", {}), "DataContract.mark_modes"
-            ).items()
-        },
+    _require_wire_keys(payload)
+    try:
+        loaded = _PAYLOAD_ADAPTER.validate_python(payload)
+    except PydanticValidationError as error:
+        # A structurally sound payload can still describe an inconsistent
+        # contract (futures without an adjustment mode). That is the domain's
+        # verdict, not the wire's, so its own error crosses this boundary
+        # untranslated — only malformed-payload failures become field errors.
+        _reraise_domain_error(error)
+        raise BundlePayloadFieldError(_format_payload_errors(error)) from error
+    return ExecutionBundle(
+        contract=loaded.contract,
+        manifest=loaded.manifest,
+        plan=loaded.plan,
     )
-    manifest = BundleManifest(
-        run_id=_required_value(manifest_payload, "run_id", "BundleManifest"),
-        role=_required_value(manifest_payload, "role", "BundleManifest"),
-        candidate_key=_required_value(manifest_payload, "candidate_key", "BundleManifest"),
-        component_source_hashes=_required_mapping(
-            manifest_payload, "component_source_hashes", "BundleManifest"
-        ),
-        instrument_ids=tuple(
-            _load_instrument_id(item)
-            for item in _required_sequence(manifest_payload, "instrument_ids", "BundleManifest")
-        ),
-    )
-    plan = LockedExecutionPlan(
-        strategy=_load_component_spec(_required_mapping(plan_payload, "strategy", "plan")),
-        indicators=tuple(
-            _load_component_spec(_ensure_mapping(item, "LockedExecutionPlan.indicators item"))
-            for item in _required_sequence(plan_payload, "indicators", "LockedExecutionPlan")
-        ),
-        instrument_bands=_load_instrument_bands(
-            _required_mapping(plan_payload, "instrument_bands", "LockedExecutionPlan")
-        ),
-        direction=_required_value(plan_payload, "direction", "LockedExecutionPlan"),
-    )
-    return ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
 
 
 def load_installed_bundle(package: str) -> ExecutionBundle:
@@ -151,113 +115,53 @@ def load_installed_bundle(package: str) -> ExecutionBundle:
     return load_bundle_payload(json.loads(manifest.read_text(encoding="utf-8")))
 
 
-def _dump_component_spec(spec: ComponentSpec) -> dict[str, Any]:
-    return {
-        "family": spec.family,
-        "component_id": spec.component_id,
-        "module": spec.module,
-        "input_names": list(spec.input_names),
-        "output_names": list(spec.output_names),
-        "params": dict(spec.params),
-    }
+# A v5 payload states every field it carries — a defaulted field on the type is
+# still mandatory on the wire, so an old wheel missing one fails loudly instead
+# of silently acquiring today's default. This is a presence-in-raw rule, not a
+# property of the constructed type (ADR-0012), so it stays here rather than
+# becoming a second, wire-only view of the bundle types. The two exceptions are
+# recorded absences: a bundle with no futures has no adjustment_mode, and a
+# pre-tggo.3 wheel recorded no mark_modes.
+_OPTIONAL_WIRE_KEYS = {"contract": frozenset({"adjustment_mode", "mark_modes"})}
 
 
-def _load_component_spec(payload: Mapping[str, Any]) -> ComponentSpec:
-    return ComponentSpec(
-        family=_required_value(payload, "family", "ComponentSpec"),
-        component_id=_required_value(payload, "component_id", "ComponentSpec"),
-        module=_required_value(payload, "module", "ComponentSpec"),
-        input_names=tuple(_required_sequence(payload, "input_names", "ComponentSpec")),
-        output_names=tuple(_required_sequence(payload, "output_names", "ComponentSpec")),
-        params=_required_mapping(payload, "params", "ComponentSpec"),
-    )
+def _require_wire_keys(payload: Mapping[str, Any]) -> None:
+    for section, declared in _PAYLOAD_SECTION_FIELDS.items():
+        raw = payload.get(section)
+        if not isinstance(raw, Mapping):
+            continue  # shape is pydantic's to reject
+        optional = _OPTIONAL_WIRE_KEYS.get(section, frozenset())
+        missing = sorted(declared - optional - set(raw))
+        if missing:
+            raise BundlePayloadFieldError(
+                f"{section} is missing required field{'s' if len(missing) > 1 else ''} "
+                f"{', '.join(repr(name) for name in missing)}"
+            )
+        # Absence is how the wire says "not recorded"; an explicit null is not a
+        # synonym for it, and must not reach the type's own optional default.
+        nulled = sorted(name for name in optional if name in raw and raw[name] is None)
+        if nulled:
+            raise BundlePayloadFieldError(
+                f"{section} field{'s' if len(nulled) > 1 else ''} "
+                f"{', '.join(repr(name) for name in nulled)} must be omitted when unset, not null"
+            )
 
 
-def _dump_instrument_bands(bands: Mapping[InstrumentId, DriftBand]) -> dict[str, dict[str, float]]:
-    return {
-        instrument_id.value: _dump_drift_band(bands[instrument_id])
-        for instrument_id in sorted(bands, key=lambda item: item.value)
-    }
+def _reraise_domain_error(error: PydanticValidationError) -> None:
+    """Re-raise the domain's own verdict when it caused the validation failure."""
+    for entry in error.errors():
+        cause = entry.get("ctx", {}).get("error")
+        if isinstance(cause, DataContractError):
+            raise cause
 
 
-def _load_instrument_bands(payload: Mapping[str, Any]) -> dict[InstrumentId, DriftBand]:
-    return {
-        _load_instrument_id(instrument_id): _load_drift_band(
-            _ensure_mapping(value, "LockedExecutionPlan.instrument_bands item")
-        )
-        for instrument_id, value in payload.items()
-    }
-
-
-def _dump_drift_band(band: DriftBand) -> dict[str, float]:
-    return {
-        "up": band.up,
-        "down": band.down,
-        "destination_fraction": band.destination_fraction,
-    }
-
-
-def _load_drift_band(payload: Mapping[str, Any]) -> DriftBand:
-    return DriftBand(
-        up=_required_value(payload, "up", "DriftBand"),
-        down=_required_value(payload, "down", "DriftBand"),
-        # Optional: older bundles carry no destination; 1.0 is their exact
-        # trade-to-target behaviour (forward-safe default).
-        destination_fraction=payload.get("destination_fraction", 1.0),
-    )
-
-
-def _load_adjustment_mode(
-    contract_payload: Mapping[str, Any],
-) -> ContinuousFutureAdjustmentType | None:
-    if "adjustment_mode" not in contract_payload:
-        return None
-    value = contract_payload["adjustment_mode"]
-    if not isinstance(value, str):
-        raise BundlePayloadFieldError(
-            "DataContract.adjustment_mode must be a supported mode string when "
-            f"present; got {value!r}"
-        )
-    try:
-        return _ADJUSTMENT_MODE_BY_VALUE[value]
-    except KeyError:
-        supported = sorted(_ADJUSTMENT_MODE_BY_VALUE)
-        raise BundlePayloadFieldError(
-            f"DataContract.adjustment_mode {value!r} is not a supported mode; "
-            f"expected one of {supported}"
-        ) from None
-
-
-def _dump_instrument_id(instrument_id: InstrumentId) -> str:
-    return instrument_id.value
-
-
-def _load_instrument_id(value: Any) -> InstrumentId:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"InstrumentId must be a non-empty string; got {value!r}")
-    return InstrumentId.from_str(value)
-
-
-def _required_mapping(
-    payload: Mapping[str, Any], field: str, owner: str
-) -> Mapping[str, Any]:
-    return _ensure_mapping(_required_value(payload, field, owner), f"{owner}.{field}")
-
-
-def _required_sequence(payload: Mapping[str, Any], field: str, owner: str) -> list[Any]:
-    value = _required_value(payload, field, owner)
-    if not isinstance(value, list):
-        raise ValueError(f"{owner}.{field} must be a list; got {value!r}")
-    return value
-
-
-def _required_value(payload: Mapping[str, Any], field: str, owner: str) -> Any:
-    try:
-        return payload[field]
-    except KeyError:
-        raise BundlePayloadFieldError(
-            f"{owner} is missing required field {field!r}"
-        ) from None
+def _format_payload_errors(error: PydanticValidationError) -> str:
+    """Accumulate every payload error into one message, dotted-path first."""
+    messages: list[str] = []
+    for entry in error.errors(include_url=False):
+        loc = ".".join(str(part) for part in entry.get("loc", ()))
+        messages.append(f"{loc}: {entry['msg']}" if loc else entry["msg"])
+    return "; ".join(messages)
 
 
 def _required_schema_version(payload: Mapping[str, Any]) -> Any:
@@ -267,9 +171,3 @@ def _required_schema_version(payload: Mapping[str, Any]) -> Any:
         raise BundlePayloadSchemaError(
             "bundle payload is missing required field 'schema_version'"
         ) from None
-
-
-def _ensure_mapping(value: Any, label: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{label} must be a mapping; got {value!r}")
-    return value

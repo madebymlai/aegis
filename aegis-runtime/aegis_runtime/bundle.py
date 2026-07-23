@@ -4,12 +4,20 @@ import importlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
 import numpy as np
 import pandas as pd
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
+from pydantic import (
+    AfterValidator,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    with_config,
+)
 
 from aegis_runtime.currency import CurrencyConversion
 from aegis_runtime.drift_band import DriftBand
@@ -47,6 +55,51 @@ class MissingIndexPolicy(str, Enum):
     RAISE = "raise"
 
 
+# ── Wire vocabulary ────────────────────────────────────────────────────────
+#
+# The serialized Execution Bundle is the research→live seam, so each field's
+# wire form is declared exactly once, as an annotation on the type that owns it,
+# and both directions are derived from it — there is no second module restating
+# the payload shape. Nautilus types are adapted through `Annotated` hooks rather
+# than `__get_pydantic_core_schema__`: we do not own them and need no JSON
+# Schema, which is pydantic's documented cue to prefer the annotation form.
+
+WireInstrumentId = Annotated[
+    InstrumentId,
+    BeforeValidator(lambda v: InstrumentId.from_str(v) if isinstance(v, str) else v),
+    PlainSerializer(lambda v: v.value, return_type=str),
+]
+
+
+def _wire_adjustment_mode(
+    mode: ContinuousFutureAdjustmentType,
+) -> ContinuousFutureAdjustmentType:
+    """The Nautilus enum has forward members; the wire vocabulary does not."""
+    if mode not in SUPPORTED_ADJUSTMENT_MODES:
+        supported = sorted(member.value for member in SUPPORTED_ADJUSTMENT_MODES)
+        raise ValueError(
+            f"{mode.value!r} is not a supported mode; expected one of {supported}"
+        )
+    return mode
+
+
+WireAdjustmentMode = Annotated[
+    ContinuousFutureAdjustmentType,
+    AfterValidator(_wire_adjustment_mode),
+    PlainSerializer(lambda v: v.value, return_type=str),
+]
+
+WireMissingIndex = Annotated[
+    MissingIndexPolicy,
+    PlainSerializer(lambda v: v.value, return_type=str),
+]
+
+# The bundle types stay stdlib dataclasses: construction keeps raising
+# DataContractError from __post_init__, unwrapped. Pydantic validates *into*
+# them at the wire boundary only, where bundle_loader translates its errors.
+BUNDLE_TYPE_CONFIG = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+
 class DataContractError(ValueError):
     """The Execution Bundle data contract is malformed or violated."""
 
@@ -76,12 +129,13 @@ class MarketDataBundle:
 
 
 @dataclass(frozen=True)
+@with_config(BUNDLE_TYPE_CONFIG)
 class DataContract:
-    instrument_ids: tuple[InstrumentId, ...]
+    instrument_ids: tuple[WireInstrumentId, ...]
     required_arrays: tuple[str, ...]
     base_currency: str
     timeframe: str
-    missing_index: MissingIndexPolicy
+    missing_index: WireMissingIndex
     lookback_bars: int = 0
     # Bare continuous-future root symbols (e.g. ``("ES",)``), declared identically to
     # research's ``DataConfig.futures``. Each root must resolve to exactly one synthetic
@@ -93,19 +147,19 @@ class DataContract:
     # never compute columns or rebalance targets — their bars convert non-base-quoted
     # tradeables to the book's base currency (research parity) and mark the FX rate
     # sizing reads.
-    exchange: tuple[InstrumentId, ...] = ()
+    exchange: tuple[WireInstrumentId, ...] = ()
     # The continuous-futures re-basing algebra the locked Run's frames were actually
     # materialised under — a recorded historical fact, never a current code default.
     # Present iff ``futures`` declares roots. Independent of ``exchange``: both
     # backward modes are valid with or without FX conversion legs.
-    adjustment_mode: ContinuousFutureAdjustmentType | None = None
+    adjustment_mode: WireAdjustmentMode | None = None
     # Recorded mark modes (aegis-rd-tggo.3): how each leg's mark was resolved in
     # research (LAST / MID / QUOTE), pinned at export so live subscribes exactly
     # the mark the run validated and never re-derives it. Keys are declared
     # loadable ids; continuous roots and their dated legs are LAST by
     # construction and are never recorded. Only the mark travels — the research
     # fill/sim projection is never serialized.
-    mark_modes: Mapping[InstrumentId, str] = field(default_factory=dict)
+    mark_modes: Mapping[WireInstrumentId, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
@@ -160,18 +214,20 @@ class DataContract:
 
 
 @dataclass(frozen=True)
+@with_config(BUNDLE_TYPE_CONFIG)
 class BundleManifest:
     run_id: str
     role: str
     candidate_key: str
     component_source_hashes: Mapping[str, str]
-    instrument_ids: tuple[InstrumentId, ...]
+    instrument_ids: tuple[WireInstrumentId, ...]
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "BundleManifest.instrument_ids")
 
 
 @dataclass(frozen=True)
+@with_config(BUNDLE_TYPE_CONFIG)
 class ComponentSpec:
     family: str
     component_id: str
@@ -182,12 +238,16 @@ class ComponentSpec:
 
 
 @dataclass(frozen=True)
+@with_config(BUNDLE_TYPE_CONFIG)
 class LockedExecutionPlan:
     strategy: ComponentSpec
     indicators: tuple[ComponentSpec, ...]
-    instrument_bands: Mapping[InstrumentId, DriftBand]
+    instrument_bands: Mapping[WireInstrumentId, DriftBand]
     direction: str
-    _exposure_limits: ExposureLimits = field(init=False, repr=False, compare=False)
+    # Derived at construction from `direction`; never serialized.
+    _exposure_limits: Annotated[ExposureLimits, Field(exclude=True)] = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         for instrument_id, band in self.instrument_bands.items():
@@ -325,14 +385,18 @@ class ExecutionBundle:
             expected_shape=(len(close), n_candidates * n_symbols),
             label=f"strategy {self._plan.strategy.component_id} allocation",
         )
-        weights = pd.DataFrame(arr[:, :n_symbols], index=close.index, columns=close.columns)
+        weights = pd.DataFrame(
+            arr[:, :n_symbols], index=close.index, columns=close.columns
+        )
         weights.columns.name = INSTRUMENT_ID_LEVEL
         _assert_latest_row_not_nan(weights)
         validate_exposure(weights, self._plan.exposure_limits)
         return weights
 
 
-def _validate_instrument_ids(instrument_ids: Sequence[InstrumentId], label: str) -> None:
+def _validate_instrument_ids(
+    instrument_ids: Sequence[InstrumentId], label: str
+) -> None:
     seen: set[str] = set()
     duplicates: set[str] = set()
     for instrument_id in instrument_ids:
@@ -444,7 +508,9 @@ def _continuous_instrument_ids(
     continuous: list[InstrumentId] = []
     for root in roots:
         matches = [
-            instrument_id for instrument_id in instrument_ids if instrument_id.symbol.value == root
+            instrument_id
+            for instrument_id in instrument_ids
+            if instrument_id.symbol.value == root
         ]
         if not matches:
             raise ValueError(
@@ -470,7 +536,9 @@ def _compute_indicators(
     outputs: dict[str, np.ndarray] = {}
     for spec in indicators:
         module = _load_component_module(spec.module)
-        result = module.run(data, n_candidates=1, **_candidate_param_lists(spec.params, 1))
+        result = module.run(
+            data, n_candidates=1, **_candidate_param_lists(spec.params, 1)
+        )
         if not isinstance(result, Mapping):
             raise TypeError(f"indicator {spec.component_id!r} must return a mapping")
         missing = sorted(set(spec.output_names) - set(result))
@@ -484,12 +552,16 @@ def _compute_indicators(
             if name in outputs:
                 raise ValueError(f"duplicate indicator output {name!r}")
             outputs[name] = _validated_array(
-                result[name], expected_shape=expected_shape, label=f"indicator output {name!r}"
+                result[name],
+                expected_shape=expected_shape,
+                label=f"indicator output {name!r}",
             )
     return outputs
 
 
-def _candidate_param_lists(params: Mapping[str, Any], n_candidates: int) -> dict[str, list[Any]]:
+def _candidate_param_lists(
+    params: Mapping[str, Any], n_candidates: int
+) -> dict[str, list[Any]]:
     return {name: [value] * n_candidates for name, value in params.items()}
 
 
@@ -500,7 +572,9 @@ def _load_component_module(module_name: str) -> Any:
 def _slice_data(
     data: MarketDataBundle, index: pd.Index, required_arrays: Sequence[str]
 ) -> MarketDataBundle:
-    return MarketDataBundle({name: data.array(name).loc[index] for name in required_arrays})
+    return MarketDataBundle(
+        {name: data.array(name).loc[index] for name in required_arrays}
+    )
 
 
 def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> None:
@@ -523,7 +597,10 @@ def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> N
             )
         if not frame.index.is_unique:
             raise ValueError(f"market data array {name!r} index must be unique")
-        if contract.missing_index is not MissingIndexPolicy.NAN and frame.isna().any().any():
+        if (
+            contract.missing_index is not MissingIndexPolicy.NAN
+            and frame.isna().any().any()
+        ):
             raise MarketDataMissingIndexError(
                 f"market data array {name!r} contains NaN under "
                 f"missing_index={contract.missing_index.value!r}"
@@ -534,10 +611,14 @@ def _validate_market_data(prices: MarketDataBundle, contract: DataContract) -> N
             raise ValueError("market data arrays must share one index")
 
 
-def _validated_array(value: Any, *, expected_shape: tuple[int, int], label: str) -> np.ndarray:
+def _validated_array(
+    value: Any, *, expected_shape: tuple[int, int], label: str
+) -> np.ndarray:
     arr = np.asarray(value)
     if arr.shape != expected_shape:
-        raise ValueError(f"{label} has expected shape {expected_shape}; actual shape {arr.shape}")
+        raise ValueError(
+            f"{label} has expected shape {expected_shape}; actual shape {arr.shape}"
+        )
     return arr
 
 
