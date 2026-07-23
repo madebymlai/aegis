@@ -69,7 +69,7 @@ def test_gbp_pence_leg_folds_the_sub_unit_factor_into_the_rate() -> None:
         base_currency="EUR",
     )
 
-    assert conversion.rate_by_instrument[_VOD].tolist() == pytest.approx([1.17 * 0.01, 1.18 * 0.01])
+    assert conversion.rate_by_instrument[_VOD].tolist() == pytest.approx([1.17 / 100.0, 1.18 / 100.0])
     # The leg is normalized to its major currency for foreign-leg detection.
     assert conversion.currency_by_instrument_id[_VOD] == "GBP"
 
