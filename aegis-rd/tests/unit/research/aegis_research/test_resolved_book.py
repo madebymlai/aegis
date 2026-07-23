@@ -125,6 +125,7 @@ def test_resolve_consumes_the_complete_run_data_tradeable_universe() -> None:
         instrument_resolution=resolution,
         currency_conversion=conversion,
         size_increment_by_instrument={aapl: 1.0, es: 0.25},
+        multiplier_by_instrument={aapl: 1.0, es: 50.0},
     )
     portfolio = make_portfolio_config(
         fees=0.0005,
@@ -139,6 +140,7 @@ def test_resolve_consumes_the_complete_run_data_tradeable_universe() -> None:
     assert book.instrument_bands == resolution.instrument_bands(portfolio)
     assert book.futures_roots == ("ES",)
     assert book.size_increment_by_instrument == {aapl: 1.0, es: 0.25}
+    assert book.multiplier_by_instrument == {aapl: 1.0, es: 50.0}
 
 
 def _id(value: str) -> InstrumentId:

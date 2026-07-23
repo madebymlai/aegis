@@ -306,6 +306,46 @@ class TestSizeOrderSizeIncrement:
         )
         assert qty == pytest.approx(1.0)
 
+    def test_half_of_first_increment_rounds_to_even_zero(self):
+        meta = InstrumentSizing(currency="EUR", size_increment=1.0)
+        qty = size_order(
+            notional_eur=50.0,
+            price=100.0,
+            fx_rate=1.0,
+            instrument=meta,
+        )
+        assert qty is None
+
+    def test_one_and_a_half_increments_rounds_to_even_two(self):
+        meta = InstrumentSizing(currency="EUR", size_increment=1.0)
+        qty = size_order(
+            notional_eur=150.0,
+            price=100.0,
+            fx_rate=1.0,
+            instrument=meta,
+        )
+        assert qty == pytest.approx(2.0)
+
+    def test_one_point_nine_increments_rounds_to_nearest_two(self):
+        meta = InstrumentSizing(currency="EUR", size_increment=1.0)
+        qty = size_order(
+            notional_eur=190.0,
+            price=100.0,
+            fx_rate=1.0,
+            instrument=meta,
+        )
+        assert qty == pytest.approx(2.0)
+
+    def test_two_and_a_half_increments_rounds_to_even_two(self):
+        meta = InstrumentSizing(currency="EUR", size_increment=1.0)
+        qty = size_order(
+            notional_eur=250.0,
+            price=100.0,
+            fx_rate=1.0,
+            instrument=meta,
+        )
+        assert qty == pytest.approx(2.0)
+
     def test_large_increment(self):
         """Instruments with large size increments (e.g., 100 shares)."""
         meta = InstrumentSizing(currency="EUR", size_increment=100.0)

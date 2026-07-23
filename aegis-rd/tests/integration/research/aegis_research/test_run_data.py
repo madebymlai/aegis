@@ -92,7 +92,7 @@ def test_load_run_data_returns_an_eager_native_bundle_from_one_catalog_window(
     assert run_data.replay_index.equals(run_data.bundle.array("Close").index)
     assert run_data.instrument_count == 2
     identity = to_builtin(run_data.identity)
-    assert identity["schema_version"] == "run_data.v1"
+    assert identity["schema_version"] == "run_data.v2"
     assert identity["requested_instrument_ids"] == [
         "MSFT.XNAS",
         "AAPL.XNAS",
@@ -309,7 +309,7 @@ def test_load_run_data_applies_one_catalog_currency_conversion_to_the_bundle(
     assert not hasattr(run_data, "pnl_open")
 
 
-def test_load_run_data_carries_verified_distributions_and_native_size_increments(
+def test_load_run_data_carries_verified_distributions_and_native_instrument_facts(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -348,6 +348,8 @@ def test_load_run_data_carries_verified_distributions_and_native_size_increments
     assert run_data.distributions[0].ex_date == distribution.ex_date
     assert run_data.distributions[0].amount == pytest.approx(0.42)
     assert run_data.size_increment_by_instrument == {aapl: 1.0}
+    assert run_data.multiplier_by_instrument == {aapl: 1.0}
+    assert run_data.identity.multiplier_by_instrument == {aapl: 1.0}
 
 
 def test_load_run_data_persists_and_warm_reads_custom_arrays_without_provider_identity(

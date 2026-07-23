@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import NoReturn
 
@@ -117,6 +118,7 @@ class RunDataIdentity:
     currency_by_instrument_id: dict[InstrumentId, str]
     continuous_root_currencies: dict[InstrumentId, str]
     size_increment_by_instrument: dict[InstrumentId, float]
+    multiplier_by_instrument: dict[InstrumentId, float]
     distribution_coverage: tuple[dict[str, object], ...]
     adjustment_mode: str | None
 
@@ -128,6 +130,7 @@ class RunData:
     currency_conversion: CurrencyConversion
     distributions: tuple[Distribution, ...]
     size_increment_by_instrument: dict[InstrumentId, float]
+    multiplier_by_instrument: dict[InstrumentId, float]
     adjustment_mode: ContinuousFutureAdjustmentType | None
     identity: RunDataIdentity
 
@@ -209,6 +212,7 @@ def load_run_data(
     )
     bundle = MarketDataBundle(currency_conversion.apply(tradeable_bundle.arrays))
     size_increments = _size_increments(resolution, window, port)
+    multipliers = _multipliers(resolution, window, port)
     index = next(iter(bundle.arrays.values())).index
     return RunData(
         bundle=bundle,
@@ -216,9 +220,10 @@ def load_run_data(
         currency_conversion=currency_conversion,
         distributions=window.distributions,
         size_increment_by_instrument=size_increments,
+        multiplier_by_instrument=multipliers,
         adjustment_mode=adjustment_mode,
         identity=RunDataIdentity(
-            schema_version="run_data.v1",
+            schema_version="run_data.v2",
             requested_instrument_ids=requested_ids,
             tradeables=resolution.tradeables,
             loaded_arrays=tuple(bundle.arrays),
@@ -234,6 +239,7 @@ def load_run_data(
             currency_by_instrument_id=dict(currency_conversion.currency_by_instrument_id),
             continuous_root_currencies=continuous_currencies,
             size_increment_by_instrument=size_increments,
+            multiplier_by_instrument=multipliers,
             distribution_coverage=(*window.distribution_coverage, *continuous_coverage),
             adjustment_mode=adjustment_mode.value if adjustment_mode is not None else None,
         ),
@@ -304,14 +310,38 @@ def _size_increments(
     window: CatalogWindow,
     port: CatalogBackedDataPort,
 ) -> dict[InstrumentId, float]:
-    increments: dict[InstrumentId, float] = {}
+    return _instrument_facts(
+        resolution,
+        window.size_increment_by_instrument,
+        port.continuous_size_increment,
+    )
+
+
+def _multipliers(
+    resolution: InstrumentResolution,
+    window: CatalogWindow,
+    port: CatalogBackedDataPort,
+) -> dict[InstrumentId, float]:
+    return _instrument_facts(
+        resolution,
+        window.multiplier_by_instrument,
+        port.continuous_multiplier,
+    )
+
+
+def _instrument_facts(
+    resolution: InstrumentResolution,
+    native_facts: Mapping[InstrumentId, float],
+    continuous_fact: Callable[[str], float],
+) -> dict[InstrumentId, float]:
+    facts: dict[InstrumentId, float] = {}
     for tradeable in resolution.tradeables:
-        increments[tradeable.instrument_id] = (
-            window.size_increment_by_instrument[tradeable.instrument_id]
+        facts[tradeable.instrument_id] = (
+            native_facts[tradeable.instrument_id]
             if tradeable.continuous_root is None
-            else port.continuous_size_increment(tradeable.continuous_root)
+            else continuous_fact(tradeable.continuous_root)
         )
-    return increments
+    return facts
 
 
 def _tradeable_bundle(

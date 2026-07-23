@@ -4,9 +4,10 @@
 every Candidate's book under: the declared :class:`PortfolioConfig` together
 with the per-instrument facts resolved from it — the FX-adjusted trade-fee
 series, the instrument → :class:`DriftBand` map (the same one the bundle
-carries), and the continuous-future roots. :meth:`ResolvedBook.resolve` owns
-all three resolutions, so an incoherent config/facts pairing cannot exist as a
-value; it is not the book of positions (that is the simulated portfolio).
+carries), the continuous-future roots, and each instrument's execution facts.
+:meth:`ResolvedBook.resolve` owns these resolutions, so an incoherent
+config/facts pairing cannot exist as a value; it is not the book of positions
+(that is the simulated portfolio).
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ class ResolvedBook:
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None
     futures_roots: tuple[str, ...] = ()
     size_increment_by_instrument: Mapping[InstrumentId, float] | None = None
+    multiplier_by_instrument: Mapping[InstrumentId, float] | None = None
 
     @classmethod
     def resolve(
@@ -51,7 +53,8 @@ class ResolvedBook:
         A leg is non-base by its currency *derived from the resolved Instrument*
         (the conversion's ``currency_by_instrument_id``), never a configured field.
         The structural resolution carries native and continuous tradeables together,
-        so fee, band, root, and size facts cannot describe different universes.
+        so fee, band, root, increment, and multiplier facts cannot describe
+        different universes.
         """
         resolution = run_data.instrument_resolution
         instrument_ids = resolution.instrument_ids
@@ -71,6 +74,7 @@ class ResolvedBook:
                 if tradeable.continuous_root is not None
             ),
             size_increment_by_instrument=run_data.size_increment_by_instrument,
+            multiplier_by_instrument=run_data.multiplier_by_instrument,
         )
 
 

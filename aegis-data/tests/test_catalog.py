@@ -1614,6 +1614,7 @@ def test_catalog_port_load_window_returns_one_coherent_value(
     assert set(window.ohlcv) == {equity_id, fx_pair}
     assert list(window.ohlcv[equity_id]["Close"]) == [100.0, 100.0, 100.0]
     assert set(window.instruments) == {equity_id, fx_pair}
+    assert window.multiplier_by_instrument == {equity_id: 1.0, fx_pair: 1.0}
     assert [(event.ex_date, event.amount) for event in window.distributions] == [
         (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
     ]

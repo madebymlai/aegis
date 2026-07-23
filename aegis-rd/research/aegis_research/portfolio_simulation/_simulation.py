@@ -77,6 +77,7 @@ _VBT_PRICE_BY_FILL_TIMING: dict[str, str | None] = {
     "same_close": None,
 }
 _gate_nb = njit(gate)
+_SIZE_TYPE_AMOUNT = int(SizeType.Amount)
 _SIZE_TYPE_TARGET_PERCENT = int(SizeType.TargetPercent)
 _DIRECTION_BOTH = int(Direction.Both)
 
@@ -130,7 +131,7 @@ def _vbt_staticized_cache_dir() -> Path:
             cache_root
             / "aegis-rd"
             / "vbt-staticization"
-            / f"driftband-{_vbt_staticized_cache_key()}"
+            / f"pre-order-segment-{_vbt_staticized_cache_key()}"
         )
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
@@ -192,6 +193,7 @@ def _band_pre_order_segment_nb(
     up_arr,
     down_arr,
     dest_arr,
+    size_increments,
     cash_earnings,
     margin_day_offsets,
     last_margin_accrual_i,
@@ -255,6 +257,24 @@ def _band_pre_order_segment_nb(
         if resolved_w == realized_w:
             c.order_info[col]["size"] = np.nan
         elif sizing_group_value != 0.0:
+            increment = float(flex_select_nb(size_increments, order_i, col))
+            if not np.isnan(increment):
+                order_val_price = _order_val_price_nb(c, price, val_price, order_i, col)
+                multiplier = flex_select_1d_pc_nb(c.multiplier, col)
+                raw_delta = (
+                    (resolved_w - realized_w)
+                    * group_value
+                    / (order_val_price * multiplier)
+                )
+                quantity = round(raw_delta / increment) * increment
+                if quantity == 0.0:
+                    c.order_info[col]["size"] = np.nan
+                else:
+                    c.order_info[col]["size"] = quantity
+                    c.order_info[col]["size_type"] = _SIZE_TYPE_AMOUNT
+                    c.order_info[col]["direction"] = _DIRECTION_BOTH
+                    c.order_info[col]["allow_partial"] = False
+                continue
             # Re-express the order as a signed target-percent so the executor
             # re-resolves it against ``last_value`` (sizing_group_value) - which lags
             # a bar - cancelling the engine's stale sizing back to ``resolved_w`` of
@@ -382,6 +402,8 @@ def _build_portfolio(
     )
     exec_kwargs = _execution_settings(config.fill_timing, open_frame)
     band_up, band_down, band_destination = _band_arrays(allocations, config, book.instrument_bands)
+    size_increments = _size_increments(allocations.columns, book)
+    multipliers = _multipliers(allocations.columns, book)
     # The gate reads targets from our own copy of the allocations: ``order_mode``
     # overwrites its internal ``size`` array with resolved order amounts before the
     # pre-order-segment callback runs.
@@ -411,6 +433,7 @@ def _build_portfolio(
             band_up,
             band_down,
             band_destination,
+            size_increments,
             vbt.Rep("cash_earnings"),
             margin_day_offsets,
             last_margin_accrual_i,
@@ -426,9 +449,9 @@ def _build_portfolio(
         sim_end=len(price_frame.index),
         fees=_resolve_fees(price_frame, config, book.fees_by_symbol),
         fixed_fees=config.fixed_fee,
-        size_granularity=_size_granularity(allocations.columns, book),
         slippage=config.slippage,
         init_cash=config.init_cash,
+        multiplier=multipliers,
         leverage=SLEEVE_GROSS_LIMIT * _SLEEVE_GROSS_LEVERAGE_MULTIPLIER,
         leverage_mode=VBT_LEVERAGE_MODE,
         cash_earnings=vbt.RepEval("np.full(wrapper.shape_2d, 0.0)"),
@@ -447,7 +470,7 @@ def _build_portfolio(
     return pf
 
 
-def _size_granularity(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
+def _size_increments(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
     """Broadcast catalog size increments over each Candidate's symbol columns."""
 
     if book.size_increment_by_instrument is None:
@@ -467,6 +490,28 @@ def _size_granularity(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
     if (~np.isfinite(increments) | (increments <= 0.0)).any():
         raise ValueError("portfolio simulation size increments must be finite and positive")
     return increments.reshape(1, -1)
+
+
+def _multipliers(columns: pd.Index, book: ResolvedBook) -> np.ndarray:
+    """Broadcast catalog contract multipliers over Candidate symbol columns."""
+
+    if book.multiplier_by_instrument is None:
+        return np.ones(len(columns), dtype=float)
+    symbols = tuple(cast(InstrumentId, symbol) for symbol in columns.get_level_values(SYMBOL_LEVEL))
+    missing = sorted(
+        {symbol.value for symbol in symbols if symbol not in book.multiplier_by_instrument}
+    )
+    if missing:
+        raise ValueError(
+            f"portfolio simulation has no catalog multiplier for tradeable columns: {missing}"
+        )
+    multipliers = np.array(
+        [book.multiplier_by_instrument[symbol] for symbol in symbols],
+        dtype=float,
+    )
+    if (~np.isfinite(multipliers) | (multipliers <= 0.0)).any():
+        raise ValueError("portfolio simulation multipliers must be finite and positive")
+    return multipliers
 
 
 def _margin_day_offsets(index: pd.Index) -> np.ndarray:

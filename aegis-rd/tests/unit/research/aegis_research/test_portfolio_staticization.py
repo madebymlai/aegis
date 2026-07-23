@@ -32,7 +32,7 @@ def test_staticized_cache_dir_uses_xdg_cache_home(tmp_path, monkeypatch) -> None
     resolved = _vbt_staticized_cache_dir()
 
     assert resolved.parent == xdg_cache / "aegis-rd" / "vbt-staticization"
-    assert resolved.name.startswith("driftband-")
+    assert resolved.name.startswith("pre-order-segment-")
     assert resolved.is_dir()
 
 

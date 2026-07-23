@@ -21,7 +21,7 @@ from aegis_data._ensure_coverage import (
     ensure_coverage,
 )
 from aegis_data.distributions import Distribution, distribution_records
-from aegis_data.instrument import native_size_increment
+from aegis_data.instrument import native_multiplier, native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.ohlcv import bars_to_ohlcv
 from aegis_data.roll import DatedContract
@@ -128,13 +128,14 @@ class CatalogWindow:
     """One coherent catalog read: the requested window's run-constant facts (ADR-0012).
 
     OHLCV per requested id, complete definitions (guaranteed — the read fails
-    loud naming every missing id before verification), native size increments,
+    loud naming every missing id before verification), native sizing facts,
     verified distributions, and their coverage report.
     """
 
     ohlcv: dict[InstrumentId, pd.DataFrame]
     instruments: dict[InstrumentId, "Instrument"]
     size_increment_by_instrument: dict[InstrumentId, float]
+    multiplier_by_instrument: dict[InstrumentId, float]
     records: tuple[Data, ...]
     distribution_coverage: tuple[dict[str, Any], ...] = ()
 
@@ -259,6 +260,10 @@ class CatalogBackedDataPort:
             instruments=instruments,
             size_increment_by_instrument={
                 instrument_id: native_size_increment(instrument)
+                for instrument_id, instrument in instruments.items()
+            },
+            multiplier_by_instrument={
+                instrument_id: native_multiplier(instrument)
                 for instrument_id, instrument in instruments.items()
             },
             records=verified.records,
@@ -387,24 +392,51 @@ class CatalogBackedDataPort:
         definitions = self._complete_definitions((instrument_id,))
         return native_size_increment(definitions[instrument_id])
 
+    def multiplier_for(self, instrument_id: InstrumentId) -> float:
+        """Return the native multiplier from one stored instrument definition."""
+
+        definitions = self._complete_definitions((instrument_id,))
+        return native_multiplier(definitions[instrument_id])
+
     def continuous_size_increment(self, root: str) -> float:
         """Return the one native increment shared by a root's dated legs."""
+
+        return self._continuous_instrument_fact(
+            root,
+            fact_name="size increments",
+            extract=native_size_increment,
+        )
+
+    def continuous_multiplier(self, root: str) -> float:
+        """Return the one native multiplier shared by a root's dated legs."""
+
+        return self._continuous_instrument_fact(
+            root,
+            fact_name="multipliers",
+            extract=native_multiplier,
+        )
+
+    def _continuous_instrument_fact(
+        self,
+        root: str,
+        *,
+        fact_name: str,
+        extract: Callable[["Instrument"], float],
+    ) -> float:
+        """Resolve one run-constant native fact shared by all dated legs."""
 
         leg_ids = tuple(
             InstrumentId.from_str(leg.symbol)
             for leg in self.resolve_continuous(root).legs
         )
         definitions = self._complete_definitions(leg_ids)
-        increments = {
-            native_size_increment(definitions[instrument_id])
-            for instrument_id in leg_ids
-        }
-        if len(increments) != 1:
+        values = {extract(definitions[instrument_id]) for instrument_id in leg_ids}
+        if len(values) != 1:
             raise ValueError(
-                f"continuous-future root {root!r} has inconsistent native size "
-                f"increments across dated legs: {sorted(increments)}"
+                f"continuous-future root {root!r} has inconsistent native "
+                f"{fact_name} across dated legs: {sorted(values)}"
             )
-        return next(iter(increments))
+        return next(iter(values))
 
     def distribution_coverage_report(
         self,

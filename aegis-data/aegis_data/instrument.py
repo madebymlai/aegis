@@ -16,3 +16,14 @@ def native_size_increment(instrument: Instrument) -> float:
             f"instrument {instrument.id} has invalid size increment {increment!r}"
         )
     return increment
+
+
+def native_multiplier(instrument: Instrument) -> float:
+    """Return the positive finite contract multiplier authored on *instrument*."""
+
+    multiplier = float(instrument.multiplier)
+    if not math.isfinite(multiplier) or multiplier <= 0.0:
+        raise ValueError(
+            f"instrument {instrument.id} has invalid multiplier {multiplier!r}"
+        )
+    return multiplier

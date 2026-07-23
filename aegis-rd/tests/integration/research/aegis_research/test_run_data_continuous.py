@@ -156,6 +156,8 @@ def test_continuous_future_records_run_economics_and_identity(
     assert result.adjustment_mode is DEFAULT_ADJUSTMENT_MODE
     assert result.identity.continuous_root_currencies == {es: "USD"}
     assert result.size_increment_by_instrument[es] == 1.0
+    assert result.multiplier_by_instrument[es] == 1.0
+    assert result.identity.multiplier_by_instrument[es] == 1.0
     assert len(result.identity.distribution_coverage) == 2
     assert result.identity.distribution_coverage[0]["instrument_id"] == "AAPL.NASDAQ"
     assert result.identity.distribution_coverage[0]["applicable"] is True
