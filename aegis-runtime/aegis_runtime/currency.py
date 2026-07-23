@@ -143,6 +143,27 @@ def build_currency_conversion(
     )
 
 
+# A minor-unit quote currency prices in a fixed fraction of its major unit
+# (GBp = pence = 1/100 GBP). Nautilus models no minor->major link
+# (get_mark_xrate on GBp returns None), so this scale is ours to apply — the
+# read-side mirror of aegis_trader.domain.sizing._PENCE_FACTOR. Keyed by the exact
+# code the catalog emits ("GBp", not "GBP"); if a second minor unit ever appears,
+# lift this to a shared table so the two engines cannot drift.
+_MINOR_UNITS: dict[str, tuple[str, float]] = {"GBp": ("GBP", 0.01)}
+
+
+def _resolve_quote_currency(code: str) -> tuple[str, float]:
+    """Resolve a quote-currency code to its (major currency, minor->major factor).
+
+    A minor unit (GBp) resolves to its major (GBP) and the factor scaling one minor
+    unit into the major (0.01); any other code is its own upper-cased major with
+    factor 1.0. Folding the factor into the leg's native->base FX rate makes a
+    minor-unit price convert through its major currency's pair.
+    """
+    major, factor = _MINOR_UNITS.get(code, (code, 1.0))
+    return major.upper(), factor
+
+
 def build_currency_conversion_from_codes(
     *,
     currency_by_instrument_id: Mapping[InstrumentId, str],
@@ -171,12 +192,18 @@ def build_currency_conversion_from_codes(
     rate_by_instrument: dict[InstrumentId, pd.Series] = {}
     normalized_currency_by_instrument_id: dict[InstrumentId, str] = {}
     for instrument_id, currency in currency_by_instrument_id.items():
-        quote = currency.upper()
+        quote, subunit_factor = _resolve_quote_currency(currency)
         normalized_currency_by_instrument_id[instrument_id] = quote
         if quote == base:
+            if subunit_factor != 1.0:
+                raise MissingFxPairError(
+                    f"instrument {instrument_id.value!r} is quoted in a minor unit of the "
+                    f"base currency {base}; a base-currency sub-unit has no FX pair to carry "
+                    "its scale factor and is unsupported"
+                )
             continue
         try:
-            rate_by_instrument[instrument_id] = rates[(quote, base)]
+            rate_by_instrument[instrument_id] = rates[(quote, base)] * subunit_factor
         except KeyError:
             raise MissingFxPairError(
                 f"instrument {instrument_id.value!r} is quoted in {quote} but the book's "
