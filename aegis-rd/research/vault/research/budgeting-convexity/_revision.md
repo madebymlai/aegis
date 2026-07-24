@@ -159,15 +159,15 @@ word-budget decision, then Stage 5 FINALIZE and Stage 6 PROCESS SUMMARY.
 
 | Parameter | Value | Rationale |
 |---|---|---|
-| Line spacing | **Double** (`\doublespacing`), the skill template default | APA manuscript-preparation convention. Briefly changed to 1.5 on the grounds that this artifact is a reading copy rather than a submission, then reverted: deviating from a documented standard on presentation preference is not a good enough reason, and the paper frames three follow-on studies, so keeping it submission-ready costs nothing. Any future change to this should be recorded as an explicit Paper Configuration Record parameter, not an ad-hoc edit. |
-| Abstract spacing | Double, same as body | Strict APA. The earlier `\singlespacing` scoping of the abstract was reverted along with the body-spacing change. |
-| Orphan/widow control | `\enlargethispage` at two sites | Two genuine typographic defects, fixed without touching spacing policy: (a) the title page pushed a single word of the keywords line onto page 2; (b) the Conclusion's final line fell alone onto its own page. Both now resolved with no page in the document under 30 words. |
+| Line spacing | **Single** (`\singlespacing`) | Explicit author decision, overriding the skill template's APA `\doublespacing` default. Recorded here as a Paper Configuration Record parameter rather than an ad-hoc edit, which is the condition set when this was last discussed. APA double spacing is a manuscript-preparation convention that exists to leave room for reviewer markup; this artifact is the reading deliverable on the `papers/` shelf, not a submission, and the author has chosen the format to match the use. 29 pages to 19. If the paper is ever prepared for submission, this reverts to `\doublespacing` and the orphan controls below are needed again. |
+| Abstract spacing | Single, same as body | Follows the body setting. |
+| Orphan/widow control | None required | Two `\enlargethispage` calls were needed under double spacing, where the title page pushed one word of the keywords line onto page 2 and the Conclusion's final line fell onto a page of its own. Both were verified vestigial at single spacing (identical 19-page output, no page under 40 words, with and without them) and removed rather than left as dead directives. |
 | Byline | `madebymlai` / Aegis | Author-supplied. The `[AUTHOR NAME]` placeholder existed only because no byline had been given and one must never be inferred from git config or email. |
 | Engine | XeLaTeX | pdfLaTeX compiled clean but silently mangled the Romanian comma-below-s in "Roșu" into a broken composite; T1 fontenc lacks the glyph and degrades rather than erroring. Caught by extracting the PDF text layer rather than trusting the compile log. |
 
-Shipped PDF: 29 pages. Em dashes 0; placeholders 0; "load-bearing" 0; COI disclosures 15 of 15; no
+Shipped PDF: 19 pages. Em dashes 0; placeholders 0; banned phrase 0; COI disclosures 15 of 15; no
 thin pages; accented names all render as correct single glyphs.
 
-**Carry-forward for the seat papers:** the byline and the two `\enlargethispage` fixes live only in the
+**Carry-forward for the seat papers:** the byline and the spacing choice live only in the
 generated `.tex`, not in `_draft.md`, so a regeneration from source loses them. Before papers 2-4 run
 through the same template, the byline belongs in the Phase 0 configuration.
