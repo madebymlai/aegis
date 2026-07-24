@@ -201,3 +201,50 @@ The two families keep their split for a real reason, not a mirroring one: `param
 and `defaults` are common and live on the base with the shared
 `defaults ⊆ param_names` validator; the family-specific required fields are `kw_only`
 so they can sit among the base's defaulted fields — the `DataConfig.arrays` pattern.
+
+## Amendment — 2026-07-24: the msgspec rejection is re-grounded on measurement
+
+The decision stands, but the reasons recorded above do not carry it. Re-examined on a
+challenge to the original rationale.
+
+**What does not discriminate.** "Considered options" rejects msgspec because it is
+fail-fast and because `Struct` is not a stdlib dataclass. The first is a *self-imposed*
+contract — all-errors-at-once is our own `ConfigValidationError` shape, changeable, not a
+physical constraint. And this ADR's headline driver does not discriminate either: msgspec
+Structs also validate *and* construct, derive requiredness from the absence of a default,
+carry field constraints (`msgspec.Meta`), and host cross-field rules in `__post_init__` —
+so "the model validates and constructs, `builders.py` dissolves" is satisfied by both
+libraries. Neither stated ground picks pydantic. This was also never an added-dependency
+question: msgspec is already in the tree via `nautilus_trader`, and `aegis-trader` and
+`aegis-data` import it directly (`node.py`, `live_custom_data.py`, `historical.py`;
+`StrategyConfig` / `ActorConfig` *are* Structs). The real question is only which library
+owns the authoring and wire boundaries.
+
+**What does carry the decision:**
+
+1. **No hot path — measured, not assumed.** msgspec's differentiating property is
+   throughput, and nothing here is on a throughput path: Run Config validates once per run,
+   Component manifests once at registry build, bundles once at load. Measured in `f88a7e37`:
+   pydantic adds **9.9ms to an import already 487ms** (pandas 178, numba 74) and
+   `load_bundle_payload` takes **0.026ms**, with the codec verified confined to startup —
+   `aegis-trader` constructs none of these types in production code and `on_bar` touches
+   none of them. A 100x decode speedup would save tens of microseconds, once.
+2. **The byte oracle is a provenance contract.** `to_builtin` + the `resolved_config.v1`
+   golden hash exist to prove reproducibility. A `Struct` is not a stdlib dataclass, so the
+   serialization path would need teaching and any drift re-bases a hash whose whole purpose
+   is not moving. Real cost, real risk, no upside given (1).
+3. **All-errors-at-once is worth keeping on its merits** — not as a blocker, but because
+   these are *human-authored* surfaces (YAML Run Configs, Component manifests) where
+   reporting every structural error in one pass is a genuine authoring win. That is a
+   product argument, and it should be recorded as one.
+
+**Boundary shape (unchanged, and correct).** `f88a7e37` keeps the bundle types as stdlib
+`@dataclass(frozen=True)` and runs pydantic **only at the wire boundary**, so
+`DataContractError` still raises unwrapped from `__post_init__`. Validation library at the
+edge, plain frozen dataclasses in the domain — swapping the edge library would change
+neither the domain nor the shape, only the risk.
+
+**Consequence.** No migration of Aegis RD, the manifest layer, or `aegis-runtime` to
+msgspec. Should a genuinely per-event codec ever appear in the runtime, msgspec is the
+right tool for *that* surface and is already a dependency — but it is re-argued from
+measurement then, not inherited from this ADR.
