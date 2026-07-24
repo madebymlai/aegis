@@ -1,7 +1,7 @@
 ---
 title: "Budgeting Convexity - chapter plan"
 paper: "Budgeting Convexity"
-status: VRP challenge verified and answered in 2.2/2.4/6 (persistence claim now conditional); targeted integrity re-check running; word budget +13.4% pending decision
+status: PIPELINE COMPLETE (Stages 1-6) - paper delivered to papers/budgeting-convexity.pdf; seats 2-4 next
 tags:
   - plan
 ---

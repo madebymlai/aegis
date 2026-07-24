@@ -1,19 +1,7 @@
----
-title: "Budgeting Convexity"
-paper: "Budgeting Convexity"
-status: Stage 2 complete - draft accepted (P4), citations verified (P5a), abstract final (P5b)
-tags:
-  - draft
----
-
 # Budgeting Convexity: Diversification as an Order of Operations over Failure Modes
 
-*Working draft (Phase 4, v3.6.6 generator-evaluator protocol). Abstract is finalized in Phase 5b;
-references are completed and DOI-verified in Phase 5a and at the Stage 2.5 integrity gate (citation
-verification level: strict). In-text citations are final in form; reference fields still pending
-verification are marked.*
-
----
+madebymlai \
+*Aegis*
 
 ## Abstract
 
@@ -657,47 +645,37 @@ has framed but deliberately not attempted.
 
 ## References
 
-*APA 7th edition. DOI completion and existence verification are the Phase 5a and Stage 2.5 integrity
-deliverables (citation level: strict). Entries below carry every cited source; fields still pending
-verification are marked.*
-
 Anghel, D. G., Caraiani, P., Roșu, A., & Roșu, I. (2023). Asset pricing with systematic skewness: Two
-decades later. *Critical Finance Review, 12*(1-4), 309-354. [verified via web search 2026-07-24]
+decades later. *Critical Finance Review, 12*(1-4), 309-354.
 
 AQR. (2020a). *Tail risk hedging: Contrasting put and trend strategies.* AQR Capital Management white
-paper (also published in *Journal of Systematic Investing, 1*(1), 2021). [verified via web search
-2026-07-24]
+paper (also published in *Journal of Systematic Investing, 1*(1), 2021).
 
 Asif, R., Frömmel, M., & Mende, A. (2022). The crisis alpha of managed futures: Myth or reality?
 *International Review of Financial Analysis, 80,* 102045. https://doi.org/10.1016/j.irfa.2022.102045
-[verified via web search 2026-07-24]
 
 Asvanunt, A., Nielsen, L. N., & Villalon, D. (2015). Working your tail off: Active strategies versus
 direct hedging. *The Journal of Investing, 24*(2), 134-145. https://doi.org/10.3905/joi.2015.24.2.134
-[COI: AQR; verified via web search 2026-07-24]
+[COI: AQR]
 
 Baltas, N., & Salinas, G. (2022). Cross-asset skew. *The Journal of Portfolio Management, 48*(4),
-194-219. https://doi.org/10.3905/jpm.2022.1.335 [verified via web search 2026-07-24]
+194-219. https://doi.org/10.3905/jpm.2022.1.335
 
 Baltussen, G., Martens, M., & van der Linden, L. (2026). The best defensive strategies: Two centuries
 of evidence. *Financial Analysts Journal, 82*(1), 6-34. https://doi.org/10.1080/0015198X.2025.2602270
-[verified via web search 2026-07-24]
 
 Baltussen, G., Swinkels, L., & van Vliet, P. (2021). Global factor premiums. *Journal of Financial
-Economics, 142*(3), 1128-1154. https://doi.org/10.1016/j.jfineco.2021.06.030 [verified via web search
-2026-07-24]
+Economics, 142*(3), 1128-1154. https://doi.org/10.1016/j.jfineco.2021.06.030
 
 Bates, D. S. (2022). Empirical option pricing models. *Annual Review of Financial Economics, 14*,
-369-389. https://doi.org/10.1146/annurev-financial-111720-091255 [verified via web search 2026-07-24]
+369-389. https://doi.org/10.1146/annurev-financial-111720-091255
 
 Bhansali, V., Chang, L., Holdom, J., & Rappaport, M. (2020). Monetization matters: Active tail risk
 management and the great virus crisis. *The Journal of Portfolio Management, 47*(1).
-https://doi.org/10.3905/jpm.2020.1.181 [COI: LongTail Alpha; peer-reviewed; verified via web search
-2026-07-24]
+https://doi.org/10.3905/jpm.2020.1.181 [COI: LongTail Alpha; peer-reviewed]
 
 Bhansali, V., Davis, J., Dorsten, M. P., & Rennison, G. (2015). Carry and trend in lots of places.
-*The Journal of Portfolio Management, 41*(4), 82-90. https://doi.org/10.3905/jpm.2015.41.4.082 [COI:
-PIMCO; verified via web search 2026-07-24]
+*The Journal of Portfolio Management, 41*(4), 82-90. https://doi.org/10.3905/jpm.2015.41.4.082 [COI: PIMCO]
 
 Bollerslev, T., Tauchen, G., & Zhou, H. (2009). Expected stock returns and variance risk premia.
 *The Review of Financial Studies, 22*(11), 4463-4492.
@@ -706,39 +684,35 @@ Bollerslev, T., & Todorov, V. (2011). Tails, fears, and risk premia. *The Journa
 2165-2211.
 
 Bongaerts, D., Kang, X., & van Dijk, M. (2020). Conditional volatility targeting. *Financial Analysts
-Journal, 76*(4), 54-71. https://doi.org/10.1080/0015198X.2020.1790853 [verified via web search
-2026-07-24]
+Journal, 76*(4), 54-71. https://doi.org/10.1080/0015198X.2020.1790853
 
 Brown, S. J., Gregoriou, G. N., & Pascalau, R. (2012). Diversification in funds of hedge funds: Is it
 possible to overdiversify? *Review of Asset Pricing Studies, 2*(1), 89-110.
-https://doi.org/10.1093/rapstu/rar003 [verified via web search 2026-07-24]
+https://doi.org/10.1093/rapstu/rar003
 
 Brunnermeier, M. K., Nagel, S., & Pedersen, L. H. (2008). Carry trades and currency crashes. *NBER
 Macroeconomics Annual, 23*, 313-347.
 
-Capital Fund Management. (2018). *The convexity of trend following* (White Paper No. 266). CFM. [COI:
-CFM; verified via web search 2026-07-24]
+Capital Fund Management. (2018). *The convexity of trend following* (White Paper No. 266). CFM. [COI: CFM]
 
 Carli, T., Deguest, R., & Martellini, L. (2014). *Improved risk reporting with factor-based
-diversification measures.* EDHEC-Risk Institute. [verified via web search 2026-07-24]
+diversification measures.* EDHEC-Risk Institute.
 
 Carr, P., & Wu, L. (2009). Variance risk premiums. *The Review of Financial Studies, 22*(3),
 1311-1341.
 
 Cederburg, S., O'Doherty, M. S., Wang, F., & Yan, X. S. (2020). On the performance of
 volatility-managed portfolios. *Journal of Financial Economics, 138*(1), 95-117.
-https://doi.org/10.1016/j.jfineco.2020.04.015 [verified via web search 2026-07-24]
+https://doi.org/10.1016/j.jfineco.2020.04.015
 
 Choueifaty, Y., & Coignard, Y. (2008). Toward maximum diversification. *The Journal of Portfolio
 Management, 35*(1), 40-51. [COI: TOBAM markets a fund built on the diversification-ratio metric]
 
 Costa, G., & Kwon, R. H. (2019). Risk parity portfolio optimization under a Markov regime-switching
 framework. *Quantitative Finance, 19*(3), 453-471. https://doi.org/10.1080/14697688.2018.1486036
-[verified via web search 2026-07-24]
 
 Dao, T.-L., Hoehener, D., Lempérière, Y., Nguyen, T.-T., Seager, P., & Bouchaud, J.-P. (2017). Trends
-and risk premia: Update and additional plots. *arXiv:1708.07637.* [preprint; COI: CFM; verified via
-web search 2026-07-24]
+and risk premia: Update and additional plots. *arXiv:1708.07637.* [preprint; COI: CFM]
 
 De Long, J. B., Shleifer, A., Summers, L. H., & Waldmann, R. J. (1990). Noise trader risk in financial
 markets. *Journal of Political Economy, 98*(4), 703-738.
@@ -748,12 +722,11 @@ is the 1/N portfolio strategy? *The Review of Financial Studies, 22*(5), 1915-19
 
 Dew-Becker, I., & Giglio, S. (2025). *The decline of the variance risk premium: Evidence from traded
 and synthetic options* (Working Paper No. 2025-17). Federal Reserve Bank of Chicago.
-https://doi.org/10.21033/wp-2025-17 [verified via web search 2026-07-24; Federal Reserve working paper,
-not peer-reviewed. Earlier version: NBER Working Paper No. 31833, https://doi.org/10.3386/w31833]
+https://doi.org/10.21033/wp-2025-17 [Federal Reserve working paper, not peer-reviewed. Earlier version: NBER Working Paper No. 31833, https://doi.org/10.3386/w31833]
 
 Feng, X. (2026). When simplicity beats optimization: Evidence from factor timing, volatility
 management, and the 1/N benchmark. *Financial Markets and Portfolio Management.*
-https://doi.org/10.1007/s11408-026-00499-8 [verified via web search 2026-07-24]
+https://doi.org/10.1007/s11408-026-00499-8
 
 Fleming, J., Kirby, C., & Ostdiek, B. (2001). The economic value of volatility timing. *The Journal of
 Finance, 56*(1), 329-352.
@@ -762,8 +735,7 @@ Fung, W., & Hsieh, D. A. (2001). The risk in hedge fund strategies: Theory and e
 followers. *The Review of Financial Studies, 14*(2), 313-341.
 
 Gârleanu, N., Pedersen, L. H., & Poteshman, A. M. (2009). Demand-based option pricing. *The Review of
-Financial Studies, 22*(10), 4259-4299. https://doi.org/10.1093/rfs/hhp005 [verified via web search
-2026-07-24]
+Financial Studies, 22*(10), 4259-4299. https://doi.org/10.1093/rfs/hhp005
 
 Grinold, R. C. (1989). The fundamental law of active management. *The Journal of Portfolio
 Management, 15*(3), 30-37.
@@ -776,7 +748,7 @@ Finance, 55*(3), 1263-1295.
 
 Harvey, C. R., & Siddique, A. (2023). Conditional skewness in asset pricing: 25 years of
 out-of-sample evidence. *Critical Finance Review, 12*(1-4), 355-366.
-https://doi.org/10.1561/104.00000134 [verified via web search 2026-07-24]
+https://doi.org/10.1561/104.00000134
 
 Hurst, B., Ooi, Y. H., & Pedersen, L. H. (2017). A century of evidence on trend-following investing.
 *The Journal of Portfolio Management, 44*(1), 15-29. [COI: AQR]
@@ -785,12 +757,10 @@ Ilmanen, A. (2012). Do financial markets reward buying or selling insurance and 
 *Financial Analysts Journal, 68*(5), 26-36. [COI: AQR]
 
 Israelov, R. (2019). Pathetic protection: The elusive benefits of protective puts. *The Journal of
-Alternative Investments, 21*(3), 6-33. https://doi.org/10.3905/jai.2018.1.066 [COI: AQR; verified via
-web search 2026-07-24]
+Alternative Investments, 21*(3), 6-33. https://doi.org/10.3905/jai.2018.1.066 [COI: AQR]
 
 Israelov, R., & Nielsen, L. N. (2015). Still not cheap: Portfolio protection in calm markets. *The
-Journal of Portfolio Management, 41*(4), 108-120. https://doi.org/10.3905/jpm.2015.41.4.108 [COI: AQR;
-verified via web search 2026-07-24]
+Journal of Portfolio Management, 41*(4), 108-120. https://doi.org/10.3905/jpm.2015.41.4.108 [COI: AQR]
 
 Kang, J., Rouwenhorst, K. G., & Tang, K. (2020). A tale of two premiums: The role of hedgers and
 speculators in commodity futures markets. *The Journal of Finance, 75*(1), 377-417.
@@ -800,15 +770,12 @@ Financial Economics, 127*(2), 197-225. [COI: AQR]
 
 Lassance, N., & Vrins, F. (2023). Portfolio selection: A target-distribution approach. *European
 Journal of Operational Research, 310*(1), 302-314. https://doi.org/10.1016/j.ejor.2023.02.014
-[verified via web search 2026-07-24]
 
 Le, T. H., Kourtis, A., & Markellos, R. N. (2023). Modeling skewness in portfolio choice. *Journal of
-Futures Markets, 43*(6), 734-770. https://doi.org/10.1002/fut.22408 [verified via web search
-2026-07-24]
+Futures Markets, 43*(6), 734-770. https://doi.org/10.1002/fut.22408
 
 Lempérière, Y., Deremble, C., Nguyen, T.-T., Seager, P., Potters, M., & Bouchaud, J.-P. (2017). Risk
-premia: Asymmetric tail risks and excess returns. *Quantitative Finance, 17*(1), 1-14. [COI: CFM;
-verified via web search 2026-07-24]
+premia: Asymmetric tail risks and excess returns. *Quantitative Finance, 17*(1), 1-14. [COI: CFM]
 
 Lettau, M., Maggiori, M., & Weber, M. (2014). Conditional risk premia in currency markets and other
 asset classes. *Journal of Financial Economics, 114*(2), 197-225.
@@ -820,7 +787,7 @@ Maillard, S., Roncalli, T., & Teiletche, J. (2010). The properties of equally we
 contribution portfolios. *The Journal of Portfolio Management, 36*(4), 60-70.
 
 Man Group. (2022). *Creating portfolio convexity: Trend versus options.* Man Group / Man Institute.
-[COI: practitioner, Man sells trend/overlay products; verified via web search 2026-07-24]
+[COI: practitioner, Man sells trend/overlay products]
 
 Martellini, L., & Ziemann, V. (2010). Improved estimates of higher-order comoments and implications
 for portfolio selection. *The Review of Financial Studies, 23*(4), 1467-1502.
@@ -828,41 +795,39 @@ for portfolio selection. *The Review of Financial Studies, 23*(4), 1467-1502.
 McLean, R. D., & Pontiff, J. (2016). Does academic research destroy stock return predictability? *The
 Journal of Finance, 71*(1), 5-32.
 
-Meucci, A. (2009). Managing diversification. *Risk, 22*(5), 74-79. [verified via web search 2026-07-24]
+Meucci, A. (2009). Managing diversification. *Risk, 22*(5), 74-79.
 
 Moskowitz, T. J., Ooi, Y. H., & Pedersen, L. H. (2012). Time series momentum. *Journal of Financial
 Economics, 104*(2), 228-250. [COI: AQR]
 
 Noguer i Alonso, M., & Al-Fallouji, A. (2026). *Tail risk management with puts and trend following: A
-CVaR framework for crashes and drawdowns.* arXiv:2607.00883. [preprint; verified via web search
-2026-07-24]
+CVaR framework for crashes and drawdowns.* arXiv:2607.00883. [preprint]
 
 Olszewski, F., & Zhou, G. (2013). Strategy diversification: Combining momentum and carry strategies
 within a foreign exchange portfolio. *Journal of Derivatives & Hedge Funds, 19*(4), 311-320.
-https://doi.org/10.1057/jdhf.2013.16 [verified via web search 2026-07-24; publisher byline spells
-"Olszweski"]
+https://doi.org/10.1057/jdhf.2013.16 [publisher byline spells "Olszweski"]
 
 One River. (2024). *The convexity (re)balancing act.* One River Asset Management (P. Kazley & S. Wang).
-[COI: practitioner, One River sells convex-overlay strategies; verified via web search 2026-07-24]
+[COI: practitioner, One River sells convex-overlay strategies]
 
 Pyun, S. (2019). Variance risk in aggregate stock returns and time-varying return predictability.
 *Journal of Financial Economics, 132*(1), 150-174.
 
 Schwalbach, B., & Auret, C. (2025). Enhancing global equity returns with trend-following and tail risk
 hedging overlays. *Investment Analysts Journal, 54*(3), 364-386.
-https://doi.org/10.1080/10293523.2025.2553254 [verified via web search 2026-07-24]
+https://doi.org/10.1080/10293523.2025.2553254
 
 Shleifer, A., & Vishny, R. W. (1997). The limits of arbitrage. *The Journal of Finance, 52*(1),
 35-55.
 
 Tomunen, T. (2026). Failure to share natural disaster risk. *The Review of Financial Studies, 39*(3),
-661-701. https://doi.org/10.1093/rfs/hhaf055 [verified via web search 2026-07-24]
+661-701. https://doi.org/10.1093/rfs/hhaf055
 
 Trucíos, C. (2026). Hierarchical risk clustering versus traditional risk-based portfolios: An
 empirical out-of-sample comparison. *Empirical Economics, 70*(3), Article 58.
-https://doi.org/10.1007/s00181-026-02900-x [verified via web search 2026-07-24]
+https://doi.org/10.1007/s00181-026-02900-x
 
 Uysal, A. S., & Mulvey, J. M. (2021). A machine learning approach in regime-switching risk parity
 portfolios. *The Journal of Financial Data Science, 3*(2), 87-108.
-https://doi.org/10.3905/jfds.2021.1.057 [verified via web search 2026-07-24]
+https://doi.org/10.3905/jfds.2021.1.057
 
