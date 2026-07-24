@@ -28,6 +28,8 @@ In currencies, carry is the interest-rate differential, and the other side is pa
 
 Those mechanisms can coexist in one portfolio without being interchangeable. A commodity producer's hedge demand, a leveraged FX investor's funding constraint, and an option buyer's crash insurance demand are different counterparties with different reasons for paying. The shared label is useful for return decomposition, not proof of a single latent premium.
 
+Naming several mechanisms is a claim about the family, not a prescription to hold all of it at once. A book can fill its convergent-income role with a single mechanism; running several simultaneously is a construction choice, not a requirement of the taxonomy. And because every row shares the same concave, insurance-selling shape, stacking two carry mechanisms concentrates one pole rather than adding an independent one. The durable diversifier of a carry engine is an opposite-convexity role such as trend, not a second carry sleeve, so at limited breadth one well-chosen engine paired across the convexity axis is often stronger than a multi-carry stack. See [[strategy-sleeve-architecture-beyond-trend-carry-tail]].
+
 | Carry family | What is collected | Structural payer | Primary failure state |
 |---|---|---|---|
 | FX | Interest differential | Hedgers and constrained borrowers | Funding unwind and funding-currency rally |
@@ -66,7 +68,7 @@ Some terms are zero or combined for particular instruments, but none may be sile
 
 A long-high, short-low carry portfolio earns from two sources. Static carry is what yesterday's positions earn if states do not change. Dynamic carry comes from changing weights as signals and relative rankings move.[^koijen] This matters because turnover, migration between ranks, and rebalancing can make a strategy look better than the underlying income stream. A credible report should show static carry, price appreciation, weight-change contribution, financing, and costs separately.
 
-The taxonomy also sharpens diversification. Low average correlation between carry sleeves does not imply independent tail risk. Their ordinary mechanisms differ, but recession, volatility, liquidity, and deleveraging shocks can make them fail together. Commodity implementations are treated separately in [[commodity-carry-constructions]].
+The taxonomy also sharpens diversification. A book that does run several carry mechanisms must not read their low average correlation as independent tail risk: the ordinary mechanisms differ, but recession, volatility, liquidity, and deleveraging shocks can make them fail together, so a multi-carry stack behaves as one concave position in the state that matters. That is the argument for pairing the convergent role against an opposite-convexity role rather than widening it. Commodity implementations are treated separately in [[commodity-carry-constructions]].
 
 ## Construct, stress, and condition the portfolio
 
@@ -100,7 +102,8 @@ The invariant definition is model-free, but implementation is not. Synthetic fut
 ## Strategy hypotheses this could seed
 
 - [ ] Decomposing each sleeve into static carry and price appreciation predicts its tail behavior better than the headline carry signal alone.
-- [ ] A mechanism-balanced carry portfolio has lower conditional drawdown than a portfolio diversified only by asset-class labels at matched volatility.
+- [ ] When several carry mechanisms are run together, a mechanism-balanced weighting has lower conditional drawdown than one diversified only by asset-class labels at matched volatility.
+- [ ] A single convergent income engine paired against an opposite-convexity role has lower conditional drawdown than a multi-mechanism carry stack at matched volatility and full-cycle return.
 - [ ] Duration- and financing-normalized carry rankings are more stable out of sample than raw-yield rankings.
 
 ## Sources

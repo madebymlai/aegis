@@ -4,7 +4,7 @@ tags:
   - index
 ---
 
-# Papers — finished PDFs
+# Papers - finished PDFs
 
 The final PDF of each paper, and nothing else: `papers/<slug>.pdf`. One flat reading shelf of
 deliverables, kept separate from the pipeline in [[research/README|research/]].
