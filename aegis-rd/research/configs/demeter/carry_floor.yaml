@@ -15,7 +15,14 @@ output_dir: runs/demeter_eu/credit_carry_sota
 # registered sweep metric, so the cell is pinned directly in strategy.params below (the
 # param_space grid collapses to it) rather than re-crowned by aerd. See
 # runs/demeter/2026-07-04 and [[the-tiered-strategy-roster]].
-lock: 20260704T170256351625Z_demeter_eu_credit_carry_sota
+# RE-LOCKED 2026-07-25. The 2026-07-04 store was candidate-store schema v6 and the code now
+# requires v8, so resolve_lock_run could not open it and the pole could not be evaluated at
+# all. Re-ran the config unlocked to regenerate the store; the run reported
+# candidate_count: 1, confirming the param_space grid does collapse to the cell pinned in
+# strategy.params below - so this is the SAME candidate re-minted under the current schema,
+# not a re-crowning. Previous lock: 20260704T170256351625Z_demeter_eu_credit_carry_sota
+# (its store is preserved at .candidate_store.v6-backup/).
+lock: 20260724T233531825545Z_demeter_eu_credit_carry_sota
 
 
 # THE CONSTRUCTION SWEEP from [[the-ucits-constrained-carry-sleeve]] — the research-backed
