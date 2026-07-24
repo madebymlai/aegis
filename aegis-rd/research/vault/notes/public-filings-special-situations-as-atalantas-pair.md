@@ -140,6 +140,17 @@ An asset manager describes buying secondary SPAC common below trust and redeemin
 > [!important] SPAC conclusion
 > The cash claim is real and the failure boundary is clear. The edge is not yet demonstrated for this account's exact implementation. The first deliverable is a prospective, common-only shadow ledger showing observable price, verified trust value, IBKR cutoff, election success, cash date, and all costs.
 
+> [!failure] Superseded 2026-07-24 - the universe has collapsed
+> This sub-book is closed on **breadth**, which is a harder kill than the implementation doubt
+> recorded above. Total SPAC trust assets fell roughly 90% from about USD 187.5bn across 2022-23 to
+> about USD 20bn by June 2025, and around 25% of live deals now trade at a **premium** to trust
+> rather than a discount. The diversified basket of below-trust names this sub-book required no
+> longer exists at anything like the size the evidence was drawn from, so the shadow ledger above
+> would be measuring a handful of idiosyncratic situations rather than a repeatable rule.
+>
+> Sourced from industry data rather than peer-reviewed measurement; re-check before reversing.
+> Sub-books A and C are unaffected. See [[income-must-accrue-not-be-captured]].
+
 ## Sub-book C: explicit odd-lot tender priority
 
 An odd-lot clause can exempt holders below 100 shares from general proration. This is a genuine contractual capacity niche—but only when the latest offer explicitly says so.
