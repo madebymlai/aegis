@@ -70,6 +70,7 @@ they score a convergent candidate by its manipulation-proof contribution to the 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -104,6 +105,15 @@ _MIN_OBSERVATIONS = 3
 DEFAULT_CONVERGENT_WEIGHT = 0.40
 DEFAULT_BOOK_VOL = 0.10
 _DOWNSIDE_QUANTILE = 0.10
+
+# Paired-resample inference defaults. One sample of delta_theta is a point estimate on
+# dependent, autocorrelated streams; the article's ranking rule asks for superiority
+# inferred from paired resampling, not from a single number. Block lengths span the
+# horizon band so a reader can see whether the verdict survives longer dependence.
+DEFAULT_BLOCK_LENGTHS = (21, 63, 126)
+DEFAULT_BOOTSTRAP_SAMPLES = 2_000
+DEFAULT_BOOTSTRAP_SEED = 42
+_INTERVAL_QUANTILES = (0.025, 0.975)
 
 CONVERGENT_INCOME_UTILITY_ID = "convergent_income_utility"
 CONVERGENT_TAIL_BUDGET_ID = "convergent_tail_budget"
@@ -326,6 +336,146 @@ def downside_correlation(
     return float(np.corrcoef(convergent_daily[mask], trend_daily[mask])[0, 1])
 
 
+# ── Paired-resample inference on the allocator metric ─────────────────────────
+
+
+class AllocatorEvaluationError(ValueError):
+    """A paired evaluation was asked for on streams that cannot support it."""
+
+
+@dataclass(frozen=True)
+class DeltaThetaInterval:
+    """Percentile interval of ``delta_theta`` under one circular-block resample width."""
+
+    block_length: int
+    samples: int
+    lower: float
+    upper: float
+
+    @property
+    def excludes_zero(self) -> bool:
+        """True when the interval sits wholly on one side of zero."""
+        return self.lower > 0.0 or self.upper < 0.0
+
+
+@dataclass(frozen=True)
+class AllocatorContribution:
+    """The convergent pole's verdict in the paired book: estimate, guard, and inference."""
+
+    delta_theta: float
+    downside_correlation: float
+    intervals: tuple[DeltaThetaInterval, ...]
+
+    @property
+    def earns_its_seat(self) -> bool:
+        """True when the pole adds certainty equivalent at every resample width.
+
+        A positive point estimate alone is not a verdict on dependent streams, so this
+        requires every block length's interval to exclude zero from above.
+        """
+        return self.delta_theta > 0.0 and all(interval.lower > 0.0 for interval in self.intervals)
+
+
+def _circular_block_positions(
+    observations: int, block_length: int, rng: np.random.Generator
+) -> np.ndarray:
+    """Indices of one circular-block resample, preserving runs of length ``block_length``."""
+    block_count = int(np.ceil(observations / block_length))
+    starts = rng.integers(0, observations, size=block_count)
+    offsets = np.arange(block_length)
+    return ((starts[:, None] + offsets) % observations).ravel()[:observations]
+
+
+def _delta_theta_interval(
+    convergent_daily: np.ndarray,
+    trend_daily: np.ndarray,
+    *,
+    block_length: int,
+    samples: int,
+    rng: np.random.Generator,
+    convergent_weight: float,
+    rho: float,
+    book_vol_annual: float,
+) -> DeltaThetaInterval:
+    """Resample both legs at the same positions, rescoring ``delta_theta`` on each draw.
+
+    Positions are shared so the pair's contemporaneous dependence - the whole object
+    ``delta_theta`` prices - survives resampling. Drawing the legs independently would
+    destroy exactly the co-crash structure the metric exists to penalize.
+    """
+    deltas = np.empty(samples)
+    for draw in range(samples):
+        positions = _circular_block_positions(trend_daily.size, block_length, rng)
+        deltas[draw] = composite_allocator_utility(
+            convergent_daily[positions],
+            trend_daily[positions],
+            convergent_weight=convergent_weight,
+            rho=rho,
+            book_vol_annual=book_vol_annual,
+        )
+    finite = deltas[np.isfinite(deltas)]
+    if finite.size == 0:
+        return DeltaThetaInterval(block_length, samples, np.nan, np.nan)
+    lower, upper = np.quantile(finite, _INTERVAL_QUANTILES)
+    return DeltaThetaInterval(block_length, samples, float(lower), float(upper))
+
+
+def evaluate_allocator_contribution(
+    convergent_daily: np.ndarray,
+    trend_daily: np.ndarray,
+    *,
+    convergent_weight: float = DEFAULT_CONVERGENT_WEIGHT,
+    rho: float = DEFAULT_RISK_AVERSION,
+    book_vol_annual: float = DEFAULT_BOOK_VOL,
+    block_lengths: Sequence[int] = DEFAULT_BLOCK_LENGTHS,
+    samples: int = DEFAULT_BOOTSTRAP_SAMPLES,
+    seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> AllocatorContribution:
+    """Score a convergent candidate in the paired book, with resample-based inference.
+
+    Takes two already-aligned daily net return streams and returns the allocator verdict:
+    the ``delta_theta`` point estimate, the downside-correlation guard, and a percentile
+    interval per block length. Callers own the alignment and the config-to-returns step;
+    this function owns the paired statistics and nothing else, so a run, a notebook, and a
+    CLI all reach the same answer through it.
+    """
+    if convergent_daily.size != trend_daily.size:
+        raise AllocatorEvaluationError(
+            f"streams must be aligned: {convergent_daily.size} convergent "
+            f"observations against {trend_daily.size} trend observations"
+        )
+    longest_block = max(block_lengths, default=0)
+    if longest_block > trend_daily.size:
+        raise AllocatorEvaluationError(
+            f"block length {longest_block} exceeds {trend_daily.size} common observations"
+        )
+    rng = np.random.default_rng(seed)
+    intervals = tuple(
+        _delta_theta_interval(
+            convergent_daily,
+            trend_daily,
+            block_length=block_length,
+            samples=samples,
+            rng=rng,
+            convergent_weight=convergent_weight,
+            rho=rho,
+            book_vol_annual=book_vol_annual,
+        )
+        for block_length in block_lengths
+    )
+    return AllocatorContribution(
+        delta_theta=composite_allocator_utility(
+            convergent_daily,
+            trend_daily,
+            convergent_weight=convergent_weight,
+            rho=rho,
+            book_vol_annual=book_vol_annual,
+        ),
+        downside_correlation=downside_correlation(convergent_daily, trend_daily),
+        intervals=intervals,
+    )
+
+
 # ── Post-hoc trust check ──────────────────────────────────────────────────────
 
 
@@ -435,11 +585,18 @@ __all__ = [
     "CONVERGENT_TAIL_BUDGET_DEFINITION",
     "CONVERGENT_TAIL_BUDGET_EXTRACTOR",
     "CONVERGENT_TAIL_BUDGET_ID",
+    "DEFAULT_BLOCK_LENGTHS",
     "DEFAULT_BOOK_VOL",
+    "DEFAULT_BOOTSTRAP_SAMPLES",
+    "DEFAULT_BOOTSTRAP_SEED",
     "DEFAULT_CONVERGENT_WEIGHT",
     "DEFAULT_RISK_AVERSION",
+    "AllocatorContribution",
+    "AllocatorEvaluationError",
+    "DeltaThetaInterval",
     "composite_allocator_utility",
     "composite_book_utility",
     "convergent_utility_rho_sensitivity_from_curve",
     "downside_correlation",
+    "evaluate_allocator_contribution",
 ]

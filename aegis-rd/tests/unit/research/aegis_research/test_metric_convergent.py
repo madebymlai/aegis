@@ -282,3 +282,116 @@ def test_allocator_utility_nan_on_length_mismatch_or_degenerate() -> None:
     trend = np.random.default_rng(1).normal(0.0, 0.01, 500)
     assert np.isnan(composite_allocator_utility(np.zeros(400), trend))  # length mismatch
     assert np.isnan(composite_allocator_utility(np.zeros(500), trend))  # zero-vol convergent
+
+
+def test_allocator_contribution_separates_decoupled_from_co_crashing_pole() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, cocrashing = _matched_convergent_pair(3)
+
+    decoupled = evaluate_allocator_contribution(
+        independent, trend, block_lengths=(21,), samples=200, seed=7
+    )
+    coupled = evaluate_allocator_contribution(
+        cocrashing, trend, block_lengths=(21,), samples=200, seed=7
+    )
+
+    # Both bleed - the fixture's convergent stream has negative drift by construction -
+    # so the claim is the ordering, carried through to the paired-resample report.
+    assert decoupled.delta_theta > coupled.delta_theta
+    assert not decoupled.earns_its_seat
+    assert not coupled.earns_its_seat
+
+
+def test_a_positive_point_estimate_alone_does_not_earn_a_seat() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, _, _ = _matched_convergent_pair(3)
+    marginal = np.random.default_rng(17).normal(0.0005, 0.008, trend.size)
+
+    contribution = evaluate_allocator_contribution(
+        marginal, trend, block_lengths=(21,), samples=200, seed=7
+    )
+
+    # The whole reason the resample exists: delta_theta reads positive, and the interval
+    # spans zero, so the pole has not shown it earns anything.
+    assert contribution.delta_theta > 0.0
+    assert contribution.intervals[0].lower < 0.0 < contribution.intervals[0].upper
+    assert not contribution.earns_its_seat
+
+
+def test_a_pole_whose_interval_clears_zero_earns_its_seat() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, _, _ = _matched_convergent_pair(3)
+    accretive = np.random.default_rng(17).normal(0.0012, 0.008, trend.size)
+
+    contribution = evaluate_allocator_contribution(
+        accretive, trend, block_lengths=(21,), samples=200, seed=7
+    )
+
+    assert contribution.intervals[0].lower > 0.0
+    assert contribution.earns_its_seat
+
+
+def test_allocator_contribution_is_deterministic_under_a_fixed_seed() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+
+    first = evaluate_allocator_contribution(
+        independent, trend, block_lengths=(21, 63), samples=100, seed=11
+    )
+    second = evaluate_allocator_contribution(
+        independent, trend, block_lengths=(21, 63), samples=100, seed=11
+    )
+
+    assert first == second
+
+
+def test_allocator_contribution_reports_one_interval_per_block_length() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+
+    contribution = evaluate_allocator_contribution(
+        independent, trend, block_lengths=(21, 63, 126), samples=50, seed=5
+    )
+
+    assert [interval.block_length for interval in contribution.intervals] == [21, 63, 126]
+    assert all(interval.samples == 50 for interval in contribution.intervals)
+    assert all(interval.lower <= interval.upper for interval in contribution.intervals)
+
+
+def test_allocator_contribution_rejects_misaligned_streams() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        AllocatorEvaluationError,
+        evaluate_allocator_contribution,
+    )
+
+    trend = np.random.default_rng(1).normal(0.0, 0.01, 500)
+
+    with pytest.raises(AllocatorEvaluationError, match="aligned"):
+        evaluate_allocator_contribution(np.zeros(400), trend)
+
+
+def test_allocator_contribution_rejects_a_block_longer_than_the_sample() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        AllocatorEvaluationError,
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+
+    with pytest.raises(AllocatorEvaluationError, match="exceeds"):
+        evaluate_allocator_contribution(independent, trend, block_lengths=(9_999,))
