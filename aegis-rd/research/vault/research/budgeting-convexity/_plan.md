@@ -1,7 +1,7 @@
 ---
 title: "Budgeting Convexity - chapter plan"
 paper: "Budgeting Convexity"
-status: pipeline Stage 3 peer review in progress (5-panel subagent)
+status: VRP challenge verified and answered in 2.2/2.4/6 (persistence claim now conditional); targeted integrity re-check running; word budget +13.4% pending decision
 tags:
   - plan
 ---
