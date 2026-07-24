@@ -31,6 +31,15 @@
 
 % === Settings ===
 \singlespacing                          % single spacing (explicit author override of the APA template default)
+
+% === Widow / orphan control ===
+% Global penalties rather than per-location \enlargethispage patches: forbid a
+% paragraph's last line alone at the top of a page (widow) or its first line
+% alone at the bottom (orphan). \raggedbottom lets the page end short instead
+% of stretching interline space to justify vertically.
+\widowpenalty=10000
+\clubpenalty=10000
+\raggedbottom
 \setlength{\parindent}{0.5in}           % first-line indent
 
 % === Metadata ===

@@ -133,7 +133,7 @@ substantive argument, or a dedicated whole-paper tightening pass runs before fin
 
 Verdict **PASS WITH NOTES** (unchanged). All four new references verified independently by the gate
 (fetched fresh rather than trusting the challenge report or my own lookups). Sections 2.2, 2.4 and 6 all
-claim-faithful, including the load-bearing caution that a jump-tied premium lives in the wedge rather
+claim-faithful, including the decisive caution that a jump-tied premium lives in the wedge rather
 than in the synthetic leg's alpha. Consistency sweep found **no stale categorical-persistence
 dependency** in Ch4, Ch5 or the Introduction: those passages describe the buyer's demand motive, which
 is a different claim from the seller's premium size, so 2.4's capacity conditioning does not contradict
@@ -161,12 +161,11 @@ word-budget decision, then Stage 5 FINALIZE and Stage 6 PROCESS SUMMARY.
 |---|---|---|
 | Line spacing | **Single** (`\singlespacing`) | Explicit author decision, overriding the skill template's APA `\doublespacing` default. Recorded here as a Paper Configuration Record parameter rather than an ad-hoc edit, which is the condition set when this was last discussed. APA double spacing is a manuscript-preparation convention that exists to leave room for reviewer markup; this artifact is the reading deliverable on the `papers/` shelf, not a submission, and the author has chosen the format to match the use. 29 pages to 19. If the paper is ever prepared for submission, this reverts to `\doublespacing` and the orphan controls below are needed again. |
 | Abstract spacing | Single, same as body | Follows the body setting. |
-| Orphan/widow control | None required | Two `\enlargethispage` calls were needed under double spacing, where the title page pushed one word of the keywords line onto page 2 and the Conclusion's final line fell onto a page of its own. Both were verified vestigial at single spacing (identical 19-page output, no page under 40 words, with and without them) and removed rather than left as dead directives. |
+| Orphan/widow control | Global `\widowpenalty` / `\clubpenalty` = 10000 plus `\raggedbottom` | Replaces two per-location `\enlargethispage` patches that were compensating for double-spacing overflow and were verified vestigial once spacing changed. The global penalties are the principled form: they forbid a paragraph's last line alone at the top of a page and its first line alone at the bottom, everywhere, rather than at the two places someone happened to look. This caught a real defect the patches would not have, the Introduction's closing "it." carried alone onto page 3. `\raggedbottom` lets a page end short instead of stretching interline space to justify vertically. Verified across all 19 pages: the only short page-opening lines are section headings. |
 | Byline | `madebymlai` / Aegis | Author-supplied. The `[AUTHOR NAME]` placeholder existed only because no byline had been given and one must never be inferred from git config or email. |
 | Engine | XeLaTeX | pdfLaTeX compiled clean but silently mangled the Romanian comma-below-s in "Roșu" into a broken composite; T1 fontenc lacks the glyph and degrades rather than erroring. Caught by extracting the PDF text layer rather than trusting the compile log. |
 
-Shipped PDF: 19 pages. Em dashes 0; placeholders 0; banned phrase 0; COI disclosures 15 of 15; no
-thin pages; accented names all render as correct single glyphs.
+Shipped PDF: 19 pages. Em dashes 0; placeholders 0; banned phrase 0; COI disclosures 15 of 15; no widows and no thin pages; accented names all render as correct single glyphs.
 
 **Carry-forward for the seat papers:** the byline and the spacing choice live only in the
 generated `.tex`, not in `_draft.md`, so a regeneration from source loses them. Before papers 2-4 run
