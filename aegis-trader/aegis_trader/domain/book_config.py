@@ -359,11 +359,12 @@ class BookConfig:
 
     sleeves: tuple[SleeveConfig, ...]
     base_currency: str = "EUR"
-    # Vol-targeting is down-only (ADR-0004 amendment): this is a *ceiling* /
-    # de-lever set-point, not a two-sided peg.  The book is scaled down to hold
-    # it in stress but never levered up past gross_cap to reach it, so in
-    # calm regimes realized vol sits below target by design.  Set it to the
-    # book's achievable unlevered level.
+    # The vol-target solve is a two-sided peg (ADR-0004 amendment): the book is
+    # levered *up* toward this target as realized risk falls and scaled *down* as
+    # it rises.  Only the clamp is down-only — any up-scale is bounded by
+    # gross_cap and never exceeds it.  The target is reached whenever the required
+    # leverage fits inside the cap, and undershoots only in the calmest regimes
+    # where reaching it would demand more gross than the cap allows.
     book_vol_target: float = 0.09
     sleeve_reversion_fraction: float = 1.0
     drawdown_delever: DrawdownDeleverCurve | None = None
