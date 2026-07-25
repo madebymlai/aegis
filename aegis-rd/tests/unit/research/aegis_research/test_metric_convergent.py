@@ -495,3 +495,90 @@ def test_smoothing_index_is_nan_when_too_short_or_degenerate() -> None:
 
     assert np.isnan(_convergent_smoothing_index(np.random.default_rng(1).normal(0, 0.01, 40)))
     assert np.isnan(_convergent_smoothing_index(np.zeros(500)))
+
+
+# ── Canonical Candidate identity across a swept grid ──────────────────────────
+#
+# These metrics were unrankable on any grid with more than one Candidate: the
+# extractors built their Series from a dict keyed by column, which nulls the
+# MultiIndex level names. The canonical-identity aligner can only reorder VBT's
+# authored parameter-level order onto canonical order while those names survive,
+# so a level-order difference became permuted identity tuples and the grid check
+# raised. A single-Candidate grid never showed it, because it takes the
+# collapsed-key bypass before the keys are ever compared.
+
+_PARAM_LEVELS = ("vol_target", "shape_power", "eur_hy_share")
+
+
+def _swept_stub_portfolio(level_names: tuple[str, ...]) -> _StubPortfolio:
+    """Two Candidates identified by a 3-level parameter MultiIndex in the given order."""
+    index = pd.bdate_range("2021-01-04", periods=_DAYS)
+    canonical = {
+        "vol_target": (0.10, 0.10),
+        "shape_power": (0.0, 1.0),
+        "eur_hy_share": (1.0, 0.0),
+    }
+    groups = pd.MultiIndex.from_arrays(
+        [canonical[name] for name in level_names], names=list(level_names)
+    )
+    value = pd.DataFrame(
+        np.column_stack(
+            [
+                10_000.0 * np.cumprod(1.0 + _smooth_crash_returns()),
+                10_000.0 * np.cumprod(1.0 + _honest_vol_returns()),
+            ]
+        ),
+        index=index,
+    )
+    value.columns = groups
+    close_columns = pd.MultiIndex.from_tuples(
+        [(*group, "TLT") for group in groups],
+        names=[*level_names, SYMBOL_LEVEL],
+    )
+    close = pd.DataFrame(np.full((len(index), len(close_columns)), 50.0), index=index)
+    close.columns = close_columns
+    return _StubPortfolio(value, close)
+
+
+@pytest.mark.parametrize(
+    "extractor",
+    [CONVERGENT_INCOME_UTILITY_EXTRACTOR, CONVERGENT_TAIL_BUDGET_EXTRACTOR],
+)
+def test_swept_grid_extractors_preserve_candidate_level_names(extractor) -> None:
+    """The parameter level names must survive the read - the aligner needs them."""
+    pf = _swept_stub_portfolio(_PARAM_LEVELS)
+
+    result = extractor.read(pf, ReportConfig())
+
+    assert list(result.index.names) == list(_PARAM_LEVELS)
+    assert result.index.equals(pf.get_value().columns)
+    assert len(result) == 2
+
+
+def test_swept_grid_identity_aligns_when_vbt_orders_levels_differently() -> None:
+    """VBT may author the levels in another order; identity must still align.
+
+    This is the regression: before the fix the extractor's index arrived nameless,
+    ``_align_registered_candidates`` could not reorder it, and the permuted tuples
+    failed the canonical-grid check.
+    """
+    from research.aegis_research.optimization.observation_blocks import (
+        _align_registered_candidates,
+    )
+
+    permuted = ("shape_power", "eur_hy_share", "vol_target")
+    raw = CONVERGENT_INCOME_UTILITY_EXTRACTOR.read(
+        _swept_stub_portfolio(permuted), ReportConfig()
+    )
+    canonical_index = _swept_stub_portfolio(_PARAM_LEVELS).get_value().columns
+
+    aligned = _align_registered_candidates(raw, canonical_index)
+
+    assert aligned.index.equals(canonical_index)
+    # The values must follow their Candidate through the reorder, not their position.
+    by_identity = {
+        tuple(key[list(permuted).index(name)] for name in _PARAM_LEVELS): value
+        for key, value in raw.items()
+    }
+    for key, value in aligned.items():
+        assert value == pytest.approx(by_identity[key])

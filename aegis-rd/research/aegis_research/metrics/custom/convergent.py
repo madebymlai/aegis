@@ -697,7 +697,17 @@ def _make_stream_read(
 ) -> Callable[[Any, ReportConfig], pd.Series]:
     def _read(pf: Any, config: ReportConfig) -> pd.Series:
         returns = EquityCurve.from_portfolio(pf).returns()
-        return pd.Series({col: fn(returns[col].dropna().to_numpy()) for col in returns.columns})
+        # Index the result with the columns OBJECT, never with a dict keyed by column.
+        # A dict-built Series nulls the level names, and the canonical-identity aligner can
+        # only reorder VBT's parameter levels onto canonical order while the names survive
+        # (observation_blocks._align_registered_candidates). Without them a level-order
+        # difference turns into permuted identity tuples and the grid check fails - which
+        # only ever showed up for N > 1 Candidates, because a single Candidate takes the
+        # collapsed-key bypass instead.
+        return pd.Series(
+            [fn(returns[col].dropna().to_numpy()) for col in returns.columns],
+            index=returns.columns,
+        )
 
     return _read
 

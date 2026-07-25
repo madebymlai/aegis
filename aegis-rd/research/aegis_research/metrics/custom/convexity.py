@@ -211,14 +211,16 @@ def _per_column(
     fn: Callable[[np.ndarray, np.ndarray], float],
 ) -> pd.Series:
     """Apply a (stream, benchmark) -> float reducer to each group, NaN-dropping pairwise."""
-    out: dict[Any, float] = {}
+    out: list[float] = []
     for col in returns.columns:
         pair = pd.concat([returns[col], benchmark[col]], axis=1).dropna()
         if len(pair) < 3:
-            out[col] = np.nan
+            out.append(np.nan)
             continue
-        out[col] = fn(pair.iloc[:, 0].to_numpy(), pair.iloc[:, 1].to_numpy())
-    return pd.Series(out)
+        out.append(fn(pair.iloc[:, 0].to_numpy(), pair.iloc[:, 1].to_numpy()))
+    # Carry the columns OBJECT through as the index: see the note in convergent._make_stream_read.
+    # A dict-built Series loses the level names the canonical-identity aligner needs.
+    return pd.Series(out, index=returns.columns)
 
 
 # ── Signature reducers ────────────────────────────────────────────────────────
@@ -354,11 +356,10 @@ def _trend_convexity_payoff(stream: np.ndarray) -> float:
 def _make_trend_convexity_payoff_read() -> Callable[[Any, ReportConfig], pd.Series]:
     def _read(pf: Any, config: ReportConfig) -> pd.Series:
         returns = EquityCurve.from_portfolio(pf).returns()
+        # Columns object as index, not a dict: see the note in convergent._make_stream_read.
         return pd.Series(
-            {
-                col: _trend_convexity_payoff(returns[col].dropna().to_numpy())
-                for col in returns.columns
-            }
+            [_trend_convexity_payoff(returns[col].dropna().to_numpy()) for col in returns.columns],
+            index=returns.columns,
         )
 
     return _read
