@@ -247,23 +247,26 @@ def _blended_book(
     *floats* with the correlation structure: a pole that diversifies trend lowers book vol,
     one that co-crashes raises it.
 
-    That float is deliberate and it is also this metric's central confound. Both readings
-    were measured on 2026-07-25 and both are true:
+    **The float is the specification, not an oversight.** The governing article is explicit:
+    "the blend's volatility then floats with the correlation structure, which is the
+    diversification signal" ([[what-makes-a-convergent-sleeve-an-income-engine]], "It ranks
+    placement, not scale"). Pinning the *legs* stops the pole's own mandated volatility from
+    buying a higher score; letting the *blend* float is how diversification registers at all.
 
-    - It is **why the co-crash penalty works.** Co-movement raises the blend's volatility,
-      which the MPPM prices directly. Levering the blend back to a common volatility instead
-      *inverts* the ranking: on the matched-marginal fixture in the tests, the decoupled pole
-      wins 8/8 under this convention and 0/8 at matched volatility when the pole's drift is
-      low, because the diversifying blend needs more leverage to reach the target and that
-      amplifies its tail faster than its shape advantage repays. The inversion clears only
-      once the pole earns roughly 25%/yr; the live convergent sleeve earns 4.2%.
-    - It **confounds the sign with scale.** The MPPM is a certainty-equivalent growth *rate*,
-      not a scale-invariant score - ``Theta(lambda r)`` is approximately
-      ``lambda mu - (rho/2) lambda^2 sigma^2`` - so the blend at ~7.7% volatility is compared
-      against a reference at 10% and is charged for the de-risking it supplied. On the live
-      pair that alone moves the answer from -0.014 to +0.008. Standard practice for comparing
-      portfolios of unequal risk is to match volatility first (Graham-Harvey's GH2), and the
-      live allocator does exactly that when it scales sleeves to ``book_vol_target``.
+    A 2026-07-25 audit proposed levering both books to a common volatility instead - standard
+    practice for comparing portfolios of unequal risk (Graham-Harvey's GH2), and what the live
+    allocator does when it scales sleeves to ``book_vol_target``. It was implemented and
+    reverted. Measured, across 12 seeds on the matched-marginal fixture, the decoupled pole is
+    correctly preferred 12/12 at every drift under this construction and only 9/12 at matched
+    volatility at the live sleeve's 4.2%/yr, because the diversifying blend needs more leverage
+    to reach the target and that amplifies its tail faster than its shape advantage repays.
+
+    The honest caveat that survives: because the MPPM is a certainty-equivalent growth *rate*
+    rather than a scale-invariant score - ``Theta(lambda r)`` is approximately
+    ``lambda mu - (rho/2) lambda^2 sigma^2`` - part of ``delta_theta`` is the blend sitting at
+    a lower volatility than the reference, and on the live pair that component carries the
+    sign (-0.013 as specified, +0.008 matched). That is a property of the chosen design and a
+    limit on how the number may be read, not a defect to be fixed by swapping conventions.
 
     So ``delta_theta`` from this construction is **not** a matched-risk comparison and its sign
     should not be read as one. Fixing that without losing the co-crash penalty needs the
