@@ -1,8 +1,8 @@
 # %% component overview
 # Demeter carry-mix allocator — the SOTA-pole construction sweep from
 # [[the-ucits-constrained-carry-sleeve]]. Same two-step routing as demeter.carry (SHAPE =
-# inverse-vol across legs, cross-sectional; EXPOSURE = vol-target x spread-richness lean,
-# time-series), extended with the two research-backed SHAPE axes the article seeds:
+# inverse-vol across legs, cross-sectional; EXPOSURE = vol-target, time-series), extended
+# with the two research-backed SHAPE axes the article seeds:
 #
 #   - defensive: the maturity-bucket tilt inside the HY sleeve — shifts the HY bucket's
 #     inverse-vol weight from broad HY (IHYU) toward short-duration HY (SDHY/STHY), the
@@ -20,7 +20,7 @@
 #
 # vol_target is PINNED BY MANDATE (single-value param), not swept: the 2026-07-03 ranker
 # A/B showed a swept scale axis feeds mu-estimation noise to a utility ranker; this grid
-# sweeps SHAPE only (defensive x fx_weight x carry_gain), which is the grid the
+# sweeps SHAPE only (defensive x fx_weight x at1_weight), which is the grid the
 # convergent_income_utility ranker is legitimate on.
 #
 # Nested control: (defensive=0, fx_weight=0) zero-weights SDHY and IEML, reproducing the
@@ -34,16 +34,15 @@ import numpy as np
 COMPONENT_MANIFEST = {
     "family": "strategies",
     "id": "demeter.carry_mix",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "input_names": ["Close"],
-    "param_names": ["vol_target", "defensive", "fx_weight", "carry_gain", "at1_weight"],
+    "param_names": ["vol_target", "defensive", "fx_weight", "at1_weight"],
     "output_name": "target_weights",
-    "consumes_outputs": ["carry_score", "realized_vol"],
+    "consumes_outputs": ["realized_vol"],
     "defaults": {
         "vol_target": 0.10,
         "defensive": 0.0,
         "fx_weight": 0.0,
-        "carry_gain": 0.0,
         "at1_weight": 0.0,
     },
     "owns_portfolio": False,
@@ -52,7 +51,8 @@ COMPONENT_MANIFEST = {
 # Vol floor: keep inverse-vol weights and the vol-target ratio finite (mirrors demeter.carry).
 _MIN_VOL = 0.01
 
-# Leg roles by column id (fail-loud, mirroring demeter_eu.credit_carry's _CREDIT_LONG).
+# Leg roles by column id (fail-loud). An unlisted column raises rather than being
+# weighted with a guessed role.
 # The defensive tilt moves weight WITHIN the HY bucket; the IG leg is untouched by it; the
 # fx leg is sized by fx_weight alone.
 _BROAD_HY = frozenset({"IHYU.L", "IHYU.LSEETF", "HYG", "JNK"})
@@ -67,9 +67,8 @@ def param_space():
     """Return VBT-native params: the SHAPE grid, with the scale axis pinned by mandate.
 
     ``defensive`` shifts the HY bucket broad -> short-duration; ``fx_weight`` is the EM
-    local-currency gross share; ``carry_gain`` is the spread-richness lean (the value half
-    of the signal); ``vol_target`` is a single mandate value, present so it is recorded,
-    never swept (the ranker A/B lesson).
+    local-currency gross share; ``vol_target`` is a single mandate value, present so it is
+    recorded, never swept (the ranker A/B lesson).
     """
 
     from vectorbtpro import vbt  # research-only; lazy so execution payloads import clean
@@ -78,7 +77,6 @@ def param_space():
         "vol_target": vbt.Param([0.10]),
         "defensive": vbt.Param([0.0, 0.5, 1.0]),
         "fx_weight": vbt.Param([0.0, 0.15, 0.30]),
-        "carry_gain": vbt.Param([0.0, 1.0, 2.0]),
         "at1_weight": vbt.Param([0.0, 0.10, 0.20]),
     }
 
@@ -124,13 +122,19 @@ def _leg_tilts(columns, defensive):
     return np.array(tilts), np.array(is_fx), np.array(is_at1)
 
 
-def _weights(score_2d, vol_2d, columns, vol_target, defensive, fx_weight, carry_gain, at1_weight):
-    """Role-tilted inverse-vol SHAPE x vol-targeted, richness-leaned EXPOSURE.
+def _weights(vol_2d, columns, vol_target, defensive, fx_weight, at1_weight):
+    """Role-tilted inverse-vol SHAPE x vol-targeted EXPOSURE.
 
     credit_share_i = tilt_i * (1/vol_i) / sum, scaled to (1 - fx_share - at1_share); the
     fx and at1 satellites each take a fixed gross share (0 while their vol is warming up).
-    Rows with no live credit leg are cash. exposure = min(vol_target / sigma_book *
-    richness^carry_gain, 1.0).
+    Rows with no live credit leg are cash. exposure = min(vol_target / sigma_book, 1.0).
+
+    The spread-richness lean (``carry_gain``) was removed in v1.2.0. It was pinned to 0.0 in
+    the only live config, which made ``lean`` an array of ones and multiplied the whole
+    ``carry_score`` feed straight out - so the champion computed a FRED-backed indicator on
+    every run and discarded it. The lean itself was killed empirically on 2026-07-04 (it
+    lowered income AND hurt the book), and a knob no live config turns is the free parameter
+    this family's design notes argue against.
     """
 
     tilts, is_fx, is_at1 = _leg_tilts(columns, defensive)
@@ -157,11 +161,7 @@ def _weights(score_2d, vol_2d, columns, vol_target, defensive, fx_weight, carry_
 
     sigma_book = (shares * vol).sum(axis=1, keepdims=True)  # comonotone approx
 
-    richness = np.nanmean(np.where(np.isfinite(score_2d), score_2d, np.nan), axis=1, keepdims=True)
-    richness = np.where(np.isfinite(richness), np.maximum(richness, 0.0), 0.0)
-    lean = np.power(richness, carry_gain) if carry_gain != 0.0 else np.ones_like(richness)
-
-    exposure = np.minimum(vol_target / np.maximum(sigma_book, _MIN_VOL) * lean, 1.0)
+    exposure = np.minimum(vol_target / np.maximum(sigma_book, _MIN_VOL), 1.0)
     exposure = np.where(sigma_book > 0, exposure, 0.0)
     return shares * exposure
 
@@ -175,7 +175,6 @@ def run(inputs, *, n_candidates, **param_lists):
     n_symbols = inputs.n_symbols
     T = len(close)
 
-    score_3d = inputs.indicators["carry_score"].reshape(T, n_candidates, n_symbols)
     vol_3d = inputs.indicators["realized_vol"].reshape(T, n_candidates, n_symbols)
 
     # Locks minted before v1.1.0 carry no at1_weight; replaying them means "no AT1 leg".
@@ -184,11 +183,10 @@ def run(inputs, *, n_candidates, **param_lists):
     result_3d = np.full((T, n_candidates, n_symbols), np.nan)
     for ci in range(n_candidates):
         result_3d[:, ci, :] = _weights(
-            score_3d[:, ci, :], vol_3d[:, ci, :], columns,
+            vol_3d[:, ci, :], columns,
             float(param_lists["vol_target"][ci]),
             float(param_lists["defensive"][ci]),
             float(param_lists["fx_weight"][ci]),
-            float(param_lists["carry_gain"][ci]),
             float(at1_list[ci]),
         )
 
