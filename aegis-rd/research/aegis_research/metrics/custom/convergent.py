@@ -124,6 +124,13 @@ _INTERVAL_QUANTILES = (0.025, 0.975)
 CONVERGENT_INCOME_UTILITY_ID = "convergent_income_utility"
 CONVERGENT_TAIL_BUDGET_ID = "convergent_tail_budget"
 CONVERGENT_DOWNSIDE_LSKEW_ID = "convergent_downside_lskew"
+CONVERGENT_SMOOTHING_INDEX_ID = "convergent_smoothing_index"
+
+# Smoothing operates at the mark-to-market lag - days for an exchange-traded NAV, not
+# months - so one month of aggregation is already far beyond any plausible MA(k) and
+# recovers the unsmoothed variance. Deliberately NOT the 2-6 month band the shape reports
+# use: those describe the payoff, this describes the feed.
+_SMOOTHING_HORIZON = 21
 
 
 # ── Reducers ──────────────────────────────────────────────────────────────────
@@ -143,6 +150,54 @@ def _convergent_income_utility(daily: np.ndarray, rho: float = DEFAULT_RISK_AVER
         return float("-inf")
     mean_utility = float(np.mean(growth ** (1.0 - rho)))
     return _ANNUALIZATION_DAYS / (1.0 - rho) * float(np.log(mean_utility))
+
+
+def _convergent_smoothing_index(stream: np.ndarray) -> float:
+    """Getmansky-Lo-Makarov smoothing index xi of one daily stream, via a variance ratio.
+
+    GLM model illiquid or stale-marked returns as a moving average of the true ones,
+    ``R_obs(t) = sum_j theta_j R(t-j)`` with the weights summing to one. Two consequences
+    matter here and both flatter the sleeve: observed variance is understated by
+    ``xi = sum_j theta_j^2``, so Sharpe is inflated by ``1/sqrt(xi)``, and **contemporaneous
+    correlations are biased toward zero**, with the true co-movement displaced into lags.
+    The second is the dangerous one for this seat: the downside-correlation guard is hired
+    to catch co-crashing with the trend pole, and smoothing is precisely the bias that hides
+    it.
+
+    ``xi = 1`` is a clean feed; ``xi`` materially below 1 means the daily marks are smoothed
+    and every daily statistic of this stream - Sharpe, volatility, and the guard - is
+    flattered. Estimated without fitting the MA: aggregating over a horizon well beyond the
+    smoothing lag recovers the true variance, so the Lo-MacKinlay variance ratio converges to
+    ``1/xi``. Capped at 1, since a variance ratio below one is mean reversion rather than
+    smoothing and this statistic makes no claim about that direction.
+
+    Pre-registered expectation (the article's own): an exchange-traded UCITS ETF NAV should
+    smooth far LESS than the OTC-marked funds GLM studied, so a large adjustment here would
+    be a finding about the data feed rather than about the strategy.
+    """
+    observations = stream.size
+    if observations < _SMOOTHING_HORIZON * 4:
+        return np.nan
+    mean = float(np.mean(stream))
+    centered = stream - mean
+    variance = float(np.dot(centered, centered) / (observations - 1))
+    if not np.isfinite(variance) or variance <= 0.0:
+        return np.nan
+    sums = np.convolve(stream, np.ones(_SMOOTHING_HORIZON), mode="valid")
+    # Lo-MacKinlay unbiased normalisation for overlapping windows.
+    scale = (
+        _SMOOTHING_HORIZON
+        * (observations - _SMOOTHING_HORIZON + 1)
+        * (1.0 - _SMOOTHING_HORIZON / observations)
+    )
+    if scale <= 0.0:
+        return np.nan
+    deviations = sums - _SMOOTHING_HORIZON * mean
+    aggregated = float(np.dot(deviations, deviations) / scale)
+    ratio = aggregated / variance
+    if not np.isfinite(ratio) or ratio <= 0.0:
+        return np.nan
+    return float(min(1.0 / ratio, 1.0))
 
 
 def _left_tail_budget(stream: np.ndarray, horizon: int) -> float:
@@ -708,6 +763,29 @@ CONVERGENT_DOWNSIDE_LSKEW_DEFINITION = MetricDefinition(
 )
 CONVERGENT_DOWNSIDE_LSKEW_EXTRACTOR = ExtractorSpec(
     _make_stream_read(_convergent_downside_lskew), contract_version=1
+)
+
+CONVERGENT_SMOOTHING_INDEX_DEFINITION = MetricDefinition(
+    id=CONVERGENT_SMOOTHING_INDEX_ID,
+    title="Convergent Smoothing Index (Getmansky-Lo-Makarov xi, variance ratio)",
+    source_type=SOURCE_TYPE_CUSTOM,
+    unit="ratio",
+    value_semantics=(
+        "GLM smoothing index of the daily stream (1.0 = clean marks). Below 1 the daily "
+        "marks are smoothed, so volatility is understated, Sharpe inflated by 1/sqrt(xi), "
+        "and contemporaneous correlations - including the downside-correlation guard - are "
+        "biased toward zero"
+    ),
+    boundary_semantics="block_local",
+    provider="aegis",
+    target="portfolio",
+    source_method="get_value",
+    required_report_output=False,
+    required_gate_input=False,
+    metadata={"horizon_days": _SMOOTHING_HORIZON, "estimator": "lo_mackinlay_variance_ratio"},
+)
+CONVERGENT_SMOOTHING_INDEX_EXTRACTOR = ExtractorSpec(
+    _make_stream_read(_convergent_smoothing_index), contract_version=1
 )
 
 

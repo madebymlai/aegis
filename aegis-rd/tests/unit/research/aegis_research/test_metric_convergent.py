@@ -459,3 +459,39 @@ def test_allocator_contribution_derives_block_lengths_when_not_given() -> None:
     assert tuple(i.block_length for i in contribution.intervals) == block_length_band(
         independent, trend
     )
+
+
+def test_smoothing_index_reads_one_on_a_clean_stream() -> None:
+    """An i.i.d. stream has no smoothing to find; xi must sit at the 1.0 ceiling."""
+    from research.aegis_research.metrics.custom.convergent import _convergent_smoothing_index
+
+    clean = np.random.default_rng(4).normal(0.0004, 0.01, 2000)
+
+    assert _convergent_smoothing_index(clean) == pytest.approx(1.0, abs=0.12)
+
+
+def test_smoothing_index_falls_as_marks_are_smoothed() -> None:
+    """A moving average of true returns is exactly the Getmansky-Lo-Makarov defect."""
+    from research.aegis_research.metrics.custom.convergent import _convergent_smoothing_index
+
+    truth = np.random.default_rng(4).normal(0.0004, 0.01, 2000)
+    # theta = (1/k,...) for k lags: xi = sum theta^2 = 1/k, so deeper smoothing -> lower xi.
+    two_day = np.convolve(truth, np.full(2, 1 / 2), mode="valid")
+    four_day = np.convolve(truth, np.full(4, 1 / 4), mode="valid")
+
+    clean_xi = _convergent_smoothing_index(truth)
+    two_xi = _convergent_smoothing_index(two_day)
+    four_xi = _convergent_smoothing_index(four_day)
+
+    # Monotone in smoothing depth, and near the theoretical xi = 1/k.
+    assert clean_xi > two_xi > four_xi
+    assert two_xi == pytest.approx(0.5, abs=0.15)
+    assert four_xi == pytest.approx(0.25, abs=0.15)
+
+
+def test_smoothing_index_is_nan_when_too_short_or_degenerate() -> None:
+    """Too few observations or zero variance cannot support a variance ratio."""
+    from research.aegis_research.metrics.custom.convergent import _convergent_smoothing_index
+
+    assert np.isnan(_convergent_smoothing_index(np.random.default_rng(1).normal(0, 0.01, 40)))
+    assert np.isnan(_convergent_smoothing_index(np.zeros(500)))

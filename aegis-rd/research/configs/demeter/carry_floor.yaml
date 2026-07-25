@@ -90,7 +90,11 @@ report:
   # capital-loss units for comparison with the incumbent and book loss budget. NOTE the book now runs on
   # TOTAL-RETURN streams: the catalog distribution store is seeded (GH #76), so these
   # coupon-bearing ETFs finally compound their income in the sim.
-  metrics: [convergent_tail_budget, convergent_downside_lskew]
+  # convergent_smoothing_index added 2026-07-25: smoothed marks would flatter every daily
+  # statistic here and bias the downside-correlation guard toward zero. Measured 1.0000
+  # (no smoothing) on this book, but it is a property of the FEED, so it is reported every
+  # run rather than assumed to hold.
+  metrics: [convergent_tail_budget, convergent_downside_lskew, convergent_smoothing_index]
 
 optimization:
   search: grid

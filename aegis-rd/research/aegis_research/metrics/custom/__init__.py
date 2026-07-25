@@ -67,6 +67,8 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         CONVERGENT_DOWNSIDE_LSKEW_EXTRACTOR,
         CONVERGENT_INCOME_UTILITY_DEFINITION,
         CONVERGENT_INCOME_UTILITY_EXTRACTOR,
+        CONVERGENT_SMOOTHING_INDEX_DEFINITION,
+        CONVERGENT_SMOOTHING_INDEX_EXTRACTOR,
         CONVERGENT_TAIL_BUDGET_DEFINITION,
         CONVERGENT_TAIL_BUDGET_EXTRACTOR,
     )
@@ -92,6 +94,9 @@ def optional_custom_metrics() -> dict[str, tuple[MetricDefinition, ExtractorSpec
         (CONVERGENT_TAIL_BUDGET_DEFINITION, CONVERGENT_TAIL_BUDGET_EXTRACTOR),
         # Robust (L-moment) skew: realized-shape report, not a convergent-membership gate.
         (CONVERGENT_DOWNSIDE_LSKEW_DEFINITION, CONVERGENT_DOWNSIDE_LSKEW_EXTRACTOR),
+        # Data-quality report: smoothed marks flatter every daily statistic of a credit
+        # stream, and bias the downside-correlation guard toward zero specifically.
+        (CONVERGENT_SMOOTHING_INDEX_DEFINITION, CONVERGENT_SMOOTHING_INDEX_EXTRACTOR),
         # Benchmark-relative metrics vs the universe's macro benchmark (SPY default).
         *capture_metrics(),
         *convexity_metrics(),
