@@ -395,3 +395,67 @@ def test_allocator_contribution_rejects_a_block_longer_than_the_sample() -> None
 
     with pytest.raises(AllocatorEvaluationError, match="exceeds"):
         evaluate_allocator_contribution(independent, trend, block_lengths=(9_999,))
+
+
+def test_optimal_block_length_grows_with_serial_dependence() -> None:
+    """The selector must react to dependence, which is the whole point of choosing b."""
+    from research.aegis_research.metrics.custom.convergent import optimal_block_length
+
+    def ar1(phi: float, seed: int = 5, n: int = 1500) -> np.ndarray:
+        noise = np.random.default_rng(seed).normal(0.0, 0.01, n)
+        series = np.empty(n)
+        series[0] = noise[0]
+        for t in range(1, n):
+            series[t] = phi * series[t - 1] + noise[t]
+        return series
+
+    independent = optimal_block_length(ar1(0.0))
+    persistent = optimal_block_length(ar1(0.9))
+
+    # A near-white series needs almost no block; a strongly persistent one needs a real one.
+    assert independent < persistent
+    assert persistent >= 5
+
+
+def test_optimal_block_length_stays_inside_its_bounds() -> None:
+    """Politis-White caps b at ceil(min(3*sqrt(n), n/3)); degenerate input must not escape it."""
+    from research.aegis_research.metrics.custom.convergent import optimal_block_length
+
+    n = 1200
+    ceiling = int(np.ceil(min(3.0 * np.sqrt(n), n / 3.0)))
+    noisy = np.random.default_rng(11).normal(0.0, 0.01, n)
+
+    assert 1 <= optimal_block_length(noisy) <= ceiling
+    assert optimal_block_length(np.zeros(n)) == 1  # zero variance cannot inform a choice
+    assert optimal_block_length(np.zeros(2)) == 1  # too short to estimate anything
+
+
+def test_block_length_band_brackets_the_longer_leg() -> None:
+    """The band is (b/2, b, 2b) around the LONGER of the two legs' selections."""
+    from research.aegis_research.metrics.custom.convergent import (
+        block_length_band,
+        optimal_block_length,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+    band = block_length_band(independent, trend)
+    selected = max(optimal_block_length(independent), optimal_block_length(trend))
+
+    assert selected in band
+    assert band == tuple(sorted(band))
+    assert min(band) <= selected <= max(band)
+
+
+def test_allocator_contribution_derives_block_lengths_when_not_given() -> None:
+    """Default inference selects from the data, not from the calendar."""
+    from research.aegis_research.metrics.custom.convergent import (
+        block_length_band,
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+    contribution = evaluate_allocator_contribution(independent, trend, samples=120, seed=3)
+
+    assert tuple(i.block_length for i in contribution.intervals) == block_length_band(
+        independent, trend
+    )

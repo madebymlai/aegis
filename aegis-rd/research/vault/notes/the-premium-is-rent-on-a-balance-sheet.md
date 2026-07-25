@@ -59,6 +59,46 @@ instance, recorded in [[income-must-accrue-not-be-captured]]. A full day of prim
 searching produced exactly one, worth a few hundred euros a year. That it exists at all is
 the more interesting fact; that only one turned up is the sobering one.
 
+> [!warning] Correction, same day: the measurement below does not decide the question
+> External verification of the metric (Exa, against primary sources) found that the sign of
+> ΔΘ̂ is set by a **scale convention that the code's own docstring misdescribes**, not by the
+> data.
+>
+> `composite_allocator_utility` states it compares "both at the same book vol". It does not:
+> the two *legs* are scaled to 10% each, but the blended book's volatility then floats down
+> to **7.66%** while the reference (trend alone) stays at **10%**. Θ is a certainty-equivalent
+> *growth rate* and is not scale-invariant, so a lower-volatility portfolio scores lower on it
+> mechanically. Re-levering both books to a common volatility - the standard convention, per
+> Graham-Harvey's GH2, and the one the live allocator actually implements by scaling sleeves
+> to `book_vol_target` - **flips the sign**:
+>
+> | | fixed-weight (as implemented) | vol-matched |
+> |---|---|---|
+> | daily (n=1889) | **-0.014055** | **+0.008034** |
+> | monthly (n=90) | **-0.020225** | **+0.017266** |
+>
+> The blend's Sharpe is **higher** than trend alone (1.213 against 1.132): the pole does
+> improve the book's risk-adjusted quality, and the negative reading comes from it also
+> de-risking the book.
+>
+> **Under every convention the intervals still span zero**, and that is now known to be
+> expected rather than informative: O'Connor (2024) finds power of 0.32 for a 0.05 Sharpe
+> difference at thirty years and correlation 0.80, and Kazak and Pohlmeier find false-negative
+> rates near 80% for certainty-equivalent-difference tests over five to ten years. The test is
+> **underpowered by construction**.
+>
+> Two further defects, both verified against primary sources. The claim that ΔΘ̂ "is the Tasche
+> marginal contribution" is a **category error**: Tasche's Proposition 2.2 is proved for a risk
+> measure homogeneous of degree 1, and Θ(λr) is approximately λμ - (ρ/2)λ²σ², which is not
+> λΘ(r). Only the arithmetic form is borrowed, none of the guarantees. And Tasche's `X - X_i`
+> would be `0.6·trend_leg`, where the code uses `1.0·trend_leg` - a second scale deviation.
+>
+> So the claim below that the negative sign "was not a blending artifact" is **withdrawn**: the
+> archived -0.0115 and the -0.0141 here share the same portfolio-level scale mismatch, so they
+> corroborate each other's convention rather than the finding. The honest statement is that
+> **this measurement cannot currently decide whether the pole earns its seat.** It remains true
+> that no positive result has been demonstrated.
+
 > [!success] Measured 2026-07-25: the seat's occupant does not demonstrably earn its seat
 > The ΔΘ̂ loader landed (`aegis-rd/scripts/floor_evaluation.py`,
 > `load_locked_strategy_returns`), so this is no longer an open obligation. **Any statement
