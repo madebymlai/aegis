@@ -22,6 +22,7 @@ from nautilus_trader.config import (
     CacheConfig,
     LiveDataEngineConfig,
     LiveDataClientConfig,
+    LiveRiskEngineConfig,
     LoggingConfig,
     TradingNodeConfig,
 )
@@ -39,7 +40,6 @@ from aegis_trader.trader.node import (
     LIVE_FILL_TIME_IN_FORCE,
     TraderNotRunningError,
     build_live_node_config,
-    build_live_risk_engine_config,
     build_live_node,
     build_live_strategy,
     default_pid_file,
@@ -73,18 +73,6 @@ def test_live_fill_time_in_force_is_market_on_close():
 
 
 # --------------------------------------------------------------------------- #
-# live RiskEngine wiring
-# --------------------------------------------------------------------------- #
-
-
-def test_live_risk_engine_config_carries_rate_limits_and_is_not_bypassed():
-    cfg = build_live_risk_engine_config()
-    assert cfg.bypass is False
-    assert cfg.max_order_submit_rate == "10/00:00:01"
-    assert cfg.max_order_modify_rate == "10/00:00:01"
-
-
-# --------------------------------------------------------------------------- #
 # broker-neutral live node config (no IBKR vocabulary, no ibapi)
 # --------------------------------------------------------------------------- #
 
@@ -101,10 +89,15 @@ def test_live_node_config_wires_cache_logging_and_reconciliation():
     assert cfg.exec_engine.reconciliation is True
 
 
-def test_live_node_config_wires_the_live_risk_engine():
+def test_live_node_config_uses_nautilus_risk_defaults():
+    """Pin the upstream live defaults Aegis relies on without configuring them."""
     cfg = build_live_node_config()
-    assert cfg.risk_engine is not None
-    assert cfg.risk_engine.bypass is False
+    risk = cfg.risk_engine
+
+    assert type(risk) is LiveRiskEngineConfig
+    assert risk.bypass is False
+    assert risk.max_order_submit_rate == "100/00:00:01"
+    assert risk.max_order_modify_rate == "100/00:00:01"
 
 
 def test_live_node_config_wires_the_shared_catalog():
@@ -188,13 +181,9 @@ def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves(
     )
 
     strategy = build_live_strategy(assembled, arrays=SleeveArrays.bar_only())
-    max_notionals = strategy.risk_engine_config_dict(100_000.0)[
-        "max_notional_per_order"
-    ]
 
     assert strategy.config.fill_time_in_force == TimeInForce.AT_THE_CLOSE
     assert strategy.config.warmup_cache_on_start is True
-    assert set(max_notionals) == {"EUR/USD.IDEALPRO", "MSFT.NASDAQ", "VUSA.XLON"}
 
 
 def test_build_live_node_rejects_an_invalid_book_before_broker_attachment(

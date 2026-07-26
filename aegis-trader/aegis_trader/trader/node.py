@@ -1,8 +1,8 @@
 """The live trading node — broker-neutral Nautilus ``TradingNode`` + the
 ``trader start``/``stop`` lifecycle (ADR-0003 amendment, aegis-rd-r8b.8).
 
-This module owns the *live* node: its ``Environment.LIVE`` config (live RiskEngine,
-cache, logging, shared catalog) and the foreground run/stop daemon.  It is
+This module owns the *live* node: its ``Environment.LIVE`` config (cache, logging,
+shared catalog) and the foreground run/stop daemon.  It is
 **broker-neutral** — no ``ibg_*``/``IDEALPRO`` vocabulary and no IBKR SDK import.
 The one broker touch is a single call, :func:`aegis_data.ibkr.attach_live_clients`,
 which wires Nautilus's stock IBKR clients onto the node; everything IBKR lives
@@ -36,7 +36,6 @@ from nautilus_trader.config import (
     CacheConfig,
     LiveDataEngineConfig,
     LiveExecEngineConfig,
-    LiveRiskEngineConfig,
     LoggingConfig,
     TradingNodeConfig,
 )
@@ -54,7 +53,6 @@ from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import IBConnectionSettings, load_book_config
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.trader.live_custom_data import (
     add_live_custom_data,
     build_live_sleeve_arrays,
@@ -81,35 +79,17 @@ class TraderNotRunningError(RuntimeError):
 # ── live node config (broker-neutral) ─────────────────────────────────────────
 
 
-def build_live_risk_engine_config(
-    risk_guard_config: RiskGuardConfig | None = None,
-) -> LiveRiskEngineConfig:
-    """The live RiskEngine config (``TradingNode`` requires the live variant).
-
-    An always-on, defense-in-depth guard over the sizing layer — never bypassed —
-    carrying the RiskGuard's order submit/modify rate limits.  Per-instrument
-    max-notional caps depend on live NAV and are applied by the strategy at
-    startup (``RebalanceStrategy.risk_engine_config_dict``).
-    """
-    guard = risk_guard_config or RiskGuardConfig()
-    return LiveRiskEngineConfig(
-        bypass=False,
-        max_order_submit_rate=guard.max_order_submit_rate,
-        max_order_modify_rate=guard.max_order_modify_rate,
-    )
-
-
 def build_live_node_config(
     *, trader_id: str | None = None, use_mark_prices: bool = False
 ) -> TradingNodeConfig:
     """Build the live ``TradingNodeConfig`` (broker-neutral).
 
-    Runs under ``Environment.LIVE`` with reconciliation, the live RiskEngine, a
-    cache, logging, and the shared aegis-data catalog wired in (ADR-0006): a
-    startup ``request_bars(update_catalog=True)`` then serves history from the
-    catalog and tops up only the missing IBKR tail, so research and live warm from
-    the *same* corpus with no cold-start lookback gap.  The broker's data/exec
-    clients are wired separately by :func:`aegis_data.ibkr.attach_live_clients`.
+    Runs under ``Environment.LIVE`` with reconciliation, a cache, logging, and the
+    shared aegis-data catalog wired in (ADR-0006): a startup
+    ``request_bars(update_catalog=True)`` then serves history from the catalog and
+    tops up only the missing IBKR tail, so research and live warm from the *same*
+    corpus with no cold-start lookback gap.  The broker's data/exec clients are
+    wired separately by :func:`aegis_data.ibkr.attach_live_clients`.
 
     *trader_id* is the Broker Connection's (``connection.trader_id``); when omitted
     Nautilus's own ``TradingNodeConfig`` default applies — the default lives in one
@@ -127,7 +107,6 @@ def build_live_node_config(
         environment=Environment.LIVE,
         data_engine=LiveDataEngineConfig(time_bars_build_with_no_updates=False),
         exec_engine=LiveExecEngineConfig(reconciliation=True),
-        risk_engine=build_live_risk_engine_config(),
         cache=CacheConfig(),
         logging=LoggingConfig(),
         catalogs=[DataCatalogConfig(path=str(catalog_root()))],

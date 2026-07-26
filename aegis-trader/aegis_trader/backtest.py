@@ -33,7 +33,6 @@ from nautilus_trader.model.identifiers import ClientId, InstrumentId, Venue
 from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.config import PortfolioConfig
-from nautilus_trader.risk.config import RiskEngineConfig
 
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.catalog import (
@@ -52,7 +51,6 @@ from aegis_trader.config import load_book_config
 from aegis_trader.data import wrangle_bars, wrangle_fx_quotes, wrangle_quote_bars
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.domain.streams import MarketStream
 from aegis_trader.portfolio.performance import (
     BookEquityRecorder,
@@ -402,36 +400,14 @@ def book_return_stats(
     return {}
 
 
-def build_risk_engine_config(
-    risk_guard_config: RiskGuardConfig | None = None,
-) -> RiskEngineConfig:
-    """The backtest RiskEngine config (``BacktestEngine`` requires the non-live
-    variant).
-
-    Mirrors the live node's RiskEngine wiring (:func:`aegis_trader.trader.node.
-    build_live_risk_engine_config`) so the overlay validated in backtest is
-    constructed the same way it trades — never bypassed, carrying the RiskGuard's
-    order submit/modify rate limits.
-    """
-    guard = risk_guard_config or RiskGuardConfig()
-    return RiskEngineConfig(
-        bypass=False,
-        max_order_submit_rate=guard.max_order_submit_rate,
-        max_order_modify_rate=guard.max_order_modify_rate,
-    )
-
-
 def build_backtest_engine_config(
     *,
     trader_id: str = "BACKTEST-001",
-    risk_guard_config: RiskGuardConfig | None = None,
     bar_capacity: int = DEFAULT_BACKTEST_BAR_CAPACITY,
     use_mark_prices: bool = False,
 ) -> BacktestEngineConfig:
     """Build the backtest engine config.
 
-    Mirrors the live node's RiskEngine wiring so the overlay validated in backtest
-    is constructed the same way it trades — "what you backtest is what you trade".
     The runner adds venues, instruments, data, and the strategy to the resulting
     ``BacktestEngine`` and pairs it with a plain ``MARKET`` (``fill_time_in_force``
     ``None``), which fills at the execution bar's close.
@@ -443,7 +419,6 @@ def build_backtest_engine_config(
     return BacktestEngineConfig(
         trader_id=trader_id,
         cache=CacheConfig(bar_capacity=bar_capacity),
-        risk_engine=build_risk_engine_config(risk_guard_config),
         portfolio=PortfolioConfig(use_mark_prices=use_mark_prices),
         logging=LoggingConfig(),
     )

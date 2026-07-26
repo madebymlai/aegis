@@ -12,9 +12,8 @@ submitted on bar t+1 and fills at bar t+1's close — one-bar lag, no look-ahead
 Identity is the native ``InstrumentId`` declared by each Execution Bundle.  The
 strategy never resolves symbols, FIGIs, or broker-specific aliases at runtime.
 
-RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
-max-notional caps from NAV; the strategy logs every ``OrderDenied`` event
-so operators can trace rejected orders.
+The strategy logs every ``OrderDenied`` event so operators can trace rejected
+orders.
 
 Per-Sleeve cadence (aegis-rd-9qkr):
 - Each Sleeve rebalances off bar-close at its own DataContract.timeframe;
@@ -56,7 +55,6 @@ from aegis_trader.data import (
     NautilusMarketData,
 )
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.roll import (
     Halt,
     RequestBars,
@@ -107,7 +105,6 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
 
     book: BookConfig
     bundle_label: str = "synthetic"
-    risk_guard_config: RiskGuardConfig = RiskGuardConfig()
     warmup_cache_on_start: bool = False
     fill_time_in_force: TimeInForce | None = None
     """Time-in-force for submitted orders (ADR-0001, next-close execution).
@@ -151,8 +148,6 @@ class RebalanceStrategy(Strategy):
         self._timeframe_by_bar_type: dict[BarType, str] = {}
         self._book_market_clock: BookMarketClock | None = None
         self._pending_due_timestamp: int | None = None
-        # ── Slice 8: RiskEngine guards ───────────────────────────────────
-        self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
         # Slice 7: startup gates + global halt
         self._startup_result: StartupResult | None = None
         self._is_halted: bool = False
@@ -739,27 +734,13 @@ class RebalanceStrategy(Strategy):
     def on_order_denied(self, event: OrderDenied) -> None:
         """Log every order denial from the RiskEngine.
 
-        A denial means the RiskEngine rejected the order before submission —
-        protects against oversized orders and other pre-trade violations.
+        A denial means the intended trade did not happen; preserve the engine's
+        reason verbatim for operator diagnosis.
         """
-        self.log.warning(
+        self.log.error(
             f"OrderDenied: instrument={event.instrument_id!r} "
             f"client_order_id={event.client_order_id!r} "
             f"reason={event.reason!r}"
-        )
-
-    def risk_engine_config_dict(self, nav: float) -> dict[str, Any]:
-        """Return a dict suitable for ``RiskEngineConfig`` kwargs.
-
-        Computes per-instrument max notionals from the current NAV, keyed by the
-        native InstrumentIds declared by the loaded bundle contracts.
-        """
-        return self._risk_guard.risk_engine_config_dict(
-            nav=nav,
-            instrument_ids=[
-                instrument_id.value
-                for instrument_id in self._require_assembled_book().loadable_instrument_ids
-            ],
         )
 
     # -- order submission -------------------------------------------------------
