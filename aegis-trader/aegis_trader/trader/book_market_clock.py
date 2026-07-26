@@ -53,7 +53,7 @@ class BookMarketClock:
     def advance(
         self,
         bar_type: BarType,
-        timestamp_ns: int,
+        ts_ns: int,
         *,
         continuous_id: InstrumentId | None = None,
     ) -> None:
@@ -62,7 +62,7 @@ class BookMarketClock:
         if consumers is None and continuous_id is not None:
             consumers = self._continuous_consumers.get(continuous_id)
         for sleeve in consumers or ():
-            self._advance_sleeve(sleeve, timestamp_ns)
+            self._advance_sleeve(sleeve, ts_ns)
 
     @property
     def has_pending_due(self) -> bool:

@@ -270,6 +270,12 @@ class _ReNetPipeline:
         )
 
 
+def _fire_alert(callback: object, *, ts_event: int) -> None:
+    if not callable(callback):
+        raise AssertionError(f"expected an alert callback, got {callback!r}")
+    callback(SimpleNamespace(ts_event=ts_event))
+
+
 class _BoundaryHarness:
     on_bar: Any = RebalanceStrategy.on_bar
     _schedule_re_net: Any = RebalanceStrategy._schedule_re_net
@@ -424,9 +430,8 @@ def test_strategy_flushes_the_coalesced_due_set_as_one_book_re_net() -> None:
     )
     harness.on_bar(_bar(bar_type, 2_000, 101.0))
     callback = harness.clock.alerts[0][2]
-    assert callable(callback)
 
-    callback(SimpleNamespace(ts_event=2_001))
+    _fire_alert(callback, ts_event=2_001)
 
     assert harness._pipeline.requests == [
         RebalanceRequest(due=due, timestamp_ns=2_001)
@@ -435,6 +440,7 @@ def test_strategy_flushes_the_coalesced_due_set_as_one_book_re_net() -> None:
 
 
 def test_halted_strategy_drains_due_sleeves_without_rebalancing() -> None:
+    bar_type = raw_bar_type(InstrumentId.from_str("VUSA.XLON"), "1D")
     due = (
         DueSleeve(
             sleeve=SleeveName("trend"),
@@ -445,9 +451,11 @@ def test_halted_strategy_drains_due_sleeves_without_rebalancing() -> None:
         Ready((), None, (), StartupResult(True)),
         due=due,
     )
+    harness.on_bar(_bar(bar_type, 2_000, 101.0))
+    callback = harness.clock.alerts[0][2]
     harness._is_halted = True
 
-    harness._on_re_net_alert(SimpleNamespace(ts_event=2_001))
+    _fire_alert(callback, ts_event=2_001)
 
     assert harness._book_market_clock.has_pending_due is False
     assert harness._pipeline.requests == []

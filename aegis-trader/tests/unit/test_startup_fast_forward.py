@@ -50,6 +50,9 @@ _WEEK_NS = 604_800_000_000_000
 _FIRST_NS = 1_752_710_400_000_000_000
 _SECOND_NS = _FIRST_NS + _DAY_NS
 _THIRD_NS = _SECOND_NS + _DAY_NS
+_SECOND_WITHIN_PERIOD_NS = 1_752_796_800_000_000_001
+_SECOND_MINUS_WEEK_NS = 1_752_192_000_000_000_000
+_SECOND_PLUS_WEEK_NS = 1_753_401_600_000_000_000
 _THROUGH = datetime(2025, 7, 19, tzinfo=timezone.utc)
 _ES = InstrumentId.from_str("ES.XCME")
 _ESM4 = InstrumentId.from_str("ESM4.XCME")
@@ -188,20 +191,20 @@ def test_fast_forward_releases_subscriptions_after_the_book_history_barrier() ->
 
 def test_fast_forward_leaves_the_live_clock_at_the_replayed_book_frontier() -> None:
     fast_forward, _pipeline, market_clock = _fast_forward_with_clock()
-    loading = fast_forward.begin(through=_THROUGH)
-    assert isinstance(loading, Recovering)
+    loading = _require_recovering(fast_forward.begin(through=_THROUGH))
     request = loading.requests[0]
     fast_forward.receive_history(_bar(request.bar_type, _FIRST_NS, 100.0))
     fast_forward.receive_history(_bar(request.bar_type, _SECOND_NS, 101.0))
     ready = fast_forward.history_loaded(request.key)
 
-    market_clock.advance(request.bar_type, _SECOND_NS + 1)
+    market_clock.advance(request.bar_type, _SECOND_WITHIN_PERIOD_NS)
     within_period_due = market_clock.drain()
     market_clock.advance(request.bar_type, _THIRD_NS)
+    next_period_due = market_clock.drain()
 
     assert isinstance(ready, Ready)
     assert within_period_due == ()
-    assert market_clock.drain() == (
+    assert next_period_due == (
         DueSleeve(
             sleeve=_SLEEVE,
             period=CompletedRebalancePeriod(
@@ -504,8 +507,7 @@ def test_fast_forward_has_one_barrier_with_per_sleeve_cadence_positions() -> Non
         book_market_clock=market_clock,
         fx_reference_pairs=(),
     )
-    loading = fast_forward.begin(through=_THROUGH)
-    assert isinstance(loading, Recovering)
+    loading = _require_recovering(fast_forward.begin(through=_THROUGH))
     daily = next(
         request
         for request in loading.requests
@@ -518,14 +520,14 @@ def test_fast_forward_has_one_barrier_with_per_sleeve_cadence_positions() -> Non
     )
     fast_forward.receive_history(_bar(daily.bar_type, _FIRST_NS, 100.0))
     fast_forward.receive_history(_bar(daily.bar_type, _SECOND_NS, 101.0))
-    fast_forward.receive_history(_bar(weekly.bar_type, _SECOND_NS - 7 * _DAY_NS, 200.0))
+    fast_forward.receive_history(_bar(weekly.bar_type, _SECOND_MINUS_WEEK_NS, 200.0))
     fast_forward.receive_history(_bar(weekly.bar_type, _SECOND_NS, 201.0))
 
     one_loaded = fast_forward.history_loaded(daily.key)
     ready = fast_forward.history_loaded(weekly.key)
     market_clock.advance(daily.bar_type, _THIRD_NS)
     daily_due = market_clock.drain()
-    market_clock.advance(weekly.bar_type, _SECOND_NS + _WEEK_NS)
+    market_clock.advance(weekly.bar_type, _SECOND_PLUS_WEEK_NS)
     weekly_due = market_clock.drain()
 
     assert isinstance(one_loaded, Recovering)
@@ -643,11 +645,9 @@ def test_fast_forward_converges_with_uninterrupted_market_processing() -> None:
         book_market_clock=market_clock,
         fx_reference_pairs=(),
     )
-    loading = fast_forward.begin(through=_THROUGH)
-    assert isinstance(loading, Recovering)
+    loading = _require_recovering(fast_forward.begin(through=_THROUGH))
     request = loading.requests[0]
     ready = _complete_cash_history(fast_forward, request, history)
-    assert isinstance(ready, Ready)
 
     uninterrupted_result = _process_market_history(
         uninterrupted, request.bar_type.instrument_id, history, live_bar
@@ -658,6 +658,7 @@ def test_fast_forward_converges_with_uninterrupted_market_processing() -> None:
     market_clock.advance(request.bar_type, live_bar.ts_event)
     live_due = market_clock.drain()
 
+    assert isinstance(ready, Ready)
     assert recovered_result.orders == uninterrupted_result.orders
     assert recovered.last_sleeve_weights == uninterrupted.last_sleeve_weights
     assert live_due == (
@@ -678,6 +679,12 @@ def test_fast_forward_converges_with_uninterrupted_market_processing() -> None:
 def _fast_forward() -> tuple[StartupFastForward, RebalancePipeline]:
     fast_forward, pipeline, _market_clock = _fast_forward_with_clock()
     return fast_forward, pipeline
+
+
+def _require_recovering(update: RecoveryUpdate) -> Recovering:
+    if not isinstance(update, Recovering):
+        raise AssertionError(f"expected Recovering, got {update!r}")
+    return update
 
 
 def _fast_forward_with_clock() -> tuple[
