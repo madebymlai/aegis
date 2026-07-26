@@ -242,7 +242,7 @@ def test_trader_start_cli_renders_recovery_progress_without_repeating_it(caplog)
     with caplog.at_level(logging.INFO, logger="aegis_trader"):
         report(Recovering((), RecoveryProgress(1, 3, 42, 100)))
         report(Recovering((), RecoveryProgress(1, 3, 43, 101)))
-        report(Ready((), 200, (), (), StartupResult(trading_enabled=True)))
+        report(Ready((), 200, (), StartupResult(trading_enabled=True)))
 
     assert caplog.messages == [
         "Startup recovery: requests_remaining=2, historical_events=42",

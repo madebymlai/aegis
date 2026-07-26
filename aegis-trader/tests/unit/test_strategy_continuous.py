@@ -22,8 +22,16 @@ from aegis_trader.domain.roll import (
     UnsubscribeBars,
 )
 from aegis_trader.domain.startup import StartupGate, StartupResult
-from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource
+from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, SleeveName
 from aegis_trader.trader.book_startup import SubscribeQuoteTicks
+from aegis_trader.trader.pipeline import (
+    CompletedRebalancePeriod,
+    DueSleeve,
+    GateOutcome,
+    RebalanceRequest,
+    RebalanceResult,
+    RebalanceSummary,
+)
 from aegis_trader.trader.strategy import RebalanceStrategy
 from aegis_trader.trader.startup_fast_forward import (
     HistoryRequest,
@@ -204,10 +212,77 @@ class _BoundaryDesk:
         return ()
 
 
+class _FakeBookMarketClock:
+    def __init__(self, due: tuple[DueSleeve, ...] = ()) -> None:
+        self.advances: list[tuple[BarType, int, InstrumentId | None]] = []
+        self.due = due
+
+    def advance(
+        self,
+        bar_type: BarType,
+        timestamp_ns: int,
+        *,
+        continuous_id: InstrumentId | None = None,
+    ) -> None:
+        self.advances.append((bar_type, timestamp_ns, continuous_id))
+
+    @property
+    def has_pending_due(self) -> bool:
+        return bool(self.due)
+
+    def drain(self) -> tuple[DueSleeve, ...]:
+        due = self.due
+        self.due = ()
+        return due
+
+
+class _AlertClock:
+    def __init__(self) -> None:
+        self.alerts: list[tuple[str, int, object]] = []
+
+    def set_time_alert_ns(
+        self,
+        name: str,
+        timestamp_ns: int,
+        *,
+        callback: object,
+    ) -> None:
+        self.alerts.append((name, timestamp_ns, callback))
+
+
+class _ReNetPipeline:
+    def __init__(self) -> None:
+        self.requests: list[RebalanceRequest] = []
+        self.last_sleeve_weights: dict[SleeveName, float] = {}
+
+    def rebalance(self, request: RebalanceRequest) -> RebalanceResult:
+        self.requests.append(request)
+        return RebalanceResult(
+            orders=(),
+            summary=RebalanceSummary(
+                nav=100_000.0,
+                num_sleeves=0,
+                num_targets=0,
+                num_orders=0,
+                gate_outcome=GateOutcome.PASS,
+                total_notional=0.0,
+            ),
+        )
+
+
 class _BoundaryHarness:
     on_bar: Any = RebalanceStrategy.on_bar
+    _schedule_re_net: Any = RebalanceStrategy._schedule_re_net
+    _on_re_net_alert: Any = RebalanceStrategy._on_re_net_alert
+    _rebalance_due_sleeves: Any = RebalanceStrategy._rebalance_due_sleeves
+    _require_pipeline: Any = RebalanceStrategy._require_pipeline
 
-    def __init__(self, ready: Ready) -> None:
+    def __init__(
+        self,
+        ready: Ready,
+        *,
+        due: tuple[DueSleeve, ...] = (),
+    ) -> None:
         self._assembled_book = object()
         self._is_halted = False
         self._is_recovering = False
@@ -217,6 +292,11 @@ class _BoundaryHarness:
         }
         self._book_activity = ready.book_activity
         self._desk = _BoundaryDesk()
+        self._book_market_clock = _FakeBookMarketClock(due)
+        self._pending_due_timestamp: int | None = None
+        self._pipeline = _ReNetPipeline()
+        self._last_sleeve_weights: dict[SleeveName, float] = {}
+        self.clock = _AlertClock()
         self.observed: list[Bar] = []
         self.halts: list[Halt] = []
 
@@ -237,11 +317,8 @@ class _BoundaryHarness:
     ) -> None:
         self.observed.append(bar)
 
-    def _bar_consumers(self, _bar_type: object, **_kwargs: object) -> tuple[()]:
-        return ()
-
-    def _advance_sleeve_clock(self, _sleeve: object, _timestamp_ns: int) -> None:
-        raise AssertionError("the boundary fixture has no Sleeve consumers")
+    def _require_book_market_clock(self) -> _FakeBookMarketClock:
+        return self._book_market_clock
 
     def _halt_from_roll_intent(self, halt: Halt) -> None:
         self.halts.append(halt)
@@ -283,7 +360,7 @@ def test_strategy_processes_the_first_live_bar_exactly_once_after_recovery() -> 
     boundary = _bar(bar_type, 1_000, 100.0)
     live = _bar(bar_type, 2_000, 101.0)
     harness = _BoundaryHarness(
-        Ready((), boundary.ts_event, (), (boundary,), StartupResult(True))
+        Ready((), boundary.ts_event, (boundary,), StartupResult(True))
     )
 
     harness.on_bar(live)
@@ -291,6 +368,8 @@ def test_strategy_processes_the_first_live_bar_exactly_once_after_recovery() -> 
 
     assert harness.observed == [live]
     assert harness._desk.bars == [live]
+    assert harness._book_market_clock.advances == [(bar_type, live.ts_event, None)]
+    assert harness.clock.alerts == []
     assert harness.halts == []
 
 
@@ -300,7 +379,7 @@ def test_strategy_halts_a_conflicting_recovery_boundary_bar() -> None:
     boundary = _bar(bar_type, 1_000, 100.0)
     conflict = _bar(bar_type, 1_000, 999.0)
     harness = _BoundaryHarness(
-        Ready((), boundary.ts_event, (), (boundary,), StartupResult(True))
+        Ready((), boundary.ts_event, (boundary,), StartupResult(True))
     )
 
     harness.on_bar(conflict)
@@ -308,6 +387,70 @@ def test_strategy_halts_a_conflicting_recovery_boundary_bar() -> None:
     assert len(harness.halts) == 1
     assert harness.halts[0].gate == StartupGate.RECOVERY_HISTORY
     assert harness.observed == []
+
+
+def test_strategy_arms_one_flush_for_all_due_bars_at_one_timestamp() -> None:
+    first_type = raw_bar_type(InstrumentId.from_str("VUSA.XLON"), "1D")
+    second_type = raw_bar_type(InstrumentId.from_str("SPY.ARCA"), "1D")
+    due = (
+        DueSleeve(
+            sleeve=SleeveName("trend"),
+            period=CompletedRebalancePeriod(period=7, period_ns=86_400_000_000_000),
+        ),
+    )
+    harness = _BoundaryHarness(
+        Ready((), None, (), StartupResult(True)),
+        due=due,
+    )
+
+    harness.on_bar(_bar(first_type, 2_000, 101.0))
+    harness.on_bar(_bar(second_type, 2_000, 202.0))
+
+    assert len(harness.clock.alerts) == 1
+    assert harness.clock.alerts[0][:2] == ("re-net-2000", 2_001)
+
+
+def test_strategy_flushes_the_coalesced_due_set_as_one_book_re_net() -> None:
+    bar_type = raw_bar_type(InstrumentId.from_str("VUSA.XLON"), "1D")
+    due = (
+        DueSleeve(
+            sleeve=SleeveName("trend"),
+            period=CompletedRebalancePeriod(period=7, period_ns=86_400_000_000_000),
+        ),
+    )
+    harness = _BoundaryHarness(
+        Ready((), None, (), StartupResult(True)),
+        due=due,
+    )
+    harness.on_bar(_bar(bar_type, 2_000, 101.0))
+    callback = harness.clock.alerts[0][2]
+    assert callable(callback)
+
+    callback(SimpleNamespace(ts_event=2_001))
+
+    assert harness._pipeline.requests == [
+        RebalanceRequest(due=due, timestamp_ns=2_001)
+    ]
+    assert harness._book_market_clock.has_pending_due is False
+
+
+def test_halted_strategy_drains_due_sleeves_without_rebalancing() -> None:
+    due = (
+        DueSleeve(
+            sleeve=SleeveName("trend"),
+            period=CompletedRebalancePeriod(period=7, period_ns=86_400_000_000_000),
+        ),
+    )
+    harness = _BoundaryHarness(
+        Ready((), None, (), StartupResult(True)),
+        due=due,
+    )
+    harness._is_halted = True
+
+    harness._on_re_net_alert(SimpleNamespace(ts_event=2_001))
+
+    assert harness._book_market_clock.has_pending_due is False
+    assert harness._pipeline.requests == []
 
 
 class _FakeMarketData:

@@ -29,6 +29,7 @@ from aegis_trader.trader.pipeline import (
     RebalanceRequest,
     RebalanceResult,
 )
+from aegis_trader.trader.book_market_clock import BookMarketClock
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.trader.roll_desk import RollDesk
 from aegis_trader.bundles.marking import RecordedMarkingResolver
@@ -45,6 +46,7 @@ _WEEKLY_INSTRUMENT = InstrumentId.from_str("QQQ.NASDAQ")
 _SLEEVE = SleeveName("trend")
 _WEEKLY_SLEEVE = SleeveName("carry")
 _DAY_NS = 86_400_000_000_000
+_WEEK_NS = 604_800_000_000_000
 _FIRST_NS = 1_752_710_400_000_000_000
 _SECOND_NS = _FIRST_NS + _DAY_NS
 _THIRD_NS = _SECOND_NS + _DAY_NS
@@ -185,7 +187,7 @@ def test_fast_forward_releases_subscriptions_after_the_book_history_barrier() ->
 
 
 def test_fast_forward_leaves_the_live_clock_at_the_replayed_book_frontier() -> None:
-    fast_forward, _pipeline = _fast_forward()
+    fast_forward, _pipeline, market_clock = _fast_forward_with_clock()
     loading = fast_forward.begin(through=_THROUGH)
     assert isinstance(loading, Recovering)
     request = loading.requests[0]
@@ -193,8 +195,21 @@ def test_fast_forward_leaves_the_live_clock_at_the_replayed_book_frontier() -> N
     fast_forward.receive_history(_bar(request.bar_type, _SECOND_NS, 101.0))
     ready = fast_forward.history_loaded(request.key)
 
+    market_clock.advance(request.bar_type, _SECOND_NS + 1)
+    within_period_due = market_clock.drain()
+    market_clock.advance(request.bar_type, _THIRD_NS)
+
     assert isinstance(ready, Ready)
-    assert dict(ready.resume_periods) == {_SLEEVE: _SECOND_NS // _DAY_NS}
+    assert within_period_due == ()
+    assert market_clock.drain() == (
+        DueSleeve(
+            sleeve=_SLEEVE,
+            period=CompletedRebalancePeriod(
+                period=20_287,
+                period_ns=_DAY_NS,
+            ),
+        ),
+    )
 
 
 def test_fast_forward_halts_a_conflicting_live_boundary_bar() -> None:
@@ -326,6 +341,10 @@ def test_fast_forward_reconstructs_rolls_before_releasing_the_live_front() -> No
         pipeline=pipeline,
         roll_desk=roll_desk,
         bar_type_resolver=resolver,
+        book_market_clock=BookMarketClock(
+            book=book,
+            bar_type_resolver=resolver,
+        ),
         fx_reference_pairs=(),
     )
     loading = fast_forward.begin(through=datetime(2024, 7, 1, tzinfo=timezone.utc))
@@ -408,12 +427,15 @@ def test_fast_forward_halts_when_quote_marking_sides_do_not_share_timestamps() -
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
         arrays=SleeveArrays.bar_only(),
     )
+    resolver = RecordedMarkingResolver(recorded={_INSTRUMENT: MarkMode.QUOTE})
     fast_forward = StartupFastForward(
         book=book,
         pipeline=pipeline,
         roll_desk=None,
-        bar_type_resolver=RecordedMarkingResolver(
-            recorded={_INSTRUMENT: MarkMode.QUOTE}
+        bar_type_resolver=resolver,
+        book_market_clock=BookMarketClock(
+            book=book,
+            bar_type_resolver=resolver,
         ),
         fx_reference_pairs=(),
     )
@@ -470,11 +492,16 @@ def test_fast_forward_has_one_barrier_with_per_sleeve_cadence_positions() -> Non
         arrays=SleeveArrays.bar_only(),
     )
     resolver = DeclaredMarkingResolver()
+    market_clock = BookMarketClock(
+        book=book,
+        bar_type_resolver=resolver,
+    )
     fast_forward = StartupFastForward(
         book=book,
         pipeline=pipeline,
         roll_desk=None,
         bar_type_resolver=resolver,
+        book_market_clock=market_clock,
         fx_reference_pairs=(),
     )
     loading = fast_forward.begin(through=_THROUGH)
@@ -496,13 +523,28 @@ def test_fast_forward_has_one_barrier_with_per_sleeve_cadence_positions() -> Non
 
     one_loaded = fast_forward.history_loaded(daily.key)
     ready = fast_forward.history_loaded(weekly.key)
+    market_clock.advance(daily.bar_type, _THIRD_NS)
+    daily_due = market_clock.drain()
+    market_clock.advance(weekly.bar_type, _SECOND_NS + _WEEK_NS)
+    weekly_due = market_clock.drain()
 
     assert isinstance(one_loaded, Recovering)
     assert isinstance(ready, Ready)
-    assert dict(ready.resume_periods) == {
-        _WEEKLY_SLEEVE: _SECOND_NS // (7 * _DAY_NS),
-        _SLEEVE: _SECOND_NS // _DAY_NS,
-    }
+    assert daily_due == (
+        DueSleeve(
+            sleeve=_SLEEVE,
+            period=CompletedRebalancePeriod(period=20_287, period_ns=_DAY_NS),
+        ),
+    )
+    assert weekly_due == (
+        DueSleeve(
+            sleeve=_WEEKLY_SLEEVE,
+            period=CompletedRebalancePeriod(
+                period=2_898,
+                period_ns=_WEEK_NS,
+            ),
+        ),
+    )
 
 
 def test_fast_forward_halts_when_a_sleeve_cannot_reconstruct_its_target() -> None:
@@ -521,6 +563,7 @@ def test_fast_forward_halts_when_a_sleeve_cannot_reconstruct_its_target() -> Non
             )
         },
     )
+    resolver = DeclaredMarkingResolver()
     fast_forward = StartupFastForward(
         book=book,
         pipeline=RebalancePipeline(
@@ -531,7 +574,11 @@ def test_fast_forward_halts_when_a_sleeve_cannot_reconstruct_its_target() -> Non
             arrays=SleeveArrays.bar_only(),
         ),
         roll_desk=None,
-        bar_type_resolver=DeclaredMarkingResolver(),
+        bar_type_resolver=resolver,
+        book_market_clock=BookMarketClock(
+            book=book,
+            bar_type_resolver=resolver,
+        ),
         fx_reference_pairs=(),
     )
     loading = fast_forward.begin(through=_THROUGH)
@@ -583,11 +630,17 @@ def test_fast_forward_converges_with_uninterrupted_market_processing() -> None:
         ledger=uninterrupted_ledger,
         arrays=SleeveArrays.bar_only(),
     )
+    resolver = DeclaredMarkingResolver()
+    market_clock = BookMarketClock(
+        book=book,
+        bar_type_resolver=resolver,
+    )
     fast_forward = StartupFastForward(
         book=book,
         pipeline=recovered,
         roll_desk=None,
-        bar_type_resolver=DeclaredMarkingResolver(),
+        bar_type_resolver=resolver,
+        book_market_clock=market_clock,
         fx_reference_pairs=(),
     )
     loading = fast_forward.begin(through=_THROUGH)
@@ -602,10 +655,17 @@ def test_fast_forward_converges_with_uninterrupted_market_processing() -> None:
     recovered_result = _process_next_market_bar(
         recovered, request.bar_type.instrument_id, history[-1], live_bar
     )
+    market_clock.advance(request.bar_type, live_bar.ts_event)
+    live_due = market_clock.drain()
 
     assert recovered_result.orders == uninterrupted_result.orders
     assert recovered.last_sleeve_weights == uninterrupted.last_sleeve_weights
-    assert dict(ready.resume_periods) == {_SLEEVE: 20_288}
+    assert live_due == (
+        DueSleeve(
+            sleeve=_SLEEVE,
+            period=CompletedRebalancePeriod(period=20_288, period_ns=_DAY_NS),
+        ),
+    )
     recovered_covariance = recovered_ledger.realized_covariance(
         (_SLEEVE,), min_returns=2
     )
@@ -616,6 +676,15 @@ def test_fast_forward_converges_with_uninterrupted_market_processing() -> None:
 
 
 def _fast_forward() -> tuple[StartupFastForward, RebalancePipeline]:
+    fast_forward, pipeline, _market_clock = _fast_forward_with_clock()
+    return fast_forward, pipeline
+
+
+def _fast_forward_with_clock() -> tuple[
+    StartupFastForward,
+    RebalancePipeline,
+    BookMarketClock,
+]:
     book_config = BookConfig(
         sleeves=(
             SleeveConfig(
@@ -642,15 +711,21 @@ def _fast_forward() -> tuple[StartupFastForward, RebalancePipeline]:
         arrays=SleeveArrays.bar_only(),
     )
     resolver = DeclaredMarkingResolver()
+    market_clock = BookMarketClock(
+        book=book,
+        bar_type_resolver=resolver,
+    )
     return (
         StartupFastForward(
             book=book,
             pipeline=pipeline,
             roll_desk=None,
             bar_type_resolver=resolver,
+            book_market_clock=market_clock,
             fx_reference_pairs=(),
         ),
         pipeline,
+        market_clock,
     )
 
 
@@ -773,11 +848,16 @@ def _recover_two_streams(
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
         arrays=SleeveArrays.bar_only(),
     )
+    resolver = DeclaredMarkingResolver()
     fast_forward = StartupFastForward(
         book=book,
         pipeline=pipeline,
         roll_desk=None,
-        bar_type_resolver=DeclaredMarkingResolver(),
+        bar_type_resolver=resolver,
+        book_market_clock=BookMarketClock(
+            book=book,
+            bar_type_resolver=resolver,
+        ),
         fx_reference_pairs=(),
     )
     loading = fast_forward.begin(through=_THROUGH)
@@ -825,6 +905,7 @@ def _futures_fast_forward(port: Any) -> tuple[StartupFastForward, RollDesk, Any]
             )
         },
     )
+    resolver = DeclaredMarkingResolver()
     fast_forward = StartupFastForward(
         book=book,
         pipeline=RebalancePipeline(
@@ -835,7 +916,11 @@ def _futures_fast_forward(port: Any) -> tuple[StartupFastForward, RollDesk, Any]
             arrays=SleeveArrays.bar_only(),
         ),
         roll_desk=roll_desk,
-        bar_type_resolver=DeclaredMarkingResolver(),
+        bar_type_resolver=resolver,
+        book_market_clock=BookMarketClock(
+            book=book,
+            bar_type_resolver=resolver,
+        ),
         fx_reference_pairs=(),
     )
     return fast_forward, roll_desk, book

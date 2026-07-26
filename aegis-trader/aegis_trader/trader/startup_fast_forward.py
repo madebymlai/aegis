@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TypeAlias
 
-from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.marking import RawBarTypeResolver
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.data import Bar, BarType
@@ -16,15 +15,13 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.domain.roll import Halt, RollEvent, SubscribeBars
 from aegis_trader.domain.startup import StartupGate, StartupResult
-from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.book_startup import (
     BootIntentBatch,
     SubscribeQuoteTicks,
     startup_history_start,
 )
+from aegis_trader.trader.book_market_clock import BookMarketClock
 from aegis_trader.trader.pipeline import (
-    CompletedRebalancePeriod,
-    DueSleeve,
     RebalancePipeline,
     RebalanceRequest,
 )
@@ -73,7 +70,6 @@ class Ready:
 
     intents: BootIntentBatch
     book_activity: int | None
-    resume_periods: tuple[tuple[SleeveName, int], ...]
     boundary_bars: tuple[Bar, ...]
     startup_result: StartupResult
 
@@ -107,79 +103,6 @@ class RecoveryProtocolError(RuntimeError):
     """The adapter called the recovery lifecycle in an impossible order."""
 
 
-class _BookMarketClock:
-    """Own per-Sleeve market periods across recovery and live delivery."""
-
-    def __init__(
-        self,
-        *,
-        book: AssembledBook,
-        bar_type_resolver: RawBarTypeResolver,
-    ) -> None:
-        consumers: dict[BarType, dict[SleeveName, None]] = {}
-        continuous_consumers: dict[InstrumentId, dict[SleeveName, None]] = {}
-        for sleeve, streams in book.sleeve_streams.items():
-            for stream in streams:
-                marking = bar_type_resolver.resolve(
-                    stream.instrument_id, stream.timeframe
-                )
-                for bar_type in marking.mark_bars:
-                    consumers.setdefault(bar_type, {})[sleeve] = None
-        for sleeve, bundle in book.sleeves.items():
-            for continuous_id in bundle.contract.continuous_instrument_ids:
-                continuous_consumers.setdefault(continuous_id, {})[sleeve] = None
-
-        self._consumers = {
-            bar_type: tuple(names) for bar_type, names in consumers.items()
-        }
-        self._continuous_consumers = {
-            continuous_id: tuple(names)
-            for continuous_id, names in continuous_consumers.items()
-        }
-        self._period_ns = {
-            name: timeframe_to_ns(bundle.contract.timeframe)
-            for name, bundle in book.sleeves.items()
-        }
-        self._current_period: dict[SleeveName, int | None] = {
-            name: None for name in book.sleeves
-        }
-
-    def consumers(
-        self,
-        bar_type: BarType,
-        *,
-        continuous_id: InstrumentId | None = None,
-    ) -> tuple[SleeveName, ...]:
-        """Return the Sleeves whose market clock this physical bar advances."""
-        direct = self._consumers.get(bar_type)
-        if direct is not None:
-            return direct
-        if continuous_id is None:
-            return ()
-        return self._continuous_consumers.get(continuous_id, ())
-
-    def advance(
-        self, sleeve: SleeveName, timestamp_ns: int
-    ) -> CompletedRebalancePeriod | None:
-        """Fold one event time and return the period it completed, if any."""
-        period_ns = self._period_ns[sleeve]
-        period = timestamp_ns // period_ns
-        completed = self._current_period[sleeve]
-        self._current_period[sleeve] = period
-        if completed is None or period == completed:
-            return None
-        return CompletedRebalancePeriod(period=completed, period_ns=period_ns)
-
-    def resume_periods(self) -> tuple[tuple[SleeveName, int], ...]:
-        return tuple(
-            (sleeve, period)
-            for sleeve, period in sorted(
-                self._current_period.items(), key=lambda item: item[0].value
-            )
-            if period is not None
-        )
-
-
 class StartupFastForward:
     """Plan, collect, and replay a Book's bounded startup history."""
 
@@ -190,6 +113,7 @@ class StartupFastForward:
         pipeline: RebalancePipeline,
         roll_desk: RollDesk | None,
         bar_type_resolver: RawBarTypeResolver,
+        book_market_clock: BookMarketClock,
         fx_reference_pairs: Sequence[InstrumentId],
     ) -> None:
         self._book = book
@@ -201,10 +125,7 @@ class StartupFastForward:
         self._required_events: dict[HistoryRequestKey, int] = {}
         self._received: dict[tuple[BarType, int], Bar] = {}
         self._loaded: set[HistoryRequestKey] = set()
-        self._market_clock = _BookMarketClock(
-            book=book,
-            bar_type_resolver=bar_type_resolver,
-        )
+        self._market_clock = book_market_clock
         self._terminal: Ready | Halt | None = None
         self._begun = False
         self._book_activity: int | None = None
@@ -422,7 +343,6 @@ class StartupFastForward:
                 key=lambda bar: str(bar.bar_type),
             )
             marks: dict[InstrumentId, float] = {}
-            due: dict[SleeveName, CompletedRebalancePeriod] = {}
             for bar in bars:
                 continuous_id = None
                 if self._roll_desk is not None:
@@ -434,21 +354,14 @@ class StartupFastForward:
                     return roll_halt
                 observed_id = continuous_id or bar.bar_type.instrument_id
                 marks[observed_id] = float(bar.close)
-                for sleeve in self._market_clock.consumers(
+                self._market_clock.advance(
                     bar.bar_type,
+                    timestamp_ns,
                     continuous_id=continuous_id,
-                ):
-                    completed = self._market_clock.advance(sleeve, timestamp_ns)
-                    if completed is not None:
-                        due[sleeve] = completed
+                )
             self._project_marks(by_timestamp[timestamp_ns], marks)
             request = RebalanceRequest(
-                due=tuple(
-                    DueSleeve(sleeve=name, period=period)
-                    for name, period in sorted(
-                        due.items(), key=lambda item: item[0].value
-                    )
-                ),
+                due=self._market_clock.drain(),
                 timestamp_ns=timestamp_ns,
             )
             failures = self._pipeline.recover_market(request, marks)
@@ -555,7 +468,6 @@ class StartupFastForward:
         ready = Ready(
             tuple((*subscriptions, *roll_intents, *quotes)),
             self._book_activity,
-            self._market_clock.resume_periods(),
             tuple(
                 boundary_bars_by_type[bar_type]
                 for bar_type in sorted(boundary_bars_by_type, key=str)
