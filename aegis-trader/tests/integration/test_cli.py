@@ -236,6 +236,13 @@ def test_trader_start_resolves_connection_from_env_and_runs(tmp_path, monkeypatc
     assert callable(captured["recovery_handler"])
 
 
+def test_trader_stop_reports_a_missing_pidfile_as_a_message_not_a_traceback(tmp_path):
+    """Not-running is an operator state, not a fault: a message and an exit code."""
+    rc = main(["trader", "stop", "--pid-file", str(tmp_path / "absent.pid")])
+
+    assert rc == 1
+
+
 def test_trader_start_cli_renders_recovery_progress_without_repeating_it(caplog):
     report = _recovery_logger()
 

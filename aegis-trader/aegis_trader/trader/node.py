@@ -222,23 +222,29 @@ def start_trader(
     registry: BundleRegistryPort | None = None,
     recovery_handler: Callable[[RecoveryUpdate], None] | None = None,
 ) -> int:
-    """Build and run the live trader for the book at *book_path* in the foreground."""
-    book = load_book_config(book_path)
-    node = build_live_node(book, connection, registry=registry)
-    if recovery_handler is not None:
-        node.kernel.msgbus.subscribe(RECOVERY_TOPIC, recovery_handler)
-    return run_node(node, pid_file=pid_file or default_pid_file())
+    """Build and run the live trader for the book at *book_path* in the foreground.
+
+    The pidfile is taken *first*, so a second trader is refused before it reaches
+    the broker: attaching a duplicate client to IBKR only to discover the book is
+    already being traded costs a connection attempt and reports the wrong fault.
+    """
+    with _held_pid_file(pid_file or default_pid_file()):
+        book = load_book_config(book_path)
+        node = build_live_node(book, connection, registry=registry)
+        if recovery_handler is not None:
+            node.kernel.msgbus.subscribe(RECOVERY_TOPIC, recovery_handler)
+        return run_node(node)
 
 
-def run_node(node: TradingNode, *, pid_file: Path) -> int:
+def run_node(node: TradingNode) -> int:
     """Run *node* in the foreground until stopped, then dispose — the Nautilus
     canonical shutdown.
 
     Nautilus's kernel installs the SIGTERM/SIGINT loop handlers itself (they call
     ``node.stop()``), so on a delivered signal ``node.run()`` returns and the
     ``finally`` tears the node down; the ``except KeyboardInterrupt`` is the
-    canonical safety net for a Ctrl-C before the loop is running.  ``trader stop``
-    delivers SIGTERM to the pidfile this holds.
+    canonical safety net for a Ctrl-C before the loop is running.  The pidfile
+    ``trader stop`` signals is held by :func:`start_trader` around this call.
 
     Exits non-zero when the node shut *itself* down.  A stop we asked for — a
     delivered signal or Ctrl-C — reaches the kernel directly, so only a
@@ -248,16 +254,15 @@ def run_node(node: TradingNode, *, pid_file: Path) -> int:
     """
     self_shutdowns: list[ShutdownSystem] = []
     _watch_self_shutdown(node, self_shutdowns.append)
-    with _held_pid_file(pid_file):
+    try:
+        node.run()
+    except KeyboardInterrupt:
+        _log.info("Interrupt received; stopping the trader")
+    finally:
         try:
-            node.run()
-        except KeyboardInterrupt:
-            _log.info("Interrupt received; stopping the trader")
+            node.stop()
         finally:
-            try:
-                node.stop()
-            finally:
-                node.dispose()
+            node.dispose()
     for command in self_shutdowns:
         _log.error(
             "Trader shut itself down (%s): %s", command.component_id, command.reason

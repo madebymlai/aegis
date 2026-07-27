@@ -48,6 +48,7 @@ from aegis_trader.trader.node import (
     build_live_strategy,
     default_pid_file,
     run_node,
+    start_trader,
     stop_trader,
 )
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
@@ -491,18 +492,16 @@ class _FakeRunNode:
         self.events.append("dispose")
 
 
-def test_run_node_runs_then_stops_disposes_and_clears_pidfile(tmp_path):
+def test_run_node_runs_then_stops_and_disposes(tmp_path):
     node = _FakeRunNode()
-    pid_file = tmp_path / "trader.pid"
 
-    rc = run_node(node, pid_file=pid_file)
+    rc = run_node(node)
 
     assert rc == 0
     assert node.events == ["run", "stop", "dispose"]
-    assert not pid_file.exists()
 
 
-def test_run_node_exits_non_zero_when_the_node_shuts_itself_down(tmp_path):
+def test_run_node_exits_non_zero_when_the_node_shuts_itself_down():
     """A self-shutdown is a failure, not the clean stop a bare 0 would claim.
 
     With graceful shutdown enabled, an unhandled exception in a live engine stops
@@ -510,45 +509,73 @@ def test_run_node_exits_non_zero_when_the_node_shuts_itself_down(tmp_path):
     supervisor something went wrong.
     """
     node = _FakeRunNode(self_shutdown="Unexpected exception in RiskEngine queue")
-    pid_file = tmp_path / "trader.pid"
 
-    rc = run_node(node, pid_file=pid_file)
+    rc = run_node(node)
 
     assert rc == 1
     assert node.events == ["run", "stop", "dispose"]
-    assert not pid_file.exists()
 
 
-def test_run_node_exits_zero_for_a_stop_we_asked_for(tmp_path):
+def test_run_node_exits_zero_for_a_stop_we_asked_for():
     """A delivered signal reaches the kernel directly and publishes no command."""
-    assert run_node(_FakeRunNode(), pid_file=tmp_path / "trader.pid") == 0
+    assert run_node(_FakeRunNode()) == 0
 
 
-def test_run_node_writes_the_current_pid_before_running(tmp_path):
-    pid_file = tmp_path / "trader.pid"
-    seen: dict[str, str] = {}
-
-    class _Node(_FakeRunNode):
-        def run(self) -> None:
-            seen["pid"] = pid_file.read_text()
-            super().run()
-
-    run_node(_Node(), pid_file=pid_file)
-
-    assert seen["pid"] == str(os.getpid())
-
-
-def test_run_node_shuts_down_gracefully_on_keyboard_interrupt(tmp_path):
+def test_run_node_shuts_down_gracefully_on_keyboard_interrupt():
     """Ctrl-C / SIGINT before the loop is running surfaces as KeyboardInterrupt;
     the node still stops then disposes (the Nautilus-correct shutdown)."""
     node = _FakeRunNode(interrupt=True)
-    pid_file = tmp_path / "trader.pid"
 
-    rc = run_node(node, pid_file=pid_file)
+    rc = run_node(node)
 
     assert rc == 0
     assert node.events == ["run", "stop", "dispose"]
+
+
+def test_start_trader_records_its_pid_while_running(tmp_path, monkeypatch):
+    pid_file = tmp_path / "trader.pid"
+    seen: dict[str, str] = {}
+    node = _FakeRunNode()
+
+    monkeypatch.setattr("aegis_trader.trader.node.load_book_config", lambda path: None)
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.build_live_node", lambda *a, **k: node
+    )
+    monkeypatch.setattr(
+        node, "run", lambda: seen.update(pid=pid_file.read_text())
+    )
+
+    rc = start_trader("book.toml", object(), pid_file=pid_file)
+
+    assert rc == 0
+    assert seen["pid"] == str(os.getpid())
     assert not pid_file.exists()
+
+
+def test_start_trader_refuses_a_held_pidfile_before_reaching_the_broker(
+    tmp_path, monkeypatch
+):
+    """A second trader must be refused before it attaches a duplicate IBKR client.
+
+    Discovering the clash only after connecting costs a connection attempt and
+    reports a broker fault instead of the plain "already running" it is.
+    """
+    pid_file = tmp_path / "trader.pid"
+    reached: list[str] = []
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.load_book_config",
+        lambda path: reached.append("loaded the book"),
+    )
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.build_live_node",
+        lambda *a, **k: reached.append("reached the broker"),
+    )
+
+    with _held_pid_file(pid_file):
+        with pytest.raises(TraderAlreadyRunningError):
+            start_trader("book.toml", object(), pid_file=pid_file)
+
+    assert reached == []
 
 
 def test_stop_trader_sends_sigterm_to_the_pid_holding_the_pidfile(tmp_path, monkeypatch):
@@ -615,8 +642,10 @@ def test_run_node_releases_the_pidfile_for_the_next_trader(tmp_path):
     """A clean run leaves nothing behind that would block a restart."""
     pid_file = tmp_path / "trader.pid"
 
-    run_node(_FakeRunNode(), pid_file=pid_file)
-    run_node(_FakeRunNode(), pid_file=pid_file)
+    with _held_pid_file(pid_file):
+        pass
+    with _held_pid_file(pid_file):
+        pass
 
     assert not pid_file.exists()
 

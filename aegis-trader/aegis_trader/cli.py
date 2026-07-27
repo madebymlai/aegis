@@ -202,10 +202,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         return _run_backtest(args)
     if args.command == "trader":
-        if args.trader_command == "start":
-            return _trader_start(args)
-        if args.trader_command == "stop":
-            return _trader_stop(args)
+        from aegis_trader.trader.node import (
+            TraderAlreadyRunningError,
+            TraderNotRunningError,
+        )
+
+        try:
+            if args.trader_command == "start":
+                return _trader_start(args)
+            if args.trader_command == "stop":
+                return _trader_stop(args)
+        except (TraderAlreadyRunningError, TraderNotRunningError) as exc:
+            # Expected operator states, not faults: report them as a message and
+            # an exit code rather than as a traceback.
+            _log.error("%s", exc)
+            return 1
         parser.error("trader requires a subcommand: 'start' or 'stop'")
 
     parser.error("a command is required: 'backtest' or 'trader start|stop'")
