@@ -35,10 +35,12 @@ from typing import IO
 
 import msgspec
 from nautilus_trader.common import Environment
+from nautilus_trader.common.messages import ShutdownSystem
 from nautilus_trader.config import (
     CacheConfig,
     LiveDataEngineConfig,
     LiveExecEngineConfig,
+    LiveRiskEngineConfig,
     LoggingConfig,
     TradingNodeConfig,
 )
@@ -98,6 +100,9 @@ def build_live_node_config(
     corpus with no cold-start lookback gap.  The broker's data/exec clients are
     wired separately by :func:`aegis_data.ibkr.attach_live_clients`.
 
+    An unexpected exception in the live RiskEngine's message queue shuts the node
+    down gracefully rather than leaving pre-trade risk processing uncertain.
+
     *trader_id* is the Broker Connection's (``connection.trader_id``); when omitted
     Nautilus's own ``TradingNodeConfig`` default applies — the default lives in one
     place, not mirrored here.
@@ -114,6 +119,7 @@ def build_live_node_config(
         environment=Environment.LIVE,
         data_engine=LiveDataEngineConfig(time_bars_build_with_no_updates=False),
         exec_engine=LiveExecEngineConfig(reconciliation=True),
+        risk_engine=LiveRiskEngineConfig(graceful_shutdown_on_exception=True),
         cache=CacheConfig(),
         logging=LoggingConfig(),
         catalogs=[DataCatalogConfig(path=str(catalog_root()))],
@@ -233,7 +239,15 @@ def run_node(node: TradingNode, *, pid_file: Path) -> int:
     ``finally`` tears the node down; the ``except KeyboardInterrupt`` is the
     canonical safety net for a Ctrl-C before the loop is running.  ``trader stop``
     delivers SIGTERM to the pidfile this holds.
+
+    Exits non-zero when the node shut *itself* down.  A stop we asked for — a
+    delivered signal or Ctrl-C — reaches the kernel directly, so only a
+    self-shutdown publishes ``ShutdownSystem``; that is what the live engines
+    raise on an unhandled exception, and the supervisor must see it as a failure
+    rather than as the clean stop a bare ``0`` would claim.
     """
+    self_shutdowns: list[ShutdownSystem] = []
+    _watch_self_shutdown(node, self_shutdowns.append)
     with _held_pid_file(pid_file):
         try:
             node.run()
@@ -244,7 +258,18 @@ def run_node(node: TradingNode, *, pid_file: Path) -> int:
                 node.stop()
             finally:
                 node.dispose()
-    return 0
+    for command in self_shutdowns:
+        _log.error(
+            "Trader shut itself down (%s): %s", command.component_id, command.reason
+        )
+    return 1 if self_shutdowns else 0
+
+
+def _watch_self_shutdown(
+    node: TradingNode, record: Callable[[ShutdownSystem], None]
+) -> None:
+    """Record every self-initiated shutdown of *node* as it is commanded."""
+    node.kernel.msgbus.subscribe("commands.system.shutdown", record)
 
 
 def stop_trader(*, pid_file: Path | None = None) -> int:

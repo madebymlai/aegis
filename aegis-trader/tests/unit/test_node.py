@@ -18,6 +18,8 @@ import sys
 import msgspec
 import pytest
 from nautilus_trader.common import Environment
+from nautilus_trader.common.messages import ShutdownSystem
+from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.config import (
     CacheConfig,
     LiveDataEngineConfig,
@@ -27,7 +29,7 @@ from nautilus_trader.config import (
     TradingNodeConfig,
 )
 from nautilus_trader.model.enums import TimeInForce
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import ComponentId, InstrumentId, TraderId
 
 from aegis_data.catalog import catalog_root
 
@@ -91,8 +93,8 @@ def test_live_node_config_wires_cache_logging_and_reconciliation():
     assert cfg.exec_engine.reconciliation is True
 
 
-def test_live_node_config_uses_nautilus_risk_defaults():
-    """Pin the upstream live defaults Aegis relies on without configuring them."""
+def test_live_node_config_uses_nautilus_risk_defaults_with_graceful_shutdown():
+    """Pin the upstream defaults and Aegis's live-only shutdown policy."""
     cfg = build_live_node_config()
     risk = cfg.risk_engine
 
@@ -100,6 +102,7 @@ def test_live_node_config_uses_nautilus_risk_defaults():
     assert risk.bypass is False
     assert risk.max_order_submit_rate == "100/00:00:01"
     assert risk.max_order_modify_rate == "100/00:00:01"
+    assert risk.graceful_shutdown_on_exception is True
 
 
 def test_live_node_config_wires_the_shared_catalog():
@@ -443,15 +446,41 @@ def test_historic_provider_config_pins_mic_venues():
 # --------------------------------------------------------------------------- #
 
 
+class _FakeMsgBus:
+    def __init__(self) -> None:
+        self.handlers: dict[str, object] = {}
+
+    def subscribe(self, topic: str, handler) -> None:
+        self.handlers[topic] = handler
+
+
+class _FakeKernel:
+    def __init__(self) -> None:
+        self.msgbus = _FakeMsgBus()
+
+
 class _FakeRunNode:
     """Stand-in TradingNode capturing the run/stop/dispose ordering."""
 
-    def __init__(self, *, interrupt: bool = False) -> None:
+    def __init__(self, *, interrupt: bool = False, self_shutdown: str | None = None) -> None:
         self.events: list[str] = []
         self._interrupt = interrupt
+        self._self_shutdown = self_shutdown
+        self.kernel = _FakeKernel()
 
     def run(self) -> None:
         self.events.append("run")
+        if self._self_shutdown is not None:
+            # What the live engines do on an unhandled exception.
+            self.kernel.msgbus.handlers["commands.system.shutdown"](
+                ShutdownSystem(
+                    trader_id=TraderId("TESTER-000"),
+                    component_id=ComponentId("RiskEngine"),
+                    reason=self._self_shutdown,
+                    command_id=UUID4(),
+                    ts_init=0,
+                )
+            )
         if self._interrupt:
             raise KeyboardInterrupt
 
@@ -471,6 +500,28 @@ def test_run_node_runs_then_stops_disposes_and_clears_pidfile(tmp_path):
     assert rc == 0
     assert node.events == ["run", "stop", "dispose"]
     assert not pid_file.exists()
+
+
+def test_run_node_exits_non_zero_when_the_node_shuts_itself_down(tmp_path):
+    """A self-shutdown is a failure, not the clean stop a bare 0 would claim.
+
+    With graceful shutdown enabled, an unhandled exception in a live engine stops
+    the node tidily — so the exit code is the only thing left that tells the
+    supervisor something went wrong.
+    """
+    node = _FakeRunNode(self_shutdown="Unexpected exception in RiskEngine queue")
+    pid_file = tmp_path / "trader.pid"
+
+    rc = run_node(node, pid_file=pid_file)
+
+    assert rc == 1
+    assert node.events == ["run", "stop", "dispose"]
+    assert not pid_file.exists()
+
+
+def test_run_node_exits_zero_for_a_stop_we_asked_for(tmp_path):
+    """A delivered signal reaches the kernel directly and publishes no command."""
+    assert run_node(_FakeRunNode(), pid_file=tmp_path / "trader.pid") == 0
 
 
 def test_run_node_writes_the_current_pid_before_running(tmp_path):
