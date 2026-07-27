@@ -22,13 +22,16 @@ no mode.  Next-close execution carries ``AT_THE_CLOSE`` live (ADR-0001).
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import signal
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import IO
 
 import msgspec
 from nautilus_trader.common import Environment
@@ -73,7 +76,11 @@ _PID_FILE_NAME = "aegis-trader.pid"
 
 
 class TraderNotRunningError(RuntimeError):
-    """No live trader is running (the pidfile ``trader stop`` expects is absent)."""
+    """No live trader is running: the pidfile is absent, or no process holds it."""
+
+
+class TraderAlreadyRunningError(RuntimeError):
+    """A live trader already holds the pidfile this one was asked to take."""
 
 
 # ── live node config (broker-neutral) ─────────────────────────────────────────
@@ -225,26 +232,30 @@ def run_node(node: TradingNode, *, pid_file: Path) -> int:
     ``node.stop()``), so on a delivered signal ``node.run()`` returns and the
     ``finally`` tears the node down; the ``except KeyboardInterrupt`` is the
     canonical safety net for a Ctrl-C before the loop is running.  ``trader stop``
-    delivers SIGTERM to the pidfile this writes.
+    delivers SIGTERM to the pidfile this holds.
     """
-    _write_pid_file(pid_file)
-    try:
-        node.run()
-    except KeyboardInterrupt:
-        _log.info("Interrupt received; stopping the trader")
-    finally:
+    with _held_pid_file(pid_file):
         try:
-            node.stop()
+            node.run()
+        except KeyboardInterrupt:
+            _log.info("Interrupt received; stopping the trader")
         finally:
-            node.dispose()
-        _remove_pid_file(pid_file)
+            try:
+                node.stop()
+            finally:
+                node.dispose()
     return 0
 
 
 def stop_trader(*, pid_file: Path | None = None) -> int:
-    """Stop a running live trader: read its pidfile and send ``SIGTERM``."""
+    """Stop a running live trader: read its pidfile and send ``SIGTERM``.
+
+    A pidfile outlives a hard termination, so the PID it names is only acted on
+    while its writer still holds the file's lock; an unheld pidfile is stale and
+    is cleared and reported as "not running" rather than signalled.
+    """
     target = pid_file or default_pid_file()
-    pid = _read_pid_file(target)
+    pid = _running_trader_pid(target)
     os.kill(pid, signal.SIGTERM)
     _log.info("Sent SIGTERM to trader pid %d (%s)", pid, target)
     return 0
@@ -257,25 +268,69 @@ def default_pid_file() -> Path:
     return base / _PID_FILE_NAME
 
 
-def _write_pid_file(pid_file: Path) -> None:
+@contextmanager
+def _held_pid_file(pid_file: Path) -> Iterator[None]:
+    """Hold *pid_file* locked for the duration, and clear it on the way out.
+
+    The lock is what makes a pidfile trustworthy.  A pidfile survives any hard
+    termination — ``os._exit``, ``SIGKILL``, an OOM kill — and PIDs are recycled,
+    so the number alone can name an unrelated live process.  The kernel drops
+    this lock however the holder dies, so an unheld pidfile is provably stale,
+    with nothing to parse and no liveness to infer.
+
+    Taking it also makes a second trader on the same pidfile impossible rather
+    than merely unlikely.
+    """
     pid_file.parent.mkdir(parents=True, exist_ok=True)
-    pid_file.write_text(str(os.getpid()))
-
-
-def _remove_pid_file(pid_file: Path) -> None:
-    pid_file.unlink(missing_ok=True)
-
-
-def _read_pid_file(pid_file: Path) -> int:
+    handle = pid_file.open("a+")
     try:
-        raw = pid_file.read_text()
+        if not _lock_acquired(handle):
+            raise TraderAlreadyRunningError(
+                f"another trader already holds {pid_file}; stop it before starting a new one"
+            )
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(os.getpid()))
+        handle.flush()
+        yield
+    finally:
+        handle.close()  # releases the lock
+        pid_file.unlink(missing_ok=True)
+
+
+def _running_trader_pid(pid_file: Path) -> int:
+    """The PID of the trader currently holding *pid_file*.
+
+    Taking the lock proves nobody holds it, which means the pidfile outlived its
+    writer; it is then cleared rather than acted on, so a recycled PID is never
+    signalled.
+    """
+    try:
+        handle = pid_file.open("r+")
     except FileNotFoundError as exc:
         raise TraderNotRunningError(
             f"no trader pidfile at {pid_file}; is the trader running?"
         ) from exc
+    with handle:
+        if _lock_acquired(handle):
+            pid_file.unlink(missing_ok=True)
+            raise TraderNotRunningError(
+                f"trader pidfile {pid_file} is stale — no live process holds it; "
+                f"removed it without signalling"
+            )
+        raw = handle.read()
     try:
         return int(raw.strip())
     except ValueError as exc:
         raise TraderNotRunningError(
             f"trader pidfile {pid_file} is malformed: {raw!r}"
         ) from exc
+
+
+def _lock_acquired(handle: IO[str]) -> bool:
+    """Whether this process could take *handle*'s exclusive lock without waiting."""
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True

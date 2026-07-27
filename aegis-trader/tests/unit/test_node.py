@@ -38,7 +38,9 @@ from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.node import (
     LIVE_FILL_TIME_IN_FORCE,
+    TraderAlreadyRunningError,
     TraderNotRunningError,
+    _held_pid_file,
     build_live_node_config,
     build_live_node,
     build_live_strategy,
@@ -498,24 +500,74 @@ def test_run_node_shuts_down_gracefully_on_keyboard_interrupt(tmp_path):
     assert not pid_file.exists()
 
 
-def test_stop_trader_sends_sigterm_to_the_pidfile_pid(tmp_path, monkeypatch):
+def test_stop_trader_sends_sigterm_to_the_pid_holding_the_pidfile(tmp_path, monkeypatch):
+    """A held pidfile names a live trader, so its PID is signalled."""
     pid_file = tmp_path / "trader.pid"
-    pid_file.write_text("4321")
     sent: dict[str, int] = {}
     monkeypatch.setattr(
         "aegis_trader.trader.node.os.kill",
         lambda pid, sig: sent.update(pid=pid, sig=sig),
     )
 
-    rc = stop_trader(pid_file=pid_file)
+    with _held_pid_file(pid_file):
+        rc = stop_trader(pid_file=pid_file)
 
     assert rc == 0
-    assert sent == {"pid": 4321, "sig": signal.SIGTERM}
+    assert sent == {"pid": os.getpid(), "sig": signal.SIGTERM}
 
 
 def test_stop_trader_fails_closed_when_no_pidfile(tmp_path):
     with pytest.raises(TraderNotRunningError):
         stop_trader(pid_file=tmp_path / "missing.pid")
+
+
+def test_stop_trader_refuses_an_unheld_pidfile_whose_pid_may_be_recycled(
+    tmp_path, monkeypatch
+):
+    """A pidfile outliving a hard kill can name a live, unrelated process.
+
+    No process holds the lock, so the trader is reported not running and the
+    recycled PID is never signalled.
+    """
+    pid_file = tmp_path / "trader.pid"
+    pid_file.write_text(str(os.getpid()))  # our own live PID, but nobody holds the file
+    monkeypatch.setattr(
+        "aegis_trader.trader.node.os.kill",
+        lambda pid, sig: pytest.fail(f"signalled unheld pid {pid}"),
+    )
+
+    with pytest.raises(TraderNotRunningError):
+        stop_trader(pid_file=pid_file)
+
+
+def test_stop_trader_clears_the_stale_pidfile_it_refused(tmp_path):
+    pid_file = tmp_path / "trader.pid"
+    pid_file.write_text(str(os.getpid()))
+
+    with pytest.raises(TraderNotRunningError):
+        stop_trader(pid_file=pid_file)
+
+    assert not pid_file.exists()
+
+
+def test_a_second_trader_cannot_take_a_held_pidfile(tmp_path):
+    """The lock makes two traders on one pidfile impossible, not merely unlikely."""
+    pid_file = tmp_path / "trader.pid"
+
+    with _held_pid_file(pid_file):
+        with pytest.raises(TraderAlreadyRunningError):
+            with _held_pid_file(pid_file):
+                pytest.fail("a second trader took a held pidfile")
+
+
+def test_run_node_releases_the_pidfile_for_the_next_trader(tmp_path):
+    """A clean run leaves nothing behind that would block a restart."""
+    pid_file = tmp_path / "trader.pid"
+
+    run_node(_FakeRunNode(), pid_file=pid_file)
+    run_node(_FakeRunNode(), pid_file=pid_file)
+
+    assert not pid_file.exists()
 
 
 def test_default_pid_file_lives_in_the_per_user_runtime_dir(tmp_path, monkeypatch):
