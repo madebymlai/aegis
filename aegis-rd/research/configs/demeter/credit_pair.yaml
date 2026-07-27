@@ -1,0 +1,126 @@
+name: demeter_eu_credit_pair
+schema_version: 11
+output_dir: runs/demeter_eu/credit_pair
+
+# THE CURRENCY-CLEAN REBUILD of the convergent pole. Unlocked on purpose: this run has to
+# mint a store before anything can be pinned, and it also SEEDS THE DISTRIBUTION RECORDS
+# for four instruments the catalog has never carried - without which the legs can only be
+# compared on price return, which on distributing credit ETFs is the trap that inverted a
+# conclusion earlier in this campaign.
+#
+# WHAT PROMPTED IT (measured 2026-07-25, total return rebuilt from the distribution store):
+#   - FX is 68% of SDHY's and 57% of LQDH's EUR-investor variance. EURUSD runs 7.2%/yr
+#     against 6.6-7.1%/yr of credit, so about two thirds of the incumbent pole's risk is a
+#     currency bet with no expected return.
+#   - The incumbent's two legs correlate +0.75 in EUR terms. The "two-leg diversified
+#     credit sleeve" is substantially one bet, and the shared dollar is part of why. Every
+#     EUR-native pairing measured better: STHE/IRCP and IHYG/IRCP both land near +0.6.
+#   - Removing the currency is confirmed by the like-for-like arm: STHE is the EUR-HEDGED
+#     share class of the same ICE BofA US HY 0-5yr index family SDHY tracks, and its EUR
+#     price vol is 7.44% against SDHY's 9.57%. The 2.1pp drop matches the total-return FX
+#     decomposition independently.
+#
+# All four legs are EUR-denominated, so there is NO `exchange:` block and no FX conversion
+# at all - which also retires the EUR/USD.IDEALPRO LAST bar-type failure that blocked the
+# incumbent's loader (IBKR serves MID/BID/ASK for FX pairs, not LAST).
+#
+# Pre-registered criteria: research/vault/runs/demeter/2026-07-25.md
+# MARKS ARE DECLARED PER LEG. These legs are thin in TRADES but continuously quoted, the
+# case carry_commodity.yaml already records for UEQC. Measured 2026-07-25 on total return,
+# LAST vs the derived BID/ASK mid:
+#
+#   leg           LAST xi   LAST vol   QUOTE xi   QUOTE vol   verdict
+#   IHYG.LSEETF     0.699      7.24%      1.000       8.78%   QUOTE - and it is VALIDATED:
+#     the smoothing correction on LAST predicted 8.66%, the quote mark delivers 8.78%.
+#     Largest quote moves are all March 2020, i.e. the real crisis and not print noise.
+#   STHE.LSEETF     0.886      7.14%      1.000      10.95%   LAST - the quote series carries
+#     a +7.6%/-6.9% adjacent print pair on 2019-09-09/10, a calm month for short-duration HY.
+#     That is a bad print, and 10.95% is not this fund's volatility. xi 0.886 is mild.
+#   IRCP.LSEETF     1.000      4.01%      1.000      14.03%   LAST - 114 quote days move >2%
+#     and the largest cluster in Jul-Aug 2023 (+8.3%, +7.9%, -7.6%) on a DURATION-HEDGED IG
+#     fund whose published 3y std dev is 1.44%. Corrupted vendor window. LAST is already clean.
+#
+# The EUR HY leg is the LSE line rather than XETRA (XHYG.IBIS2, same iBoxx EUR Liquid HY
+# index, 30bp cheaper) because XHYG cannot be marked well on either side: xi 0.833 on LAST
+# and 0.784 on QUOTE, with the widest spread of the four at 0.567%. A trustworthy measurement
+# of the risk outranks 30bp of TER when the two conflict. Whether to EXECUTE the cheaper line
+# against research done on this one is a separate question, deliberately not decided here.
+#
+# Cross-check that the venue difference was only ever the feed: correlation to the IG leg is
+# +0.753 (IHYG) vs +0.666 (XHYG) daily, but +0.882 vs +0.884 monthly - identical past the
+# smoothing lag, as two trackers of one index must be.
+#
+# HOW TO READ convergent_smoothing_index ON THIS CONFIG - it is NOT a mark-quality score
+# here, and an earlier reading of it as one was wrong. The sleeve reports ~0.60 whether its
+# HY leg is marked LAST or QUOTE (0.607 vs 0.605 on the IHYG+IRCP pair), i.e. IDENTICALLY
+# with legs that individually read 1.000/1.000. The incumbent's 1.0000 is the metric's CAP,
+# not a clean feed: SDHY, LQDH and their blend have raw variance ratios of 0.780/0.832/0.889
+# with negative autocorrelation (-0.130/-0.095/-0.111), which is bid-ask bounce, and the
+# statistic explicitly "makes no claim about that direction". So incumbent-vs-challenger on
+# this number is mean-reverting vs trending, not clean vs stale.
+#
+# The consequence that DOES bind: at daily frequency both books' correlations are biased
+# downward, by opposite microstructure mechanisms and by different amounts. Judge the
+# downside-correlation guard at an aggregated horizon. Measured leg-pair correlations,
+# daily -> weekly -> monthly:
+#     incumbent  SDHY-LQDH   +0.774 -> +0.869 -> +0.903
+#     challenger STHE-IRCP   +0.430 -> +0.763 -> +0.801
+#     challenger IHYG-IRCP   +0.753 -> +0.863 -> +0.882
+# The challenger's diversification edge is 0.10 at the honest horizon, not the 0.34 the
+# daily numbers advertise. Every credit pair here co-moves at 0.80-0.90 monthly.
+data:
+  base_currency: EUR
+  instruments: [STHE.LSEETF, IHYG.LSEETF:QUOTE, IRCP.LSEETF]
+  arrays: [OHLCV]
+  start: '2018-01-01'
+  end: '2026-07-01'
+  timeframe: 1D
+  missing_index: drop
+
+indicators:
+- id: demeter.realized_vol
+  params:
+    vol_window: 63
+
+strategy:
+  # SHAPE-only grid (2 x 3 = 6 cells), scale pinned by mandate.
+  #   shape_power  {0.0, 1.0} - the weighting rule, which carry_mix hard-coded at inverse
+  #                             vol. Measured, inverse vol hands the low-vol IG leg 66-73%
+  #                             of the sleeve, so the IG leg silently BECOMES the sleeve.
+  #                             0.0 is tilt-weighted equal; 1.0 reproduces carry_mix.
+  #   eur_hy_share {0, 0.5, 1} - splits the HY bucket between US short-maturity (STHE) and
+  #                             EUR-native (IHYG). These are two credit markets, not two
+  #                             slices of one.
+  # Nested control: (shape_power 1.0, eur_hy_share 0.0) is STHE+IRCP, the straight
+  # currency-fixed analogue of the incumbent SDHY+LQDH - so the grid contains its own
+  # baseline and the currency change can be read on its own.
+  # at1_weight is pinned OFF: XAT1 launched Jun 2018 and `missing_index: drop` would cut
+  # the sample to its history. The subordinated satellite gets its own sweep, as it did
+  # for carry_mix.
+  id: demeter.credit_pair
+  params:
+    at1_weight: 0.0
+
+portfolio:
+  direction: both
+  init_cash: 5000.0
+  fees: 0.0005
+  slippage: 0.0005
+  fixed_fee: 1.25            # IBKR per-order minimum - the live fee floor the trend book models
+  band_up: 0.10              # atalanta's asymmetric drift band: without it the book rebalances daily
+  band_down: 0.20            # (254 trades/yr -> ~3; live order minimums alone would eat 3-6%/yr)
+  # NOTE no fx_conversion_cost: every leg is EUR, so there is no non-EUR trade to surcharge.
+
+ranking:
+  metric: convergent_income_utility   # income ranker; the allocator delta-theta ranks the shortlist in the floor harness
+
+report:
+  # convergent_smoothing_index is a property of the FEED, not the payoff, so it is reported
+  # every run rather than assumed: smoothed marks would flatter every daily statistic here
+  # and bias the downside-correlation guard toward zero.
+  metrics: [convergent_tail_budget, convergent_downside_lskew, convergent_smoothing_index]
+
+optimization:
+  search: grid
+  seed: 42
+  observation_block_bars: 252

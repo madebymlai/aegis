@@ -44,6 +44,6 @@ tags:
   [[research/budgeting-convexity/_challenge-verification|budgeting-convexity/_challenge-verification]]).
   A related "shadow gamma" claim, that dealers' *crash-scenario* short exposure persists even where
   local gamma flipped, is an **unverified lead** owned by
-  [[research/convergent-engine/_brief|③ convergent-engine]] - do not cite until sourced. If it holds it
+  [[research/income-engine/_brief|③ income-engine]] - do not cite until sourced. If it holds it
   bears directly on this seat, since it would mean the dealer is still short the crash this sleeve is
   built to be long.

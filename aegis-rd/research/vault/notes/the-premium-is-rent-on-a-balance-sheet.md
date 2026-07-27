@@ -25,11 +25,26 @@ tags:
 > mechanism family, then fully open - converged on the same answer. Real, well-evidenced,
 > durable behaviours exist. Nearly every one of them **sells balance-sheet capacity that
 > somebody else is prohibited from holding.** That is not incidental to those premia; it is
-> what they are compensation *for*. An unlevered account with no balance sheet to rent is
-> trying to sell the one thing it does not have.
+> what they are compensation *for*. An account that can **bear** risk but cannot **provide capacity**
+> is trying to sell the one thing it does not have.
 >
 > This note records the conclusion and then registers everything found and not followed, so
 > the next search starts from here rather than repeating it.
+
+> [!bug] Correction 2026-07-25: the operative property is function, not leverage
+> This abstract previously read "an unlevered account with no balance sheet to rent." That was
+> **factually wrong about this book and contradicted a correction already made upstream.** The sleeve
+> pays USD margin interest on a USD debit (see "Remove the currency and financing tax" below), the
+> sleeve budget carries a 1.75 gross-up, and paper ①'s own re-review records that §5.2 "correctly
+> declines to describe the book as unlevered (not the book's use of leverage, which it runs up to that
+> cap)."
+>
+> Leverage was never the operative axis. A margin-levered account still cannot be a repo counterparty,
+> cannot warehouse a bond inventory, and cannot act as an authorised participant. What separates the
+> compensated party from an outside allocator is **institutional function**: capacity provision, meaning
+> financing and warehousing, versus risk-bearing. That distinction is sharper than the leverage claim it
+> replaces, it is true rather than false, and it is a statement about what the mechanism pays for rather
+> than about what any particular account can reach.
 
 ## The conclusion
 
