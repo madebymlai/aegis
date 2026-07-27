@@ -6,6 +6,7 @@ import numpy as np
 
 from research.aegis_research import configuration as public_config
 from research.aegis_research.canonical_json import canonical_json_bytes, to_builtin
+from research.aegis_research.metrics import ResolvedMetrics, make_default_metric_registry
 from tests.support.research.aegis_research.factories import (
     make_portfolio_config,
     make_ranking_config,
@@ -50,13 +51,14 @@ def test_to_builtin_serializes_resolved_run_config_wrapped_config() -> None:
         name="demo",
         strategy=make_run_source_ref_config(id="demo.strategy"),
         indicators=[],
-        ranking=make_ranking_config(metric="sharpe"),
+        ranking=make_ranking_config(metric="sharpe_ratio"),
         portfolio=make_portfolio_config(direction="longonly"),
     )
     wrapper = public_config.ResolvedRunConfig(
         config=run_config,
         raw_config_hash="hash",
         authored_config={},
+        metrics=ResolvedMetrics.resolve(make_default_metric_registry(), "sharpe_ratio"),
     )
 
     assert to_builtin(wrapper) == to_builtin(run_config)

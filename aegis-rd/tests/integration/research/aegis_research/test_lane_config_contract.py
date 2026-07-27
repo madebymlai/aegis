@@ -223,7 +223,7 @@ def test_run_ranking_accepts_vbt_metric_id(tmp_path: Path) -> None:
     resolved = resolve_run_config(raw, component_registry=registry)
 
     assert resolved.config.ranking.metric == "total_return"
-    assert resolved.metric_registry is not None
+    assert resolved.metrics.ranking.id == "total_return"
     assert len(resolved.manifest()["metric_registry_fingerprint"]) == 64
 
 

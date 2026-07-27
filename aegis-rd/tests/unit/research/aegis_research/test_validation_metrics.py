@@ -155,6 +155,14 @@ def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:
     assert len(mt_issues) == 1, f"expected 1 issue for min_trades, got {len(mt_issues)}"
 
 
+def test_resolution_carries_the_effective_registry_and_canonical_ranking_metric(
+    tmp_path: Path,
+) -> None:
+    resolved = _resolve({"metric": "total_return"}, tmp_path=tmp_path)
+
+    assert resolved.metrics.ranking is resolved.metrics.registry.get("total_return")
+
+
 # ── report.metrics: opt-in extra reported metrics beside the ranker ────────────
 
 
@@ -179,7 +187,7 @@ def test_report_metrics_pull_custom_metrics_into_the_effective_registry(tmp_path
         {"metrics": ["convergent_tail_budget", "convergent_downside_lskew"]},
         tmp_path=tmp_path,
     )
-    ids = set(resolved.metric_registry.ids())
+    ids = set(resolved.metrics.registry.ids())
     assert {
         "convergent_income_utility",
         "convergent_tail_budget",

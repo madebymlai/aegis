@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -25,8 +25,8 @@ from research.aegis_research.configuration.validation import (
 from research.aegis_research.metrics import (
     FrozenMetricRegistry,
     MetricRegistry,
+    ResolvedMetrics,
     freeze_metric_registry,
-    make_default_metric_registry,
     make_metric_registry_for,
 )
 
@@ -61,11 +61,9 @@ class ResolvedRunConfig:
     config: RunConfig
     raw_config_hash: str
     authored_config: dict[str, Any]
+    metrics: ResolvedMetrics
     source_path: str | None = None
     component_registry: FrozenComponentRegistry | None = None
-    # Resolution always installs an effective registry; direct construction
-    # gets the same default rather than admitting None.
-    metric_registry: FrozenMetricRegistry = field(default_factory=make_default_metric_registry)
 
     def authored_config_document(self) -> dict[str, Any]:
         return self.authored_config
@@ -81,7 +79,7 @@ class ResolvedRunConfig:
             "component_registry_fingerprint": (
                 self.component_registry.fingerprint if self.component_registry else None
             ),
-            "metric_registry_fingerprint": self.metric_registry.fingerprint,
+            "metric_registry_fingerprint": self.metrics.registry.fingerprint,
         }
 
 
@@ -138,13 +136,14 @@ def resolve_run_config(
     if issues:
         raise ConfigValidationError(issues)
 
+    metrics = ResolvedMetrics.resolve(effective_metric_registry, config.ranking.metric)
     return _build_resolved_run_config(
         config,
         raw,
         raw_text=raw_text,
         source_path=source_path,
         component_registry=registry,
-        metric_registry=effective_metric_registry,
+        metrics=metrics,
     )
 
 
@@ -161,14 +160,14 @@ def _build_resolved_run_config(
     raw_text: str | None,
     source_path: str | None,
     component_registry: FrozenComponentRegistry,
-    metric_registry: FrozenMetricRegistry,
+    metrics: ResolvedMetrics,
 ) -> ResolvedRunConfig:
     text_for_hash = raw_text if raw_text is not None else yaml.safe_dump(raw, sort_keys=False)
     return ResolvedRunConfig(
         config=config,
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
+        metrics=metrics,
         source_path=source_path,
         component_registry=component_registry,
-        metric_registry=metric_registry,
     )

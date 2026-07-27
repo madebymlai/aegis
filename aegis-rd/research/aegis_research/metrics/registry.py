@@ -46,6 +46,24 @@ class FrozenMetricRegistry:
         return metric_id in self.definitions
 
 
+@dataclass(frozen=True, init=False)
+class ResolvedMetrics:
+    registry: FrozenMetricRegistry
+    ranking: MetricDefinition
+
+    def __init__(self) -> None:
+        raise TypeError("ResolvedMetrics must be constructed with ResolvedMetrics.resolve")
+
+    @classmethod
+    def resolve(
+        cls, registry: FrozenMetricRegistry, ranking_id: str
+    ) -> ResolvedMetrics:
+        resolved = object.__new__(cls)
+        object.__setattr__(resolved, "registry", registry)
+        object.__setattr__(resolved, "ranking", registry.get(ranking_id))
+        return resolved
+
+
 class MetricRegistry:
     def __init__(self) -> None:
         self._definitions: dict[str, MetricDefinition] = {}

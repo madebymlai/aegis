@@ -9,6 +9,7 @@ from research.aegis_research.metrics.contracts import (
 from research.aegis_research.metrics.registry import (
     FrozenMetricRegistry,
     MetricRegistry,
+    ResolvedMetrics,
     empty_metric_registry,
     freeze_metric_registry,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "MetricDefinition",
     "MetricRegistry",
     "MetricRegistryError",
+    "ResolvedMetrics",
     "empty_metric_registry",
     "freeze_metric_registry",
     "make_default_metric_registry",

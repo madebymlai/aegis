@@ -11,7 +11,7 @@ from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OptimizationConfig, ReportConfig
 from research.aegis_research.metrics.accessors import central_metrics_from_grouped_accessors
-from research.aegis_research.metrics.registry import FrozenMetricRegistry
+from research.aegis_research.metrics.registry import ResolvedMetrics
 from research.aegis_research.optimization.candidate_validity import (
     Verdicts,
     classify_continuous_candidates,
@@ -119,14 +119,11 @@ def build_development_paths(
     optimization: OptimizationConfig,
     book: ResolvedBook,
     report: ReportConfig,
-    metric_registry: FrozenMetricRegistry,
+    metrics: ResolvedMetrics,
     min_trades: int,
-    ranking_metric: str,
     plan: DevelopmentPlan | None = None,
 ) -> DevelopmentPaths:
     """Build every fixed Candidate path before any observational analysis."""
-    if ranking_metric not in metric_registry:
-        raise CandidatePathError(f"ranking metric {ranking_metric!r} is not in the metric registry")
     signal_close = run_data.bundle.array("Close")
     resolved_plan = (
         plan
@@ -164,25 +161,25 @@ def build_development_paths(
         distributions=run_data.distributions,
         currency_conversion=run_data.currency_conversion,
     )
-    metrics = central_metrics_from_grouped_accessors(
+    full_period_metrics = central_metrics_from_grouped_accessors(
         replay.portfolio,
         report,
         list(candidates.keys),
         list(candidates.param_names),
-        metric_registry.extractors,
+        metrics.registry.extractors,
     )
     verdicts = classify_continuous_candidates(
-        metrics,
+        full_period_metrics,
         invalid_keys=invalid_keys,
         min_trades=min_trades,
-        metric=ranking_metric,
+        metric=metrics.ranking.id,
     )
     return DevelopmentPaths(
         candidates=candidates,
         lookbacks=lookbacks,
         allocations=allocations,
         replay=replay,
-        full_period_metrics=metrics,
+        full_period_metrics=full_period_metrics,
         verdicts=verdicts,
     )
 

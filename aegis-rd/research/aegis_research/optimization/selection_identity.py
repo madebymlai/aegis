@@ -4,8 +4,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from research.aegis_research.candidates.records import canonical_value
-from research.aegis_research.configuration import OptimizationConfig, RankingConfig, ReportConfig
-from research.aegis_research.metrics.registry import FrozenMetricRegistry
+from research.aegis_research.configuration import OptimizationConfig, ReportConfig
+from research.aegis_research.metrics.registry import FrozenMetricRegistry, ResolvedMetrics
 from research.aegis_research.optimization.continuous_replay import continuous_replay_protocol
 from research.aegis_research.optimization.observation_blocks import (
     OBSERVATION_BLOCK_PROTOCOL_SCHEMA_VERSION,
@@ -27,18 +27,16 @@ def build_selection_identity(
     analysis: ObservationBlockAnalysis,
     preflight: OptimizationPreflight,
     optimization: OptimizationConfig,
-    metric_registry: FrozenMetricRegistry,
-    ranking: RankingConfig,
+    metrics: ResolvedMetrics,
+    min_trades: int,
     report: ReportConfig,
     direction: str,
     fill_timing: str,
     data_start: Any,
 ) -> Mapping[str, Any]:
     """Build only the Candidate identity facts consumed by durable behavior."""
-    if analysis.blocks != preflight.blocks:
+    if not analysis.blocks.has_same_geometry_as(preflight.blocks):
         raise ValueError("execution Observation Blocks must equal preflighted blocks")
-    if ranking.metric not in metric_registry:
-        raise ValueError("ranking Metric must exist in the Metric registry")
     candidates = preflight.plan.candidates
     lookbacks = preflight.plan.lookbacks
     candidate_grid = [
@@ -70,14 +68,15 @@ def build_selection_identity(
                 sim_end=len(analysis.blocks.index),
             ),
             "observation_block_protocol": observation_block_protocol(analysis.blocks),
-            "metric_protocol": _metric_protocol(metric_registry),
+            "metric_protocol": _metric_protocol(metrics.registry),
             "metric_inputs": {
                 "freq": report.freq,
                 "periods_per_year": report.periods_per_year,
                 "year_freq": report.year_freq,
             },
             "ranking": observation_block_ranking_protocol(
-                metric_registry.get(ranking.metric), min_trades=ranking.min_trades
+                metrics.ranking,
+                min_trades=min_trades,
             ),
         }
     )

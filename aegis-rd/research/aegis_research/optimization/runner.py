@@ -8,10 +8,9 @@ from vectorbtpro import vbt
 
 from research.aegis_research.configuration import (
     OptimizationConfig,
-    RankingConfig,
     ReportConfig,
 )
-from research.aegis_research.metrics.registry import FrozenMetricRegistry
+from research.aegis_research.metrics.registry import ResolvedMetrics
 from research.aegis_research.optimization.candidate_paths import (
     CandidatePathError,
     build_development_paths,
@@ -40,17 +39,12 @@ def execute_optimization(
     optimization: OptimizationConfig,
     book: ResolvedBook,
     report: ReportConfig,
-    ranking: RankingConfig,
-    metric_registry: FrozenMetricRegistry,
+    metrics: ResolvedMetrics,
+    min_trades: int,
     preflight: OptimizationPreflight,
 ) -> ObservationBlockAnalysis:
     """Execute the preflighted continuous replay and observational analysis."""
     _validate_source_param_names(source.params)
-    if ranking.metric not in metric_registry:
-        raise OptimizationRunnerError(
-            f"optimization ranking metric {ranking.metric!r} is not in the "
-            f"metric registry: {sorted(metric_registry.ids())}"
-        )
 
     try:
         paths = build_development_paths(
@@ -59,9 +53,8 @@ def execute_optimization(
             optimization=optimization,
             book=book,
             report=report,
-            metric_registry=metric_registry,
-            min_trades=ranking.min_trades,
-            ranking_metric=ranking.metric,
+            metrics=metrics,
+            min_trades=min_trades,
             plan=preflight.plan,
         )
     except CandidatePathError as error:
@@ -70,8 +63,7 @@ def execute_optimization(
         paths,
         preflight.blocks,
         report=report,
-        metric_registry=metric_registry,
-        ranking_metric=ranking.metric,
+        metrics=metrics,
     )
 
 

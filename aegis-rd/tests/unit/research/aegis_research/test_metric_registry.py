@@ -10,6 +10,7 @@ from research.aegis_research.metrics import (
     MetricDefinition,
     MetricRegistry,
     MetricRegistryError,
+    ResolvedMetrics,
     make_default_metric_registry,
 )
 from research.aegis_research.metrics.contracts import ExtractorSpec
@@ -34,6 +35,40 @@ def test_metric_registry_freezes_definitions_and_fingerprint() -> None:
     assert frozen.ids() == ("sharpe_ratio", "total_return")
     assert frozen.get("total_return").title == "Total Return"
     assert len(frozen.fingerprint) == 64
+
+
+def test_resolved_metrics_carries_the_registry_canonical_ranking_metric() -> None:
+    registry = make_default_metric_registry()
+
+    resolved = ResolvedMetrics.resolve(registry, "total_return")
+
+    assert resolved.registry is registry
+    assert resolved.ranking is registry.get("total_return")
+
+
+def test_resolved_metrics_rejects_an_unknown_ranking_metric() -> None:
+    registry = make_default_metric_registry()
+
+    with pytest.raises(MetricRegistryError, match="unknown metric id: not_a_metric"):
+        ResolvedMetrics.resolve(registry, "not_a_metric")
+
+
+def test_resolved_metrics_rejects_zero_argument_construction() -> None:
+    with pytest.raises(
+        TypeError,
+        match=r"ResolvedMetrics must be constructed with ResolvedMetrics\.resolve",
+    ):
+        ResolvedMetrics()
+
+
+def test_resolved_metrics_rejects_direct_field_construction() -> None:
+    registry = make_default_metric_registry()
+
+    with pytest.raises(TypeError):
+        ResolvedMetrics(  # type: ignore[call-arg]
+            registry=registry,
+            ranking=registry.get("total_return"),
+        )
 
 
 def test_register_requires_an_extractor() -> None:

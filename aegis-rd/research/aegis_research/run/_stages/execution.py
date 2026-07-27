@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from research.aegis_research.configuration import (
     RunConfig,
 )
-from research.aegis_research.metrics.registry import FrozenMetricRegistry
+from research.aegis_research.metrics.registry import ResolvedMetrics
 from research.aegis_research.optimization.observation_blocks import ObservationBlockAnalysis
 from research.aegis_research.optimization.preflight import (
     OptimizationPreflight,
@@ -50,7 +50,7 @@ def run_pipeline_execution(
     config: RunConfig,
     setup: SetupResult,
     book: ResolvedBook,
-    metric_registry: FrozenMetricRegistry,
+    metrics: ResolvedMetrics,
 ) -> ExecutionResult:
     """Validate exact geometry, replay Candidates, and rank Observation Blocks."""
     try:
@@ -59,7 +59,7 @@ def run_pipeline_execution(
             optimization=config.optimization,
             index=setup.run_data.replay_index,
             symbol_count=setup.run_data.instrument_count,
-            metric_count=len(metric_registry.ids()),
+            metric_count=len(metrics.registry.ids()),
             has_open_prices=True,
         )
     except PreflightError as error:
@@ -71,16 +71,16 @@ def run_pipeline_execution(
         optimization=config.optimization,
         book=book,
         report=config.report,
-        ranking=config.ranking,
-        metric_registry=metric_registry,
+        metrics=metrics,
+        min_trades=config.ranking.min_trades,
         preflight=preflight,
     )
     selection_identity = build_selection_identity(
         analysis=analysis,
         preflight=preflight,
         optimization=config.optimization,
-        metric_registry=metric_registry,
-        ranking=config.ranking,
+        metrics=metrics,
+        min_trades=config.ranking.min_trades,
         report=config.report,
         direction=config.portfolio.direction,
         fill_timing=config.portfolio.fill_timing,

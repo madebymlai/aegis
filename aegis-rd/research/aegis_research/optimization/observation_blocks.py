@@ -16,7 +16,7 @@ from research.aegis_research.metrics.contracts import ExtractorSpec, MetricDefin
 from research.aegis_research.metrics.range_extractors import (
     FullPathPrimitives,
 )
-from research.aegis_research.metrics.registry import FrozenMetricRegistry
+from research.aegis_research.metrics.registry import ResolvedMetrics
 from research.aegis_research.optimization.candidate_paths import DevelopmentPaths
 from research.aegis_research.optimization.candidate_validity import Verdicts
 from research.aegis_research.optimization.ranking import (
@@ -126,6 +126,13 @@ class ObservationBlocks:
                 "Observation Block labels must be unique and match the resolved bounds"
             )
         return cls(index=index, bounds=resolved, labels=block_labels)
+
+    def has_same_geometry_as(self, other: ObservationBlocks) -> bool:
+        return (
+            self.bounds == other.bounds
+            and self.labels == other.labels
+            and self.index.equals(other.index)
+        )
 
     def splitter(self) -> vbt.Splitter:
         return vbt.Splitter.from_splits(
@@ -360,14 +367,9 @@ def analyze_development_paths(
     blocks: ObservationBlocks,
     *,
     report: ReportConfig,
-    metric_registry: FrozenMetricRegistry,
-    ranking_metric: str,
+    metrics: ResolvedMetrics,
 ) -> ObservationBlockAnalysis:
     """Apply all registered Metrics and select solely from the ranking Metric ranks."""
-    if ranking_metric not in metric_registry:
-        raise ObservationBlockError(
-            f"ranking metric {ranking_metric!r} is not in the Metric registry"
-        )
     if blocks.index is not paths.replay.portfolio.wrapper.index and not blocks.index.equals(
         paths.replay.portfolio.wrapper.index
     ):
@@ -388,20 +390,19 @@ def analyze_development_paths(
             blocks,
             paths.replay.portfolio,
             primitives,
-            metric_registry.get(metric_id),
+            metrics.registry.get(metric_id),
             spec,
             report,
             candidate_index,
         )
-        for metric_id, spec in metric_registry.extractors.items()
+        for metric_id, spec in metrics.registry.extractors.items()
     }
-    definition = metric_registry.get(ranking_metric)
     ranking = rank_observation_block_candidates(
-        matrices[ranking_metric],
+        matrices[metrics.ranking.id],
         param_names=paths.candidates.param_names,
         verdicts=paths.verdicts,
         full_period_metrics=paths.full_period_metrics,
-        definition=definition,
+        definition=metrics.ranking,
     )
     return ObservationBlockAnalysis(
         blocks=blocks,

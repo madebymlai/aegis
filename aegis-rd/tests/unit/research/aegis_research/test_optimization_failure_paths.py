@@ -6,7 +6,7 @@ import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OptimizationConfig
-from research.aegis_research.metrics import make_default_metric_registry
+from research.aegis_research.metrics import ResolvedMetrics, make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
 from research.aegis_research.optimization.preflight import PreflightError, build_preflight
 from research.aegis_research.optimization.runner import (
@@ -18,7 +18,6 @@ from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
-    make_ranking_config,
     make_report_config,
     make_run_data,
 )
@@ -65,6 +64,7 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     )
 
     optimization = _optimization_config()
+    registry = make_default_metric_registry()
     with pytest.raises(OptimizationRunnerError, match="no portfolio allocations"):
         execute_optimization(
             run_data=make_run_data(close=close, open_=close),
@@ -72,8 +72,8 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
             optimization=optimization,
             book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
             report=make_report_config(),
-            ranking=make_ranking_config(metric="total_return"),
-            metric_registry=make_default_metric_registry(),
+            metrics=ResolvedMetrics.resolve(registry, "total_return"),
+            min_trades=0,
             preflight=_preflight(close, source, optimization),
         )
 
@@ -93,6 +93,7 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     )
 
     optimization = _optimization_config()
+    registry = make_default_metric_registry()
     with pytest.raises(RuntimeError, match="pipeline blew up"):
         execute_optimization(
             run_data=make_run_data(close=close, open_=close),
@@ -100,8 +101,8 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
             optimization=optimization,
             book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
             report=make_report_config(),
-            ranking=make_ranking_config(metric="total_return"),
-            metric_registry=make_default_metric_registry(),
+            metrics=ResolvedMetrics.resolve(registry, "total_return"),
+            min_trades=0,
             preflight=_preflight(close, source, optimization),
         )
 

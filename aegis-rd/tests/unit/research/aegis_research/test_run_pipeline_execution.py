@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.metrics.registry import empty_metric_registry
 from research.aegis_research.optimization.source import OptimizationSource, OptimizationSourceError
 from research.aegis_research.portfolio_simulation import ResolvedBook
 from research.aegis_research.run._stages.execution import run_pipeline_execution
@@ -40,5 +39,5 @@ def test_pipeline_execution_raises_on_preflight_failure(
             config=config,
             setup=setup,
             book=ResolvedBook.resolve(config.portfolio, setup.run_data),
-            metric_registry=empty_metric_registry().freeze(),
+            metrics=resolved.metrics,
         )

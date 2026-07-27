@@ -123,9 +123,8 @@ def load_locked_strategy_returns(config_path: str | Path) -> LockedStrategyRetur
         optimization=config.optimization,
         book=ResolvedBook.resolve(config.portfolio, run_data),
         report=config.report,
-        metric_registry=resolved.metric_registry,
+        metrics=resolved.metrics,
         min_trades=config.ranking.min_trades,
-        ranking_metric=config.ranking.metric,
     )
 
     return_frame = EquityCurve.from_portfolio(paths.replay.portfolio).returns()

@@ -9,7 +9,7 @@ from research.aegis_research.candidates.models import CandidateSet
 from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.component_registry import FrozenComponentRegistry
 from research.aegis_research.configuration import ResolvedRunConfig, RunConfig
-from research.aegis_research.metrics.registry import FrozenMetricRegistry
+from research.aegis_research.metrics.registry import ResolvedMetrics
 from research.aegis_research.portfolio_simulation import ResolvedBook
 from research.aegis_research.run._stages.execution import ExecutionResult, run_pipeline_execution
 from research.aegis_research.run._stages.setup import SetupResult, run_pipeline_setup
@@ -45,12 +45,12 @@ def run_strategy_sweep(
         ),
         custom_data_providers=custom_data_providers,
     )
-    metric_registry = resolved_config.metric_registry
+    metrics = resolved_config.metrics
     setup, execution = _execute_run(
         config,
         component_registry=component_registry,
         run_data=run_data,
-        metric_registry=metric_registry,
+        metrics=metrics,
     )
     candidate_set = derive_candidate_set(
         run_id=attempted_run_id,
@@ -58,7 +58,7 @@ def run_strategy_sweep(
         setup=setup,
         execution=execution,
         array_contract=array_contract,
-        metric_registry_fingerprint=metric_registry.fingerprint,
+        metric_registry_fingerprint=metrics.registry.fingerprint,
     )
     result = _build_run_result(
         config, setup=setup, execution=execution, candidate_set=candidate_set
@@ -73,7 +73,7 @@ def _execute_run(
     *,
     component_registry: FrozenComponentRegistry,
     run_data: RunData,
-    metric_registry: FrozenMetricRegistry,
+    metrics: ResolvedMetrics,
 ) -> tuple[SetupResult, ExecutionResult]:
     setup = run_pipeline_setup(
         config=config,
@@ -84,7 +84,7 @@ def _execute_run(
         config=config,
         setup=setup,
         book=ResolvedBook.resolve(config.portfolio, run_data),
-        metric_registry=metric_registry,
+        metrics=metrics,
     )
     return setup, execution
 

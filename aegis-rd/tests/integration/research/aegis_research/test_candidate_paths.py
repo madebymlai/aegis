@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.metrics import make_metric_registry_for
+from research.aegis_research.metrics import ResolvedMetrics, make_metric_registry_for
 from research.aegis_research.optimization.candidate_paths import (
     CandidatePathError,
     build_development_paths,
@@ -33,7 +33,6 @@ from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
-    make_ranking_config,
     make_report_config,
     make_run_data,
 )
@@ -98,6 +97,7 @@ def test_development_paths_resolve_one_common_start_from_the_sampled_grid() -> N
             "strategies/demo": 2,
         }
 
+    registry = make_metric_registry_for(())
     paths = build_development_paths(
         run_data=make_run_data(close=close, open_=close),
         source=_source(lookbacks),
@@ -108,9 +108,8 @@ def test_development_paths_resolve_one_common_start_from_the_sampled_grid() -> N
             )
         ),
         report=make_report_config(),
-        metric_registry=make_metric_registry_for(()),
+        metrics=ResolvedMetrics.resolve(registry, "total_return"),
         min_trades=2,
-        ranking_metric="total_return",
     )
 
     assert paths.candidates.count == 4
@@ -151,6 +150,7 @@ def test_invalid_lookback_contract_fails_before_replay(
         "research.aegis_research.optimization.candidate_paths.replay_candidates",
         replay_spy,
     )
+    registry = make_metric_registry_for(())
 
     with pytest.raises(CandidatePathError, match=message):
         build_development_paths(
@@ -159,9 +159,8 @@ def test_invalid_lookback_contract_fails_before_replay(
             optimization=make_optimization_config(),
             book=ResolvedBook(make_portfolio_config(fill_timing="next_close")),
             report=make_report_config(),
-            metric_registry=make_metric_registry_for(()),
+            metrics=ResolvedMetrics.resolve(registry, "total_return"),
             min_trades=0,
-            ranking_metric="total_return",
         )
 
     assert replayed is False
@@ -185,6 +184,8 @@ def test_fixed_seed_materializes_the_same_random_candidate_sample() -> None:
 def test_random_sample_changes_common_start_only_through_sampled_candidates() -> None:
     close = pd.DataFrame({"A": np.arange(10.0, 18.0)})
     params = {"indicator.window": vbt.Param([1, 2, 3, 4])}
+    registry = make_metric_registry_for(())
+    metrics = ResolvedMetrics.resolve(registry, "total_return")
 
     def build(seed: int):
         return build_development_paths(
@@ -196,9 +197,8 @@ def test_random_sample_changes_common_start_only_through_sampled_candidates() ->
             optimization=make_optimization_config(search="random", random_subset=1, seed=seed),
             book=ResolvedBook(make_portfolio_config(fill_timing="next_close")),
             report=make_report_config(),
-            metric_registry=make_metric_registry_for(()),
+            metrics=metrics,
             min_trades=0,
-            ranking_metric="total_return",
         )
 
     seed_zero = build(0)
@@ -220,6 +220,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
     )
     report = make_report_config()
     registry = make_metric_registry_for(())
+    metrics = ResolvedMetrics.resolve(registry, "total_return")
     source = _source(lambda params: {"source": 1})
     optimization = make_optimization_config(observation_block_bars=3)
     preflight = build_preflight(
@@ -236,9 +237,8 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         optimization=optimization,
         book=book,
         report=report,
-        metric_registry=registry,
+        metrics=metrics,
         min_trades=0,
-        ranking_metric="total_return",
     )
 
     sequential_analyses = []
@@ -252,9 +252,8 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
             optimization=optimization,
             book=book,
             report=report,
-            metric_registry=registry,
+            metrics=metrics,
             min_trades=0,
-            ranking_metric="total_return",
         )
         pd.testing.assert_series_equal(
             batch.full_period_metrics.iloc[position],
@@ -266,8 +265,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
                 sequential,
                 preflight.blocks,
                 report=report,
-                metric_registry=registry,
-                ranking_metric="total_return",
+                metrics=metrics,
             )
         )
 
@@ -275,8 +273,7 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
         batch,
         preflight.blocks,
         report=report,
-        metric_registry=registry,
-        ranking_metric="total_return",
+        metrics=metrics,
     )
     sequential_metric_matrices = {
         metric_id: pd.concat(
@@ -305,8 +302,8 @@ def test_batched_full_period_metrics_match_sequential_candidate_replays() -> Non
     identity_kwargs = {
         "preflight": preflight,
         "optimization": optimization,
-        "metric_registry": registry,
-        "ranking": make_ranking_config(metric="total_return"),
+        "metrics": metrics,
+        "min_trades": 0,
         "report": make_report_config(),
         "direction": "longonly",
         "fill_timing": "next_close",
@@ -323,6 +320,7 @@ def test_development_paths_flow_unchanged_into_observation_analysis() -> None:
     close = pd.DataFrame({"A": np.arange(10.0, 18.0)}, index=index)
     report = make_report_config()
     registry = make_metric_registry_for(())
+    metrics = ResolvedMetrics.resolve(registry, "total_return")
     paths = build_development_paths(
         run_data=make_run_data(close=close, open_=close),
         source=_source(lambda params: {"source": 2}),
@@ -333,9 +331,8 @@ def test_development_paths_flow_unchanged_into_observation_analysis() -> None:
             )
         ),
         report=report,
-        metric_registry=registry,
+        metrics=metrics,
         min_trades=0,
-        ranking_metric="total_return",
     )
     portfolio = paths.replay.portfolio
 
@@ -343,8 +340,7 @@ def test_development_paths_flow_unchanged_into_observation_analysis() -> None:
         paths,
         ObservationBlocks.from_bounds(index, [(2, 5), (5, 8)]),
         report=report,
-        metric_registry=registry,
-        ranking_metric="total_return",
+        metrics=metrics,
     )
 
     assert set(analysis.metric_matrices) == set(registry.ids())
@@ -370,6 +366,7 @@ def test_preflighted_runner_executes_continuous_replay_without_public_split() ->
     optimization = make_optimization_config(observation_block_bars=3)
     report = make_report_config()
     registry = make_metric_registry_for(())
+    metrics = ResolvedMetrics.resolve(registry, "total_return")
     preflight = build_preflight(
         source=source,
         optimization=optimization,
@@ -392,8 +389,8 @@ def test_preflighted_runner_executes_continuous_replay_without_public_split() ->
             )
         ),
         report=report,
-        ranking=make_ranking_config(metric="total_return"),
-        metric_registry=registry,
+        metrics=metrics,
+        min_trades=0,
         preflight=preflight,
     )
 
