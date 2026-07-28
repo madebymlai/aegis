@@ -117,6 +117,20 @@ and it is a **different claim** from the one `_synthesis.md` §4.2 makes, and th
   and it is the role working.
 - **What the income is payment for** - Jurek: crash-neutral carry stays significantly profitable at
   3.18 to 5.31 percent per year, skewness-specific nearer 10 to 15 percent. So the seat that sheds the
+
+> [!bug] The 3.18 to 5.31 percent figures are STALE and must not be quoted. Found 2026-07-27
+> Verified against the publication history: those figures come from Jurek's **2008 NBER conference draft**
+> (sample 1999-2007). A 2009 redraft reports **3.85 and 6.55 percent** on an extended sample, and the final
+> 2014 *JFE* paper uses a different sample again (1990-2012), reports spread-weighted unhedged carry at
+> **5.21 percent** per annum, and reports the crash risk premium itself as 0.20 to 0.50 percent, rising to
+> 1.3 to 1.6 percent with transaction costs. **None of those is 3.18 to 5.31.** The final Section 5 table is
+> paywalled, so the figure is not formally refuted, but it changed at every redraft and must be treated as
+> superseded.
+>
+> **Use the published claim instead**, which is stronger for D1's purpose and is quotable from the *JFE*
+> abstract: **crash risk premia account for at most one third of the excess return.** Section 4 of the draft
+> now carries that form. The draft never quoted 3.18 to 5.31, so nothing published is affected; this flag
+> exists so a later pass does not pick the figure back up out of this decision block.
   inventory keeps most of the money. This is the claim with teeth, and it is what forces the defence of
   the inventory to portfolio level.
 
@@ -1307,6 +1321,36 @@ D17 records.
 Sixteen live docket items were anchored to sections at the re-anchoring; the draft works those assigned to §1
 through §8, and whether each is discharged to the standard the panel asked for is a re-review question, not a
 drafting one.
+
+### D21. Stage 4.5 passed. What verification changed, and the two things it could not close
+
+Full record in [[research/income-engine/_integrity_final|_integrity_final]]. Twelve checks passed, nine defects
+found and fixed, one blocker resolved. Three outcomes belong in this file because they change what the plan says.
+
+**The blocker resolved against my own suspicion.** `_sources.md` recorded Dick-Nielsen and Rossi as an incomplete
+citation with an instruction not to fill the gap, while D6.2 asserted "2019, *RFS* 32(1)". I flagged D6.2 as
+possibly fabricated. **It was correct and the register was stale.** Every field verified, the quoted phrase
+confirmed verbatim in the published text, and critically the sub-claim D6.2's derivation depends on holds: only
+about two-thirds of downgraded-exclusion inventory clears within 100 days, and costs are higher for downgrades
+"because the downgraded bonds are both more risky and kept longer on inventory". Recorded because the reverse
+error, trusting a decision block over a verification register, is one this project has actually made.
+
+**D1's headline figures are stale and are flagged at D1.** The 3.18 to 5.31 percent range comes from a 2008
+conference draft. Section 4 now carries the published claim instead, that crash risk premia account for **at most
+one third** of the excess return, which is verified and sharper.
+
+**Section 7's asserted claim is now sourced, and sourcing it produced a second rejection ground.** Nagel (2012)
+directly tests concentration rather than level. But the concentration holds **on average across stress states,
+not in every one**: in fast funding-constrained episodes the income inverts because the supplier is compelled to
+unwind rather than free to charge more. That locates the behaviour's worst losses in the fast segment the tier
+above owns, so §6's collision applies as well as the timing failure. One step remains this paper's own
+extrapolation and is marked: no source partitions liquidity income into calm versus choppy as two distinct
+regimes. The same funding-constraint model also gave §5 a **mechanism** for the loss channel it had argued only
+from absence of evidence.
+
+**Two items are open and neither is the drafting stage's to close.** The abstract is 314 words and the required
+cap depends on a target venue the Configuration Record does not name. And companion-paper reference entries for ①
+and ② await their authorship, which was **not invented**.
 
 ## Open questions
 
