@@ -4,13 +4,13 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args
 
 import pandas as pd
-from aegis_data.marking import split_mark_token
+from aegis_data.marking import DeclaredMarkingResolver, MarkMode, split_mark_token
 from aegis_runtime import DriftBand
+from nautilus_trader.model.identifiers import InstrumentId
 from pydantic import AfterValidator, ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from research.aegis_research.configuration.field_types import (
-    IDENTIFIER_RE,  # noqa: F401 — re-exported for configuration
+from research.aegis_research.authoring_fields import (
     ComponentIdStr,
     NonEmptyStr,
     NonNegativeCash,
@@ -19,14 +19,17 @@ from research.aegis_research.configuration.field_types import (
     PositiveCash,
     PositiveInt,
     RootSymbol,
-    StrictFloat,
+    RunName,
     TimedeltaStr,
     UnitInterval,
+    has_data_array_token_shape,
 )
+from research.aegis_research.candidates.models import REPRESENTATIVE_ROLE_VALUES
 
 # v11 (aegis-rd-ui1m): portfolio.gross_cap / portfolio.net_cap removed — the
 # exposure envelope is the fixed unit-gross sleeve contract, not config.
-CONFIG_SCHEMA_VERSION = 11
+RunConfigSchemaVersion = Literal[11]
+CONFIG_SCHEMA_VERSION: int = get_args(RunConfigSchemaVersion)[0]
 OHLCV_ARRAYS = ("Open", "High", "Low", "Close", "Volume")
 # This is intentionally a shortcut catalog, not a universal feature catalog.
 # Full VBT feature names are source-specific and discovered from native_data.features.
@@ -47,36 +50,6 @@ MISSING_POLICIES = set(get_args(MissingPolicy))
 # config load. aegis-data's marking seam owns the grammar and the resolution.
 MarkModeName = Literal["LAST", "MID", "QUOTE"]
 MARK_MODES = set(get_args(MarkModeName))
-Degradation = Literal[
-    "duplicate_index",
-    "missing_rows",
-    "non_monotonic_index",
-    "skipped_instrument_ids",
-]
-DATA_QUALITY_DEGRADATIONS = set(get_args(Degradation))
-FORWARD_OPTIMIZATION_REQUIRED_MESSAGE = (
-    "is required; fixed/non-optimized strategy runs are removed from the forward "
-    "run contract; use optimization.search and optimization.split"
-)
-
-# ── Forward-contract prepass overlay ──────────────────────────────────────────
-# Rules that amend the raw pydantic model for the forward contract: pydantic
-# alone declares ``optimization`` optional and gives ``schema_version`` a
-# default, but the validation prepass requires both. This is the single home
-# consumed by BOTH the prepass (``validation._prepass_raw_config``) and the
-# config-schema guide renderer, so the documented requiredness cannot fork from
-# the enforced requiredness (ADR-0019).
-PREPASS_REQUIRED_FIELDS: dict[str, str] = {
-    "optimization": FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
-}
-"""Top-level fields the prepass requires regardless of the model default,
-mapped to the validation-issue message emitted when the field is absent."""
-
-PREPASS_CONST_FIELDS: dict[str, object] = {
-    "schema_version": CONFIG_SCHEMA_VERSION,
-}
-"""Top-level fields whose value the prepass fixes (const)."""
-
 OPTIMIZATION_SEARCH_POLICIES = {"grid", "random"}
 
 
@@ -91,11 +64,6 @@ class ConfigValidationError(ValueError):
         self.issues = tuple(issues)
         details = "; ".join(f"{issue.path}: {issue.message}" for issue in self.issues)
         super().__init__(f"Invalid run config: {details}")
-
-
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class DataQualityConfig:
-    allowed_degradations: list[Degradation] = field(default_factory=list)
 
 
 def _validate_array_token(token: str) -> str:
@@ -135,7 +103,6 @@ class DataConfig:
     timeframe: str = "1D"
     path: str | None = None
     missing_index: MissingPolicy = "raise"
-    quality: DataQualityConfig = field(default_factory=DataQualityConfig)
 
     @property
     def effective_arrays(self) -> tuple[str, ...]:
@@ -145,6 +112,18 @@ class DataConfig:
     def native_instrument_ids(self) -> tuple[str, ...]:
         """Native Nautilus InstrumentIds requested from the catalog/port."""
         return tuple(dict.fromkeys([*self.instruments, *self.exchange]))
+
+    def marking_resolver(self) -> DeclaredMarkingResolver:
+        """Build the run's marking policy from its explicit declarations."""
+        return DeclaredMarkingResolver(
+            declared={
+                **{InstrumentId.from_str(value): MarkMode.MID for value in self.exchange},
+                **{
+                    InstrumentId.from_str(value): MarkMode(mode)
+                    for value, mode in self.mark_modes.items()
+                },
+            }
+        )
 
     @model_validator(mode="after")
     def _validate_conditional_requireds(self) -> DataConfig:
@@ -220,9 +199,7 @@ def _require_unique_non_empty(
 
 
 def expand_data_arrays(arrays: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    return merge_data_arrays(
-        *(DATA_ARRAY_SHORTCUTS.get(token, (token,)) for token in arrays)
-    )
+    return merge_data_arrays(*(DATA_ARRAY_SHORTCUTS.get(token, (token,)) for token in arrays))
 
 
 def merge_data_arrays(*array_groups: tuple[str, ...]) -> tuple[str, ...]:
@@ -236,28 +213,6 @@ def merge_data_arrays(*array_groups: tuple[str, ...]) -> tuple[str, ...]:
             merged.append(feature)
             seen.add(feature)
     return tuple(merged)
-
-
-def has_data_array_token_shape(value: str) -> bool:
-    return bool(value) and value.strip() == value and not any(char in "\t\n\r" for char in value)
-
-
-@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
-class RunSplitConfig:
-    method: str
-    params: dict[str, Any] = field(default_factory=dict)
-    max_splits: PositiveInt = 100
-    max_estimated_output_cells: PositiveInt = 25_000_000
-    max_public_artifact_bytes: PositiveInt = 10_000_000
-
-    @model_validator(mode="after")
-    def _no_set_labels(self):
-        if "set_labels" in self.params:
-            raise ValueError(
-                "set roles are owned by Aegis and assigned positionally "
-                "(set 0 selection, set 1 held_out); set_labels is not configurable"
-            )
-        return self
 
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -370,9 +325,6 @@ class PortfolioConfig:
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class ReportConfig:
-    min_oos_sharpe: StrictFloat = 0.5
-    max_oos_drawdown: UnitInterval = 0.35
-    min_oos_trades: NonNegativeInt = 5
     freq: TimedeltaStr = "1D"
     year_freq: TimedeltaStr = "252D"
     # Extra opt-in custom metrics to compute and report per candidate alongside the
@@ -410,60 +362,30 @@ class RankingConfig:
     min_trades: NonNegativeInt = 0
 
 
-OPTIMIZATION_EXECUTE_RESERVED_KEYS = frozenset(
-    {
-        "random_subset",
-        "seed",
-        "merge_func",
-        "raise_no_results",
-        "filter_results",
-    }
-)
-
-
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class OptimizationConfig:
     search: Literal["grid", "random"]
-    split: RunSplitConfig
+    observation_block_bars: PositiveInt
     random_subset: PositiveInt | None = None
     seed: NonNegativeInt | None = None
-    execute: dict[str, Any] = field(default_factory=dict)
 
     @model_validator(mode="after")
     def _random_needs_subset_and_seed(self):
         if self.search == "random":
             if self.random_subset is None:
-                raise ValueError(
-                    "random_subset is required when optimization.search is 'random'"
-                )
+                raise ValueError("random_subset is required when optimization.search is 'random'")
             if self.seed is None:
                 raise ValueError(
                     "seed is required when optimization.search is 'random' "
-                    "so sampled evidence is deterministic"
+                    "so the sampled grid is deterministic"
                 )
         if self.search == "grid" and self.random_subset is not None:
-            raise ValueError(
-                "random_subset is only valid when optimization.search is 'random'"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _execute_no_reserved_keys(self):
-        reserved = sorted(set(self.execute) & OPTIMIZATION_EXECUTE_RESERVED_KEYS)
-        if reserved:
-            raise ValueError(
-                f"reserved keys {reserved} are managed by Aegis's optimization "
-                "layer and must not be passed through optimization.execute, which "
-                "forwards raw vbt.parameterized engine kwargs only "
-                "(e.g. chunking, engine, progress)"
-            )
+            raise ValueError("random_subset is only valid when optimization.search is 'random'")
         return self
 
 
-# The representative roles a Lock handle may name, in rank order. These mirror the
-# roles evidence emits for every Run (candidate_evidence.CANDIDATE_ROLES); the config
-# layer keeps its own copy because it must not depend up on the optimization layer.
-LOCK_ROLES: tuple[str, ...] = ("best", "median", "worst")
+# The representative roles a Lock handle may name, in rank order.
+LOCK_ROLES = REPRESENTATIVE_ROLE_VALUES
 DEFAULT_LOCK_ROLE = "best"
 
 
@@ -492,7 +414,7 @@ class Lock:
     ``lock: run_id[:role]`` lands here with the role keyword (default ``best``).
     """
 
-    run_id: str
+    run_id: NonEmptyStr
     candidate_id: NonEmptyStr
 
     @model_validator(mode="before")
@@ -501,6 +423,11 @@ class Lock:
         """Normalize a scalar ``run_id[:role]`` handle to the mapping shape."""
         if isinstance(data, str):
             run_id, _, role = data.partition(":")
+            if not run_id:
+                raise ValueError("run_id must not be empty")
+            if role and role not in LOCK_ROLES:
+                roles_label = ", ".join(LOCK_ROLES)
+                raise ValueError(f"role must be one of: {roles_label} (got {role!r})")
             return {"run_id": run_id, "candidate_id": role or DEFAULT_LOCK_ROLE}
         return data
 
@@ -510,34 +437,21 @@ class RunConfig:
     """Whole-tree pydantic dataclass: one ``TypeAdapter(RunConfig).validate_python(raw)``
     validates the entire run config and accumulates all structural errors across sections.
 
-    Top-level prepass (removed-training-field tombstones, portfolio tombstones,
-    ``schema_version`` presence check) lives in the resolution coordinator so custom
-    messages survive (``@model_validator`` loses dotted paths).
+    The model is the structural authoring contract. Runtime registry and whole-config
+    selection checks run only after this value has been constructed.
     """
 
-    name: str
+    name: RunName
     strategy: RunSourceRefConfig
     indicators: list[RunIndicatorSourceConfig]
     ranking: RankingConfig
-    schema_version: int = CONFIG_SCHEMA_VERSION
+    schema_version: RunConfigSchemaVersion = field(kw_only=True)
     # Required (keyword-only so they can sit among defaulted fields): a run must declare
     # its data (which requires explicit arrays — no silent OHLCV default) and its
     # portfolio (which requires an explicit direction — no silently long-only default).
     data: DataConfig = field(kw_only=True)
     portfolio: PortfolioConfig = field(kw_only=True)
     report: ReportConfig = field(default_factory=ReportConfig)
-    optimization: OptimizationConfig | None = None
+    optimization: OptimizationConfig = field(kw_only=True)
     lock: Lock | None = None
     output_dir: str = "runs"
-
-
-@dataclass(frozen=True)
-class ConfigSelectionEvidence:
-    source: str
-    config_path: str | None = None
-
-    def manifest(self) -> dict[str, Any]:
-        return {
-            "source": self.source,
-            "config_path": self.config_path,
-        }

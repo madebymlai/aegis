@@ -51,6 +51,7 @@ from aegis_trader.trader.pipeline import (
     RebalanceRequest,
     RebalanceResult,
 )
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import assemble_test_book
 
 NAV = 1_000_000.0
@@ -319,6 +320,7 @@ def build_harness(
         market_data=_UnitPriceMarketData(staged_ids),
         book=assemble_test_book(book, bundles),
         ledger=ledger if ledger is not None else SleeveLedger(horizon=derive_horizon(("1D",))),
+        arrays=SleeveArrays.bar_only(),
     )
     return RebalanceHarness(
         pipeline,

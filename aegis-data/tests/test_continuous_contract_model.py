@@ -212,6 +212,25 @@ def test_materialize_rejects_legs_disagreeing_on_quote_currency() -> None:
         model.materialize(end=ES_END)
 
 
+def test_continuous_multiplier_is_shared_by_dated_legs() -> None:
+    port, _ = es_port(
+        leg_multipliers={"ESH4.XCME": 50.0, "ESM4.XCME": 50.0}
+    )
+
+    multiplier = port.continuous_multiplier("ES")
+
+    assert multiplier == 50.0
+
+
+def test_continuous_multiplier_rejects_inconsistent_dated_legs() -> None:
+    port, _ = es_port(
+        leg_multipliers={"ESH4.XCME": 50.0, "ESM4.XCME": 25.0}
+    )
+
+    with pytest.raises(ValueError, match="inconsistent native multipliers"):
+        port.continuous_multiplier("ES")
+
+
 def test_materialize_exposes_the_continuous_root_id() -> None:
     port, _native = es_port()
     model = ContinuousContractModel(

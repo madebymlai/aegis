@@ -282,3 +282,303 @@ def test_allocator_utility_nan_on_length_mismatch_or_degenerate() -> None:
     trend = np.random.default_rng(1).normal(0.0, 0.01, 500)
     assert np.isnan(composite_allocator_utility(np.zeros(400), trend))  # length mismatch
     assert np.isnan(composite_allocator_utility(np.zeros(500), trend))  # zero-vol convergent
+
+
+def test_allocator_contribution_separates_decoupled_from_co_crashing_pole() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, cocrashing = _matched_convergent_pair(3)
+
+    decoupled = evaluate_allocator_contribution(
+        independent, trend, block_lengths=(21,), samples=200, seed=7
+    )
+    coupled = evaluate_allocator_contribution(
+        cocrashing, trend, block_lengths=(21,), samples=200, seed=7
+    )
+
+    # Both bleed - the fixture's convergent stream has negative drift by construction -
+    # so the claim is the ordering, carried through to the paired-resample report.
+    assert decoupled.delta_theta > coupled.delta_theta
+    assert not decoupled.earns_its_seat
+    assert not coupled.earns_its_seat
+
+
+def test_a_positive_point_estimate_alone_does_not_earn_a_seat() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, _, _ = _matched_convergent_pair(3)
+    marginal = np.random.default_rng(17).normal(0.0005, 0.008, trend.size)
+
+    contribution = evaluate_allocator_contribution(
+        marginal, trend, block_lengths=(21,), samples=200, seed=7
+    )
+
+    # The whole reason the resample exists: delta_theta reads positive, and the interval
+    # spans zero, so the pole has not shown it earns anything.
+    assert contribution.delta_theta > 0.0
+    assert contribution.intervals[0].lower < 0.0 < contribution.intervals[0].upper
+    assert not contribution.earns_its_seat
+
+
+def test_a_pole_whose_interval_clears_zero_earns_its_seat() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, _, _ = _matched_convergent_pair(3)
+    accretive = np.random.default_rng(17).normal(0.0012, 0.008, trend.size)
+
+    contribution = evaluate_allocator_contribution(
+        accretive, trend, block_lengths=(21,), samples=200, seed=7
+    )
+
+    assert contribution.intervals[0].lower > 0.0
+    assert contribution.earns_its_seat
+
+
+def test_allocator_contribution_is_deterministic_under_a_fixed_seed() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+
+    first = evaluate_allocator_contribution(
+        independent, trend, block_lengths=(21, 63), samples=100, seed=11
+    )
+    second = evaluate_allocator_contribution(
+        independent, trend, block_lengths=(21, 63), samples=100, seed=11
+    )
+
+    assert first == second
+
+
+def test_allocator_contribution_reports_one_interval_per_block_length() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+
+    contribution = evaluate_allocator_contribution(
+        independent, trend, block_lengths=(21, 63, 126), samples=50, seed=5
+    )
+
+    assert [interval.block_length for interval in contribution.intervals] == [21, 63, 126]
+    assert all(interval.samples == 50 for interval in contribution.intervals)
+    assert all(interval.lower <= interval.upper for interval in contribution.intervals)
+
+
+def test_allocator_contribution_rejects_misaligned_streams() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        AllocatorEvaluationError,
+        evaluate_allocator_contribution,
+    )
+
+    trend = np.random.default_rng(1).normal(0.0, 0.01, 500)
+
+    with pytest.raises(AllocatorEvaluationError, match="aligned"):
+        evaluate_allocator_contribution(np.zeros(400), trend)
+
+
+def test_allocator_contribution_rejects_a_block_longer_than_the_sample() -> None:
+    from research.aegis_research.metrics.custom.convergent import (
+        AllocatorEvaluationError,
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+
+    with pytest.raises(AllocatorEvaluationError, match="exceeds"):
+        evaluate_allocator_contribution(independent, trend, block_lengths=(9_999,))
+
+
+def test_optimal_block_length_grows_with_serial_dependence() -> None:
+    """The selector must react to dependence, which is the whole point of choosing b."""
+    from research.aegis_research.metrics.custom.convergent import optimal_block_length
+
+    def ar1(phi: float, seed: int = 5, n: int = 1500) -> np.ndarray:
+        noise = np.random.default_rng(seed).normal(0.0, 0.01, n)
+        series = np.empty(n)
+        series[0] = noise[0]
+        for t in range(1, n):
+            series[t] = phi * series[t - 1] + noise[t]
+        return series
+
+    independent = optimal_block_length(ar1(0.0))
+    persistent = optimal_block_length(ar1(0.9))
+
+    # A near-white series needs almost no block; a strongly persistent one needs a real one.
+    assert independent < persistent
+    assert persistent >= 5
+
+
+def test_optimal_block_length_stays_inside_its_bounds() -> None:
+    """Politis-White caps b at ceil(min(3*sqrt(n), n/3)); degenerate input must not escape it."""
+    from research.aegis_research.metrics.custom.convergent import optimal_block_length
+
+    n = 1200
+    ceiling = int(np.ceil(min(3.0 * np.sqrt(n), n / 3.0)))
+    noisy = np.random.default_rng(11).normal(0.0, 0.01, n)
+
+    assert 1 <= optimal_block_length(noisy) <= ceiling
+    assert optimal_block_length(np.zeros(n)) == 1  # zero variance cannot inform a choice
+    assert optimal_block_length(np.zeros(2)) == 1  # too short to estimate anything
+
+
+def test_block_length_band_brackets_the_longer_leg() -> None:
+    """The band is (b/2, b, 2b) around the LONGER of the two legs' selections."""
+    from research.aegis_research.metrics.custom.convergent import (
+        block_length_band,
+        optimal_block_length,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+    band = block_length_band(independent, trend)
+    selected = max(optimal_block_length(independent), optimal_block_length(trend))
+
+    assert selected in band
+    assert band == tuple(sorted(band))
+    assert min(band) <= selected <= max(band)
+
+
+def test_allocator_contribution_derives_block_lengths_when_not_given() -> None:
+    """Default inference selects from the data, not from the calendar."""
+    from research.aegis_research.metrics.custom.convergent import (
+        block_length_band,
+        evaluate_allocator_contribution,
+    )
+
+    trend, independent, _ = _matched_convergent_pair(3)
+    contribution = evaluate_allocator_contribution(independent, trend, samples=120, seed=3)
+
+    assert tuple(i.block_length for i in contribution.intervals) == block_length_band(
+        independent, trend
+    )
+
+
+def test_smoothing_index_reads_one_on_a_clean_stream() -> None:
+    """An i.i.d. stream has no smoothing to find; xi must sit at the 1.0 ceiling."""
+    from research.aegis_research.metrics.custom.convergent import _convergent_smoothing_index
+
+    clean = np.random.default_rng(4).normal(0.0004, 0.01, 2000)
+
+    assert _convergent_smoothing_index(clean) == pytest.approx(1.0, abs=0.12)
+
+
+def test_smoothing_index_falls_as_marks_are_smoothed() -> None:
+    """A moving average of true returns is exactly the Getmansky-Lo-Makarov defect."""
+    from research.aegis_research.metrics.custom.convergent import _convergent_smoothing_index
+
+    truth = np.random.default_rng(4).normal(0.0004, 0.01, 2000)
+    # theta = (1/k,...) for k lags: xi = sum theta^2 = 1/k, so deeper smoothing -> lower xi.
+    two_day = np.convolve(truth, np.full(2, 1 / 2), mode="valid")
+    four_day = np.convolve(truth, np.full(4, 1 / 4), mode="valid")
+
+    clean_xi = _convergent_smoothing_index(truth)
+    two_xi = _convergent_smoothing_index(two_day)
+    four_xi = _convergent_smoothing_index(four_day)
+
+    # Monotone in smoothing depth, and near the theoretical xi = 1/k.
+    assert clean_xi > two_xi > four_xi
+    assert two_xi == pytest.approx(0.5, abs=0.15)
+    assert four_xi == pytest.approx(0.25, abs=0.15)
+
+
+def test_smoothing_index_is_nan_when_too_short_or_degenerate() -> None:
+    """Too few observations or zero variance cannot support a variance ratio."""
+    from research.aegis_research.metrics.custom.convergent import _convergent_smoothing_index
+
+    assert np.isnan(_convergent_smoothing_index(np.random.default_rng(1).normal(0, 0.01, 40)))
+    assert np.isnan(_convergent_smoothing_index(np.zeros(500)))
+
+
+# ── Canonical Candidate identity across a swept grid ──────────────────────────
+#
+# These metrics were unrankable on any grid with more than one Candidate: the
+# extractors built their Series from a dict keyed by column, which nulls the
+# MultiIndex level names. The canonical-identity aligner can only reorder VBT's
+# authored parameter-level order onto canonical order while those names survive,
+# so a level-order difference became permuted identity tuples and the grid check
+# raised. A single-Candidate grid never showed it, because it takes the
+# collapsed-key bypass before the keys are ever compared.
+
+_PARAM_LEVELS = ("vol_target", "shape_power", "eur_hy_share")
+
+
+def _swept_stub_portfolio(level_names: tuple[str, ...]) -> _StubPortfolio:
+    """Two Candidates identified by a 3-level parameter MultiIndex in the given order."""
+    index = pd.bdate_range("2021-01-04", periods=_DAYS)
+    canonical = {
+        "vol_target": (0.10, 0.10),
+        "shape_power": (0.0, 1.0),
+        "eur_hy_share": (1.0, 0.0),
+    }
+    groups = pd.MultiIndex.from_arrays(
+        [canonical[name] for name in level_names], names=list(level_names)
+    )
+    value = pd.DataFrame(
+        np.column_stack(
+            [
+                10_000.0 * np.cumprod(1.0 + _smooth_crash_returns()),
+                10_000.0 * np.cumprod(1.0 + _honest_vol_returns()),
+            ]
+        ),
+        index=index,
+    )
+    value.columns = groups
+    close_columns = pd.MultiIndex.from_tuples(
+        [(*group, "TLT") for group in groups],
+        names=[*level_names, SYMBOL_LEVEL],
+    )
+    close = pd.DataFrame(np.full((len(index), len(close_columns)), 50.0), index=index)
+    close.columns = close_columns
+    return _StubPortfolio(value, close)
+
+
+@pytest.mark.parametrize(
+    "extractor",
+    [CONVERGENT_INCOME_UTILITY_EXTRACTOR, CONVERGENT_TAIL_BUDGET_EXTRACTOR],
+)
+def test_swept_grid_extractors_preserve_candidate_level_names(extractor) -> None:
+    """The parameter level names must survive the read - the aligner needs them."""
+    pf = _swept_stub_portfolio(_PARAM_LEVELS)
+
+    result = extractor.read(pf, ReportConfig())
+
+    assert list(result.index.names) == list(_PARAM_LEVELS)
+    assert result.index.equals(pf.get_value().columns)
+    assert len(result) == 2
+
+
+def test_swept_grid_identity_aligns_when_vbt_orders_levels_differently() -> None:
+    """VBT may author the levels in another order; identity must still align.
+
+    This is the regression: before the fix the extractor's index arrived nameless,
+    ``_align_registered_candidates`` could not reorder it, and the permuted tuples
+    failed the canonical-grid check.
+    """
+    from research.aegis_research.optimization.observation_blocks import (
+        _align_registered_candidates,
+    )
+
+    permuted = ("shape_power", "eur_hy_share", "vol_target")
+    raw = CONVERGENT_INCOME_UTILITY_EXTRACTOR.read(
+        _swept_stub_portfolio(permuted), ReportConfig()
+    )
+    canonical_index = _swept_stub_portfolio(_PARAM_LEVELS).get_value().columns
+
+    aligned = _align_registered_candidates(raw, canonical_index)
+
+    assert aligned.index.equals(canonical_index)
+    # The values must follow their Candidate through the reorder, not their position.
+    by_identity = {
+        tuple(key[list(permuted).index(name)] for name in _PARAM_LEVELS): value
+        for key, value in raw.items()
+    }
+    for key, value in aligned.items():
+        assert value == pytest.approx(by_identity[key])

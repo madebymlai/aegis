@@ -15,9 +15,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-GSW_NOMINAL_CURVE_URL = (
-    "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv"
-)
+GSW_NOMINAL_CURVE_URL = "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv"
 
 Fetch = Callable[[], bytes]
 
@@ -45,9 +43,7 @@ class GswNominalCurveSnapshot:
     curve: pd.DataFrame
     provenance: GswCurveProvenance
 
-    def zero_yield(
-        self, as_of_date: str | pd.Timestamp, modified_duration: float
-    ) -> GswZeroYield:
+    def zero_yield(self, as_of_date: str | pd.Timestamp, modified_duration: float) -> GswZeroYield:
         """Return the fitted continuously compounded yield without using a future curve."""
         date = _calendar_timestamp(as_of_date)
         eligible = self.curve.loc[self.curve.index <= date]
@@ -159,9 +155,7 @@ def _svensson_zero_yield(parameters: pd.Series, maturity_years: float) -> float:
     if beta3 != 0.0:
         if not math.isfinite(tau2) or tau2 <= 0.0:
             raise GswCurveDataError("GSW curve has invalid TAU2")
-        third = _svensson_loading(maturity_years, tau2) - math.exp(
-            -maturity_years / tau2
-        )
+        third = _svensson_loading(maturity_years, tau2) - math.exp(-maturity_years / tau2)
     yield_pct = beta0 + beta1 * first + beta2 * second + beta3 * third
     if not math.isfinite(yield_pct):
         raise GswCurveDataError("GSW curve produced a non-finite zero yield")

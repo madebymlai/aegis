@@ -10,6 +10,12 @@ import yaml
 from research.aegis_research import cli
 from research.aegis_research.cli_commands import run as run_command
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
+from research.aegis_research.run.identity import RunId
+from research.aegis_research.run.result import (
+    CandidateSummary,
+    OptimizationSummary,
+    RunResult,
+)
 from tests.support.research.aegis_research.component_fixtures import (
     write_indicator_component,
     write_strategy_component,
@@ -32,47 +38,17 @@ def test_root_help_identifies_aerd(capsys: pytest.CaptureFixture[str]) -> None:
     assert "play" not in output.out
 
 
-def test_run_help_does_not_list_train_flag(capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_help_lists_only_live_run_creation_options(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert cli.main(["run", "--help"]) == 0
 
     output = capsys.readouterr()
     assert "--train" not in output.out
     assert "Run the config's train section" not in output.out
-
-
-def test_show_splitters_from_rolling_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters", "from_rolling"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["method"] == "from_rolling"
-    assert payload["run_scoring_set_policy"] == "exactly_two_sets_first_selection_second_held_out"
-    param_names = {param["name"] for param in payload["params"]}
-    assert {"length", "split", "offset"}.issubset(param_names)
-
-
-def test_show_splitters_marks_runtime_object_methods_unsupported(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    assert cli.main(["show", "splitters", "from_split_func"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["supported"] is False
-    assert "split_func" in payload["required_internal_params"]
-
-
-def test_show_splitters_lists_catalog_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["schema_version"] == "splitter_catalog.v1"
-    assert payload["run_scoring_set_policy"] == "exactly_two_sets_first_selection_second_held_out"
-    assert any(method["method"] == "from_rolling" for method in payload["methods"])
+    assert "--rerun-mode" not in output.out
+    assert "--parent-run-id" not in output.out
+    assert "--supersedes-run-id" not in output.out
 
 
 def test_show_components_lists_registry_json(
@@ -97,28 +73,6 @@ def test_show_components_lists_registry_json(
     assert indicator["outputs"] == ["returns"]
 
 
-def test_show_splitters_unknown_method_json(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["show", "splitters", "missing_method"]) == 6
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    assert payload["status"] == "error"
-    assert payload["error"]["category"] == "config_validation"
-    assert "missing_method" in payload["error"]["message"]
-
-
-def test_show_error_is_json_without_flag(capsys: pytest.CaptureFixture[str]) -> None:
-    """A failing show invocation emits JSON error envelope on stderr regardless of --json."""
-    assert cli.main(["show", "splitters", "missing_method"]) == 6
-
-    output = capsys.readouterr()
-    payload = json.loads(output.err)
-    assert payload["status"] == "error"
-    assert payload["command"] == "show"
-    assert payload["error"]["category"] == "config_validation"
-    assert "missing_method" in payload["error"]["message"]
-
-
 def test_preparse_error_is_json_without_flag(capsys: pytest.CaptureFixture[str]) -> None:
     """Pre-parse failures emit JSON error envelope without --json flag."""
     assert cli.main(["nope"]) == 2
@@ -135,6 +89,7 @@ def test_interrupted_error_is_json_without_flag(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """KeyboardInterrupt emits JSON error envelope without --json flag."""
+
     def interrupt():
         raise KeyboardInterrupt
 
@@ -234,34 +189,42 @@ def test_run_success_payload_is_the_emitted_json_contract(
                 "ranking": {"metric": "total_return"},
                 "optimization": {
                     "search": "grid",
-                    "split": {
-                        "method": "from_rolling",
-                        "params": {"length": 40, "offset": 40, "split": 0.5},
-                        "max_splits": 2,
-                    },
+                    "observation_block_bars": 20,
                 },
             },
             sort_keys=False,
         )
     )
     long_base = tmp_path.joinpath(*(f"long-path-segment-{i:02d}" for i in range(35)))
-    artifact_path = long_base / "strategy_run.json"
     store_path = long_base / ".candidate_store" / "candidates.sqlite3"
 
-    def stub_run_strategy_sweep(*_args: object, **kwargs: object) -> dict[str, object]:
-        return {
-            "run_id": kwargs["run_id"],
-            "status": "completed",
-            "run_dir": str(long_base),
-            "manifest_path": str(long_base / "manifest.json"),
-            "started_at": "2026-06-12T00:00:00Z",
-            "finished_at": "2026-06-12T00:01:00Z",
-            "strategy_artifact_id": "strategy.run",
-            "strategy_artifact_path": str(artifact_path),
-            "candidate_store_path": str(store_path),
-            "optimization": {"total": 4, "held_out_warning": None},
-            "candidates": [{"role": "best", "lock": kwargs["run_id"]}],
-        }
+    def stub_run_strategy_sweep(*_args: object, **kwargs: object) -> RunResult:
+        run_id = RunId(str(kwargs["run_id"]))
+        return RunResult(
+            run_id=run_id,
+            candidate_store_path=store_path,
+            optimization=OptimizationSummary(
+                ranking_metric="total_return",
+                observation_block_bars=20,
+                observation_block_count=2,
+                candidate_count=3,
+                total=4,
+                excluded_invalid=0,
+                excluded_degenerate=0,
+            ),
+            candidates=(
+                CandidateSummary(
+                    role="best",
+                    ordinal_rank=1,
+                    candidate_key="cand_best",
+                    params={},
+                    mean_rank=1.0,
+                    complete_period_metrics={},
+                    observation_block_metrics={},
+                    lock=str(run_id),
+                ),
+            ),
+        )
 
     monkeypatch.setattr(run_command, "run_strategy_sweep", stub_run_strategy_sweep)
 
@@ -270,27 +233,40 @@ def test_run_success_payload_is_the_emitted_json_contract(
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "success"
     assert payload["command"] == "run"
-    assert payload["selection"] == {
-        "source": "explicit",
-        "config_path": str(config_path.resolve()),
-    }
+    assert "selection" not in payload
     assert payload["run"] == {
         "id": "stubbed-success",
-        "status": "completed",
-        "run_dir": str(long_base.resolve(strict=False)),
-        "manifest_path": str((long_base / "manifest.json").resolve(strict=False)),
-        "started_at": "2026-06-12T00:00:00Z",
-        "finished_at": "2026-06-12T00:01:00Z",
     }
-    assert payload["artifacts"] == {
-        "strategy_artifact_id": "strategy.run",
-        "strategy_artifact_path": str(artifact_path.resolve(strict=False)),
-    }
+    assert "artifacts" not in payload
     assert payload["candidate_store"] == {
         "path": str(store_path.resolve(strict=False)),
     }
-    assert payload["optimization"] == {"total": 4, "held_out_warning": None}
-    assert payload["candidates"] == [{"role": "best", "lock": "stubbed-success"}]
+    assert payload["optimization"] == {
+        "ranking_metric": "total_return",
+        "observation_block_bars": 20,
+        "observation_block_count": 2,
+        "candidate_count": 3,
+        "total": 4,
+        "protocol": "continuous_future_in_past",
+        "excluded_invalid": 0,
+        "excluded_degenerate": 0,
+    }
+    assert payload["candidates"][0]["role"] == "best"
+    assert payload["candidates"][0]["lock"] == "stubbed-success"
+
+
+def test_run_missing_config_preserves_explicit_attempted_run_id(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing_config = tmp_path / "missing.yaml"
+
+    exit_code = cli.main(["run", str(missing_config), "--run-id", "early-failure"])
+    output = capsys.readouterr()
+
+    payload = json.loads(output.err)
+    assert exit_code != 0
+    assert payload["run"] == {"id": "early-failure"}
 
 
 def test_run_rejects_removed_labeler_without_train_guidance(
@@ -345,11 +321,7 @@ def _signed_book_run_config(
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 40, "offset": 40, "split": 0.5},
-                "max_splits": 2,
-            },
+            "observation_block_bars": 20,
         },
     }
 
@@ -361,9 +333,7 @@ def test_run_rejects_unknown_portfolio_direction(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "run.yaml"
-    config_path.write_text(
-        yaml.safe_dump(_signed_book_run_config("sideways"), sort_keys=False)
-    )
+    config_path.write_text(yaml.safe_dump(_signed_book_run_config("sideways"), sort_keys=False))
 
     assert cli.main(["run", str(config_path), "--run-id", "bad-dir"]) == 6
 
@@ -411,7 +381,10 @@ def _carry_run_config(
 
 
 def _run_candidate_returns(
-    tmp_path: Path, short_borrow_rate: float | None, run_id: str
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    short_borrow_rate: float | None,
+    run_id: str,
 ) -> list[object]:
     config_path = tmp_path / f"{run_id}.yaml"
     config_path.write_text(
@@ -424,10 +397,10 @@ def _run_candidate_returns(
         )
     )
     assert cli.main(["run", str(config_path), "--run-id", run_id]) == 0
-    artifact = json.loads(
-        (tmp_path / "runs" / run_id / "strategy_run.json").read_text()
-    )
-    return [candidate["metrics"]["total_return"] for candidate in artifact["candidates"]]
+    payload = json.loads(capsys.readouterr().out)
+    return [
+        candidate["complete_period_metrics"]["total_return"] for candidate in payload["candidates"]
+    ]
 
 
 def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
@@ -443,14 +416,13 @@ def test_run_long_only_strategy_returns_unchanged_whether_carry_on_or_off(
     write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
     seed_catalog_ohlcv(tmp_path / "catalog", ["SYN.XNAS"], periods=120)
 
-    carry_on = _run_candidate_returns(tmp_path, short_borrow_rate=None, run_id="carry-on")
-    carry_off = _run_candidate_returns(tmp_path, short_borrow_rate=0.0, run_id="carry-off")
-    capsys.readouterr()
+    carry_on = _run_candidate_returns(tmp_path, capsys, short_borrow_rate=None, run_id="carry-on")
+    carry_off = _run_candidate_returns(tmp_path, capsys, short_borrow_rate=0.0, run_id="carry-off")
 
     assert carry_on == carry_off
 
 
-def test_run_rejects_stale_train_shaped_config_before_run_directory(
+def test_run_rejects_stale_train_shaped_config_before_manifest_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -504,10 +476,7 @@ def test_output_helper_normalizes_nonstandard_json_numbers(
 ) -> None:
     from research.aegis_research.cli_support.output import CommandResult, write_success
 
-    assert (
-        write_success(CommandResult(command="test", payload={"value": float("nan")}))
-        == 0
-    )
+    assert write_success(CommandResult(command="test", payload={"value": float("nan")})) == 0
 
     assert json.loads(capsys.readouterr().out)["value"] is None
 
@@ -526,57 +495,6 @@ def test_error_details_paths_emit_real_resolved_paths(
     assert jsonable_value(Path("/data/runs/abc")) == "/data/runs/abc"
 
 
-def test_run_refs_emits_absolute_paths_unscrubbed() -> None:
-    """The run-refs projection emits real absolute paths — no scrubbing."""
-    from research.aegis_research.cli_support.output import run_refs
-
-    refs: dict[str, object] = {
-        "run_id": "abc123",
-        "status": "success",
-        "run_dir": "/data/runs/abc123",
-        "manifest_path": "/data/runs/abc123/manifest.json",
-        "started_at": "2026-06-12T00:00:00Z",
-        "finished_at": "2026-06-12T00:01:00Z",
-    }
-    block = run_refs(refs)
-    assert block["id"] == "abc123"
-    assert block["run_dir"] == "/data/runs/abc123"
-    assert block["manifest_path"] == "/data/runs/abc123/manifest.json"
-
-
-def test_run_refs_resolves_relative_paths_against_cwd(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Relative pipeline paths resolve to real absolute paths (ADR-0021)."""
-    from research.aegis_research.cli_support.output import run_refs
-
-    monkeypatch.chdir(tmp_path)
-    block = run_refs(
-        {"run_id": "x", "run_dir": "runs/x", "manifest_path": "runs/x/manifest.json"}
-    )
-    assert block["run_dir"] == str(tmp_path / "runs" / "x")
-    assert block["manifest_path"] == str(tmp_path / "runs" / "x" / "manifest.json")
-
-
-def test_run_refs_stringifies_path_values() -> None:
-    """Path-typed refs become strings in the projection, so the success
-    envelope's JSON sanitizer (whose Path branch scrubs) never sees a Path."""
-    from pathlib import Path
-
-    from research.aegis_research.cli_support.output import run_refs
-
-    block = run_refs(
-        {
-            "run_id": "abc123",
-            "run_dir": Path("/data/runs/abc123"),
-            "manifest_path": Path("/data/runs/abc123/manifest.json"),
-        }
-    )
-    assert block["run_dir"] == "/data/runs/abc123"
-    assert block["manifest_path"] == "/data/runs/abc123/manifest.json"
-
-
 # ── config-schema show subcommand ────────────────────────────────────────────
 
 
@@ -590,19 +508,17 @@ def test_show_config_schema_exits_zero_and_prints_markdown(
     guide = output.out
 
     assert "# Run Config Forward Contract" in guide
-    assert "## Forward-Contract Overrides" in guide
+    assert "## Structural Contract" in guide
     assert "## Top-Level Fields" in guide
     assert "## Literal Catalogs" in guide
-    assert "## Split Parameters" in guide
+    assert "observation_block_bars" in guide
     assert "## Component IDs" in guide
     assert "## Example Run Config" in guide
 
-    # Prepass overlay: optimization required, schema_version const 11
-    assert "optimization`** — required" in guide
-    assert "schema_version`** — must be present and exactly `11`" in guide
+    assert "| `optimization` | `OptimizationConfig` | yes | — | — |" in guide
+    assert "| `schema_version` | `11` | yes | — | exactly `11` |" in guide
 
     # Pointers to other show subcommands
-    assert "`aerd show splitters <method>`" in guide
     assert "`aerd show components`" in guide
 
 
@@ -625,24 +541,20 @@ def test_show_config_schema_json_envelope(
     assert isinstance(content, str)
     assert len(content) > 1000  # Full guide, not clipped
     assert "# Run Config Forward Contract" in content
-    assert "## Forward-Contract Overrides" in content
+    assert "## Structural Contract" in content
     assert "## Literal Catalogs" in content
 
 
-def test_show_config_schema_marks_optimization_required_and_schema_version_const(
+def test_show_config_schema_marks_model_required_fields(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The rendered guide states the forward contract, not the raw model."""
+    """The rendered guide states requiredness from the validating model."""
     assert cli.main(["show", "config-schema"]) == 0
 
     guide = capsys.readouterr().out
 
-    # optimization is marked required (model default is None)
-    assert "optimization`** — required" in guide
-    assert "forward contract requires" in guide.lower()
-
-    # schema_version is const 11 (model default is CONFIG_SCHEMA_VERSION)
-    assert "schema_version`** — must be present and exactly `11`" in guide
+    assert "| `optimization` | `OptimizationConfig` | yes | — | — |" in guide
+    assert "| `schema_version` | `11` | yes | — | exactly `11` |" in guide
 
 
 def test_show_config_schema_literal_catalogs_interpolated(
@@ -678,20 +590,17 @@ def test_show_config_schema_literal_catalogs_interpolated(
     assert "Signal Policies" in guide
     assert "Signal Execution Timings" in guide
 
-    # Reserved execute keys
-    assert "Reserved `optimization.execute` Keys" in guide
 
-
-def test_show_config_schema_points_at_splitters_and_components(
+def test_show_config_schema_points_at_components_and_internal_block_policy(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The guide points at aerd show splitters and aerd show components."""
+    """The guide points at Components while keeping Splitter policy internal."""
     assert cli.main(["show", "config-schema"]) == 0
 
     guide = capsys.readouterr().out
 
-    assert "`aerd show splitters <method>`" in guide
     assert "`aerd show components`" in guide
+    assert "Splitter construction and application are internal policy" in guide
 
 
 def test_show_config_schema_documents_native_data_contract(
@@ -729,12 +638,8 @@ def test_show_config_schema_continuous_future_example_validates(
 ) -> None:
     """The embedded continuous-future YAML validates through the real validation coordinator."""
     monkeypatch.chdir(tmp_path)
-    write_indicator_component(
-        tmp_path / "research" / "components" / "indicators" / "returns.py"
-    )
-    write_strategy_component(
-        tmp_path / "research" / "components" / "strategies" / "strategy.py"
-    )
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
 
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
@@ -765,12 +670,8 @@ def test_show_config_schema_embedded_example_validates(
     """The embedded example Run Config YAML validates through the real
     validation coordinator with wired demo components."""
     monkeypatch.chdir(tmp_path)
-    write_indicator_component(
-        tmp_path / "research" / "components" / "indicators" / "returns.py"
-    )
-    write_strategy_component(
-        tmp_path / "research" / "components" / "strategies" / "strategy.py"
-    )
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
 
     from research.aegis_research.configuration import (
         CONFIG_SCHEMA_VERSION,
@@ -797,11 +698,7 @@ def test_show_config_schema_embedded_example_validates(
         "ranking": {"metric": "sharpe_ratio"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 126, "split": 0.5},
-                "max_splits": 2,
-            },
+            "observation_block_bars": 63,
         },
     }
 
@@ -819,12 +716,9 @@ def test_show_config_schema_coherence_optimization_required(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Coherence: a config omitting optimization fails validation AND the
-    rendered guide states it required — both driven by the single overlay
-    constant in schema.py, so requiredness cannot fork (ADR-0019)."""
+    """The guide and validation both expose model-owned requiredness."""
     from research.aegis_research.configuration import (
         CONFIG_SCHEMA_VERSION,
-        PREPASS_REQUIRED_FIELDS,
         ConfigValidationError,
         resolve_run_config,
     )
@@ -832,16 +726,12 @@ def test_show_config_schema_coherence_optimization_required(
     # Side A: guide states optimization required
     assert cli.main(["show", "config-schema"]) == 0
     guide = capsys.readouterr().out
-    assert "optimization`** — required" in guide
+    assert "| `optimization` | `OptimizationConfig` | yes | — | — |" in guide
 
     # Side B: config omitting optimization fails validation
     monkeypatch.chdir(tmp_path)
-    write_indicator_component(
-        tmp_path / "research" / "components" / "indicators" / "returns.py"
-    )
-    write_strategy_component(
-        tmp_path / "research" / "components" / "strategies" / "strategy.py"
-    )
+    write_indicator_component(tmp_path / "research" / "components" / "indicators" / "returns.py")
+    write_strategy_component(tmp_path / "research" / "components" / "strategies" / "strategy.py")
 
     raw_no_optimization = {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -856,10 +746,8 @@ def test_show_config_schema_coherence_optimization_required(
     with pytest.raises(ConfigValidationError) as exc_info:
         resolve_run_config(raw_no_optimization)
 
-    # The enforced message is the exact one carried by the shared overlay — the
-    # validator reads schema.PREPASS_REQUIRED_FIELDS, not a private copy.
     issues = {i.path: i.message for i in exc_info.value.issues}
-    assert issues["optimization"] == PREPASS_REQUIRED_FIELDS["optimization"]
+    assert issues["optimization"] == "Field required"
 
 
 # ── indicator-schema ────────────────────────────────────────────────────────
@@ -966,9 +854,8 @@ def test_show_indicator_schema_example_round_trips_through_registry(
     from research.aegis_research.component_registry.registry import (
         discover_component_registry,
     )
-    example_src = Path(
-        "research/aegis_research/component_registry/indicator_example.py"
-    )
+
+    example_src = Path("research/aegis_research/component_registry/authoring/indicator_example.py")
     dest = tmp_path / "research" / "components" / "indicators" / "example_ma.py"
     dest.parent.mkdir(parents=True)
     shutil.copy(example_src, dest)
@@ -1000,7 +887,7 @@ def test_show_indicator_schema_guide_embeds_example_source(
     # The example source is embedded as a code block
     assert "## Complete Example" in markdown
     # Key lines from the example
-    assert 'COMPONENT_MANIFEST = {' in markdown
+    assert "COMPONENT_MANIFEST = {" in markdown
     assert '"family": "indicators"' in markdown
     assert '"id": "example.ma"' in markdown
     assert "def run(data, *, n_candidates, **param_lists):" in markdown
@@ -1023,19 +910,6 @@ def test_show_components_unchanged_after_indicator_schema(
     assert payload["schema_version"] == "component_registry_snapshot.v1"
     assert "fingerprint" in payload
     assert "families" in payload
-
-
-def test_show_splitters_catalog_unchanged_after_indicator_schema(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`aerd show splitters` behavior is unchanged."""
-    assert cli.main(["show", "splitters"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["schema_version"] == "splitter_catalog.v1"
-    assert any(method["method"] == "from_rolling" for method in payload["methods"])
 
 
 # ── strategy-schema ─────────────────────────────────────────────────────────
@@ -1170,9 +1044,7 @@ def test_show_strategy_schema_example_round_trips_through_registry(
         discover_component_registry,
     )
 
-    example_src = Path(
-        "research/aegis_research/component_registry/strategy_example.py"
-    )
+    example_src = Path("research/aegis_research/component_registry/authoring/strategy_example.py")
     dest = tmp_path / "research" / "components" / "strategies" / "example_ma_cross.py"
     dest.parent.mkdir(parents=True)
     shutil.copy(example_src, dest)
@@ -1206,7 +1078,7 @@ def test_show_strategy_schema_guide_embeds_example_source(
     # The example source is embedded as a code block
     assert "## Complete Example" in markdown
     # Key lines from the example
-    assert 'COMPONENT_MANIFEST = {' in markdown
+    assert "COMPONENT_MANIFEST = {" in markdown
     assert '"family": "strategies"' in markdown
     assert '"id": "example.ma_cross"' in markdown
     assert "def run(inputs, *, n_candidates, **param_lists):" in markdown
@@ -1231,19 +1103,6 @@ def test_show_components_unchanged_after_strategy_schema(
     assert "families" in payload
 
 
-def test_show_splitters_catalog_unchanged_after_strategy_schema(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`aerd show splitters` behavior is unchanged."""
-    assert cli.main(["show", "splitters"]) == 0
-
-    output = capsys.readouterr()
-    payload = json.loads(output.out)
-    assert payload["status"] == "success"
-    assert payload["schema_version"] == "splitter_catalog.v1"
-    assert any(method["method"] == "from_rolling" for method in payload["methods"])
-
-
 def test_authoring_story_round_trip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1260,11 +1119,9 @@ def test_authoring_story_round_trip(
 
     # Copy both packaged examples into the component tree
     indicator_src = Path(
-        "research/aegis_research/component_registry/indicator_example.py"
+        "research/aegis_research/component_registry/authoring/indicator_example.py"
     )
-    strategy_src = Path(
-        "research/aegis_research/component_registry/strategy_example.py"
-    )
+    strategy_src = Path("research/aegis_research/component_registry/authoring/strategy_example.py")
     indicator_dest = tmp_path / "research" / "components" / "indicators" / "example_ma.py"
     strategy_dest = tmp_path / "research" / "components" / "strategies" / "example_ma_cross.py"
     indicator_dest.parent.mkdir(parents=True)
@@ -1289,11 +1146,7 @@ def test_authoring_story_round_trip(
         "ranking": {"metric": "sharpe_ratio"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 126, "split": 0.5},
-                "max_splits": 2,
-            },
+            "observation_block_bars": 63,
         },
     }
 
@@ -1315,10 +1168,10 @@ def test_authoring_story_round_trip(
 
 def _render_guide(subcommand: str) -> str:
     """Render a schema guide and return the markdown output."""
-    from research.aegis_research.component_registry.indicator_guide import (
+    from research.aegis_research.component_registry.authoring.indicator_guide import (
         render_indicator_schema_guide,
     )
-    from research.aegis_research.component_registry.strategy_guide import (
+    from research.aegis_research.component_registry.authoring.strategy_guide import (
         render_strategy_schema_guide,
     )
     from research.aegis_research.configuration.config_schema_guide import (
@@ -1376,7 +1229,7 @@ def test_config_schema_guide_states_all_data_array_shortcuts() -> None:
 def test_config_schema_guide_states_allowed_degradations() -> None:
     """Drift: allowed data-quality degradations catalog is interpolated from code."""
     guide = _render_guide("config-schema")
-    assert "Allowed Data-Quality Degradations" in guide
+    assert "Allowed Data-Quality Degradations" not in guide
 
 
 def test_config_schema_guide_states_missing_policies() -> None:
@@ -1385,23 +1238,25 @@ def test_config_schema_guide_states_missing_policies() -> None:
     assert "Missing-Index Policy" in guide
 
 
-def test_config_schema_guide_states_reserved_execute_keys() -> None:
-    """Drift: reserved optimization.execute keys are interpolated from code."""
-    guide = _render_guide("config-schema")
-    assert "Reserved `optimization.execute` Keys" in guide
-
-
 def test_config_schema_guide_marks_optimization_required() -> None:
-    """Drift: the forward contract requires optimization (not optional)."""
+    """Drift: the validating model requires optimization."""
     guide = _render_guide("config-schema")
-    assert "optimization`** — required" in guide
-    assert "forward contract requires" in guide.lower()
+    assert "| `optimization` | `OptimizationConfig` | yes | — | — |" in guide
 
 
-def test_config_schema_guide_marks_schema_version_const() -> None:
-    """Drift: schema_version is marked as const 11 (not a model default)."""
+def test_config_schema_guide_marks_schema_version_required_and_exact() -> None:
+    """Drift: the validating model requires schema version 11."""
     guide = _render_guide("config-schema")
-    assert "schema_version`** — must be present and exactly `11`" in guide
+    assert "| `schema_version` | `11` | yes | — | exactly `11` |" in guide
+
+
+def test_config_schema_guide_derives_run_name_constraints() -> None:
+    guide = _render_guide("config-schema")
+    assert (
+        "| `name` | `str` | yes | — | "
+        "must match `^(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\."
+        "[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\.\\.[A-Za-z0-9_.-]+)$` |" in guide
+    )
 
 
 def test_config_schema_guide_states_native_data_contract() -> None:
@@ -1447,18 +1302,18 @@ def test_config_schema_guide_documents_lock_syntax() -> None:
     assert "candidate_id:" in guide
 
 
-def test_config_schema_guide_points_at_other_show_commands() -> None:
-    """Drift: the guide points at aerd show splitters and aerd show components."""
+def test_config_schema_guide_points_at_component_command_only() -> None:
+    """Drift: public config does not expose the internal Splitter catalog."""
     guide = _render_guide("config-schema")
-    assert "`aerd show splitters <method>`" in guide
     assert "`aerd show components`" in guide
+    assert "`aerd show splitters <method>`" not in guide
 
 
-def test_config_schema_guide_sets_not_configurable() -> None:
-    """Drift: set_labels is called out as forbidden/not configurable."""
+def test_config_schema_guide_contains_no_splitter_kwargs() -> None:
+    """Drift: VBT Splitter kwargs never appear as Run Config choices."""
     guide = _render_guide("config-schema")
-    assert "set_labels" in guide
-    assert "forbidden" in guide.lower() or "not configurable" in guide.lower()
+    assert "set_labels" not in guide
+    assert "observation_block_bars" in guide
 
 
 # ── indicator-schema drift assertions ─────────────────────────────────────

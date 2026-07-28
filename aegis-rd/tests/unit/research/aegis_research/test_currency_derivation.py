@@ -18,6 +18,7 @@ _BMW = InstrumentId.from_str("BMW.XETR")
 _EURUSD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 _USDEUR = InstrumentId.from_str("USD/EUR.IDEALPRO")
 _VOD = InstrumentId.from_str("VOD.XLON")
+_GBPEUR = InstrumentId.from_str("GBP/EUR.IDEALPRO")
 _INDEX = pd.date_range("2024-01-01", periods=2, freq="D")
 
 
@@ -52,6 +53,37 @@ def test_derives_native_to_base_rate_directly_from_a_quote_base_pair() -> None:
     )
 
     assert conversion.rate_by_instrument[_AAPL].tolist() == pytest.approx([0.90, 0.80])
+
+
+def test_gbp_pence_leg_folds_the_sub_unit_factor_into_the_rate() -> None:
+    # VOD.XLON quotes in GBp (pence = 1/100 GBP), so its native->base rate must be
+    # the GBP->EUR rate scaled by 0.01 — otherwise a pence price converts 100x too
+    # high. Nautilus models no minor->major link, so this factor is ours to apply
+    # (mirror of aegis_trader.domain.sizing._PENCE_FACTOR).
+    gbp_eur = pd.Series([1.17, 1.18], index=_INDEX)
+
+    conversion = build_currency_conversion(
+        instruments={_VOD: equity_definition(_VOD, "GBp")},
+        fx_pairs={_GBPEUR: currency_pair_definition(_GBPEUR)},
+        fx_close={_GBPEUR: gbp_eur},
+        base_currency="EUR",
+    )
+
+    assert conversion.rate_by_instrument[_VOD].tolist() == pytest.approx([1.17 / 100.0, 1.18 / 100.0])
+    # The leg is normalized to its major currency for foreign-leg detection.
+    assert conversion.currency_by_instrument_id[_VOD] == "GBP"
+
+
+def test_minor_unit_of_the_base_currency_fails_loud() -> None:
+    # A GBp leg in a GBP-base book: the pence factor has no FX pair to ride on, so
+    # rather than silently drop the 1/100 it must fail loud.
+    with pytest.raises(MissingFxPairError, match="minor unit of the base currency"):
+        build_currency_conversion(
+            instruments={_VOD: equity_definition(_VOD, "GBp")},
+            fx_pairs={},
+            fx_close={},
+            base_currency="GBP",
+        )
 
 
 def test_non_base_quote_currency_with_no_exchange_pair_fails_loud() -> None:

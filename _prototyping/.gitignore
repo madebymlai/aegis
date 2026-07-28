@@ -1,6 +1,8 @@
 **/__pycache__/
 **/.pytest_cache/
 merger/historical/cache*/
+eu_variance_premium/.cache/
+global_variance_premium/.cache/
 
 # Regenerable merger census/report data + rerun logs. Prototype CODE
 # (cash_merger/*.py, run_*.py) and FROZEN_ALPHA_*.md reports stay tracked.

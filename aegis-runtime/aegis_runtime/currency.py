@@ -21,6 +21,8 @@ import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 
+from aegis_runtime.currency_units import resolve_quote_currency
+
 # Currency-denominated arrays the conversion scales; a share count (Volume) is not
 # a price and must pass through unscaled.
 _PRICE_ARRAYS = frozenset({"Open", "High", "Low", "Close"})
@@ -171,12 +173,18 @@ def build_currency_conversion_from_codes(
     rate_by_instrument: dict[InstrumentId, pd.Series] = {}
     normalized_currency_by_instrument_id: dict[InstrumentId, str] = {}
     for instrument_id, currency in currency_by_instrument_id.items():
-        quote = currency.upper()
+        quote, minor_per_major = resolve_quote_currency(currency)
         normalized_currency_by_instrument_id[instrument_id] = quote
         if quote == base:
+            if minor_per_major != 1.0:
+                raise MissingFxPairError(
+                    f"instrument {instrument_id.value!r} is quoted in a minor unit of the "
+                    f"base currency {base}; a base-currency sub-unit has no FX pair to carry "
+                    "its scale factor and is unsupported"
+                )
             continue
         try:
-            rate_by_instrument[instrument_id] = rates[(quote, base)]
+            rate_by_instrument[instrument_id] = rates[(quote, base)] / minor_per_major
         except KeyError:
             raise MissingFxPairError(
                 f"instrument {instrument_id.value!r} is quoted in {quote} but the book's "

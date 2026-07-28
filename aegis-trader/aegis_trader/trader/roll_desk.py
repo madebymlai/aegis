@@ -8,6 +8,7 @@ from datetime import datetime
 import pandas as pd
 from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.continuous_contract_model import ContinuousContractModel
+from aegis_data.roll import DatedContract
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -40,6 +41,7 @@ class RollDesk:
         self._models: dict[InstrumentId, ContinuousContractModel] = {}
         self._timeframe_by_continuous_id: dict[InstrumentId, str] = {}
         self._leg_to_continuous_id: dict[InstrumentId, InstrumentId] = {}
+        self._recovery_event_ns: dict[InstrumentId, int] = {}
         self._pending_leg_subscriptions: dict[InstrumentId, InstrumentId] = {}
 
     def start(
@@ -88,7 +90,9 @@ class RollDesk:
 
             front_leg = model.front_leg
             models[declaration.continuous_id] = model
-            timeframe_by_continuous_id[declaration.continuous_id] = declaration.timeframe
+            timeframe_by_continuous_id[declaration.continuous_id] = (
+                declaration.timeframe
+            )
             leg_to_continuous_id[front_leg] = declaration.continuous_id
             if warmup:
                 intents.append(
@@ -128,6 +132,118 @@ class RollDesk:
             UnsubscribeBars(instrument_id=front_before, timeframe=timeframe),
             self._ensure_front_leg(front_after, continuous_id),
             RollEvent(continuous_id=continuous_id, rebasing=model.last_rebasing),
+        )
+
+    def recovery_streams(
+        self,
+        declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
+        end: datetime,
+    ) -> tuple[tuple[str, InstrumentId, str], ...]:
+        """Return every dated leg whose bars can causally determine a declared root."""
+        streams = {
+            (root, InstrumentId.from_str(leg.symbol), declaration.timeframe)
+            for root, declaration in declarations.items()
+            for leg in self._recovery_legs(
+                root,
+                start=history_starts[root],
+                end=end,
+            )
+        }
+        return tuple(
+            sorted(streams, key=lambda item: (item[0], item[1].value, item[2]))
+        )
+
+    def _recovery_legs(
+        self,
+        root: str,
+        *,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[DatedContract, ...]:
+        """Return interval legs plus the successor whose volume can trigger a Roll."""
+        legs = tuple(
+            leg
+            for leg in self._catalog_port.resolve_continuous(root).legs
+            if leg.last_trade >= start.date()
+        )
+        end_leg = next(
+            (index for index, leg in enumerate(legs) if leg.last_trade >= end.date()),
+            len(legs) - 1,
+        )
+        return legs[: end_leg + 2]
+
+    def start_recovery(
+        self,
+        *,
+        declarations: Mapping[str, ContinuousRootDeclaration],
+        history_starts: Mapping[str, datetime],
+    ) -> RollIntentBatch:
+        """Initialize each root at its replay origin, before chronological folding."""
+        models: dict[InstrumentId, ContinuousContractModel] = {}
+        timeframes: dict[InstrumentId, str] = {}
+        leg_to_continuous: dict[InstrumentId, InstrumentId] = {}
+        recovery_event_ns: dict[InstrumentId, int] = {}
+        for root, declaration in sorted(declarations.items()):
+            history_start = history_starts[root]
+            model = ContinuousContractModel(
+                self._catalog_port,
+                root,
+                start=history_start.date().isoformat(),
+                timeframe=declaration.timeframe,
+                adjustment_mode=declaration.adjustment_mode,
+            )
+            model.materialize(end=history_start.date().isoformat())
+            if model.continuous_id != declaration.continuous_id:
+                return (
+                    Halt(
+                        StartupGate.CONTINUOUS_IDENTITY,
+                        (
+                            f"continuous root {root!r} materialized as "
+                            f"{model.continuous_id.value}, expected "
+                            f"{declaration.continuous_id.value}"
+                        ),
+                    ),
+                )
+            models[declaration.continuous_id] = model
+            timeframes[declaration.continuous_id] = declaration.timeframe
+            leg_to_continuous[model.front_leg] = declaration.continuous_id
+            recovery_event_ns[declaration.continuous_id] = int(
+                history_start.timestamp() * 1_000_000_000
+            )
+
+        self._models = models
+        self._timeframe_by_continuous_id = timeframes
+        self._leg_to_continuous_id = leg_to_continuous
+        self._recovery_event_ns = recovery_event_ns
+        return ()
+
+    def on_recovery_bar(self, bar: Bar) -> RollIntentBatch:
+        """Fold historical market time without emitting historical IO intents."""
+        continuous_id = self._leg_to_continuous_id.get(bar.bar_type.instrument_id)
+        if continuous_id is None:
+            return ()
+        model = self._models[continuous_id]
+        if bar.ts_event <= self._recovery_event_ns[continuous_id]:
+            return ()
+
+        front_before = model.front_leg
+        model.on_bar(bar)
+        self._recovery_event_ns[continuous_id] = bar.ts_event
+        front_after = model.front_leg
+        if front_after == front_before:
+            return ()
+        del self._leg_to_continuous_id[front_before]
+        self._leg_to_continuous_id[front_after] = continuous_id
+        return (RollEvent(continuous_id=continuous_id, rebasing=model.last_rebasing),)
+
+    def live_intents(self) -> RollIntentBatch:
+        """Release only the causally reconstructed execution fronts to live IO."""
+        return tuple(
+            self._ensure_front_leg(model.front_leg, continuous_id)
+            for continuous_id, model in sorted(
+                self._models.items(), key=lambda item: item[0].value
+            )
         )
 
     def on_instrument(self, instrument_id: InstrumentId) -> RollIntentBatch:

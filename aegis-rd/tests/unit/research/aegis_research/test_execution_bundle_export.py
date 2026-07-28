@@ -6,15 +6,21 @@ from pathlib import Path
 import pytest
 from aegis_runtime import ComponentSpec
 
-from research.aegis_research.execution_bundle import assemble_bundle
-from research.aegis_research.optimization.candidate_evidence import (
+from research.aegis_research.candidates.identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+)
+from research.aegis_research.candidates.models import CandidateSet
+from research.aegis_research.candidates.records import (
     candidate_rows_from_result,
 )
-from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.candidates.store import CandidateStore
+from research.aegis_research.execution_bundle import assemble_bundle
 from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from research.aegis_research.run.identity import RunId
+from tests.support.research.aegis_research.factories import make_selection_identity
 
 _RUN_ID = "export-fixture-run"
 
@@ -40,7 +46,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
         ComponentSpec(
             family="indicators",
             component_id="tests.export_indicator",
-            module="aegis_exec_tests_export_strategy_cand_605.indicator_0",
+            module="aegis_exec_tests_export_strategy_cand_9ea.indicator_0",
             input_names=("Close",),
             output_names=("signal",),
             params={"window": 5},
@@ -49,7 +55,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
     assert artifact.plan.strategy == ComponentSpec(
         family="strategies",
         component_id="tests.export_strategy",
-        module="aegis_exec_tests_export_strategy_cand_605.strategy",
+        module="aegis_exec_tests_export_strategy_cand_9ea.strategy",
         input_names=("Close",),
         output_names=(),
         params={"holding_period": 2},
@@ -61,13 +67,7 @@ def test_export_rejects_module_level_research_import(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _locked_workspace(tmp_path)
-    strategy_path = (
-        workspace
-        / "research"
-        / "components"
-        / "strategies"
-        / "export_strategy.py"
-    )
+    strategy_path = workspace / "research" / "components" / "strategies" / "export_strategy.py"
     strategy_path.write_text(
         "from vectorbtpro import vbt\n" + strategy_path.read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -86,17 +86,11 @@ def test_export_requires_every_component_to_declare_warmup_bars(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _locked_workspace(tmp_path)
-    strategy_path = (
-        workspace
-        / "research"
-        / "components"
-        / "strategies"
-        / "export_strategy.py"
-    )
+    strategy_path = workspace / "research" / "components" / "strategies" / "export_strategy.py"
     source = strategy_path.read_text(encoding="utf-8")
     strategy_path.write_text(
         source.replace(
-            '# %% lookback\ndef lookback(**params):\n'
+            "# %% lookback\ndef lookback(**params):\n"
             '    """Return the strategy holding-period warmup."""\n'
             '    return int(params["holding_period"])\n\n\n',
             "",
@@ -127,10 +121,11 @@ def _seed_candidate_store(store_path: Path) -> None:
     candidate = EvaluatedCandidate(
         params={},
         score=1.0,
-        selection_metrics={0: {"sharpe_ratio": 1.0}},
+        observation_block_metrics={"block-000": {"sharpe_ratio": 1.0}},
         metrics={"sharpe_ratio": 1.0},
     )
     result = OptimizationResult(best=candidate, median=candidate, worst=candidate)
+    selection_identity = make_selection_identity()
     candidate_rows = candidate_rows_from_result(
         result,
         source_identity={
@@ -139,18 +134,26 @@ def _seed_candidate_store(store_path: Path) -> None:
             "source_hash": "fixture-source",
         },
         data_identity={"schema_version": "candidate_data_identity.fixture"},
+        selection_identity=selection_identity,
         book_settings={"net_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     with CandidateStore(store_path) as store:
-        store.insert_completed_run(
-            run_id=_RUN_ID,
-            candidate_rows=candidate_rows,
-            provenance={"run_id": _RUN_ID, "source": _source_evidence()},
+        store.commit_candidates(
+            CandidateSet.create(
+                run_id=RunId(_RUN_ID),
+                candidates=candidate_rows,
+                provenance={
+                    "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                    "run_id": _RUN_ID,
+                    "source": _source_identity(),
+                    "selection_identity": selection_identity,
+                },
+            )
         )
 
 
-def _source_evidence() -> dict[str, object]:
+def _source_identity() -> dict[str, object]:
     return {
         "schema_version": "component_optimization_source.v2",
         "source": "component",

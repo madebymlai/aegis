@@ -3,8 +3,7 @@
 Structural checks (min_trades non-negative, extra keys rejected)
 live on the ``RankingConfig`` pydantic dataclass.  Metric membership is
 covered at the registry cross-check seam in ``test_cross_checks.py``; this
-file keeps the thin coordinator net (structural wording through resolve,
-structural + membership co-reporting).
+file keeps the thin coordinator net for structural wording through resolution.
 """
 
 from __future__ import annotations
@@ -47,7 +46,7 @@ def _component_registry(tmp_path: Path):
         "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
         "}\n"
         "\n# %% main compute\n"
-        "def run(bundle):\n    \"\"\"Fixture strategy, never executed.\"\"\"\n"
+        'def run(bundle):\n    """Fixture strategy, never executed."""\n'
         "    raise RuntimeError('not executed during config tests')\n"
     )
     return discover_component_registry(root=root, repo_root=tmp_path)
@@ -63,10 +62,7 @@ def _resolve(ranking: dict[str, Any], *, tmp_path: Path):
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": ranking,
-        "optimization": {
-            "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
-        },
+        "optimization": {"search": "grid", "observation_block_bars": 20},
     }
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
@@ -117,9 +113,7 @@ def test_ranking_construction_rejects_float_min_trades() -> None:
 
 def test_ranking_construction_rejects_unknown_key() -> None:
     with pytest.raises(ValidationError) as e:
-        _RANKING_ADAPTER.validate_python(
-            {"metric": "sharpe_ratio", "bogus": 42}
-        )
+        _RANKING_ADAPTER.validate_python({"metric": "sharpe_ratio", "bogus": 42})
     assert any(err["type"] == "unexpected_keyword_argument" for err in e.value.errors())
 
 
@@ -135,26 +129,22 @@ def test_ranking_not_a_dict_fails(tmp_path: Path) -> None:
         "strategy": {"id": "demo.strategy"},
         "indicators": [{"id": "demo.returns"}],
         "ranking": "not_a_dict",
-        "optimization": {
-            "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
-        },
+        "optimization": {"search": "grid", "observation_block_bars": 20},
     }
     with pytest.raises(ConfigValidationError) as e:
         resolve_run_config(raw, component_registry=_component_registry(tmp_path))
-    assert any(i.path == "ranking" and "Input should be a dictionary" in i.message for i in e.value.issues)
+    assert any(
+        i.path == "ranking" and "Input should be a dictionary" in i.message for i in e.value.issues
+    )
 
 
 # ── no duplicate issues ──────────────────────────────────────────────────────
 
 
-def test_ranking_unknown_metric_plus_unknown_key_co_reports(tmp_path: Path) -> None:
-    """Structural error (unknown key) and membership error co-reported."""
+def test_ranking_structural_failure_stops_before_metric_membership(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve({"metric": "not_a_metric", "bogus": 42}, tmp_path=tmp_path)
-    paths = {i.path for i in e.value.issues}
-    assert "ranking.bogus" in paths
-    assert "ranking.metric" in paths
+    assert str(e.value) == ("Invalid run config: ranking.bogus: Unexpected keyword argument")
 
 
 def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:
@@ -165,18 +155,15 @@ def test_ranking_single_structural_problem_no_duplicate(tmp_path: Path) -> None:
     assert len(mt_issues) == 1, f"expected 1 issue for min_trades, got {len(mt_issues)}"
 
 
+def test_resolution_carries_the_effective_registry_and_canonical_ranking_metric(
+    tmp_path: Path,
+) -> None:
+    resolved = _resolve({"metric": "total_return"}, tmp_path=tmp_path)
+
+    assert resolved.metrics.ranking is resolved.metrics.registry.get("total_return")
+
+
 # ── report.metrics: opt-in extra reported metrics beside the ranker ────────────
-
-def test_requested_metric_ids_unions_ranking_and_report_metrics() -> None:
-    from research.aegis_research.configuration.resolution import _requested_metric_ids
-
-    raw = {
-        "ranking": {"metric": "convergent_income_utility"},
-        "report": {"metrics": ["convergent_tail_budget", "convergent_downside_lskew", "convergent_income_utility"]},
-    }
-    ids = _requested_metric_ids(raw)
-    # Ranker first, then report extras, de-duplicated (income appears once).
-    assert ids == ("convergent_income_utility", "convergent_tail_budget", "convergent_downside_lskew")
 
 
 def _resolve_with_report(ranking: dict[str, Any], report: dict[str, Any], *, tmp_path: Path):
@@ -189,10 +176,7 @@ def _resolve_with_report(ranking: dict[str, Any], report: dict[str, Any], *, tmp
         "indicators": [{"id": "demo.returns"}],
         "ranking": ranking,
         "report": report,
-        "optimization": {
-            "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
-        },
+        "optimization": {"search": "grid", "observation_block_bars": 20},
     }
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
@@ -203,9 +187,16 @@ def test_report_metrics_pull_custom_metrics_into_the_effective_registry(tmp_path
         {"metrics": ["convergent_tail_budget", "convergent_downside_lskew"]},
         tmp_path=tmp_path,
     )
-    ids = set(resolved.metric_registry.ids())
-    assert {"convergent_income_utility", "convergent_tail_budget", "convergent_downside_lskew"} <= ids
-    assert list(resolved.config.report.metrics) == ["convergent_tail_budget", "convergent_downside_lskew"]
+    ids = set(resolved.metrics.registry.ids())
+    assert {
+        "convergent_income_utility",
+        "convergent_tail_budget",
+        "convergent_downside_lskew",
+    } <= ids
+    assert list(resolved.config.report.metrics) == [
+        "convergent_tail_budget",
+        "convergent_downside_lskew",
+    ]
 
 
 def test_unknown_report_metric_fails_closed_at_its_path(tmp_path: Path) -> None:

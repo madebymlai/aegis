@@ -19,9 +19,7 @@ from research.aegis_research.metrics.custom.capture import (
     capture_metrics,
 )
 
-_CAPTURE_EXTRACTORS = {
-    definition.id: spec for definition, spec in capture_metrics("SPY")
-}
+_CAPTURE_EXTRACTORS = {definition.id: spec for definition, spec in capture_metrics("SPY")}
 NEG_DOWN_CAPTURE_EXTRACTOR = _CAPTURE_EXTRACTORS[NEG_DOWN_CAPTURE_ID]
 CAPTURE_SPREAD_EXTRACTOR = _CAPTURE_EXTRACTORS[CAPTURE_SPREAD_ID]
 

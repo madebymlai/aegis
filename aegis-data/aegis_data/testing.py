@@ -41,7 +41,12 @@ _CROSSOVER = pd.Timestamp("2024-03-01")
 
 
 def future(
-    instrument_id: str, expiry: str, *, underlying: str = "ES", currency: Currency = USD
+    instrument_id: str,
+    expiry: str,
+    *,
+    underlying: str = "ES",
+    currency: Currency = USD,
+    multiplier: float = 1.0,
 ) -> FuturesContract:
     """A dated futures-contract definition for the fake catalog."""
     iid = InstrumentId.from_str(instrument_id)
@@ -53,7 +58,7 @@ def future(
         currency=currency,
         price_precision=_PRECISION,
         price_increment=Price(10**-_PRECISION, _PRECISION),
-        multiplier=Quantity.from_int(1),
+        multiplier=Quantity.from_str(str(multiplier)),
         lot_size=Quantity.from_int(1),
         underlying=underlying,
         activation_ns=0,
@@ -173,14 +178,18 @@ class FakeCatalog:
 
 
 def es_port(
-    *, leg_currencies: dict[str, str] | None = None
+    *,
+    leg_currencies: dict[str, str] | None = None,
+    leg_multipliers: dict[str, float] | None = None,
 ) -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
     """ES with two legs and one liquidity migration at the crossover.
 
     ``leg_currencies`` overrides individual legs' quote currencies (by
     instrument-id string) so currency-derivation tests can stage disagreement.
+    ``leg_multipliers`` does the same for contract-multiplier consistency tests.
     """
     currencies = leg_currencies or {}
+    multipliers = leg_multipliers or {}
 
     def _currency(instrument_id: str) -> Currency:
         return Currency.from_str(currencies.get(instrument_id, "USD"))
@@ -194,8 +203,18 @@ def es_port(
     return _port(
         frames,
         [
-            future("ESH4.XCME", "2024-03-15", currency=_currency("ESH4.XCME")),
-            future("ESM4.XCME", "2024-06-21", currency=_currency("ESM4.XCME")),
+            future(
+                "ESH4.XCME",
+                "2024-03-15",
+                currency=_currency("ESH4.XCME"),
+                multiplier=multipliers.get("ESH4.XCME", 1.0),
+            ),
+            future(
+                "ESM4.XCME",
+                "2024-06-21",
+                currency=_currency("ESM4.XCME"),
+                multiplier=multipliers.get("ESM4.XCME", 1.0),
+            ),
         ],
     )
 

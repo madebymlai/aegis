@@ -28,22 +28,13 @@ def test_declared_marking_resolver_marks_exchange_legs_mid_by_section_membership
     from aegis_data.marking import MarkMode
     from nautilus_trader.model.identifiers import InstrumentId
 
-    from research.aegis_research.market_data.identity import declared_marking_resolver
-    from tests.support.research.aegis_research.factories import make_data_config
-
     config = make_data_config(
         instruments=["UEQC.XETR:QUOTE", "VUSA.XLON"],
         exchange=["EUR/USD.IDEALPRO"],
     )
 
-    resolver = declared_marking_resolver(config)
+    resolver = config.marking_resolver()
 
-    assert resolver.resolve(
-        InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D"
-    ).mode is MarkMode.MID
-    assert resolver.resolve(
-        InstrumentId.from_str("UEQC.XETR"), "1D"
-    ).mode is MarkMode.QUOTE
-    assert resolver.resolve(
-        InstrumentId.from_str("VUSA.XLON"), "1D"
-    ).mode is MarkMode.LAST
+    assert resolver.resolve(InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D").mode is MarkMode.MID
+    assert resolver.resolve(InstrumentId.from_str("UEQC.XETR"), "1D").mode is MarkMode.QUOTE
+    assert resolver.resolve(InstrumentId.from_str("VUSA.XLON"), "1D").mode is MarkMode.LAST

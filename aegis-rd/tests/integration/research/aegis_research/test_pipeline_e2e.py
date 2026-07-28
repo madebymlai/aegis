@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from research.aegis_research import cli
+from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.configuration import CONFIG_SCHEMA_VERSION
 from tests.support.research.aegis_research.market_data_fixtures import (
     ETF_INSTRUMENT_ID_VALUES,
@@ -18,7 +19,7 @@ from tests.support.research.aegis_research.market_data_fixtures import (
 COMPONENTS_ROOT = Path(__file__).resolve().parents[3] / "fixtures" / "components"
 
 
-def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
+def test_pipeline_returns_typed_result_and_commits_candidate_store_with_intree_components(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -65,11 +66,7 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
                 "ranking": {"metric": "total_return"},
                 "optimization": {
                     "search": "grid",
-                    "split": {
-                        "method": "from_rolling",
-                        "params": {"length": 150, "offset": 0, "split": 0.5},
-                        "max_splits": 3,
-                    },
+                    "observation_block_bars": 84,
                 },
             },
             sort_keys=False,
@@ -84,22 +81,18 @@ def test_pipeline_produces_valid_optimization_artifact_with_intree_components(
     payload = json.loads(output.out)
     assert payload["status"] == "success"
 
-    artifact_path = tmp_path / "runs" / "pipeline-e2e" / "strategy_run.json"
-    assert artifact_path.exists()
-    artifact = json.loads(artifact_path.read_text())
-
-    manifest_path = tmp_path / "runs" / "pipeline-e2e" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    assert (
-        manifest["evidence"]["optimization"]["source"]["schema_version"]
-        == "component_optimization_source.v2"
-    )
-    assert [candidate["role"] for candidate in artifact["candidates"]] == ["best", "median", "worst"]
-    assert artifact["candidates"]
-    assert len(artifact["candidates"]) > 0
-
-    first_candidate = artifact["candidates"][0]
-    param_keys = set(first_candidate["params"])
-    for key in param_keys:
-        parts = key.split("__")
-        assert parts[0] == "component"
+    assert payload["run"] == {"id": "pipeline-e2e"}
+    assert not (tmp_path / "runs" / "pipeline-e2e.json").exists()
+    best, median, worst = payload["candidates"]
+    assert best["role"] == "best"
+    assert median["role"] == "median"
+    assert worst["role"] == "worst"
+    assert best["lock"] == "pipeline-e2e"
+    assert median["lock"] == "pipeline-e2e:median"
+    assert worst["lock"] == "pipeline-e2e:worst"
+    store_path = tmp_path / "runs" / ".candidate_store" / "candidates.sqlite3"
+    with CandidateStore(store_path) as store:
+        best_key = store.candidate_key_for_role("pipeline-e2e", "best")
+        provenance = store.candidate_by_key(best_key, run_id="pipeline-e2e")["provenance"]
+    assert provenance["schema_version"] == "candidate_store_provenance.v3"
+    assert "strategy_artifact_id" not in provenance

@@ -15,23 +15,31 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
-from aegis_data.distributions import Distribution
+from aegis_data.array_names import OHLCV_ARRAY_NAMES
+from aegis_data.custom_data import (
+    VOCABULARY as CUSTOM_ARRAY_VOCABULARY,
+    CustomDataProviderMap,
+    ensure_arrays,
+    records_for_arrays,
+)
+from aegis_data.distributions import Distribution, distribution_records
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.config import CacheConfig, LoggingConfig
+from nautilus_trader.core.data import Data
 from nautilus_trader.model.data import Bar, CustomData, DataType
 from nautilus_trader.model.enums import AccountType, BookType, OmsType
-from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model.identifiers import ClientId, InstrumentId, Venue
 from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.config import PortfolioConfig
-from nautilus_trader.risk.config import RiskEngineConfig
 
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     NautilusDataProviderPort,
     CatalogWindowRequest,
+    catalog_root,
     parquet_data_catalog,
 )
 
@@ -43,7 +51,6 @@ from aegis_trader.config import load_book_config
 from aegis_trader.data import wrangle_bars, wrangle_fx_quotes, wrangle_quote_bars
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.risk_guard import RiskGuardConfig
 from aegis_trader.domain.streams import MarketStream
 from aegis_trader.portfolio.performance import (
     BookEquityRecorder,
@@ -53,15 +60,16 @@ from aegis_trader.portfolio.performance import (
 from aegis_trader.trader.costs import build_simulated_cost_models
 from aegis_trader.trader.dividends import build_dividend_modules
 from aegis_trader.trader.financing import FinancingModule, build_financing_module
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _PRICE_COLS = ("Open", "High", "Low", "Close")
-_OHLCV_ARRAYS = (*_PRICE_COLS, "Volume")
 
 # The backtest cache holds the rolling bar window the strategy reads each period;
 # at least the deepest sleeve's lookback (+1) must fit, so the runner widens it
 # from this floor when a contract needs more.
 DEFAULT_BACKTEST_BAR_CAPACITY = 10_000
+_CUSTOM_DATA_CLIENT_ID = ClientId("AEGIS-CUSTOM")
 
 
 class CatalogInstrumentError(ValueError):
@@ -93,10 +101,15 @@ class BacktestMarketData:
 
     instruments: Mapping[InstrumentId, Instrument]
     ohlcv: Mapping[InstrumentId, pd.DataFrame]
-    distributions: tuple[Distribution, ...] = ()
+    records: tuple[Data, ...] = ()
     quote_frames: Mapping[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = field(
         default_factory=dict
     )
+
+    @property
+    def distributions(self) -> tuple[Distribution, ...]:
+        """Distribution records consumed by the dividend cash module."""
+        return distribution_records(self.records)
 
 
 @dataclass(frozen=True)
@@ -155,7 +168,7 @@ class CatalogBacktestDataSource:
         return BacktestMarketData(
             instruments=window.instruments,
             ohlcv=window.ohlcv,
-            distributions=window.distributions,
+            records=window.records,
             quote_frames=data_port.load_quote_frames(request),
         )
 
@@ -166,7 +179,6 @@ class CatalogBacktestDataSource:
         return CatalogBackedDataPort(
             catalog,
             provider=self.provider,
-            distribution_provider=_distribution_provider(self.provider),
             resolver=self.resolver,
         )
 
@@ -180,6 +192,7 @@ def run_book_backtest(
     registry: BundleRegistryPort | None = None,
     data_source: BacktestDataSource | None = None,
     provider: NautilusDataProviderPort | None = None,
+    custom_data_providers: CustomDataProviderMap | None = None,
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
     bar_type_resolver: RawBarTypeResolver | None = None,
@@ -188,9 +201,9 @@ def run_book_backtest(
 
     There is no Historical Store, symbol map, or provider-specific identity on
     this path.  The catalog must hold instrument definitions keyed by the same
-    native ``InstrumentId`` values declared by the Execution Bundles.  Raw bars
-    are read through ``CatalogBackedDataPort``, so catalog coverage gaps fail
-    before the Nautilus engine starts.
+    native ``InstrumentId`` values declared by the Execution Bundles. Raw bars
+    and custom arrays fill catalog gaps through their shared coverage engine, so
+    an unservable window fails before the Nautilus engine starts.
     """
     book = load_book_config(book_path)
     registry = registry if registry is not None else EntryPointBundleRegistry()
@@ -200,7 +213,9 @@ def run_book_backtest(
     # identical bars.  The sim/fill projection below is DERIVED from the resolved
     # markings, research-side only, and never serialized (aegis-rd-tggo.5).
     resolver = (
-        bar_type_resolver if bar_type_resolver is not None else _book_resolver(assembled_book)
+        bar_type_resolver
+        if bar_type_resolver is not None
+        else _book_resolver(assembled_book)
     )
     source = data_source or CatalogBacktestDataSource(
         catalog_path=catalog_path,
@@ -208,11 +223,29 @@ def run_book_backtest(
         resolver=resolver,
     )
     loaded = tuple(
-        (timeframe, source.load(instrument_ids, timeframe=timeframe, start=start, end=end))
+        (
+            timeframe,
+            source.load(instrument_ids, timeframe=timeframe, start=start, end=end),
+        )
         for timeframe, instrument_ids in _stream_load_groups(assembled_book)
     )
     market_data = _merged_market_data(loaded)
     _validate_market_data(assembled_book, market_data)
+    custom_catalog_path = catalog_path if catalog_path is not None else catalog_root()
+    custom_array_requirements = _custom_array_requirements(assembled_book)
+    ensure_arrays(
+        custom_array_requirements,
+        start=pd.Timestamp(start),
+        end=pd.Timestamp(end),
+        providers=custom_data_providers or {},
+        catalog_path=custom_catalog_path,
+    )
+    array_records = records_for_arrays(
+        custom_array_requirements,
+        start=pd.Timestamp(start),
+        end=pd.Timestamp(end),
+        catalog_path=custom_catalog_path,
+    )
 
     engine = BacktestEngine(
         build_backtest_engine_config(
@@ -247,14 +280,22 @@ def run_book_backtest(
             resolver=resolver,
             added_instrument_ids=added_instrument_ids,
         )
+    _add_custom_data(engine, (*market_data.records, *array_records))
     engine.sort_data()
     _add_equity_recorder(
         engine,
         book=book,
-        streams=tuple(requirement.stream for requirement in assembled_book.required_streams),
+        streams=tuple(
+            requirement.stream for requirement in assembled_book.required_streams
+        ),
         resolver=resolver,
     )
-    _add_strategy(engine, book=assembled_book, resolver=resolver)
+    _add_strategy(
+        engine,
+        book=assembled_book,
+        resolver=resolver,
+        custom_catalog_path=custom_catalog_path,
+    )
 
     # ``end`` keeps the engine advancing the clock past the final data event,
     # so a re-net alert scheduled 1ns after the last bar still fires and the
@@ -302,17 +343,17 @@ def _merged_market_data(
         return loaded[0][1]
     instruments: dict[InstrumentId, Instrument] = {}
     ohlcv: dict[InstrumentId, pd.DataFrame] = {}
-    distributions: list[Distribution] = []
+    records: list[Data] = []
     quote_frames: dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = {}
     for _timeframe, market_data in loaded:
         instruments.update(market_data.instruments)
         ohlcv.update(market_data.ohlcv)
-        distributions.extend(market_data.distributions)
+        records.extend(market_data.records)
         quote_frames.update(market_data.quote_frames)
     return BacktestMarketData(
         instruments=instruments,
         ohlcv=ohlcv,
-        distributions=tuple(distributions),
+        records=tuple(records),
         quote_frames=quote_frames,
     )
 
@@ -328,10 +369,25 @@ def _book_resolver(book: AssembledBook) -> RawBarTypeResolver:
     return recorded_marking_resolver(book)
 
 
-def _distribution_provider(provider: NautilusDataProviderPort | None) -> Any | None:
-    if provider is None or not hasattr(provider, "request_adjusted_last"):
-        return None
-    return provider
+def _custom_array_requirements(
+    book: AssembledBook,
+) -> dict[InstrumentId, tuple[str, ...]]:
+    names_by_instrument_id: dict[InstrumentId, dict[str, None]] = {}
+    for bundle in book.sleeves.values():
+        custom_names = tuple(
+            name
+            for name in bundle.contract.required_arrays
+            if name in CUSTOM_ARRAY_VOCABULARY
+        )
+        for instrument_id in bundle.contract.instrument_ids:
+            names_by_instrument_id.setdefault(instrument_id, {}).update(
+                dict.fromkeys(custom_names)
+            )
+    return {
+        instrument_id: tuple(names)
+        for instrument_id, names in names_by_instrument_id.items()
+        if names
+    }
 
 
 def book_return_stats(
@@ -344,36 +400,14 @@ def book_return_stats(
     return {}
 
 
-def build_risk_engine_config(
-    risk_guard_config: RiskGuardConfig | None = None,
-) -> RiskEngineConfig:
-    """The backtest RiskEngine config (``BacktestEngine`` requires the non-live
-    variant).
-
-    Mirrors the live node's RiskEngine wiring (:func:`aegis_trader.trader.node.
-    build_live_risk_engine_config`) so the overlay validated in backtest is
-    constructed the same way it trades — never bypassed, carrying the RiskGuard's
-    order submit/modify rate limits.
-    """
-    guard = risk_guard_config or RiskGuardConfig()
-    return RiskEngineConfig(
-        bypass=False,
-        max_order_submit_rate=guard.max_order_submit_rate,
-        max_order_modify_rate=guard.max_order_modify_rate,
-    )
-
-
 def build_backtest_engine_config(
     *,
     trader_id: str = "BACKTEST-001",
-    risk_guard_config: RiskGuardConfig | None = None,
     bar_capacity: int = DEFAULT_BACKTEST_BAR_CAPACITY,
     use_mark_prices: bool = False,
 ) -> BacktestEngineConfig:
     """Build the backtest engine config.
 
-    Mirrors the live node's RiskEngine wiring so the overlay validated in backtest
-    is constructed the same way it trades — "what you backtest is what you trade".
     The runner adds venues, instruments, data, and the strategy to the resulting
     ``BacktestEngine`` and pairs it with a plain ``MARKET`` (``fill_time_in_force``
     ``None``), which fills at the execution bar's close.
@@ -385,7 +419,6 @@ def build_backtest_engine_config(
     return BacktestEngineConfig(
         trader_id=trader_id,
         cache=CacheConfig(bar_capacity=bar_capacity),
-        risk_engine=build_risk_engine_config(risk_guard_config),
         portfolio=PortfolioConfig(use_mark_prices=use_mark_prices),
         logging=LoggingConfig(),
     )
@@ -425,7 +458,6 @@ def _validate_market_data(book: AssembledBook, market_data: BacktestMarketData) 
                 frame,
                 sleeve=sleeve_name.value,
                 instrument_id=instrument_id,
-                required_arrays=contract.required_arrays,
                 min_rows=contract.lookback_bars + 1,
             )
 
@@ -435,11 +467,10 @@ def _validate_contract_frame(
     *,
     sleeve: str,
     instrument_id: InstrumentId,
-    required_arrays: tuple[str, ...],
     min_rows: int,
 ) -> None:
     columns = {str(column).lower() for column in frame.columns}
-    required = tuple(dict.fromkeys((*_OHLCV_ARRAYS, *required_arrays)))
+    required = OHLCV_ARRAY_NAMES
     missing = [name for name in required if name.lower() not in columns]
     if missing:
         raise ContractDataError(
@@ -498,7 +529,11 @@ def _add_venues(
             None if native_venue in quote_marked_venues else cost_models.fill_model
         )
         modules = [
-            *([financing_module] if index == 0 and financing_module is not None else []),
+            *(
+                [financing_module]
+                if index == 0 and financing_module is not None
+                else []
+            ),
             *build_dividend_modules(distributions),
         ]
         # Financing is book-level: it nets the shared cache across all venue
@@ -567,7 +602,6 @@ def _add_instruments_and_bars(
             # does: one quote per bar close (strategy.on_quote_tick), so sizing's
             # fx_rate read works from the same series the panel conversion uses.
             engine.add_data(_fx_quotes(instrument, frame), sort=False)
-    _add_distribution_data(engine, market_data.distributions)
 
 
 def _wrangle_quote_external_bars(
@@ -586,19 +620,18 @@ def _wrangle_quote_external_bars(
     )
 
 
-def _add_distribution_data(
+def _add_custom_data(
     engine: BacktestEngine,
-    distributions: Sequence[Distribution],
+    records: Sequence[Data],
 ) -> None:
-    if not distributions:
+    if not records:
         return
-    data_type = DataType(Distribution)
     engine.add_data(
         [
-            CustomData(data_type=data_type, data=distribution)
-            for distribution in distributions
+            CustomData(data_type=DataType(type(record)), data=record)
+            for record in records
         ],
-        validate=False,
+        client_id=_CUSTOM_DATA_CLIENT_ID,
         sort=False,
     )
 
@@ -624,7 +657,7 @@ def _wrangle_external_bars(
 def _normalize_ohlcv(ohlcv: pd.DataFrame) -> pd.DataFrame:
     columns = {str(column).lower(): column for column in ohlcv.columns}
     normalized = pd.DataFrame(index=ohlcv.index)
-    for name in _OHLCV_ARRAYS:
+    for name in OHLCV_ARRAY_NAMES:
         normalized[name.lower()] = ohlcv[columns[name.lower()]]
     normalized = normalized.dropna().copy()
     normalized["high"] = normalized[[col.lower() for col in _PRICE_COLS]].max(axis=1)
@@ -660,6 +693,7 @@ def _add_strategy(
     *,
     book: AssembledBook,
     resolver: RawBarTypeResolver,
+    custom_catalog_path: Path,
 ) -> None:
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
@@ -667,6 +701,7 @@ def _add_strategy(
             fill_time_in_force=None,
             warmup_cache_on_start=False,
         ),
+        arrays=SleeveArrays.prepared(catalog_path=custom_catalog_path),
         bar_type_resolver=resolver,
     )
     strategy.register_book(book)
@@ -714,5 +749,7 @@ def _account_currencies(
 
 
 def _instrument_venues(instruments: Sequence[Instrument]) -> tuple[Venue, ...]:
-    venues = {instrument.id.venue.value: instrument.id.venue for instrument in instruments}
+    venues = {
+        instrument.id.venue.value: instrument.id.venue for instrument in instruments
+    }
     return tuple(venues[key] for key in sorted(venues))

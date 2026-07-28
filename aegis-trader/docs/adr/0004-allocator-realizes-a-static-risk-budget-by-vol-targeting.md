@@ -2,35 +2,51 @@
 
 Status: accepted (allocator implemented in `aegis-rd-bu4` slices 1–6; knob calibration +
 HITL sign-off `aegis-rd-bu4.7` pending; **amends ADR-0001's static-budget boundary** and
-feeds the netting/gate of ADR-0002; **amended by `aegis-rd-ytr` — vol-targeting is down-only,
-and the live net-convex skew solve is removed; see the amendments below**)
+feeds the netting/gate of ADR-0002; **amended by `aegis-rd-ytr` — the vol-target up-scale is
+clamped to the gross cap (a down-only clamp), and the live net-convex skew solve is removed;
+see the amendments below**)
 
-## Amendment (`aegis-rd-ytr`): vol-targeting is down-only; the vol target is a ceiling
+## Amendment (`aegis-rd-ytr`): the vol-target up-scale is clamped down to the gross cap
 
-The original decision below framed vol-targeting as a two-sided peg — scale the book up *or*
-down to hold a constant volatility. The `aegis-rd-bu4.7` re-validation on real data showed
-this is incoherent for the **unlevered** book: the operator runs the Commingled Book under a
-finite gross cap, while the Floor sleeves are low-vol, so pegging a
-~9% book volatility demands ~1.1–1.8× leverage the cap forbids — and the then-current
-rebalancer gross gate failed closed, halting the book.
+The original decision below framed vol-targeting as an *uncapped* two-sided peg — scale the
+book up *or* down without bound to hold a constant volatility. The `aegis-rd-bu4.7`
+re-validation on real data showed the uncapped peg is incoherent: the Floor sleeves are
+low-vol, so pegging a ~9% book volatility can demand several times the book's gross when
+realized volatilities are calm (the diagonal solve wants ~4× when realized vols sit near a
+third of target) — and the then-current rebalancer gross gate met that demand by failing
+closed, halting the book. The defect was the *unbounded* up-scale hitting a hard gate, not
+leverage as such.
 
-**Amendment:** vol-targeting is **one-sided (down-only)**. The Allocator's solve may scale the
-netted book *down* (to shed risk when realized volatility / correlations rise) but the
-rebalancer **clamps any up-scale to `gross_cap`** — a uniform, shape-preserving,
-post-netting de-lever that is reapplied to the post-band projection and is authoritative for
-gross exposure. An explicit net cap remains a separate fail-closed gate. The **book
-volatility target is therefore a ceiling / de-lever set-point, not a
-peg**: in calm regimes realized volatility sits *below* target because the book is not levered
-to chase it (this is by design, not a miss); the target binds only when the unconstrained solve
-would otherwise exceed it. The target should be set to the book's achievable unlevered level.
+**Amendment:** the vol-target up-scale is **clamped to `gross_cap`, not failed closed**. The
+Allocator's solve stays a two-sided peg — it levers the netted book *up* toward the target as
+realized volatility / correlations fall and *down* as they rise — but the rebalancer **clamps
+the resulting gross to `gross_cap`** with a uniform, shape-preserving, post-netting scale,
+reapplied to the post-band projection and authoritative for gross exposure. The clamp itself is
+**down-only**: it only ever scales the netted book *down* to the cap and never lifts it above,
+so a book already within the ceiling passes through unchanged. An explicit net cap remains a
+separate fail-closed gate. `gross_cap` is therefore the book's real ceiling: the book **levers
+toward the vol target up to `gross_cap`**, reaches the target whenever the required leverage is
+within the cap, and undershoots only in the calmest regimes where hitting it would need more
+gross than the cap allows (there the cap, not the vol target, binds).
 
-This is grounded in the literature, not a workaround: capping vol-target leverage is standard
-practice, and the down-only / unlevered form is a validated design that improves Sharpe and
-cuts drawdowns for constrained books (Bongaerts, Kang & van Dijk, "Conditional Volatility
-Targeting", *Financial Analysts Journal* 2020); the lever-up channel is procyclically
-destabilising (ECB *Financial Stability Review*, May 2020) and adds negligible Sharpe for
-non-equity / bond books (Harvey et al., "The Impact of Volatility Targeting"); and once a hard
-gross constraint binds, the achievable risk budget is necessarily the constrained one (Richard
+**The live book is levered, not unlevered.** B1 DECISION 2026-07-05 (GH #79) set
+`gross_cap = 1.75` so the peg can lever the low-vol, well-diversified Floor toward the 9% target
+— recycling the diversification dividend instead of leaving it pinned at unit gross. This
+supersedes the earlier premise that the target be "set to the book's achievable *unlevered*
+level": the 9% target is reached *by* levering to the cap in normal and calm regimes, and the
+~8.3% realized vol measured over 2018–2024 is the cap binding in the calmest stretches (plus the
+drawdown de-lever and the one-period estimate lag), not the book declining to lever.
+
+This is grounded in the literature, not a workaround: **bounding** vol-target leverage with a
+hard cap is standard practice, and conditioning risk on volatility state — de-levering as
+realized volatility rises, with the up-scale bounded rather than unbounded — improves Sharpe and
+cuts drawdowns with low turnover and leverage, the gains concentrated in the high-volatility
+(de-lever) states (Bongaerts, Kang & van Dijk, "Conditional Volatility Targeting", *Financial
+Analysts Journal* 2020; their conditional strategy is two-sided-but-*capped*, not a one-sided
+design, so it motivates capping the up-scale, not removing it). The *unbounded* lever-up channel
+is procyclically destabilising (ECB *Financial Stability Review*, May 2020) and adds negligible
+Sharpe for non-equity / bond books (Harvey et al., "The Impact of Volatility Targeting"); and
+once the gross cap binds, the achievable risk budget is necessarily the constrained one (Richard
 & Roncalli, "Constrained Risk Budgeting"). The clamp lives in the rebalancer (which owns
 per-InstrumentId netting) because it must scale the *netted* book gross, not a per-sleeve sum — a long
 in one sleeve and a short in another cancel, so the netted gross is what the cap governs.

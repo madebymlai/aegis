@@ -70,3 +70,20 @@ The change lands in three slices:
 - ADR-0004 (terminal status persisted by recorder mark-methods before raise) stands.
 - ADR-0009 (Runs are local and single-process, so in-memory hand-off is sufficient) is relied upon.
 - ADR-0015 (terminal CLI-facing surfaces stay dicts) is followed — no typed refs object.
+
+**Amendment (2026-07-23).** The Manifest is now the single Run lifecycle record. Its Run section
+contains identity, status, timing, and—only for failed or interrupted Runs—one terminal failure
+fact with stage, exception type, and bounded message. The generic stage ledger, duplicate
+optimization-failure diagnostics, rerun modes, and parent/supersedes lineage are removed. The
+callback contract and exception propagation remain unchanged.
+
+**Amendment (2026-07-23) — flattened Run storage.** Each Run is now one Manifest file named
+`<run-id>.json` directly under the configured Run root. The recorder's refs projection therefore
+becomes a five-field dict: Run ID, Manifest path, status, started-at, and finished-at. Both callback
+firings still carry live in-memory lifecycle facts after persistence, and no failure path rereads
+the Manifest. The removed Run-directory field has no placeholder or compatibility alias.
+
+**Amendment (2026-07-23) — attempted identity replaces lifecycle refs.** A typed Run ID is created
+before execution and is the only Run fact transported to the CLI failure surface. The callback,
+terminal lifecycle state, timestamps, Manifest reference, and failed-Run persistence are deleted.
+A failure before Candidate commit leaves no durable Run or Candidate record.

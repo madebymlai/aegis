@@ -16,18 +16,6 @@ from nautilus_trader.model.instruments import CurrencyPair, Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
-from research.aegis_research.configuration import DataConfig
-from research.aegis_research.data import MarketDataResult
-from research.aegis_research.market_data.adapters._support import (
-    index_evidence,
-    native_from_array_dict,
-)
-from research.aegis_research.market_data.contracts import MarketDataLoad
-
-# The orchestrator's own assembly, crossed by leaf-altitude tests for
-# hand-built loads — one owner for observe → judge → describe, no drift.
-from research.aegis_research.market_data.loading import result_from_load
-
 DEFAULT_INSTRUMENT_ID_VALUES = ("SYN.XNAS", "SYN2.XNAS")
 ETF_INSTRUMENT_ID_VALUES = (
     "SPY.XNAS",
@@ -102,32 +90,6 @@ def deterministic_ohlcv_panels(
         "Close": pd.DataFrame(close, index=index, columns=columns),
         "Volume": pd.DataFrame(volume, index=index, columns=columns),
     }
-
-
-def loaded_market_data_result(
-    config: DataConfig,
-    *,
-    periods: int = 120,
-    seed: int = 0,
-) -> MarketDataResult:
-    panels = deterministic_ohlcv_panels(
-        config.instruments,
-        periods=periods,
-        start=config.start or "2024-01-01",
-        seed=seed,
-    )
-    native_data = native_from_array_dict(
-        {name: panels[name] for name in config.effective_arrays if name in panels},
-        config,
-    )
-    return result_from_load(
-        config,
-        MarketDataLoad(
-            native_data=native_data,
-            evidence=index_evidence(panels["Close"].index, source="test_fixture"),
-            port_metadata={"class": "tests.market_data_fixture"},
-        ),
-    )
 
 
 class UnservableCatalog(FakeCatalog):
@@ -226,9 +188,7 @@ def seed_catalog_ohlcv(
     end_ts = start_ts + pd.Timedelta(days=periods)
     start_text = start_ts.date().isoformat()
     end_text = end_ts.date().isoformat()
-    seed_catalog_frames(
-        catalog_path, frames, start=start_text, end=end_text, currency=currency
-    )
+    seed_catalog_frames(catalog_path, frames, start=start_text, end=end_text, currency=currency)
     return start_text, end_text
 
 

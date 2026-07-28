@@ -45,6 +45,7 @@ from aegis_trader.domain.roll import (
     UnsubscribeBars,
 )
 from aegis_trader.domain.types import SleeveName
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.trader.pipeline import RebalancePipeline
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
@@ -166,7 +167,10 @@ async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_
         sleeves=(SleeveConfig(name=SleeveName("trend"), wheel_filename="t.whl", risk_share=1.0),),
         base_currency="USD",
     )
-    strategy = _RollHarnessStrategy(RebalanceStrategyConfig(book=book, warmup_cache_on_start=False))
+    strategy = _RollHarnessStrategy(
+        RebalanceStrategyConfig(book=book, warmup_cache_on_start=False),
+        arrays=SleeveArrays.bar_only(),
+    )
     portfolio = Portfolio(msgbus, cache, clock)
     strategy.register(trader_id, portfolio, msgbus, cache, clock)
     ledger = _RecordingLedger()

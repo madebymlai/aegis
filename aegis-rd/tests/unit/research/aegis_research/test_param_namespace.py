@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from research.aegis_research.optimization.candidate_evidence import candidate_rows_from_result
-from research.aegis_research.optimization.candidate_store import CandidateStore
+from research.aegis_research.candidates.identity import (
+    CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+)
+from research.aegis_research.candidates.models import CandidateSet
+from research.aegis_research.candidates.records import candidate_rows_from_result
+from research.aegis_research.candidates.store import CandidateStore
 from research.aegis_research.optimization.param_namespace import (
     FIXED_CANDIDATE_PARAM,
     ComponentRef,
@@ -15,6 +19,8 @@ from research.aegis_research.optimization.ranking import (
     EvaluatedCandidate,
     OptimizationResult,
 )
+from research.aegis_research.run.identity import RunId
+from tests.support.research.aegis_research.factories import make_selection_identity
 
 _DATA_IDENTITY = {
     "schema_version": "candidate_data_identity.v3",
@@ -73,64 +79,67 @@ def test_stored_row_decode_through_candidate_store_path(tmp_path: Path) -> None:
         best=EvaluatedCandidate(
             params={fast_key: 2, slow_key: 10, window_key: 20},
             score=0.30,
-            selection_metrics={0: {"total_return": 0.30}},
+            observation_block_metrics={"block-000": {"total_return": 0.30}},
             metrics={"total_return": 0.30},
-            held_out_metrics={0: {"total_return": 0.25}},
         ),
         median=EvaluatedCandidate(
             params={fast_key: 3, slow_key: 12, window_key: 22},
             score=0.20,
-            selection_metrics={0: {"total_return": 0.20}},
+            observation_block_metrics={"block-000": {"total_return": 0.20}},
             metrics={"total_return": 0.20},
-            held_out_metrics={0: {"total_return": 0.15}},
         ),
         worst=EvaluatedCandidate(
             params={fast_key: 5, slow_key: 15, window_key: 25},
             score=0.10,
-            selection_metrics={0: {"total_return": 0.10}},
+            observation_block_metrics={"block-000": {"total_return": 0.10}},
             metrics={"total_return": 0.10},
-            held_out_metrics={0: {"total_return": 0.05}},
         ),
     )
+    selection_identity = make_selection_identity()
     rows = candidate_rows_from_result(
         result,
         source_identity={"source": "component", "id": "ma_opt", "source_hash": "abc"},
         data_identity=_DATA_IDENTITY,
+        selection_identity=selection_identity,
         book_settings={"target_exposure_cap": 1.0},
         store_namespace={"kind": "local_sqlite", "name": "default"},
     )
     with CandidateStore(tmp_path / "candidates.sqlite3") as store:
-        store.insert_completed_run(
-            run_id="stored-decode-run",
-            candidate_rows=rows,
-            provenance={
-                "run_id": "stored-decode-run",
-                "source": {
-                    "schema_version": "component_optimization_source.v2",
-                    "source": "component",
-                    "strategy": {
-                        "family": "strategies",
-                        "slot": "strategy:demo.ma_cross",
-                        "id": "demo.ma_cross",
-                        "version": "1.0.0",
-                        "fixed_params": {},
-                        "param_keys": {
-                            "fast_window": fast_key,
-                            "slow_window": slow_key,
-                        },
-                    },
-                    "indicators": [
-                        {
-                            "family": "indicators",
-                            "slot": "demo.mom",
-                            "id": "demo.mom",
+        store.commit_candidates(
+            CandidateSet.create(
+                run_id=RunId("stored-decode-run"),
+                candidates=rows,
+                provenance={
+                    "schema_version": CANDIDATE_STORE_PROVENANCE_SCHEMA_VERSION,
+                    "run_id": "stored-decode-run",
+                    "selection_identity": selection_identity,
+                    "source": {
+                        "schema_version": "component_optimization_source.v2",
+                        "source": "component",
+                        "strategy": {
+                            "family": "strategies",
+                            "slot": "strategy:demo.ma_cross",
+                            "id": "demo.ma_cross",
                             "version": "1.0.0",
                             "fixed_params": {},
-                            "param_keys": {"window": window_key},
-                        }
-                    ],
+                            "param_keys": {
+                                "fast_window": fast_key,
+                                "slow_window": slow_key,
+                            },
+                        },
+                        "indicators": [
+                            {
+                                "family": "indicators",
+                                "slot": "demo.mom",
+                                "id": "demo.mom",
+                                "version": "1.0.0",
+                                "fixed_params": {},
+                                "param_keys": {"window": window_key},
+                            }
+                        ],
+                    },
                 },
-            },
+            )
         )
 
         median_key = store.candidate_key_for_role("stored-decode-run", "median")

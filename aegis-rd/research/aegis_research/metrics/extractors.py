@@ -42,7 +42,7 @@ def _read_total_trades(pf: Any, config: ReportConfig) -> pd.Series:
 
 
 def _read_win_rate(pf: Any, config: ReportConfig) -> pd.Series:
-    return _to_series(pf.exit_trades.get_win_rate())
+    return _to_series(pf.exit_trades.status_closed.get_win_rate())
 
 
 def _read_total_fees_paid(pf: Any, config: ReportConfig) -> pd.Series:
@@ -58,11 +58,84 @@ def _read_sharpe_ratio(pf: Any, config: ReportConfig) -> pd.Series:
     )
 
 
+def _continuous_path_range_factory(metric_id: str):
+    """Build an Observation-Block read over one uninterrupted Portfolio path.
+
+    Return and drawdown deliberately reduce their full native streams: bounded
+    VBT calls rebase the first return and reset inherited high-water state.
+    """
+
+    def factory(config: ReportConfig):
+        def extractor(pf: Any, *, sim_start: int, sim_end: int) -> pd.Series:
+            kwargs = {
+                "sim_start": sim_start,
+                "sim_end": sim_end,
+                "rec_sim_range": False,
+            }
+            if metric_id == "total_return":
+                returns = pf.get_returns(rec_sim_range=False)
+                if isinstance(returns, pd.Series):
+                    returns = returns.to_frame()
+                return (1.0 + returns.iloc[sim_start:sim_end].fillna(0.0)).prod() - 1.0
+            if metric_id == "max_dd":
+                drawdown = pf.get_drawdown(rec_sim_range=False)
+                if isinstance(drawdown, pd.Series):
+                    drawdown = drawdown.to_frame()
+                return drawdown.iloc[sim_start:sim_end].min()
+            if metric_id == "sharpe_ratio":
+                return _to_series(
+                    pf.get_sharpe_ratio(
+                        **kwargs,
+                        freq=pd.Timedelta(config.freq),
+                        year_freq=pd.Timedelta(config.year_freq),
+                    )
+                )
+            if metric_id == "total_trades":
+                return _to_series(pf.get_exit_trades(**kwargs).count())
+            if metric_id == "win_rate":
+                return _to_series(pf.get_exit_trades(**kwargs).status_closed.get_win_rate())
+            if metric_id == "total_fees_paid":
+                return _to_series(pf.get_orders(**kwargs).fees.sum())
+            raise KeyError(metric_id)
+
+        return extractor
+
+    return factory
+
+
 BUILTIN_EXTRACTORS: dict[str, ExtractorSpec] = {
-    "total_return": ExtractorSpec(_read_total_return, scale="percent"),
-    "max_dd": ExtractorSpec(_read_max_dd, scale="percent", abs_=True),
-    "total_trades": ExtractorSpec(_read_total_trades),
-    "win_rate": ExtractorSpec(_read_win_rate, scale="percent"),
-    "total_fees_paid": ExtractorSpec(_read_total_fees_paid),
-    "sharpe_ratio": ExtractorSpec(_read_sharpe_ratio),
+    "total_return": ExtractorSpec(
+        _read_total_return,
+        contract_version=1,
+        scale="percent",
+        range_factory=_continuous_path_range_factory("total_return"),
+    ),
+    "max_dd": ExtractorSpec(
+        _read_max_dd,
+        contract_version=1,
+        scale="percent",
+        abs_=True,
+        range_factory=_continuous_path_range_factory("max_dd"),
+    ),
+    "total_trades": ExtractorSpec(
+        _read_total_trades,
+        contract_version=1,
+        range_factory=_continuous_path_range_factory("total_trades"),
+    ),
+    "win_rate": ExtractorSpec(
+        _read_win_rate,
+        contract_version=1,
+        scale="percent",
+        range_factory=_continuous_path_range_factory("win_rate"),
+    ),
+    "total_fees_paid": ExtractorSpec(
+        _read_total_fees_paid,
+        contract_version=1,
+        range_factory=_continuous_path_range_factory("total_fees_paid"),
+    ),
+    "sharpe_ratio": ExtractorSpec(
+        _read_sharpe_ratio,
+        contract_version=1,
+        range_factory=_continuous_path_range_factory("sharpe_ratio"),
+    ),
 }

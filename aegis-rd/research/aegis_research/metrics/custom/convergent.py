@@ -70,6 +70,7 @@ they score a convergent candidate by its manipulation-proof contribution to the 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -97,17 +98,39 @@ _SENSITIVITY_RHOS = (2.0, 3.0, 4.0, 5.0)
 _MIN_OBSERVATIONS = 3
 
 # Allocator defaults: the floor's fixed convergent weight in vol-normalized risk space
-# (runs/floor/2026-06-14 addendum) and the book's mandate volatility. Both poles are
-# rescaled to this same book vol before the MPPM, so the certainty-equivalent delta
-# ranks payoff *shape and placement*, never scale (the ranker A/B lesson: MPPM on a
-# free scale axis ranks mu-noise; pinning the book vol removes that axis by construction).
+# (runs/floor/2026-06-14 addendum) and the book's mandate volatility. Each LEG is pinned to
+# this volatility; the blended book's own volatility then floats with the leg correlation, so
+# delta_theta is NOT a matched-risk comparison. That float is what makes the co-crash penalty
+# work and what makes the sign scale-dependent - one mechanism, both effects, measured and
+# documented in _blended_book and tracked in aegis-rd-600y.
 DEFAULT_CONVERGENT_WEIGHT = 0.40
-DEFAULT_BOOK_VOL = 0.10
+# Matches aegis-trader's book.toml book_vol_target. It is a default, not a constant of
+# nature: a caller evaluating a book run at another volatility should pass that instead,
+# because the comparison happens at whatever level this sets.
+DEFAULT_BOOK_VOL = 0.09
 _DOWNSIDE_QUANTILE = 0.10
+
+# Paired-resample inference defaults. One sample of delta_theta is a point estimate on
+# dependent, autocorrelated streams; the article's ranking rule asks for superiority
+# inferred from paired resampling, not from a single number. Block lengths span the
+# horizon band so a reader can see whether the verdict survives longer dependence.
+# Retained only as the documented fallback for callers that pass block lengths
+# explicitly; the default path now derives the band from the data (block_length_band).
+DEFAULT_BLOCK_LENGTHS = (21, 63, 126)
+DEFAULT_BOOTSTRAP_SAMPLES = 2_000
+DEFAULT_BOOTSTRAP_SEED = 42
+_INTERVAL_QUANTILES = (0.025, 0.975)
 
 CONVERGENT_INCOME_UTILITY_ID = "convergent_income_utility"
 CONVERGENT_TAIL_BUDGET_ID = "convergent_tail_budget"
 CONVERGENT_DOWNSIDE_LSKEW_ID = "convergent_downside_lskew"
+CONVERGENT_SMOOTHING_INDEX_ID = "convergent_smoothing_index"
+
+# Smoothing operates at the mark-to-market lag - days for an exchange-traded NAV, not
+# months - so one month of aggregation is already far beyond any plausible MA(k) and
+# recovers the unsmoothed variance. Deliberately NOT the 2-6 month band the shape reports
+# use: those describe the payoff, this describes the feed.
+_SMOOTHING_HORIZON = 21
 
 
 # ── Reducers ──────────────────────────────────────────────────────────────────
@@ -129,13 +152,61 @@ def _convergent_income_utility(daily: np.ndarray, rho: float = DEFAULT_RISK_AVER
     return _ANNUALIZATION_DAYS / (1.0 - rho) * float(np.log(mean_utility))
 
 
+def _convergent_smoothing_index(stream: np.ndarray) -> float:
+    """Getmansky-Lo-Makarov smoothing index xi of one daily stream, via a variance ratio.
+
+    GLM model illiquid or stale-marked returns as a moving average of the true ones,
+    ``R_obs(t) = sum_j theta_j R(t-j)`` with the weights summing to one. Two consequences
+    matter here and both flatter the sleeve: observed variance is understated by
+    ``xi = sum_j theta_j^2``, so Sharpe is inflated by ``1/sqrt(xi)``, and **contemporaneous
+    correlations are biased toward zero**, with the true co-movement displaced into lags.
+    The second is the dangerous one for this seat: the downside-correlation guard is hired
+    to catch co-crashing with the trend pole, and smoothing is precisely the bias that hides
+    it.
+
+    ``xi = 1`` is a clean feed; ``xi`` materially below 1 means the daily marks are smoothed
+    and every daily statistic of this stream - Sharpe, volatility, and the guard - is
+    flattered. Estimated without fitting the MA: aggregating over a horizon well beyond the
+    smoothing lag recovers the true variance, so the Lo-MacKinlay variance ratio converges to
+    ``1/xi``. Capped at 1, since a variance ratio below one is mean reversion rather than
+    smoothing and this statistic makes no claim about that direction.
+
+    Pre-registered expectation (the article's own): an exchange-traded UCITS ETF NAV should
+    smooth far LESS than the OTC-marked funds GLM studied, so a large adjustment here would
+    be a finding about the data feed rather than about the strategy.
+    """
+    observations = stream.size
+    if observations < _SMOOTHING_HORIZON * 4:
+        return np.nan
+    mean = float(np.mean(stream))
+    centered = stream - mean
+    variance = float(np.dot(centered, centered) / (observations - 1))
+    if not np.isfinite(variance) or variance <= 0.0:
+        return np.nan
+    sums = np.convolve(stream, np.ones(_SMOOTHING_HORIZON), mode="valid")
+    # Lo-MacKinlay unbiased normalisation for overlapping windows.
+    scale = (
+        _SMOOTHING_HORIZON
+        * (observations - _SMOOTHING_HORIZON + 1)
+        * (1.0 - _SMOOTHING_HORIZON / observations)
+    )
+    if scale <= 0.0:
+        return np.nan
+    deviations = sums - _SMOOTHING_HORIZON * mean
+    aggregated = float(np.dot(deviations, deviations) / scale)
+    ratio = aggregated / variance
+    if not np.isfinite(ratio) or ratio <= 0.0:
+        return np.nan
+    return float(min(1.0 / ratio, 1.0))
+
+
 def _left_tail_budget(stream: np.ndarray, horizon: int) -> float:
     """Actual left-decile mean of overlapping ``horizon``-day own returns.
 
     The loss side of convexity's net tail payoff, alone: how much the sleeve
     gives back when its multi-month windows go badly, on the horizon a
     short-gamma unwind actually develops over. A window floor keeps the decile
-    mean stable on a held-out split. The result stays in capital-budget units:
+    mean stable on a finite Development path. The result stays in capital-budget units:
     -0.08 means an 8% loss over the stated horizon, not an annualized projection.
     """
     windows = _rolling_compound(stream, horizon)
@@ -223,17 +294,40 @@ def _blended_book(
     convergent_weight: float,
     book_vol_annual: float,
 ) -> np.ndarray | None:
-    """The two-pole book: put each LEG at the book vol, blend (1-w)/w, keep the blend as is.
+    """The two-pole book: put each LEG at the book vol, blend (1-w)/w, let the blend float.
 
     Each leg is unit-vol-normalized then scaled to ``book_vol_annual`` - this pins the
     scale axis at the *leg* level (the convergent pole's own volatility is a mandate, not a
     free knob, so it must not be a way to score higher). The blend's volatility then
-    *floats* with the correlation structure: a pole that diversifies trend lowers book
-    vol and shallows the joint tail (higher MPPM); one that co-crashes raises both
-    (lower MPPM). The blend is a real return stream (1+r stays positive at ~10% vol), so
-    the MPPM is well defined. Crucially the blend is NOT re-normalized to a fixed vol -
-    doing so would divide out exactly the concentrated joint-crash risk we mean to price,
-    perversely rewarding a co-crashing pole for raising raw book vol.
+    *floats* with the correlation structure: a pole that diversifies trend lowers book vol,
+    one that co-crashes raises it.
+
+    **The float is the specification, not an oversight.** The governing article is explicit:
+    "the blend's volatility then floats with the correlation structure, which is the
+    diversification signal" ([[what-makes-a-convergent-sleeve-an-income-engine]], "It ranks
+    placement, not scale"). Pinning the *legs* stops the pole's own mandated volatility from
+    buying a higher score; letting the *blend* float is how diversification registers at all.
+
+    A 2026-07-25 audit proposed levering both books to a common volatility instead - standard
+    practice for comparing portfolios of unequal risk (Graham-Harvey's GH2), and what the live
+    allocator does when it scales sleeves to ``book_vol_target``. It was implemented and
+    reverted. Measured, across 12 seeds on the matched-marginal fixture, the decoupled pole is
+    correctly preferred 12/12 at every drift under this construction and only 9/12 at matched
+    volatility at the live sleeve's 4.2%/yr, because the diversifying blend needs more leverage
+    to reach the target and that amplifies its tail faster than its shape advantage repays.
+
+    The honest caveat that survives: because the MPPM is a certainty-equivalent growth *rate*
+    rather than a scale-invariant score - ``Theta(lambda r)`` is approximately
+    ``lambda mu - (rho/2) lambda^2 sigma^2`` - part of ``delta_theta`` is the blend sitting at
+    a lower volatility than the reference, and on the live pair that component carries the
+    sign (-0.013 as specified, +0.008 matched). That is a property of the chosen design and a
+    limit on how the number may be read, not a defect to be fixed by swapping conventions.
+
+    So ``delta_theta`` from this construction is **not** a matched-risk comparison and its sign
+    should not be read as one. Fixing that without losing the co-crash penalty needs the
+    placement question moved to the ``downside_correlation`` guard, which is scale-free and
+    separates the same fixture cleanly (+0.93 against -0.07) - a design change tracked
+    separately, not a convention swap.
     """
     if convergent_daily.size != trend_daily.size or convergent_daily.size < _MIN_OBSERVATIONS:
         return None
@@ -277,14 +371,34 @@ def composite_allocator_utility(
 ) -> float:
     """The allocator metric: the convergent pole's manipulation-proof contribution to the book.
 
-    ``delta_theta = Theta(book with this convergent pole) - Theta(trend pole alone)``, both
-    at the same book vol. Positive = the pole earns its place. Because the MPPM's power
-    utility weights the book's joint-loss states, delta_theta prices, in one number,
-    income (raises the calm book), the tail (only insofar as it deepens the *book's*
+    ``delta_theta = Theta(book with this convergent pole) - Theta(trend pole alone)``, with
+    each *leg* pinned to ``book_vol_annual``. Positive = the pole earns its place. Because
+    the MPPM's power utility weights the book's joint-loss states, delta_theta prices, in one
+    number, income (raises the calm book), the tail (only insofar as it deepens the *book's*
     tail), and crisis-conditional placement (a pole whose losses land in trend's *gains*
     never deepens the book's tail and scores high; one that co-crashes with trend scores
-    low). It is the Tasche marginal-contribution rho(X) - rho(X - X_i) with rho the
-    negative MPPM, and it is manipulation-proof at the book level (Goetzmann et al.).
+    low). It is manipulation-proof at the book level (Goetzmann-Ingersoll-Spiegel-Welch).
+
+    Two corrections to what this docstring used to claim, both established 2026-07-25.
+
+    **It is not a matched-volatility comparison.** The legs are pinned; the two *books* are
+    not. The blend floats to roughly 7.7% against a 10% reference, and since the MPPM is a
+    growth *rate* rather than a scale-invariant score, some of ``delta_theta`` is that scale
+    gap rather than the pole's quality - enough to carry the sign on the live pair. See
+    :func:`_blended_book` for why the float is nonetheless kept: it is the channel through
+    which the co-crash penalty operates, and matching volatility inverts that penalty at
+    realistic drift. Read the sign as convention-dependent, and read the accompanying
+    ``downside_correlation`` alongside it, not after it.
+
+    **It is not a Tasche marginal risk contribution**, though this docstring said so. Tasche's
+    ``rho(X) - rho(X - X_i)`` carries its meaning - the Euler and RORAC allocation results -
+    only for a risk measure homogeneous of degree 1, and a CRRA certainty-equivalent growth
+    rate is not: ``Theta(lambda r)`` is approximately ``lambda mu - (rho/2) lambda^2 sigma^2``.
+    The arithmetic shape is shared; none of the guarantees are. The reference here is also the
+    trend leg at full weight rather than Tasche's ``(1-w)`` remainder, a second departure.
+
+    ``book_vol_annual`` is not cosmetic: it sets the risk level the comparison happens at, and
+    callers should pass the volatility their book actually runs at.
     """
     theta_book = composite_book_utility(
         convergent_daily,
@@ -326,6 +440,233 @@ def downside_correlation(
     return float(np.corrcoef(convergent_daily[mask], trend_daily[mask])[0, 1])
 
 
+# ── Paired-resample inference on the allocator metric ─────────────────────────
+
+
+class AllocatorEvaluationError(ValueError):
+    """A paired evaluation was asked for on streams that cannot support it."""
+
+
+@dataclass(frozen=True)
+class DeltaThetaInterval:
+    """Percentile interval of ``delta_theta`` under one circular-block resample width."""
+
+    block_length: int
+    samples: int
+    lower: float
+    upper: float
+
+    @property
+    def excludes_zero(self) -> bool:
+        """True when the interval sits wholly on one side of zero."""
+        return self.lower > 0.0 or self.upper < 0.0
+
+
+@dataclass(frozen=True)
+class AllocatorContribution:
+    """The convergent pole's verdict in the paired book: estimate, guard, and inference."""
+
+    delta_theta: float
+    downside_correlation: float
+    intervals: tuple[DeltaThetaInterval, ...]
+
+    @property
+    def earns_its_seat(self) -> bool:
+        """True when the pole adds certainty equivalent at every resample width.
+
+        A positive point estimate alone is not a verdict on dependent streams, so this
+        requires every block length's interval to exclude zero from above.
+        """
+        return self.delta_theta > 0.0 and all(interval.lower > 0.0 for interval in self.intervals)
+
+
+def _flat_top_weight(x: float) -> float:
+    """Politis-Romano (1995) flat-top lag window: 1, then a linear taper, then 0."""
+    magnitude = abs(x)
+    if magnitude < 0.5:
+        return 1.0
+    if magnitude <= 1.0:
+        return 2.0 * (1.0 - magnitude)
+    return 0.0
+
+
+def optimal_block_length(series: np.ndarray) -> int:
+    """Politis-White (2004) automatic block length for the CIRCULAR block bootstrap.
+
+    Includes the Patton-Politis-White (2009) correction. Hand-picked calendar block lengths
+    (a month, a quarter, six months) have no basis in the selection literature and can be
+    badly wrong: Hall-Horowitz-Jing (1995) put the optimal length for a two-sided interval at
+    order ``n**(1/3)``, which is about 12 at ``n = 1889``, so a six-month block is an order of
+    magnitude too long and leaves only ~15 blocks to resample. Since
+    :attr:`AllocatorContribution.earns_its_seat` requires *every* block length's interval to
+    clear zero, the longest and most oversmoothed one silently binds the verdict.
+
+    ``D`` uses the ``4/3`` circular-block constant, not the stationary bootstrap's ``2``.
+    """
+    n = series.size
+    if n < _MIN_TAIL_WINDOWS:
+        return 1
+    centered = series - series.mean()
+    variance = float(np.dot(centered, centered) / n)
+    if not np.isfinite(variance) or variance <= 0.0:
+        return 1
+
+    consecutive = max(5, int(np.sqrt(np.log10(n))))
+    max_lag = min(int(np.ceil(np.sqrt(n))) + consecutive, n - 1)
+
+    def autocovariance(lag: int) -> float:
+        span = abs(lag)
+        return float(np.dot(centered[: n - span], centered[span:]) / n)
+
+    correlations = np.array([autocovariance(k) / variance for k in range(1, max_lag + 1)])
+    threshold = 2.0 * np.sqrt(np.log10(n) / n)
+    insignificant = np.abs(correlations) < threshold
+
+    # Smallest lag after which `consecutive` correlations are all inside the band.
+    m_hat = 0
+    for start in range(len(insignificant) - consecutive + 1):
+        if insignificant[start : start + consecutive].all():
+            m_hat = start + 1
+            break
+    else:  # no such run: fall back to the last lag still outside the band
+        outside = np.flatnonzero(~insignificant)
+        m_hat = int(outside[-1]) + 1 if outside.size else 1
+
+    lag_window = min(2 * m_hat, max_lag)
+    lags = np.arange(-lag_window, lag_window + 1)
+    weights = np.array([_flat_top_weight(k / lag_window) for k in lags])
+    covariances = np.array([autocovariance(int(k)) for k in lags])
+
+    g_hat = float(np.sum(weights * np.abs(lags) * covariances))
+    long_run_variance = float(np.sum(weights * covariances))
+    d_hat = (4.0 / 3.0) * long_run_variance**2
+    if not np.isfinite(g_hat) or not np.isfinite(d_hat) or d_hat <= 0.0 or g_hat == 0.0:
+        return 1
+
+    block = (2.0 * g_hat**2 / d_hat) ** (1.0 / 3.0) * n ** (1.0 / 3.0)
+    ceiling = int(np.ceil(min(3.0 * np.sqrt(n), n / 3.0)))
+    return int(np.clip(round(block), 1, ceiling))
+
+
+def block_length_band(convergent_daily: np.ndarray, trend_daily: np.ndarray) -> tuple[int, ...]:
+    """A sensitivity band bracketing the automatic selection: ``(b/2, b, 2b)``.
+
+    The selector is univariate and no Politis-White extension to a paired statistic exists in
+    the literature, so the longer of the two legs' selections is taken - conservative, since a
+    longer block preserves more dependence, and chosen rather than derived. Politis and White
+    warn against trusting the selector blindly, so the verdict is read across a bracket rather
+    than a point.
+    """
+    selected = max(optimal_block_length(convergent_daily), optimal_block_length(trend_daily))
+    return tuple(sorted({max(1, selected // 2), selected, selected * 2}))
+
+
+def _circular_block_positions(
+    observations: int, block_length: int, rng: np.random.Generator
+) -> np.ndarray:
+    """Indices of one circular-block resample, preserving runs of length ``block_length``."""
+    block_count = int(np.ceil(observations / block_length))
+    starts = rng.integers(0, observations, size=block_count)
+    offsets = np.arange(block_length)
+    return ((starts[:, None] + offsets) % observations).ravel()[:observations]
+
+
+def _delta_theta_interval(
+    convergent_daily: np.ndarray,
+    trend_daily: np.ndarray,
+    *,
+    block_length: int,
+    samples: int,
+    rng: np.random.Generator,
+    convergent_weight: float,
+    rho: float,
+    book_vol_annual: float,
+) -> DeltaThetaInterval:
+    """Resample both legs at the same positions, rescoring ``delta_theta`` on each draw.
+
+    Positions are shared so the pair's contemporaneous dependence - the whole object
+    ``delta_theta`` prices - survives resampling. Drawing the legs independently would
+    destroy exactly the co-crash structure the metric exists to penalize.
+    """
+    deltas = np.empty(samples)
+    for draw in range(samples):
+        positions = _circular_block_positions(trend_daily.size, block_length, rng)
+        deltas[draw] = composite_allocator_utility(
+            convergent_daily[positions],
+            trend_daily[positions],
+            convergent_weight=convergent_weight,
+            rho=rho,
+            book_vol_annual=book_vol_annual,
+        )
+    finite = deltas[np.isfinite(deltas)]
+    if finite.size == 0:
+        return DeltaThetaInterval(block_length, samples, np.nan, np.nan)
+    lower, upper = np.quantile(finite, _INTERVAL_QUANTILES)
+    return DeltaThetaInterval(block_length, samples, float(lower), float(upper))
+
+
+def evaluate_allocator_contribution(
+    convergent_daily: np.ndarray,
+    trend_daily: np.ndarray,
+    *,
+    convergent_weight: float = DEFAULT_CONVERGENT_WEIGHT,
+    rho: float = DEFAULT_RISK_AVERSION,
+    book_vol_annual: float = DEFAULT_BOOK_VOL,
+    block_lengths: Sequence[int] | None = None,
+    samples: int = DEFAULT_BOOTSTRAP_SAMPLES,
+    seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> AllocatorContribution:
+    """Score a convergent candidate in the paired book, with resample-based inference.
+
+    Takes two already-aligned daily net return streams and returns the allocator verdict:
+    the ``delta_theta`` point estimate, the downside-correlation guard, and a percentile
+    interval per block length. Callers own the alignment and the config-to-returns step;
+    this function owns the paired statistics and nothing else, so a run, a notebook, and a
+    CLI all reach the same answer through it.
+
+    ``block_lengths`` defaults to :func:`block_length_band`, which selects from the streams'
+    own dependence (Politis-White) rather than from the calendar. Pass an explicit sequence
+    only to override that.
+    """
+    if convergent_daily.size != trend_daily.size:
+        raise AllocatorEvaluationError(
+            f"streams must be aligned: {convergent_daily.size} convergent "
+            f"observations against {trend_daily.size} trend observations"
+        )
+    if block_lengths is None:
+        block_lengths = block_length_band(convergent_daily, trend_daily)
+    longest_block = max(block_lengths, default=0)
+    if longest_block > trend_daily.size:
+        raise AllocatorEvaluationError(
+            f"block length {longest_block} exceeds {trend_daily.size} common observations"
+        )
+    rng = np.random.default_rng(seed)
+    intervals = tuple(
+        _delta_theta_interval(
+            convergent_daily,
+            trend_daily,
+            block_length=block_length,
+            samples=samples,
+            rng=rng,
+            convergent_weight=convergent_weight,
+            rho=rho,
+            book_vol_annual=book_vol_annual,
+        )
+        for block_length in block_lengths
+    )
+    return AllocatorContribution(
+        delta_theta=composite_allocator_utility(
+            convergent_daily,
+            trend_daily,
+            convergent_weight=convergent_weight,
+            rho=rho,
+            book_vol_annual=book_vol_annual,
+        ),
+        downside_correlation=downside_correlation(convergent_daily, trend_daily),
+        intervals=intervals,
+    )
+
+
 # ── Post-hoc trust check ──────────────────────────────────────────────────────
 
 
@@ -356,7 +697,17 @@ def _make_stream_read(
 ) -> Callable[[Any, ReportConfig], pd.Series]:
     def _read(pf: Any, config: ReportConfig) -> pd.Series:
         returns = EquityCurve.from_portfolio(pf).returns()
-        return pd.Series({col: fn(returns[col].dropna().to_numpy()) for col in returns.columns})
+        # Index the result with the columns OBJECT, never with a dict keyed by column.
+        # A dict-built Series nulls the level names, and the canonical-identity aligner can
+        # only reorder VBT's parameter levels onto canonical order while the names survive
+        # (observation_blocks._align_registered_candidates). Without them a level-order
+        # difference turns into permuted identity tuples and the grid check fails - which
+        # only ever showed up for N > 1 Candidates, because a single Candidate takes the
+        # collapsed-key bypass instead.
+        return pd.Series(
+            [fn(returns[col].dropna().to_numpy()) for col in returns.columns],
+            index=returns.columns,
+        )
 
     return _read
 
@@ -370,6 +721,7 @@ CONVERGENT_INCOME_UTILITY_DEFINITION = MetricDefinition(
         "annualized certainty-equivalent excess growth for a crash-averse (CRRA) evaluator; "
         "manipulation-proof (higher = more income net of the tail it hides)"
     ),
+    boundary_semantics="block_local",
     provider="aegis",
     target="portfolio",
     source_method="get_value",
@@ -377,7 +729,9 @@ CONVERGENT_INCOME_UTILITY_DEFINITION = MetricDefinition(
     required_gate_input=False,
     metadata={"risk_aversion": DEFAULT_RISK_AVERSION, "risk_free": 0.0},
 )
-CONVERGENT_INCOME_UTILITY_EXTRACTOR = ExtractorSpec(_make_stream_read(_convergent_income_utility))
+CONVERGENT_INCOME_UTILITY_EXTRACTOR = ExtractorSpec(
+    _make_stream_read(_convergent_income_utility), contract_version=1
+)
 
 CONVERGENT_TAIL_BUDGET_DEFINITION = MetricDefinition(
     id=CONVERGENT_TAIL_BUDGET_ID,
@@ -388,6 +742,7 @@ CONVERGENT_TAIL_BUDGET_DEFINITION = MetricDefinition(
         "actual mean loss in the worst decile of overlapping 2-6 month own returns; "
         "the sleeve's budgeted bleed (closer to zero = shallower tail)"
     ),
+    boundary_semantics="block_local",
     provider="aegis",
     target="portfolio",
     source_method="get_value",
@@ -395,7 +750,9 @@ CONVERGENT_TAIL_BUDGET_DEFINITION = MetricDefinition(
     required_gate_input=False,
     metadata={"horizon_band_days": list(_HORIZON_BAND), "tail_quantile": _TAIL_QUANTILE},
 )
-CONVERGENT_TAIL_BUDGET_EXTRACTOR = ExtractorSpec(_make_stream_read(_convergent_tail_budget))
+CONVERGENT_TAIL_BUDGET_EXTRACTOR = ExtractorSpec(
+    _make_stream_read(_convergent_tail_budget), contract_version=1
+)
 
 CONVERGENT_DOWNSIDE_LSKEW_DEFINITION = MetricDefinition(
     id=CONVERGENT_DOWNSIDE_LSKEW_ID,
@@ -406,6 +763,7 @@ CONVERGENT_DOWNSIDE_LSKEW_DEFINITION = MetricDefinition(
         "robust L-moment skewness (tau_3) of overlapping 2-6 month own returns; "
         "the realized sample shape report (negative = observed left asymmetry)"
     ),
+    boundary_semantics="block_local",
     provider="aegis",
     target="portfolio",
     source_method="get_value",
@@ -413,7 +771,32 @@ CONVERGENT_DOWNSIDE_LSKEW_DEFINITION = MetricDefinition(
     required_gate_input=False,
     metadata={"horizon_band_days": list(_HORIZON_BAND), "estimator": "l_moment_tau3"},
 )
-CONVERGENT_DOWNSIDE_LSKEW_EXTRACTOR = ExtractorSpec(_make_stream_read(_convergent_downside_lskew))
+CONVERGENT_DOWNSIDE_LSKEW_EXTRACTOR = ExtractorSpec(
+    _make_stream_read(_convergent_downside_lskew), contract_version=1
+)
+
+CONVERGENT_SMOOTHING_INDEX_DEFINITION = MetricDefinition(
+    id=CONVERGENT_SMOOTHING_INDEX_ID,
+    title="Convergent Smoothing Index (Getmansky-Lo-Makarov xi, variance ratio)",
+    source_type=SOURCE_TYPE_CUSTOM,
+    unit="ratio",
+    value_semantics=(
+        "GLM smoothing index of the daily stream (1.0 = clean marks). Below 1 the daily "
+        "marks are smoothed, so volatility is understated, Sharpe inflated by 1/sqrt(xi), "
+        "and contemporaneous correlations - including the downside-correlation guard - are "
+        "biased toward zero"
+    ),
+    boundary_semantics="block_local",
+    provider="aegis",
+    target="portfolio",
+    source_method="get_value",
+    required_report_output=False,
+    required_gate_input=False,
+    metadata={"horizon_days": _SMOOTHING_HORIZON, "estimator": "lo_mackinlay_variance_ratio"},
+)
+CONVERGENT_SMOOTHING_INDEX_EXTRACTOR = ExtractorSpec(
+    _make_stream_read(_convergent_smoothing_index), contract_version=1
+)
 
 
 __all__ = [
@@ -426,11 +809,20 @@ __all__ = [
     "CONVERGENT_TAIL_BUDGET_DEFINITION",
     "CONVERGENT_TAIL_BUDGET_EXTRACTOR",
     "CONVERGENT_TAIL_BUDGET_ID",
+    "DEFAULT_BLOCK_LENGTHS",
     "DEFAULT_BOOK_VOL",
+    "DEFAULT_BOOTSTRAP_SAMPLES",
+    "DEFAULT_BOOTSTRAP_SEED",
     "DEFAULT_CONVERGENT_WEIGHT",
     "DEFAULT_RISK_AVERSION",
+    "AllocatorContribution",
+    "AllocatorEvaluationError",
+    "DeltaThetaInterval",
+    "block_length_band",
     "composite_allocator_utility",
     "composite_book_utility",
     "convergent_utility_rho_sensitivity_from_curve",
     "downside_correlation",
+    "evaluate_allocator_contribution",
+    "optimal_block_length",
 ]

@@ -15,3 +15,8 @@ We considered three modules instead of four (merging Lock creation into `candida
 - The "promotion" terminology is retired in favor of "Lock" (matching CONTEXT.md). `optimization/promotion.py` becomes `optimization/lock_resolution.py`, types rename (`ComponentPromotionRef` → `ComponentLockRef`, etc.), schema version constants change (`component_promotion.v1` → `component_lock.v1`).
 - CandidateStore schema bumps from v2 to v3 (table rename `candidate_promotions` → `candidate_locks`). Forward-first: no migration code, old databases fail on version check and must be recreated.
 - Each stage module receives `store_path` (not an open connection) when it needs CandidateStore access, and manages its own connection lifecycle.
+
+**Amendment (2026-07-23) — contract obsolete lifecycle stages.** Publishing and completion
+ceased to be honest modules once Candidate Store commit became the sole durable boundary. They
+are deleted. The remaining flow is setup, typed execution, Candidate Set derivation, one atomic
+Candidate Store commit, and return of the already-built typed Run Result.

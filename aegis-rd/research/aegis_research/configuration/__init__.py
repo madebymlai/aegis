@@ -1,43 +1,29 @@
 """Public config surface — single import home for all configuration names.
 
 All public configuration types, constants, and entry points are re-exported
-here.  Internal implementation modules (cross_checks, field_types, etc.) are
-package-private and not part of this surface.
+here. Internal implementation modules are package-private.
 """
 
 from research.aegis_research.canonical_json import to_builtin
-from research.aegis_research.configuration.env_references import resolve_env_refs
-from research.aegis_research.configuration.field_types import (
-    ComponentIdStr,
-    NonEmptyStr,
-)
 from research.aegis_research.configuration.resolution import (
     ResolvedRunConfig,
     load_run_config,
     resolve_run_config,
-    with_run_config_selection,
 )
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     DATA_ARRAY_SHORTCUTS,
-    DATA_QUALITY_DEGRADATIONS,
     DEFAULT_LOCK_ROLE,
-    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
-    IDENTIFIER_RE,
     LOCK_ROLES,
     MISSING_POLICIES,
     OHLCV_ARRAYS,
     OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
-    PREPASS_CONST_FIELDS,
-    PREPASS_REQUIRED_FIELDS,
     SIGNAL_EXECUTION_TIMINGS,
     SIGNAL_POLICIES,
-    ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
     DataConfig,
-    DataQualityConfig,
     InstrumentBandConfig,
     Lock,
     OptimizationConfig,
@@ -47,10 +33,8 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
-    RunSplitConfig,
     SignalConfig,
     expand_data_arrays,
-    has_data_array_token_shape,
     lock_handle,
     merge_data_arrays,
 )
@@ -58,28 +42,19 @@ from research.aegis_research.configuration.schema import (
 __all__ = [
     "CONFIG_SCHEMA_VERSION",
     "DATA_ARRAY_SHORTCUTS",
-    "DATA_QUALITY_DEGRADATIONS",
     "DEFAULT_LOCK_ROLE",
-    "FORWARD_OPTIMIZATION_REQUIRED_MESSAGE",
-    "IDENTIFIER_RE",
     "LOCK_ROLES",
     "MISSING_POLICIES",
     "OHLCV_ARRAYS",
     "OPTIMIZATION_SEARCH_POLICIES",
     "PORTFOLIO_DIRECTIONS",
-    "PREPASS_CONST_FIELDS",
-    "PREPASS_REQUIRED_FIELDS",
     "SIGNAL_EXECUTION_TIMINGS",
     "SIGNAL_POLICIES",
-    "ComponentIdStr",
-    "ConfigSelectionEvidence",
     "ConfigValidationError",
     "ConfigValidationIssue",
     "DataConfig",
-    "DataQualityConfig",
     "InstrumentBandConfig",
     "Lock",
-    "NonEmptyStr",
     "OptimizationConfig",
     "PortfolioConfig",
     "RankingConfig",
@@ -88,15 +63,11 @@ __all__ = [
     "RunConfig",
     "RunIndicatorSourceConfig",
     "RunSourceRefConfig",
-    "RunSplitConfig",
     "SignalConfig",
     "expand_data_arrays",
-    "has_data_array_token_shape",
     "load_run_config",
     "lock_handle",
     "merge_data_arrays",
-    "resolve_env_refs",
     "resolve_run_config",
     "to_builtin",
-    "with_run_config_selection",
 ]

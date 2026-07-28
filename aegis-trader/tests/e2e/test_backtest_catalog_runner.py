@@ -11,6 +11,13 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from aegis_data.custom_data import (
+    CustomDataCoverageError,
+    CustomDataProviderPort,
+    FixtureRecord,
+    ServedCustomData,
+    ingest,
+)
 from aegis_data.distributions import Distribution, write_distribution_data
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
@@ -151,6 +158,80 @@ class _FixedWeightBundle(ExecutionBundle):
         )
         weights.columns.name = "instrument_id"
         return weights
+
+
+class _FixtureArrayBundle(ExecutionBundle):
+    """Synthetic bundle whose target is supplied by a Custom Data panel."""
+
+    def __init__(self, instrument_id: InstrumentId) -> None:
+        self._instrument_id = instrument_id
+        contract = DataContract(
+            instrument_ids=(instrument_id,),
+            required_arrays=("Close", "FixtureValue", "FixtureAvailable"),
+            base_currency="EUR",
+            timeframe="1D",
+            missing_index=MissingIndexPolicy.DROP,
+            lookback_bars=1,
+            mark_modes={instrument_id: "LAST"},
+        )
+        manifest = BundleManifest(
+            run_id="catalog-runner-fixture-array",
+            role="synth",
+            candidate_key="catalog-runner-fixture-array-key",
+            component_source_hashes={},
+            instrument_ids=(instrument_id,),
+        )
+        plan = LockedExecutionPlan(
+            strategy=ComponentSpec(
+                family="strategy",
+                component_id="fixture_array_weight",
+                module="synth",
+                input_names=(),
+                output_names=(),
+                params={},
+            ),
+            indicators=(),
+            instrument_bands={instrument_id: DriftBand.symmetric(0.02)},
+            direction="longonly",
+        )
+        super().__init__(contract=contract, manifest=manifest, plan=plan)
+
+    def compute_weights(
+        self,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None = None,
+    ) -> pd.DataFrame:
+        available = native_prices.array("FixtureAvailable")
+        value = native_prices.array("FixtureValue")
+        return value.where(available == 1.0, 0.0)
+
+
+class _FixtureProvider(CustomDataProviderPort[FixtureRecord]):
+    def __init__(self) -> None:
+        self.requests: list[tuple[InstrumentId, pd.Timestamp, pd.Timestamp]] = []
+
+    def request_records(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> ServedCustomData[FixtureRecord]:
+        self.requests.append((instrument_id, start, end))
+        timestamp = pd.Timestamp("2020-01-01", tz="UTC").value
+        return ServedCustomData(
+            (
+                FixtureRecord(
+                    timestamp,
+                    timestamp,
+                    instrument_id=instrument_id,
+                    value=0.5,
+                    provider="fixture",
+                ),
+            ),
+            start,
+        )
 
 
 class _AdjustedLastProvider:
@@ -424,6 +505,118 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     assert len(fills) == 1
     assert fills[0].instrument_id == _INSTRUMENT_ID
     engine.dispose()
+
+
+def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    provider = _FixtureProvider()
+    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        custom_data_providers={FixtureRecord: (provider,)},
+    )
+
+    try:
+        fills = _closed_orders(result.engine)
+        assert len(fills) == 1
+        assert fills[0].instrument_id == _INSTRUMENT_ID
+    finally:
+        result.engine.dispose()
+
+
+def test_run_book_backtest_fills_custom_array_coverage_on_cold_catalog(
+    tmp_path,
+) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    provider = _FixtureProvider()
+    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(
+            catalog_path, (_INSTRUMENT_ID,)
+        ),
+        custom_data_providers={FixtureRecord: (provider,)},
+    )
+
+    try:
+        assert provider.requests == [
+            (
+                _INSTRUMENT_ID,
+                pd.Timestamp("2020-01-01", tz="UTC"),
+                pd.Timestamp("2020-01-05", tz="UTC"),
+            )
+        ]
+    finally:
+        result.engine.dispose()
+
+
+def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    ingest(
+        FixtureRecord,
+        (_INSTRUMENT_ID,),
+        start=pd.Timestamp("2020-01-01", tz="UTC"),
+        end=pd.Timestamp("2020-01-05", tz="UTC"),
+        providers=(_FixtureProvider(),),
+        catalog_path=catalog_path,
+    )
+    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+    unused = _FixtureProvider()
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        custom_data_providers={FixtureRecord: (unused,)},
+    )
+
+    try:
+        assert unused.requests == []
+    finally:
+        result.engine.dispose()
+
+
+def test_run_book_backtest_fails_on_uncovered_custom_arrays(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+
+    with pytest.raises(CustomDataCoverageError, match="custom data"):
+        run_book_backtest(
+            book_path,
+            start="2020-01-01",
+            end="2020-01-05",
+            catalog_path=catalog_path,
+            registry=registry,
+            data_source=_verified_zero_distribution_source(
+                catalog_path, (_INSTRUMENT_ID,)
+            ),
+        )
 
 
 def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:

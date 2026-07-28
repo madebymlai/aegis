@@ -29,8 +29,8 @@ from research.aegis_research.optimization.param_namespace import FIXED_CANDIDATE
 from research.aegis_research.optimization.run_data_contract import (
     build_run_data_array_contract,
 )
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.optimization.portfolio_simulation import ResolvedBook
+from research.aegis_research.optimization.portfolio_simulation._simulation import (
     simulate_portfolio_batch,
 )
 

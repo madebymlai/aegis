@@ -5,8 +5,8 @@ import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.configuration import PortfolioConfig
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.portfolio_simulation import ResolvedBook
+from research.aegis_research.portfolio_simulation._simulation import (
     simulate_portfolio_batch,
 )
 

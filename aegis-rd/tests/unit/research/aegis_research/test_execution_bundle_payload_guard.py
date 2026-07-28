@@ -14,7 +14,7 @@ import pytest
 
 from research.aegis_research.execution_bundle import _assert_payload_imports_clean
 
-_CLEAN = '''# %% imports
+_CLEAN = """# %% imports
 import numpy as np
 
 
@@ -28,7 +28,7 @@ def param_space():
 # %% main compute
 def run(inputs, *, n_candidates, **param_lists):
     return np.zeros(1)
-'''
+"""
 
 
 def test_clean_payload_passes_through_verbatim() -> None:

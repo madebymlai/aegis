@@ -18,11 +18,11 @@ from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     resolve_run_config,
 )
-from research.aegis_research.market_data.adapters import catalog as catalog_adapter
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.portfolio_simulation._simulation import (
     VBT_STATICIZED_CACHE_ENV,
 )
-from research.aegis_research.run_pipeline import run_strategy_sweep
+from research.aegis_research.run import pipeline as run_pipeline_module
+from research.aegis_research.run.pipeline import run_strategy_sweep
 from tests.support.research.aegis_research.market_data_fixtures import (
     equity_definition,
     instrument_id,
@@ -47,8 +47,7 @@ def _flat_adjusted_last() -> pd.Series:
 def _adjusted_last_with_cash_distribution() -> pd.Series:
     adjusted = _PRICE / (1.0 - (_DISTRIBUTION_AMOUNT / _PRICE))
     return pd.Series(
-        [_PRICE] * _DISTRIBUTION_OFFSET
-        + [adjusted] * (_PERIODS - _DISTRIBUTION_OFFSET),
+        [_PRICE] * _DISTRIBUTION_OFFSET + [adjusted] * (_PERIODS - _DISTRIBUTION_OFFSET),
         index=pd.date_range(_START, periods=_PERIODS, freq="D", tz="UTC"),
     )
 
@@ -105,7 +104,7 @@ def _pipeline_total_return(
         distribution_provider=_AdjustedLastProvider(adjusted_last),
     )
     monkeypatch.setattr(
-        catalog_adapter,
+        run_pipeline_module,
         "catalog_data_port",
         lambda _path, resolver=None: port,
     )
@@ -121,7 +120,7 @@ def _pipeline_total_return(
         component_registry=registry,
         run_id=workspace.name,
     )
-    return float(result["candidates"][0]["metrics"]["total_return"])
+    return float(result.candidates[0].complete_period_metrics["total_return"])
 
 
 def _run_config(
@@ -148,19 +147,15 @@ def _run_config(
             "direction": "longonly",
             "short_borrow_rate": 0.0,
             "short_rebate_rate": 0.0,
-            "fill_timing": "same_close",
+            "fill_timing": "next_open",
         },
         "strategy": {"id": "demo.always_long"},
         "indicators": [],
         "ranking": {"metric": "total_return"},
-        "report": {"min_oos_trades": 0},
+        "report": {},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_n_expanding",
-                "params": {"n": 3, "min_length": 6, "split": 0.5},
-                "max_splits": 3,
-            },
+            "observation_block_bars": 6,
         },
     }
 
@@ -180,12 +175,16 @@ def _write_always_long_strategy(path: Path) -> None:
         "'output_name': 'target_weights', 'owns_portfolio': False}\n"
         "\n# %% main compute\n"
         "def run(bundle):\n"
-        "    \"\"\"Return a fully invested long-only allocation frame.\"\"\"\n"
+        '    """Return a fully invested long-only allocation frame."""\n'
         "    close = bundle.data.array('Close')\n"
         "    return pd.DataFrame(1.0, index=close.index, columns=close.columns)\n"
+        "\n# %% lookback\n"
+        "def lookback(**params):\n"
+        '    """Use the complete path without a warmup."""\n'
+        "    return 0\n"
         "\n# %% wide compute\n"
         "def run(inputs, *, n_candidates, **param_lists):\n"
-        "    \"\"\"Return a wide fully invested long-only allocation matrix.\"\"\"\n"
+        '    """Return a wide fully invested long-only allocation matrix."""\n'
         "    close = inputs.data.array('Close')\n"
         "    rows, symbols = close.shape\n"
         "    return np.ones((rows, n_candidates * symbols), dtype=float)\n"

@@ -62,9 +62,7 @@ def test_override_without_destination_fraction_inherits_the_sleeve_default() -> 
     assert cfg.resolved_band_for("AAPL.NASDAQ") == DriftBand(
         up=0.01, down=0.03, destination_fraction=0.5
     )
-    assert cfg.resolved_band_for("ES") == DriftBand(
-        up=0.05, down=0.08, destination_fraction=1.0
-    )
+    assert cfg.resolved_band_for("ES") == DriftBand(up=0.05, down=0.08, destination_fraction=1.0)
 
 
 def test_resolved_band_for_matches_the_override_key_exactly() -> None:

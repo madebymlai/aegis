@@ -11,6 +11,7 @@ class StartupGate(str, Enum):
 
     ACCOUNT_INTEGRITY = "account_integrity"
     CONTINUOUS_IDENTITY = "continuous_identity"
+    RECOVERY_HISTORY = "recovery_history"
 
 
 @dataclass(frozen=True)

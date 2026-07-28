@@ -14,7 +14,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, InstrumentId, MarketDataBundle
@@ -36,7 +35,6 @@ from research.aegis_research.component_registry.registry import (
 from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     DataConfig,
-    DataQualityConfig,
     Lock,
     OptimizationConfig,
     PortfolioConfig,
@@ -45,36 +43,31 @@ from research.aegis_research.configuration import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
-    RunSplitConfig,
     SignalConfig,
 )
-from research.aegis_research.market_data.run_arrays import RunArrays
-from research.aegis_research.optimization.candidate_grid import (
-    SPLIT_LEVEL,
-    CandidateGrid,
+from research.aegis_research.instrument_resolution import (
+    InstrumentResolution,
+    TradeableInstrument,
 )
-from research.aegis_research.optimization.pipeline.setup import SetupResult
-from research.aegis_research.optimization.precompute import CandidateKey
-from research.aegis_research.optimization.run_data_contract import (
-    DataArrayContract,
-    RunDataFacts,
+from research.aegis_research.optimization.continuous_replay import (
+    continuous_replay_protocol,
 )
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.optimization.observation_blocks import (
+    ObservationBlocks,
+    observation_block_protocol,
+)
+from research.aegis_research.optimization.selection_identity import (
+    CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
+    METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
+)
+from research.aegis_research.portfolio_simulation import ResolvedBook
+from research.aegis_research.portfolio_simulation._simulation import (
     _build_portfolio,
     expand_market_frame_to_candidate_columns,
     simulate_portfolio_batch,
 )
-from tests.support.research.aegis_research.test_doubles import FakeDataResult
-
-
-def make_data_quality_config(**overrides: Any) -> DataQualityConfig:
-    """Return a DataQualityConfig with valid defaults, overridden by any kwargs."""
-    defaults: dict[str, Any] = {
-        "allowed_degradations": [],
-    }
-    defaults.update(overrides)
-    return DataQualityConfig(**defaults)
+from research.aegis_research.run._stages.setup import SetupResult
+from research.aegis_research.run.data import RunData, RunDataIdentity
 
 
 def make_data_config(**overrides: Any) -> DataConfig:
@@ -94,7 +87,6 @@ def make_data_config(**overrides: Any) -> DataConfig:
         "timeframe": "1D",
         "path": None,
         "missing_index": "raise",
-        "quality": make_data_quality_config(),
     }
     defaults.update(overrides)
     return DataConfig(**defaults)
@@ -134,9 +126,6 @@ def make_portfolio_config(**overrides: Any) -> PortfolioConfig:
 def make_report_config(**overrides: Any) -> ReportConfig:
     """Return a ReportConfig with valid defaults, overridden by any kwargs."""
     defaults: dict[str, Any] = {
-        "min_oos_sharpe": 0.5,
-        "max_oos_drawdown": 0.35,
-        "min_oos_trades": 5,
         "freq": "1D",
         "year_freq": "252D",
     }
@@ -174,30 +163,68 @@ def make_ranking_config(**overrides: Any) -> RankingConfig:
     return RankingConfig(**defaults)
 
 
-def make_run_split_config(**overrides: Any) -> RunSplitConfig:
-    """Return a RunSplitConfig with valid defaults, overridden by any kwargs."""
-    defaults: dict[str, Any] = {
-        "method": "from_rolling",
-        "params": {"length": 20, "split": 0.5},
-        "max_splits": 100,
-        "max_estimated_output_cells": 25_000_000,
-        "max_public_artifact_bytes": 10_000_000,
-    }
-    defaults.update(overrides)
-    return RunSplitConfig(**defaults)
-
-
 def make_optimization_config(**overrides: Any) -> OptimizationConfig:
     """Return an OptimizationConfig with valid defaults, overridden by any kwargs."""
     defaults: dict[str, Any] = {
         "search": "grid",
-        "split": make_run_split_config(),
+        "observation_block_bars": 20,
         "random_subset": None,
         "seed": None,
-        "execute": {},
     }
     defaults.update(overrides)
     return OptimizationConfig(**defaults)
+
+
+def make_selection_identity(**overrides: Any) -> dict[str, Any]:
+    """Return a structurally current continuous-selection identity for tests."""
+    blocks = ObservationBlocks.from_bounds(pd.RangeIndex(20), ((0, 10), (10, 20)))
+    defaults: dict[str, Any] = {
+        "schema_version": CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
+        "trial_lineage": {
+            "search": "grid",
+            "random_subset": None,
+            "seed": None,
+            "candidate_grid": [{"position": 0, "params": {}}],
+        },
+        "warmup": {"resolved_warmup_bars": 0, "scored_start": 0},
+        "scored_interval": {"start": 0, "end": 20, "end_exclusive": True},
+        "replay_protocol": continuous_replay_protocol(
+            fill_timing="next_close",
+            direction="longonly",
+            scored_start=0,
+            sim_end=20,
+        ),
+        "observation_block_protocol": observation_block_protocol(blocks),
+        "metric_protocol": {
+            "schema_version": METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
+            "registry_fingerprint": "0" * 64,
+            "candidate_vector_contract": "non_scalar_canonical_candidate_series.v1",
+            "extractors": {
+                "total_return": {
+                    "kind": "native_full_portfolio",
+                    "source_type": "vbt_stats",
+                    "boundary_semantics": "native_continuous",
+                    "scale": "percent",
+                    "absolute": False,
+                }
+            },
+        },
+        "metric_inputs": {
+            "freq": "1D",
+            "year_freq": "252D",
+            "periods_per_year": 252,
+        },
+        "ranking": {
+            "metric": "total_return",
+            "direction": "maximize",
+            "min_trades": 0,
+            "score": "mean_within_observation_block_rank",
+            "tie_method": "average",
+            "equal_score_tie_break": "materialized_candidate_position",
+        },
+    }
+    defaults.update(overrides)
+    return defaults
 
 
 def make_lock(**overrides: Any) -> Lock:
@@ -226,76 +253,12 @@ def make_run_config(**overrides: Any) -> RunConfig:
         "data": make_data_config(),
         "portfolio": make_portfolio_config(),
         "report": make_report_config(),
-        "optimization": None,
+        "optimization": make_optimization_config(),
         "lock": None,
         "output_dir": "runs",
     }
     defaults.update(overrides)
     return RunConfig(**defaults)
-
-
-def make_candidate_grid(
-    spec: Mapping[CandidateKey, Mapping[Any, Mapping[str, float | None]]],
-    *,
-    param_names: list[str] | None = None,
-) -> CandidateGrid:
-    """Build a CandidateGrid from a boundary-vocabulary spec.
-
-    ``spec`` maps each CandidateKey to its per-Split per-Metric values. Scalar
-    candidate keys are wrapped as 1-tuples automatically. ``None`` values are
-    converted to NaN for the DataFrame spine so the grid's read surface can
-    normalize them back to None.
-
-    The factory constructs through ``from_sweep`` so every test grid exercises
-    the production construction path.
-    """
-    if not spec:
-        # Empty grid — still valid by construction; carries the default
-        # param level and metric column the non-empty path would produce.
-        if param_names is None:
-            param_names = ["param"]
-        index = pd.MultiIndex.from_tuples(
-            [], names=[*param_names, SPLIT_LEVEL]
-        )
-        return CandidateGrid.from_sweep(
-            pd.DataFrame({"sharpe": []}, index=index, dtype="float64")
-        )
-
-    # Collect all metric ids across all candidates and splits.
-    metric_ids_set: set[str] = set()
-    for per_split in spec.values():
-        for per_metric in per_split.values():
-            metric_ids_set.update(per_metric.keys())
-    metric_ids = sorted(metric_ids_set)
-
-    # Derive param names from the first candidate key if not provided.
-    if param_names is None:
-        first_key = next(iter(spec))
-        if isinstance(first_key, tuple):
-            n = len(first_key)
-            param_names = [f"param_{i}" for i in range(n)] if n > 1 else ["param"]
-        else:
-            param_names = ["param"]
-
-    # Build MultiIndex rows.
-    tuples: list[tuple] = []
-    rows: list[dict[str, float]] = []
-    for key, per_split in spec.items():
-        key_tuple = (key,) if not isinstance(key, tuple) else key
-        for split_label, per_metric in per_split.items():
-            tuples.append((*key_tuple, split_label))
-            rows.append({
-                mid: (np.nan if v is None else float(v))
-                for mid, v in per_metric.items()
-            })
-    index = pd.MultiIndex.from_tuples(tuples, names=[*param_names, SPLIT_LEVEL])
-    # Fill missing metric columns with NaN.
-    frame = pd.DataFrame(rows, index=index)
-    for mid in metric_ids:
-        if mid not in frame.columns:
-            frame[mid] = np.nan
-    frame = frame[metric_ids]
-    return CandidateGrid.from_sweep(frame)
 
 
 def make_component_registry(
@@ -379,43 +342,64 @@ def _component_source_identity(component_id: str) -> ComponentSourceIdentity:
     )
 
 
-def make_run_arrays(**overrides: Any) -> RunArrays:
-    """Return a RunArrays with valid defaults, overridden by any kwargs.
-
-    Defaults are a coherent single-series shape: the P&L frames are the signal
-    Close/Open objects themselves, mirroring what ``prepare_run_arrays``
-    produces when no P&L series is declared.
-    """
-    close = overrides.pop("close", pd.DataFrame({0: [1.0, 2.0]}))
-    open_ = overrides.pop("open_", pd.DataFrame({0: [1.0, 2.0]}))
-    defaults: dict[str, Any] = {
-        "signal": MarketDataBundle({"Close": close, "Open": open_}),
-        "pnl_close": close,
-        "pnl_open": open_,
-        "currency_conversion": None,
-        "distributions": (),
-    }
-    defaults.update(overrides)
-    return RunArrays(**defaults)
-
-
-def make_run_data_facts(**overrides: Any) -> RunDataFacts:
-    """Return a RunDataFacts with valid defaults, overridden by any kwargs.
-
-    Defaults are the simplest healthy fixture: a fake data result, a contract
-    whose configured arrays satisfy the pipeline-required Close/Open pair, and
-    no metric-registry fingerprint.
-    """
-    defaults: dict[str, Any] = {
-        "data_result": FakeDataResult(),
-        "array_contract": DataArrayContract(
-            configured_arrays=("Close", "Open"),
-            pipeline_required_arrays=("Close", "Open"),
+def make_run_data(**overrides: Any) -> RunData:
+    """Return a coherent eager RunData fixture, overridden by any kwargs."""
+    instrument_id = InstrumentId.from_str("SYN.XNAS")
+    close = overrides.pop("close", pd.DataFrame({instrument_id: [1.0, 2.0]}))
+    open_ = overrides.pop("open_", pd.DataFrame({instrument_id: [1.0, 2.0]}))
+    resolution = overrides.pop(
+        "instrument_resolution",
+        InstrumentResolution((TradeableInstrument(instrument_id),)),
+    )
+    conversion = overrides.pop(
+        "currency_conversion",
+        CurrencyConversion({}, currency_by_instrument_id={instrument_id: "EUR"}),
+    )
+    increments = overrides.pop(
+        "size_increment_by_instrument",
+        dict.fromkeys(resolution.instrument_ids, 1.0),
+    )
+    multipliers = overrides.pop(
+        "multiplier_by_instrument",
+        dict.fromkeys(resolution.instrument_ids, 1.0),
+    )
+    adjustment_mode = overrides.pop("adjustment_mode", None)
+    identity = overrides.pop(
+        "identity",
+        RunDataIdentity(
+            schema_version="run_data.v2",
+            requested_instrument_ids=resolution.instrument_ids,
+            tradeables=resolution.tradeables,
+            loaded_arrays=("Close", "Open"),
+            timeframe="1D",
+            start="2024-01-01",
+            end="2024-01-03",
+            missing_index="raise",
+            rows=2,
+            index_start="0",
+            index_end="1",
+            source="fixture",
+            catalog_path=None,
+            currency_by_instrument_id=dict(conversion.currency_by_instrument_id),
+            continuous_root_currencies={},
+            size_increment_by_instrument=increments,
+            multiplier_by_instrument=multipliers,
+            distribution_coverage=(),
+            adjustment_mode=(adjustment_mode.value if adjustment_mode is not None else None),
         ),
-        "metric_registry_fingerprint": None,
+    )
+    defaults: dict[str, Any] = {
+        "bundle": MarketDataBundle({"Close": close, "Open": open_}),
+        "instrument_resolution": resolution,
+        "currency_conversion": conversion,
+        "distributions": (),
+        "size_increment_by_instrument": increments,
+        "multiplier_by_instrument": multipliers,
+        "adjustment_mode": adjustment_mode,
+        "identity": identity,
     }
     defaults.update(overrides)
-    return RunDataFacts(**defaults)
+    return RunData(**defaults)
 
 
 def make_setup_result(**overrides: Any) -> SetupResult:
@@ -428,8 +412,7 @@ def make_setup_result(**overrides: Any) -> SetupResult:
     defaults: dict[str, Any] = {
         "store_path": Path("candidates.sqlite3"),
         "optimization_source": _fake_optimization_source(),
-        "arrays": make_run_arrays(),
-        "split_result": _fake_split_result(),
+        "run_data": make_run_data(),
     }
     defaults.update(overrides)
     return SetupResult(**defaults)
@@ -438,21 +421,11 @@ def make_setup_result(**overrides: Any) -> SetupResult:
 class _FakeOptimizationSource:
     def __init__(self) -> None:
         self.params: dict[str, Any] = {}
-        self.evidence: dict[str, Any] = {"strategy": {}}
+        self.identity: dict[str, Any] = {"strategy": {}}
 
 
 def _fake_optimization_source() -> Any:
     return _FakeOptimizationSource()
-
-
-class _FakeSplitResult:
-    def __init__(self) -> None:
-        self.metadata: dict[str, int] = {"n_splits": 2}
-        self.splits: list[Any] = []
-
-
-def _fake_split_result() -> Any:
-    return _FakeSplitResult()
 
 
 def make_candidate_portfolio(
@@ -465,9 +438,9 @@ def make_candidate_portfolio(
 ) -> vbt.Portfolio:
     """Simulate a Candidate batch for metrics tests.
 
-    Wraps the Window Evaluation internal simulation seam so tests that only
+    Wraps the Portfolio Simulation internal seam so tests that only
     need a Portfolio to extract metrics from never name the sim module
-    (mirrors ``make_run_arrays``). ``config`` defaults to the factory
+    (mirrors the production portfolio seam). ``config`` defaults to the factory
     PortfolioConfig.
     """
     book = ResolvedBook(config if config is not None else make_portfolio_config())
@@ -494,7 +467,6 @@ def make_single_book_portfolio(
     config: PortfolioConfig,
     *,
     open_: pd.DataFrame | None = None,
-    market_index: pd.Index | None = None,
     periods_per_year: int = 252,
     fees_by_symbol: pd.Series | None = None,
     instrument_bands: Mapping[InstrumentId, DriftBand] | None = None,
@@ -521,7 +493,6 @@ def make_single_book_portfolio(
             futures_roots=futures_roots,
         ),
         open_=open_,
-        market_index=market_index,
         periods_per_year=periods_per_year,
         distributions=distributions,
         currency_conversion=currency_conversion,
@@ -555,7 +526,7 @@ def make_engine_mechanics_portfolio(
         alloc_mi,
         ResolvedBook(config=config, futures_roots=futures_roots),
         open_frame=None,
-        market_index=None,
         group_by=vbt.ExceptLevel(SYMBOL_LEVEL),
+        scored_start=0,
         periods_per_year=periods_per_year,
     )

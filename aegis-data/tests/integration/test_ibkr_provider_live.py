@@ -39,6 +39,7 @@ _AAPL = InstrumentId.from_str("AAPL.XNAS")
 _EUR_USD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 _SPY = InstrumentId.from_str("SPY.ARCA")
 _GLD = InstrumentId.from_str("GLD.ARCA")
+_CRNX = InstrumentId.from_str("CRNX.XNAS")
 _START = pd.Timestamp("2024-01-02", tz="UTC")
 _END = pd.Timestamp("2024-02-01", tz="UTC")
 
@@ -90,7 +91,9 @@ def test_request_instruments_round_trips_native_identity() -> None:
     assert any(instrument.id == _AAPL for instrument in instruments)
 
 
-def _upcoming_es_quarterly_legs(now: pd.Timestamp, count: int = 4) -> list[InstrumentId]:
+def _upcoming_es_quarterly_legs(
+    now: pd.Timestamp, count: int = 4
+) -> list[InstrumentId]:
     """The next ``count`` ES quarterly leg ids (IB simplified symbology, MIC venue) after ``now``.
 
     ES rolls on the quarterly cycle H(Mar)/M(Jun)/U(Sep)/Z(Dec); the leg id is
@@ -101,7 +104,9 @@ def _upcoming_es_quarterly_legs(now: pd.Timestamp, count: int = 4) -> list[Instr
     cursor = (now + pd.DateOffset(months=2)).replace(day=1)
     while len(legs) < count:
         if cursor.month in code:
-            legs.append(InstrumentId.from_str(f"ES{code[cursor.month]}{cursor.year % 10}.XCME"))
+            legs.append(
+                InstrumentId.from_str(f"ES{code[cursor.month]}{cursor.year % 10}.XCME")
+            )
         cursor = cursor + pd.DateOffset(months=1)
     return legs
 
@@ -119,7 +124,9 @@ def test_request_instruments_loads_dated_futures_legs_mic_qualified() -> None:
     assert len(by_id) >= 2  # the front and at least one roll-ahead leg load
     for leg_id, leg in by_id.items():
         assert isinstance(leg, FuturesContract)
-        assert leg_id.venue.value == "XCME"  # CME exchange MIC-pinned (request used .XCME)
+        assert (
+            leg_id.venue.value == "XCME"
+        )  # CME exchange MIC-pinned (request used .XCME)
         assert str(leg.underlying) == "ES"
 
 
@@ -140,14 +147,20 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
             catalog, provider, (instrument_id,)
         ),
     )
-    request = CatalogWindowRequest(instrument_ids=(_AAPL,), start="2024-01-02", end="2024-02-01")
+    request = CatalogWindowRequest(
+        instrument_ids=(_AAPL,), start="2024-01-02", end="2024-02-01"
+    )
 
     filled = port.load_window(request).ohlcv
     assert not filled[_AAPL].empty
     assert (filled[_AAPL]["Close"] > 0).all()
 
     # Provider-less read: must serve entirely from the catalog (no IBKR contact).
-    warm = CatalogBackedDataPort(parquet_data_catalog(catalog_path)).load_window(request).ohlcv
+    warm = (
+        CatalogBackedDataPort(parquet_data_catalog(catalog_path))
+        .load_window(request)
+        .ohlcv
+    )
     assert warm[_AAPL]["Close"].tolist() == filled[_AAPL]["Close"].tolist()
 
     # AC6: the served instrument's definition was persisted as a Step-1 write.
@@ -159,8 +172,8 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
 
 def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
     """Operator-run dividend source check: TRADES rides the standard bar path,
-    ADJUSTED_LAST rides the raw-ibapi seam, and the ratio recovers real gross
-    distributions while the GLD non-distributor stays empty."""
+    ADJUSTED_LAST rides the persistent Nautilus session, and the ratio recovers
+    real gross distributions while the GLD non-distributor stays empty."""
     provider = _provider()
     start = pd.Timestamp("2024-01-01", tz="UTC")
     end = pd.Timestamp("2026-06-01", tz="UTC")
@@ -191,3 +204,21 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
     assert len(spy) >= 6
     assert sum(event.amount for event in spy) > 10.0
     assert gld == ()
+
+
+def test_adjusted_last_returns_closes_through_the_persistent_session() -> None:
+    provider = _provider()
+    start = pd.Timestamp("2026-06-01", tz="UTC")
+    end = pd.Timestamp("2026-07-16", tz="UTC")
+
+    adjusted = provider.request_adjusted_last(
+        _CRNX,
+        start=start,
+        end=end,
+        currency="USD",
+    )
+
+    assert not adjusted.empty
+    assert adjusted.index.min() >= start
+    assert adjusted.index.max() <= end
+    assert (adjusted > 0).all()

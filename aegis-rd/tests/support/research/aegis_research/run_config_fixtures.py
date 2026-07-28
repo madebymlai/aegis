@@ -42,20 +42,13 @@ def build_resolved_run_config(
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 40, "offset": 40, "split": 0.5},
-                "max_splits": 2,
-            },
+            "observation_block_bars": 20,
         },
     }
     if data is not None:
         raw["data"] = {**raw["data"], **data}
     if optimization is not None:
-        merged = {**raw["optimization"], **optimization}
-        if "split" in optimization:
-            merged["split"] = {**raw["optimization"]["split"], **optimization["split"]}
-        raw["optimization"] = merged
+        raw["optimization"] = {**raw["optimization"], **optimization}
     return resolve_run_config(
         raw,
         component_registry=discover_component_registry(root=root, repo_root=tmp_path),

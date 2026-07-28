@@ -14,14 +14,24 @@ import pytest
 
 from research.aegis_research.component_registry.contracts import SYMBOL_LEVEL
 from research.aegis_research.metrics.custom.support import EquityCurve
+from research.aegis_research.metrics.custom.support.equity_curve import _scalar_bound
 
 
 class _StubPortfolio:
     """Counts get_value reads so the one-read contract is an assertable property."""
 
-    def __init__(self, value: pd.DataFrame | pd.Series, close: pd.DataFrame) -> None:
+    def __init__(
+        self,
+        value: pd.DataFrame | pd.Series,
+        close: pd.DataFrame,
+        *,
+        sim_start: object = None,
+        sim_end: object = None,
+    ) -> None:
         self._value = value
         self.close = close
+        self.sim_start = sim_start
+        self.sim_end = sim_end
         self.get_value_calls = 0
 
     def get_value(self) -> pd.DataFrame | pd.Series:
@@ -61,7 +71,9 @@ def test_from_portfolio_normalizes_a_series_to_a_frame() -> None:
         {("only", "SPY"): [10.0, 11.0, 10.5]},
         index=index,
     )
-    close.columns = pd.MultiIndex.from_tuples([("only", "SPY")], names=["candidate_id", SYMBOL_LEVEL])
+    close.columns = pd.MultiIndex.from_tuples(
+        [("only", "SPY")], names=["candidate_id", SYMBOL_LEVEL]
+    )
     curve = EquityCurve.from_portfolio(_StubPortfolio(series, close))
     assert isinstance(curve.value, pd.DataFrame)
     assert list(curve.value.columns) == ["only"]
@@ -98,3 +110,59 @@ def test_benchmark_returns_align_to_candidate_columns() -> None:
     assert list(benchmark.columns) == ["a", "b"]
     assert benchmark["a"].iloc[1] == pytest.approx(0.02)
     pd.testing.assert_series_equal(benchmark["a"], benchmark["b"], check_names=False)
+
+
+# --- Multi-candidate simulation-range bounds ---
+# VBT returns Portfolio.sim_start / sim_end as a scalar for a single Candidate
+# group but as a per-group Series once there is more than one group. EquityCurve
+# slices its value frame with a single positional .iloc[start:end], which a Series
+# bound crashes. The derived common-start contract guarantees every Candidate
+# shares one scored range, so the per-group bounds collapse to the one shared
+# scalar; a non-uniform bound is a contract violation and must raise.
+
+
+def test_scalar_bound_reduces_uniform_series_to_int() -> None:
+    assert _scalar_bound(pd.Series([3, 3, 3], index=["a", "b", "c"])) == 3
+    assert _scalar_bound(np.array([5, 5])) == 5
+    assert _scalar_bound(7) == 7
+    assert _scalar_bound(None) is None
+
+
+def test_scalar_bound_rejects_nonuniform_bounds() -> None:
+    with pytest.raises(ValueError, match="one shared simulation bound"):
+        _scalar_bound(pd.Series([3, 4], index=["a", "b"]))
+
+
+def test_from_portfolio_collapses_per_group_series_bounds_to_scalar() -> None:
+    pf = _two_group_portfolio()
+    groups = pf.get_value().columns
+    # VBT's multi-group shape: one bound value per Candidate group, all equal.
+    pf.sim_start = pd.Series([2, 2], index=groups)
+    pf.sim_end = pd.Series([5, 5], index=groups)
+    curve = EquityCurve.from_portfolio(pf)
+    assert curve.sim_start == 2 and isinstance(curve.sim_start, int)
+    assert curve.sim_end == 5 and isinstance(curve.sim_end, int)
+
+
+def test_multi_candidate_returns_equal_full_path_slice_and_stay_continuous() -> None:
+    pf = _two_group_portfolio()
+    full = pf.get_value()
+    pf.sim_start = pd.Series([2, 2], index=full.columns)  # per-group (multi-candidate)
+    curve = EquityCurve.from_portfolio(pf)
+    # The batched (per-group Series) slice equals the full-path pct_change sliced
+    # with the shared scalar start -- the known-good single-Candidate scalar path.
+    expected = full.pct_change(fill_method=None).iloc[2:]
+    pd.testing.assert_frame_equal(curve.returns(), expected)
+    # The first in-range return is the CONTINUOUS transition (value[2]/value[1]-1),
+    # not a return rebased against the portfolio's initial value.
+    assert curve.returns()["a"].iloc[0] == pytest.approx(99.0 / 110.0 - 1.0)
+
+
+def test_single_candidate_scalar_bound_passes_through_unchanged() -> None:
+    pf = _two_group_portfolio()
+    pf.sim_start = 2  # single-Candidate: VBT hands back a scalar, not a Series
+    curve = EquityCurve.from_portfolio(pf)
+    assert curve.sim_start == 2
+    pd.testing.assert_frame_equal(
+        curve.returns(), pf.get_value().pct_change(fill_method=None).iloc[2:]
+    )

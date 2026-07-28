@@ -6,22 +6,20 @@ import pytest
 from vectorbtpro import vbt
 
 from research.aegis_research.configuration import OptimizationConfig
-from research.aegis_research.metrics import make_default_metric_registry
+from research.aegis_research.metrics import ResolvedMetrics, make_default_metric_registry
 from research.aegis_research.optimization.precompute import empty_precompute
+from research.aegis_research.optimization.preflight import PreflightError, build_preflight
 from research.aegis_research.optimization.runner import (
     OptimizationRunnerError,
     execute_optimization,
 )
 from research.aegis_research.optimization.source import OptimizationSource
-from research.aegis_research.optimization.window_evaluation import ResolvedBook
-from research.aegis_research.run_splits import build_run_splits_result
+from research.aegis_research.portfolio_simulation import ResolvedBook
 from tests.support.research.aegis_research.factories import (
     make_optimization_config,
     make_portfolio_config,
-    make_ranking_config,
     make_report_config,
-    make_run_arrays,
-    make_run_split_config,
+    make_run_data,
 )
 
 
@@ -33,9 +31,21 @@ def _close_frame() -> pd.DataFrame:
 
 
 def _optimization_config() -> OptimizationConfig:
-    return make_optimization_config(
-        search="grid",
-        split=make_run_split_config(method="from_rolling", params={"length": 20, "split": 0.5}),
+    return make_optimization_config(search="grid", observation_block_bars=10)
+
+
+def _preflight(
+    close: pd.DataFrame,
+    source: OptimizationSource,
+    optimization: OptimizationConfig,
+):
+    return build_preflight(
+        source=source,
+        optimization=optimization,
+        index=close.index,
+        symbol_count=close.shape[1],
+        metric_count=len(make_default_metric_registry().ids()),
+        has_open_prices=True,
     )
 
 
@@ -48,24 +58,23 @@ def test_runner_wraps_vbt_no_results_exception_as_runner_error() -> None:
     source = OptimizationSource(
         precompute=empty_precompute,
         simulate=always_skip,
+        resolve_lookbacks=lambda params: {"source": 0},
         params={"fast_window": vbt.Param([2, 5])},
-        output_name="active",
-        evidence={"source": "always_skip"},
-        diagnostics={},
-        metadata={},
+        identity={"source": "always_skip"},
     )
 
     optimization = _optimization_config()
-    with pytest.raises(OptimizationRunnerError, match="no usable results"):
+    registry = make_default_metric_registry()
+    with pytest.raises(OptimizationRunnerError, match="no portfolio allocations"):
         execute_optimization(
-            arrays=make_run_arrays(close=close, open_=close),
+            run_data=make_run_data(close=close, open_=close),
             source=source,
             optimization=optimization,
             book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
             report=make_report_config(),
-            ranking=make_ranking_config(metric="total_return"),
-            metric_registry=make_default_metric_registry(),
-            split_result=build_run_splits_result(close.index, optimization.split),
+            metrics=ResolvedMetrics.resolve(registry, "total_return"),
+            min_trades=0,
+            preflight=_preflight(close, source, optimization),
         )
 
 
@@ -78,29 +87,28 @@ def test_runner_pipeline_runtime_error_surfaces_to_caller() -> None:
     source = OptimizationSource(
         precompute=empty_precompute,
         simulate=exploding_pipeline,
+        resolve_lookbacks=lambda params: {"source": 0},
         params={"fast_window": vbt.Param([2, 5])},
-        output_name="active",
-        evidence={"source": "exploding"},
-        diagnostics={},
-        metadata={},
+        identity={"source": "exploding"},
     )
 
     optimization = _optimization_config()
+    registry = make_default_metric_registry()
     with pytest.raises(RuntimeError, match="pipeline blew up"):
         execute_optimization(
-            arrays=make_run_arrays(close=close, open_=close),
+            run_data=make_run_data(close=close, open_=close),
             source=source,
             optimization=optimization,
             book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
             report=make_report_config(),
-            ranking=make_ranking_config(metric="total_return"),
-            metric_registry=make_default_metric_registry(),
-            split_result=build_run_splits_result(close.index, optimization.split),
+            metrics=ResolvedMetrics.resolve(registry, "total_return"),
+            min_trades=0,
+            preflight=_preflight(close, source, optimization),
         )
 
 
 @pytest.mark.parametrize("reserved_name", ["split", "set", "symbol", "metric_name"])
-def test_runner_rejects_param_names_reserved_for_result_coordinates(
+def test_preflight_rejects_param_names_reserved_for_result_coordinates(
     reserved_name: str,
 ) -> None:
     close = _close_frame()
@@ -111,22 +119,11 @@ def test_runner_rejects_param_names_reserved_for_result_coordinates(
     source = OptimizationSource(
         precompute=empty_precompute,
         simulate=passthrough,
+        resolve_lookbacks=lambda params: {"source": 0},
         params={reserved_name: vbt.Param([1, 2])},
-        output_name="active",
-        evidence={"source": "reserved_name"},
-        diagnostics={},
-        metadata={},
+        identity={"source": "reserved_name"},
     )
 
     optimization = _optimization_config()
-    with pytest.raises(OptimizationRunnerError, match="reserved"):
-        execute_optimization(
-            arrays=make_run_arrays(close=close, open_=close),
-            source=source,
-            optimization=optimization,
-            book=ResolvedBook(make_portfolio_config(fees=0, slippage=0, direction="longonly")),
-            report=make_report_config(),
-            ranking=make_ranking_config(metric="total_return"),
-            metric_registry=make_default_metric_registry(),
-            split_result=build_run_splits_result(close.index, optimization.split),
-        )
+    with pytest.raises(PreflightError, match="reserved"):
+        _preflight(close, source, optimization)

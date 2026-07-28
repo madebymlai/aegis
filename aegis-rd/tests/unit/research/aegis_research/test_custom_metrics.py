@@ -66,12 +66,16 @@ def test_single_extractor_read_is_testable_in_isolation() -> None:
     inside the read.
     """
     index = pd.date_range("2024-01-01", periods=10, freq="D")
-    close = pd.DataFrame({"A": 100 + np.cumsum(np.random.default_rng(42).normal(0, 1, 10))}, index=index)
+    close = pd.DataFrame(
+        {"A": 100 + np.cumsum(np.random.default_rng(42).normal(0, 1, 10))}, index=index
+    )
     entries = pd.DataFrame({"A": False}, index=index)
     exits = pd.DataFrame({"A": False}, index=index)
     entries.iloc[0] = True
     exits.iloc[5] = True
-    pf = vbt.Portfolio.from_signals(close, entries=entries, exits=exits, init_cash=10_000, fees=0.001)
+    pf = vbt.Portfolio.from_signals(
+        close, entries=entries, exits=exits, init_cash=10_000, fees=0.001
+    )
 
     result = BUILTIN_EXTRACTORS["total_return"].read(pf, make_report_config())
     assert isinstance(result, pd.Series)
@@ -91,12 +95,19 @@ def test_register_custom_metrics_records_definition_and_extractor() -> None:
         value_semantics="test_metric",
         provider="test",
     )
-    spec = ExtractorSpec(lambda pf, config: pd.Series([99.0]), scale="identity")
+    spec = ExtractorSpec(
+        lambda pf, config: pd.Series([99.0]),
+        contract_version=1,
+        scale="identity",
+    )
 
     frozen = _registry_with_custom([(definition, spec)])
 
     assert frozen.get("my_custom_metric").title == "My Custom Metric"
-    assert frozen.extractors["my_custom_metric"] is spec
+    registered = frozen.extractors["my_custom_metric"]
+    assert registered.read is spec.read
+    assert registered.scale == spec.scale
+    assert registered.range_factory is not None
     assert set(frozen.extractors) == set(frozen.definitions)
 
 
@@ -111,7 +122,9 @@ def test_register_custom_metric_rejects_shadowing_a_builtin() -> None:
     )
 
     with pytest.raises(MetricRegistryError, match="duplicate metric id"):
-        _registry_with_custom([(definition, ExtractorSpec(lambda pf, config: None))])
+        _registry_with_custom(
+            [(definition, ExtractorSpec(lambda pf, config: None, contract_version=1))]
+        )
 
 
 def test_register_custom_metrics_rejects_duplicate_in_same_call() -> None:
@@ -122,7 +135,7 @@ def test_register_custom_metrics_rejects_duplicate_in_same_call() -> None:
         unit="count",
         value_semantics="test",
     )
-    spec = ExtractorSpec(lambda pf, config: None)
+    spec = ExtractorSpec(lambda pf, config: None, contract_version=1)
 
     registry = MetricRegistry()
     with pytest.raises(MetricRegistryError, match="duplicate metric id"):
@@ -160,7 +173,9 @@ def test_custom_metric_computed_through_extraction_loop() -> None:
         value_semantics="constant_test",
         provider="test",
     )
-    frozen = _registry_with_custom([(definition, ExtractorSpec(_read_constant))])
+    frozen = _registry_with_custom(
+        [(definition, ExtractorSpec(_read_constant, contract_version=1))]
+    )
 
     portfolio, candidate_ids = _two_candidate_portfolio()
     result = central_metrics_from_grouped_accessors(
@@ -200,12 +215,21 @@ def test_custom_metric_does_not_perturb_existing_metrics() -> None:
         candidate_keys,
         ["candidate_id"],
         _registry_with_custom(
-            [(definition, ExtractorSpec(lambda pf, c: pd.Series([42.0] * len(pf.wrapper.columns))))]
+            [
+                (
+                    definition,
+                    ExtractorSpec(
+                        lambda pf, c: pd.Series([42.0] * len(pf.wrapper.columns)),
+                        contract_version=1,
+                    ),
+                )
+            ]
         ).extractors,
     )
 
     for metric_id in PORTFOLIO_METRIC_VALUE_KEYS:
-        assert (
-            with_custom.loc[("candidate-a",), metric_id]
-            == baseline.loc[("candidate-a",), metric_id]
+        with_value = with_custom.loc[("candidate-a",), metric_id]
+        baseline_value = baseline.loc[("candidate-a",), metric_id]
+        assert (pd.isna(with_value) and pd.isna(baseline_value)) or (
+            with_value == baseline_value
         ), f"{metric_id} value changed after adding custom metric"

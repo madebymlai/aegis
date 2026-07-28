@@ -67,8 +67,10 @@ def _compute_score(close, h1, h2, h3, h4, w1, w2, w3, w4):
 def lookback(**params):
     """Warmup bars for momentum score: max of the four horizon parameters."""
     return max(
-        int(params["h1"]), int(params["h2"]),
-        int(params["h3"]), int(params["h4"]),
+        int(params["h1"]),
+        int(params["h2"]),
+        int(params["h3"]),
+        int(params["h4"]),
     )
 
 

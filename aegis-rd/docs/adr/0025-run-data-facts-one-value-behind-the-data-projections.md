@@ -1,5 +1,7 @@
 # Run data facts: one value behind the data projections
 
+Status: superseded by [ADR-0028](0028-run-data-is-the-single-research-data-interface.md)
+
 ADR-0015 rejected an ambient `RunContext` but recorded a revisit trigger: the co-traveling trio `data_result` + `array_contract` + `metric_registry_fingerprint` are all facts about what data this Run ran on, and if they kept co-travelling they would become a domain-named module adjacent to what `run_data_contract.py` assembles. That trigger is now active — the pair crosses the orchestrator, the data metadata artifact writer, setup's evidence baseline, publishing's candidate identity (twice: rows and store provenance), and completion's artifact payload, with the fingerprint riding alongside at every stop. This ADR cashes the trigger in.
 
 `run_data_contract.py` deepens in place: it gains a frozen `RunDataFacts` value with three public fields (`data_result: MarketDataResult`, `array_contract: DataArrayContract`, `metric_registry_fingerprint: str | None`) and three projection methods — `evidence_payload()` (was `build_run_data_evidence_payload`), `candidate_data_identity()` (was `build_candidate_data_identity`), and `metadata_artifact_payload()` (absorbed from `provenance/data_artifacts.py`, where `to_builtin(data_result.metadata) | array_contract.metadata()` was a fourth home for the pair's schema knowledge). The free functions are deleted, not shimmed (Forward-First). Fields stay public: the module is a record of facts, and the fingerprint is consumed as a bare value inside three payloads. The schema-version strings (`candidate_data_identity.v3`) and the adjustment-mode fact stay implementation.
@@ -23,3 +25,9 @@ Landing is one step. ADR-0015 needed two because it curated fields while naming 
 - Every projection of the pair's schema — evidence payload, candidate identity, metadata artifact payload — lives in exactly one module; `provenance/data_artifacts.py` keeps the write (recorder coupling stays in provenance) but loses the payload knowledge.
 - **Amends ADR-0015**: its revisit trigger is discharged; the bundle carries a domain name, the recorder stays outside the seam, and no stage gains ambient authority.
 - `manifest.json` and `strategy_run.json` are byte-identical — the regression oracle for the whole change.
+
+**Amendment (2026-07-23).** The `data_metadata.json` projection and its writer are deleted. The
+projection had become byte-for-byte equivalent to RunData Evidence and had no production reader.
+RunData identity, provenance, adjustment, and Array-contract facts now persist only under the
+Manifest's `evidence.data` section; Candidate identity remains independently owned by
+CandidateStore.

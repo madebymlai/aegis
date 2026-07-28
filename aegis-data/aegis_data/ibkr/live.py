@@ -89,8 +89,14 @@ def attach_live_clients(
     # config for one carrying the IBKR clients, then register the factories.
     node._config = msgspec.structs.replace(
         node._config,
-        data_clients={IB_CLIENT_NAME: data_config},
-        exec_clients={IB_CLIENT_NAME: exec_config},
+        data_clients={
+            **node._config.data_clients,
+            IB_CLIENT_NAME: data_config,
+        },
+        exec_clients={
+            **node._config.exec_clients,
+            IB_CLIENT_NAME: exec_config,
+        },
     )
     node.add_data_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveDataClientFactory)
     node.add_exec_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveExecClientFactory)

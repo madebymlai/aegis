@@ -5,7 +5,7 @@ Structural validation is driven through pydantic construction
 coordinator-level wording.  Registry cross-check rules (membership, ``all``,
 duplicates, params, output contract) are covered at their own seam in
 ``test_cross_checks.py``; this file keeps only the thin coordinator net —
-a valid config resolves, and structural + registry issues co-report.
+a valid config resolves, while structural failures stop before registry checks.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _component_registry(tmp_path: Path):
         "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
         "}\n"
         "\n# %% main compute\n"
-        "def run(bundle):\n    \"\"\"Fixture strategy, never executed.\"\"\"\n"
+        'def run(bundle):\n    """Fixture strategy, never executed."""\n'
         "    raise RuntimeError('not executed during config tests')\n"
     )
     return discover_component_registry(root=root, repo_root=tmp_path)
@@ -76,11 +76,7 @@ def _resolve(
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 20, "split": 0.5},
-                "max_splits": 10,
-            },
+            "observation_block_bars": 20,
         },
     }
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
@@ -212,7 +208,9 @@ def test_indicators_reject_extra_keys_on_item(tmp_path: Path) -> None:
 def test_strategy_not_a_mapping_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(tmp_path=tmp_path, strategy="not_a_dict")  # type: ignore[arg-type]
-    assert any(i.path == "strategy" and "Input should be a dictionary" in i.message for i in e.value.issues)
+    assert any(
+        i.path == "strategy" and "Input should be a dictionary" in i.message for i in e.value.issues
+    )
 
 
 def test_strategy_missing_id_reported_with_pydantic_wording(tmp_path: Path) -> None:
@@ -233,7 +231,8 @@ def test_indicators_not_a_list_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigValidationError) as e:
         _resolve(tmp_path=tmp_path, indicators="not_a_list")  # type: ignore[arg-type]
     assert any(
-        i.path == "indicators" and "Input should be a valid list" in i.message for i in e.value.issues
+        i.path == "indicators" and "Input should be a valid list" in i.message
+        for i in e.value.issues
     )
 
 
@@ -256,10 +255,9 @@ def test_indicator_missing_id_reported_with_pydantic_wording(tmp_path: Path) -> 
 # ── coordinator: all-errors-at-once ──────────────────────────────────────────
 
 
-def test_co_reports_strategy_structural_and_indicator_membership_errors(
+def test_strategy_structural_failure_stops_before_indicator_membership(
     tmp_path: Path,
 ) -> None:
-    """Structural errors and membership errors are both reported."""
     with pytest.raises(ConfigValidationError) as e:
         _resolve(
             tmp_path=tmp_path,
@@ -268,7 +266,7 @@ def test_co_reports_strategy_structural_and_indicator_membership_errors(
         )
     paths = {i.path for i in e.value.issues}
     assert "strategy.id" in paths
-    assert "indicators[0].id" in paths
+    assert "indicators[0].id" not in paths
 
 
 def test_co_reports_indicator_duplicate_and_membership_errors(

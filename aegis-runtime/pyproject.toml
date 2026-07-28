@@ -12,6 +12,7 @@ dependencies = [
   "numba>=0.66.0",
   "numpy",
   "pandas",
+  "pydantic>=2.12",
 ]
 
 [tool.setuptools.packages.find]

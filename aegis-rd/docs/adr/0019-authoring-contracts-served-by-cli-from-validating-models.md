@@ -66,3 +66,17 @@ field table cannot express, only curated prose plus interpolated constants
 - `docs/components.md` and the configs README keep only directory-level concerns
   (gitignore semantics, layout-carries-no-semantics) plus a pointer to the guide
   commands.
+
+## Amendment — 2026-07-22: Run Config structure comes directly from the model
+
+`RunConfig` now directly requires the current `schema_version` and a non-null
+`optimization` section. The config-schema guide therefore no longer distinguishes a raw
+Pydantic model from a forward-contract prepass overlay. Requiredness and literal
+constraints are rendered from the validating model; curated prose remains responsible
+for domain semantics, examples, removed-field guidance, Lock syntax, and catalog
+pointers.
+
+The exported prepass overlay constants and their compatibility aliases are removed.
+This preserves the hybrid-guide decision while restoring one structural authority: a
+document accepted by the printed model-derived shape is accepted by structural
+validation, and a document rejected structurally receives Pydantic-backed issues.

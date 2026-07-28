@@ -12,7 +12,6 @@ from research.aegis_research.cli_support.errors import (
 from research.aegis_research.cli_support.output import (
     CommandResult,
     real_path_text,
-    run_refs,
     write_success,
 )
 from research.aegis_research.component_registry import (
@@ -20,27 +19,18 @@ from research.aegis_research.component_registry import (
     discover_component_registry,
 )
 from research.aegis_research.configuration import (
-    ConfigSelectionEvidence,
     ConfigValidationError,
     load_run_config,
-    with_run_config_selection,
 )
-from research.aegis_research.provenance.recorder import RerunMode
-from research.aegis_research.run_pipeline import run_strategy_sweep
+from research.aegis_research.run.identity import InvalidRunIdError, RunId
+from research.aegis_research.run.pipeline import run_strategy_sweep
+from research.aegis_research.run.result import RunResult
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("run", help="Run a config")
     parser.add_argument("config", nargs="?", help="Path to run YAML")
-    parser.add_argument(
-        "--rerun-mode",
-        choices=[RerunMode.NEW, RerunMode.DUPLICATE, RerunMode.FORK, RerunMode.OVERWRITE],
-        default=RerunMode.NEW,
-        help="Explicit run creation mode",
-    )
     parser.add_argument("--run-id", help="Optional physical run id")
-    parser.add_argument("--parent-run-id", help="Parent run id for forked runs")
-    parser.add_argument("--supersedes-run-id", help="Prior run id superseded by overwrite mode")
     parser.set_defaults(handler=handle_run, command_name="run")
 
 
@@ -57,36 +47,27 @@ def _handle_strategy_run(
     config_path: Path,
     **streams: Any,
 ) -> int:
-    failure_refs: dict[str, Any] = {}
-    selection_evidence = ConfigSelectionEvidence(
-        source="explicit", config_path=str(config_path.resolve())
-    )
+    explicit_run_id = _explicit_run_id(args.run_id)
+    early_failure_refs = {"run_id": str(explicit_run_id)} if explicit_run_id is not None else None
     try:
         component_registry = discover_component_registry()
         resolved = load_run_config(
             config_path,
             component_registry=component_registry,
         )
-        resolved = with_run_config_selection(
-            resolved,
-            selection_evidence,
-        )
     except (ConfigValidationError, ComponentRegistryError) as error:
-        raise ConfigCliError(str(error)) from error
+        raise ConfigCliError(str(error), run_refs=early_failure_refs) from error
     except OSError as error:
-        raise ConfigCliError(str(error)) from error
+        raise ConfigCliError(str(error), run_refs=early_failure_refs) from error
 
+    attempted_run_id = explicit_run_id or RunId.create(None, run_name=resolved.config.name)
+    failure_refs = {"run_id": str(attempted_run_id)}
     try:
         result = run_strategy_sweep(
             resolved,
             component_registry=component_registry,
-            rerun_mode=args.rerun_mode,
-            run_id=args.run_id,
-            parent_run_id=args.parent_run_id,
-            supersedes_run_id=args.supersedes_run_id,
-            on_run_refs=failure_refs.update,
+            run_id=str(attempted_run_id),
         )
-        failure_refs.update(result)
     except KeyboardInterrupt as error:
         raise InterruptedCliError(
             "strategy run interrupted",
@@ -106,27 +87,27 @@ def _handle_strategy_run(
     return write_success(
         CommandResult(
             command="run",
-            payload=_run_payload(result, selection_evidence=selection_evidence),
+            payload=_run_payload(result),
         ),
         **streams,
     )
 
 
-def _run_payload(
-    result: dict[str, Any],
-    *,
-    selection_evidence: ConfigSelectionEvidence,
-) -> dict[str, Any]:
+def _explicit_run_id(value: str | None) -> RunId | None:
+    if value is None:
+        return None
+    try:
+        return RunId(value)
+    except InvalidRunIdError as error:
+        raise ConfigCliError(str(error)) from error
+
+
+def _run_payload(result: RunResult) -> dict[str, Any]:
     return {
-        "selection": selection_evidence.manifest(),
-        "run": run_refs(result),
-        "artifacts": {
-            "strategy_artifact_id": result["strategy_artifact_id"],
-            "strategy_artifact_path": real_path_text(result["strategy_artifact_path"]),
-        },
+        "run": {"id": str(result.run_id)},
         "candidate_store": {
-            "path": real_path_text(result["candidate_store_path"]),
+            "path": real_path_text(result.candidate_store_path),
         },
-        "optimization": result["optimization"],
-        "candidates": result["candidates"],
+        "optimization": result.optimization.to_dict(),
+        "candidates": [candidate.to_dict() for candidate in result.candidates],
     }

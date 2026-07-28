@@ -1,310 +1,148 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 import pytest
 from vectorbtpro import vbt
 
-from research.aegis_research.configuration import OptimizationConfig
 from research.aegis_research.optimization.preflight import (
     PreflightError,
     build_preflight,
 )
-from research.aegis_research.run_splits import RunSplit
-from tests.support.research.aegis_research.factories import (
-    make_optimization_config,
-    make_run_split_config,
-)
+from research.aegis_research.optimization.source import OptimizationSource
+from tests.support.research.aegis_research.factories import make_optimization_config
 
 
-def test_preflight_reports_two_phase_shape_and_execution_policy() -> None:
-    diagnostics = build_preflight(
-        params={
-            "fast_window": vbt.Param([5, 10]),
-            "entry_threshold": vbt.Param([0.4, 0.45], level=1),
-            "exit_threshold": vbt.Param([0.6, 0.55], level=1),
+def _source(
+    params: dict[str, vbt.Param], *, lookback_param: str | None = None
+) -> OptimizationSource:
+    def should_not_execute(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("preflight must not execute Indicator or Portfolio work")
+
+    def resolve(candidate: dict[str, Any]) -> dict[str, int]:
+        return {"component": 2 if lookback_param is None else int(candidate[lookback_param])}
+
+    return OptimizationSource(
+        precompute=should_not_execute,
+        simulate=should_not_execute,
+        resolve_lookbacks=resolve,
+        params=params,
+        identity={},
+    )
+
+
+def test_preflight_reports_continuous_replay_and_observation_block_geometry() -> None:
+    source = _source(
+        {
+            "window": vbt.Param([2, 4]),
+            "threshold": vbt.Param([0.4, 0.6]),
         },
-        optimization=_optimization(execute={"chunk_len": "auto"}),
-        splits=_splits(split_count=2, selection_rows=3, held_out_rows=2),
+        lookback_param="window",
+    )
+
+    result = build_preflight(
+        source=source,
+        optimization=make_optimization_config(observation_block_bars=6),
+        index=pd.RangeIndex(20),
         symbol_count=2,
+        metric_count=7,
         has_open_prices=True,
     )
 
-    assert diagnostics["schema_version"] == "optimization_preflight.v1"
-    assert diagnostics["theoretical_combinations"] == 4
-    assert diagnostics["conditioned_combinations"] == 4
+    diagnostics = result.diagnostics
+    assert diagnostics["schema_version"] == "optimization_preflight.v2"
     assert diagnostics["sampled_combinations"] == 4
-    assert diagnostics["split_count"] == 2
-    assert diagnostics["selection_rows"] == 6
-    assert diagnostics["held_out_rows"] == 4
-    assert diagnostics["symbol_count"] == 2
-    assert diagnostics["metric_count"] == 6
-    assert diagnostics["materialized_frame_count"] == 5
-    assert diagnostics["held_out_candidates"] == 3
-    # Phase 1: full 4-combo grid x 2 splits x 6 metrics. Phase 3: 3 reps x 2 x 6.
-    assert diagnostics["selection_result_cells"] == 48
-    assert diagnostics["held_out_result_cells"] == 36
-    assert diagnostics["estimated_result_cells"] == 84
-    # Phase 1 broadcast: 4 combos x 6 selection rows x 2 symbols x 5 frames.
-    # Phase 3 broadcast: 3 reps x 4 held-out rows x 2 symbols x 5 frames.
-    assert diagnostics["selection_broadcast_cells"] == 240
-    assert diagnostics["held_out_broadcast_cells"] == 120
-    assert diagnostics["estimated_portfolio_broadcast_cells"] == 360
-    assert diagnostics["estimated_output_cells"] == 360
-    # Public artifact: 3 role rows + 3 candidates x 2 splits x 2 sets.
-    assert diagnostics["candidate_row_count"] == 3
-    assert "lock_row_count" not in diagnostics
-    assert diagnostics["estimated_public_rows"] == 15
-    assert diagnostics["execute"] == {"chunk_len": "auto"}
-    assert "max_batch_expansion_bytes" not in diagnostics["limits"]
+    assert diagnostics["loaded_rows"] == 20
+    assert diagnostics["derived_warmup_rows"] == 4
+    assert diagnostics["scored_start"] == 4
+    assert diagnostics["scored_rows"] == 16
+    assert diagnostics["observation_block_bars"] == 6
+    assert diagnostics["observation_block_count"] == 2
+    assert diagnostics["observation_block_bounds"] == [[4, 10], [10, 20]]
+    assert diagnostics["peak_candidate_batch_count"] == 4
+    assert diagnostics["peak_candidate_batch_cells"] == 4 * 20 * 2 * 5
+    assert diagnostics["observation_metric_cells"] == 4 * 2 * 7
+    assert "limits" not in diagnostics
+    assert result.blocks.bounds == ((4, 10), (10, 20))
 
 
-def test_preflight_public_rows_reflect_three_candidate_publish() -> None:
-    # A 500-combo selection grid still publishes exactly three representative
-    # candidates — the public artifact never scaled back to a per-combo leaderboard.
-    diagnostics = build_preflight(
-        params={"window": vbt.Param(range(500))},
-        optimization=_optimization(),
-        splits=_splits(split_count=2, selection_rows=3, held_out_rows=2),
+def test_preflight_one_candidate_and_exact_minimum_two_blocks_agree() -> None:
+    result = build_preflight(
+        source=_source({"window": vbt.Param([2])}, lookback_param="window"),
+        optimization=make_optimization_config(observation_block_bars=4),
+        index=pd.RangeIndex(10),
         symbol_count=1,
+        metric_count=6,
         has_open_prices=False,
     )
 
-    assert diagnostics["sampled_combinations"] == 500
-    assert diagnostics["candidate_row_count"] == 3
-    assert diagnostics["estimated_public_rows"] == 3 + 3 * 2 * 2
+    assert result.plan.candidates.count == 1
+    assert result.blocks.bounds == ((2, 6), (6, 10))
+    assert result.diagnostics["observation_metric_cells"] == 1 * 2 * 6
 
 
-def test_preflight_held_out_phase_scales_with_three_candidates_not_the_grid() -> None:
-    diagnostics = build_preflight(
-        params={"window": vbt.Param([5, 10, 20, 40])},
-        optimization=_optimization(),
-        splits=_splits(split_count=2, selection_rows=10, held_out_rows=4),
+def test_preflight_merges_final_remainder_into_the_last_complete_block() -> None:
+    result = build_preflight(
+        source=_source({"window": vbt.Param([1])}, lookback_param="window"),
+        optimization=make_optimization_config(observation_block_bars=4),
+        index=pd.RangeIndex(12),
         symbol_count=1,
+        metric_count=6,
         has_open_prices=False,
     )
 
-    assert diagnostics["sampled_combinations"] == 4
-    assert diagnostics["held_out_candidates"] == 3
-    assert diagnostics["selection_result_cells"] == 4 * 2 * 6
-    assert diagnostics["held_out_result_cells"] == 3 * 2 * 6
-    # Selection rows total = 10 x 2 splits; held-out rows total = 4 x 2; frames = 4.
-    assert diagnostics["selection_broadcast_cells"] == 4 * 20 * 1 * 4
-    assert diagnostics["held_out_broadcast_cells"] == 3 * 8 * 1 * 4
-    assert diagnostics["estimated_result_cells"] == 4 * 2 * 6 + 3 * 2 * 6
-    assert diagnostics["estimated_portfolio_broadcast_cells"] == 4 * 20 * 1 * 4 + 3 * 8 * 1 * 4
+    assert result.blocks.bounds == ((1, 5), (5, 12))
 
 
-def test_preflight_held_out_candidates_clamp_to_a_small_grid() -> None:
-    diagnostics = build_preflight(
-        params={"window": vbt.Param([5])},
-        optimization=_optimization(),
-        splits=_splits(split_count=1, selection_rows=4, held_out_rows=2),
+def test_materialized_grid_maximum_lookback_sets_one_common_start() -> None:
+    result = build_preflight(
+        source=_source({"window": vbt.Param([2, 7])}, lookback_param="window"),
+        optimization=make_optimization_config(observation_block_bars=4),
+        index=pd.RangeIndex(20),
         symbol_count=1,
+        metric_count=6,
         has_open_prices=False,
     )
 
-    assert diagnostics["sampled_combinations"] == 1
-    assert diagnostics["held_out_candidates"] == 1
-    assert diagnostics["held_out_result_cells"] == 1 * 1 * 6
-    # Three role rows are still published even when the grid holds one candidate.
-    assert diagnostics["candidate_row_count"] == 3
+    assert result.plan.lookbacks.candidate_warmup_bars == (2, 7)
+    assert result.plan.lookbacks.scored_start == 7
+    assert result.blocks.bounds[0][0] == 7
 
 
-def test_preflight_allows_random_subset_when_sampled_shape_fits() -> None:
-    diagnostics = build_preflight(
-        params={
-            "fast_window": vbt.Param(range(1_000)),
-            "slow_window": vbt.Param(range(1_000)),
-        },
-        optimization=_optimization(search="random", random_subset=10, seed=42),
-        splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
-        symbol_count=1,
-        has_open_prices=False,
-    )
-
-    assert diagnostics["theoretical_combinations"] == 1_000_000
-    assert diagnostics["sampled_combinations"] == 10
-    # Phase 1: 10 x 5 x 1 x 4 = 200. Phase 3: 3 x 5 x 1 x 4 = 60.
-    assert diagnostics["estimated_portfolio_broadcast_cells"] == 260
-
-
-def test_preflight_rejects_random_subset_above_executable_combinations() -> None:
-    with pytest.raises(PreflightError, match="random_subset") as error:
-        build_preflight(
-            params={
-                "fast_window": vbt.Param([2, 5]),
-                "slow_window": vbt.Param([10, 20]),
-            },
-            optimization=_optimization(search="random", random_subset=100, seed=42),
-            splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
-            symbol_count=1,
-            has_open_prices=False,
-        )
-
-    assert error.value.diagnostics["sampled_combinations"] == 4
-    assert error.value.diagnostics["sampled_count_source"] == "shape_estimate"
-
-
-def test_preflight_rejects_oversized_exhaustive_grid_before_execution() -> None:
-    with pytest.raises(PreflightError) as error:
-        build_preflight(
-            params={
-                "fast_window": vbt.Param(range(1_000)),
-                "slow_window": vbt.Param(range(1_000)),
-            },
-            optimization=_optimization(max_estimated_output_cells=100),
-            splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
-            symbol_count=1,
-            has_open_prices=False,
-        )
-
-    assert "max_estimated_output_cells" in str(error.value)
-    assert error.value.diagnostics["theoretical_combinations"] == 1_000_000
-    assert error.value.diagnostics["sampled_combinations"] == 1_000_000
-
-
-def test_preflight_rejects_random_sample_above_evidence_budget() -> None:
-    with pytest.raises(PreflightError) as error:
-        build_preflight(
-            params={
-                "fast_window": vbt.Param(range(1_000)),
-                "slow_window": vbt.Param(range(1_000)),
-            },
-            optimization=_optimization(
-                search="random",
-                random_subset=100,
-                seed=42,
-                max_public_artifact_bytes=10_000,
-            ),
-            splits=_splits(split_count=2, selection_rows=5, held_out_rows=5),
-            symbol_count=1,
-            has_open_prices=False,
-        )
-
-    assert "max_public_artifact_bytes" in str(error.value)
-    assert error.value.diagnostics["theoretical_combinations"] == 1_000_000
-    assert error.value.diagnostics["sampled_combinations"] == 100
-    assert error.value.diagnostics["estimated_public_rows"] == 15
-
-
-def test_preflight_conditioned_grid_uses_vbt_executable_combinations() -> None:
-    diagnostics = build_preflight(
-        params={
-            "fast_window": vbt.Param([2, 5, 10], condition="fast_window < slow_window"),
-            "slow_window": vbt.Param([3, 8]),
-        },
-        optimization=_optimization(),
-        splits=_splits(split_count=1, selection_rows=3, held_out_rows=2),
-        symbol_count=1,
-        has_open_prices=False,
-    )
-
-    assert diagnostics["theoretical_combinations"] == 6
-    assert diagnostics["conditioned_combinations"] == 3
-    assert diagnostics["sampled_combinations"] == 3
-    assert diagnostics["sampled_count_source"] == "vbt.combine_params"
-
-
-def test_search_mode_is_exhaustive_for_non_random_search() -> None:
-    diagnostics = build_preflight(
-        params={"window": vbt.Param([5, 10, 20])},
-        optimization=_optimization(),
-        splits=_splits(split_count=1, selection_rows=3, held_out_rows=2),
-        symbol_count=1,
-        has_open_prices=False,
-    )
-
-    assert diagnostics["search_mode"] == "exhaustive"
-
-
-def test_search_mode_is_random_when_subset_reduces_the_grid() -> None:
-    diagnostics = build_preflight(
-        params={
-            "fast_window": vbt.Param(range(1_000)),
-            "slow_window": vbt.Param(range(1_000)),
-        },
-        optimization=_optimization(search="random", random_subset=10, seed=42),
-        splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
-        symbol_count=1,
-        has_open_prices=False,
-    )
-
-    assert diagnostics["sampled_combinations"] == 10
-    assert diagnostics["search_mode"] == "random"
-
-
-def test_search_mode_is_exhaustive_auto_when_subset_matches_total_combos() -> None:
-    diagnostics = build_preflight(
-        params={"fast_window": vbt.Param([2, 5]), "slow_window": vbt.Param([10, 20])},
-        optimization=_optimization(search="random", random_subset=4, seed=42),
-        splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
-        symbol_count=1,
-        has_open_prices=False,
-    )
-
-    # 4 executable combos == random_subset -> the min() runs every combo.
-    assert diagnostics["sampled_combinations"] == 4
-    assert diagnostics["search_mode"] == "exhaustive_auto"
-
-
-def test_search_mode_exhaustive_auto_surfaced_when_subset_exceeds_combos() -> None:
-    # Param locking reduces the grid below random_subset; the run fails closed,
-    # but the evidence still classifies it as exhaustive_auto.
-    with pytest.raises(PreflightError, match="random_subset") as error:
-        build_preflight(
-            params={"fast_window": vbt.Param([2, 5]), "slow_window": vbt.Param([10, 20])},
-            optimization=_optimization(search="random", random_subset=100, seed=42),
-            splits=_splits(split_count=1, selection_rows=5, held_out_rows=5),
-            symbol_count=1,
-            has_open_prices=False,
-        )
-
-    assert error.value.diagnostics["search_mode"] == "exhaustive_auto"
-
-
-def _optimization(
-    *,
-    search: str = "grid",
-    random_subset: int | None = None,
-    seed: int | None = None,
-    max_estimated_output_cells: int = 1_000_000,
-    max_public_artifact_bytes: int = 1_000_000,
-    execute: dict[str, object] | None = None,
-) -> OptimizationConfig:
-    return make_optimization_config(
-        search=search,
-        split=make_run_split_config(
-            method="from_rolling",
-            params={"length": 10, "split": 0.5},
-            max_splits=100,
-            max_estimated_output_cells=max_estimated_output_cells,
-            max_public_artifact_bytes=max_public_artifact_bytes,
+def test_random_preflight_uses_the_materialized_seeded_sample() -> None:
+    result = build_preflight(
+        source=_source({"window": vbt.Param(range(1, 101))}, lookback_param="window"),
+        optimization=make_optimization_config(
+            search="random",
+            random_subset=3,
+            seed=42,
+            observation_block_bars=4,
         ),
-        random_subset=random_subset,
-        seed=seed,
-        execute=execute or {},
+        index=pd.RangeIndex(120),
+        symbol_count=1,
+        metric_count=6,
+        has_open_prices=False,
     )
 
+    assert result.plan.candidates.count == 3
+    assert result.diagnostics["sampled_combinations"] == 3
+    assert result.diagnostics["sampled_count_source"] == "materialized_grid"
 
-def _splits(
-    *,
-    split_count: int,
-    selection_rows: int,
-    held_out_rows: int,
-) -> list[RunSplit]:
-    splits = []
-    for split_number in range(split_count):
-        offset = split_number * (selection_rows + held_out_rows)
-        selection_index = pd.RangeIndex(offset, offset + selection_rows)
-        held_out_index = pd.RangeIndex(
-            offset + selection_rows, offset + selection_rows + held_out_rows
+
+def test_insufficient_post_warmup_history_fails_before_execution() -> None:
+    source = _source({"window": vbt.Param([7])}, lookback_param="window")
+
+    with pytest.raises(PreflightError, match="at least two") as error:
+        build_preflight(
+            source=source,
+            optimization=make_optimization_config(observation_block_bars=4),
+            index=pd.RangeIndex(14),
+            symbol_count=1,
+            metric_count=6,
+            has_open_prices=False,
         )
-        splits.append(
-            RunSplit(
-                label=f"split_{split_number}",
-                set_indices={"selection": selection_index, "held_out": held_out_index},
-                selection_set="selection",
-                held_out_set="held_out",
-            )
-        )
-    return splits
+
+    assert error.value.diagnostics["loaded_rows"] == 14
+    assert error.value.diagnostics["derived_warmup_rows"] == 7
+    assert error.value.diagnostics["scored_rows"] == 7

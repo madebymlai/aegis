@@ -5,30 +5,27 @@
 ---
 
 Aegis RD is a research operating system for turning market hypotheses into
-reproducible evidence.
+reproducible Candidates.
 
-It gives every idea the same audit trail: source data, indicator construction,
-strategy signals, split scoring, execution assumptions, costs, metrics, and
-promotion evidence. The result is a research process you can rerun, inspect,
-reject, or promote without relying on memory, notebooks, or hand-waved
-assumptions.
+It gives every idea the same execution contract: source data, indicator construction,
+strategy allocations, continuous replay, execution assumptions, costs, Metrics, and
+reproducible Candidate identity.
 
-Each valid run writes a local `manifest.json`. It records lifecycle status,
-config evidence, environment and Git evidence, artifact hashes, schema versions,
-and lineage. Failed runs stay inspectable. Split-based validation keeps
-per-split artifacts separate from aggregate reports, and optimization writes
-immutable candidate, leaderboard, and lock evidence.
+Optimization replays each Candidate once, observes fixed chronological blocks without
+resetting portfolio state, and atomically commits the best, median, and worst roles to
+the shared Candidate Store. Failed Runs leave no durable Run or Candidate record.
 
 ## What it does
 
 Each research loop follows one clear contract:
 
-- **Load** market data from the shared Nautilus catalog by native `InstrumentId`,
-  with explicit arrays, timeframe, timezone, missing-data, and quality behavior.
+- **Load** one coherent `RunData` value from the shared Nautilus catalog by native
+  `InstrumentId`, with explicit Arrays, timeframe, and missing-index policy.
 - **Build** indicator outputs with preserved parameter metadata.
 - **Generate** strategy signals from reviewed components.
-- **Split** run scoring into selection and held-out windows (optional), with
-  native VBT splitter labels preserved as evidence.
+- **Replay** each fixed Candidate continuously after a common derived warmup.
+- **Observe** fixed chronological blocks on the unchanged full Portfolio and
+  rank Candidates by their mean within-block rank.
 - **Simulate** shared-cash portfolios with explicit entry budgets, costs,
   direction, metric scope, and benchmark assumptions. Fill timing is
   configurable (`portfolio.fill_timing`: `next_open`, `next_close`, or
@@ -39,13 +36,13 @@ Each research loop follows one clear contract:
 ## Commands
 
 - **`aerd run <config>`** scores a strategy or research sweep over direct
-  component references, then persists candidate rows and lock refs. A component's
-  `param_space_callable` produces a native VBT parameter grid.
-  `optimization.split` names the exact VBT `Splitter` method (for example
-  `from_rolling` or `from_purged_kfold`). A later run can reuse a result by
+  component references, then commits a Candidate Set and returns Lock handles. A component's
+  `param_space_callable` produces a native VBT parameter grid, while
+  `optimization.observation_block_bars` fixes the observational regime length.
+  A later run can reuse a result by
   `lock_id`, or by `candidate_id` plus its source `run_id`.
 - **`aerd show <topic>`** renders the authoring contracts and catalogs
-  (`config-schema`, `components`, `splitters`, `indicator-schema`,
+  (`config-schema`, `components`, `indicator-schema`,
   `strategy-schema`) from the validating models, so the docs never drift from the
   code.
 - **`aerd export <config>`** bakes a locked config into an **Execution Bundle**
@@ -53,15 +50,32 @@ Each research loop follows one clear contract:
 
 Configs stay inert: YAML selects trusted IDs and parameters only. It cannot
 import Python, execute formulas, point at arbitrary notebooks or scripts, or
-reference generated run artifacts as reproducible inputs. Stale `lane`, `train`,
+reference generated Run files as reproducible inputs. Stale `lane`, `train`,
 `model`, `label`, `labeler`, or `signals` fields are rejected before a run
-directory is created.
+is attempted.
+
+## Code layout
+
+The `research/aegis_research` package follows domain ownership:
+
+- `run/` owns typed Run orchestration and the RunData contract. `run.pipeline`
+  is the public orchestration seam.
+- `candidates/` owns atomic Candidate commit, Candidate Store identity,
+  and Lock resolution across Runs.
+- `optimization/` owns Candidate search and evaluation: precompute, Preflight,
+  continuous replay, Observation Blocks, ranking, and the optimizer runner.
+- `portfolio_simulation/` owns `ResolvedBook` and the internal VectorBT
+  simulation engine used by replay.
+- `configuration/`, `component_registry/`, and `metrics/` own their matching
+  authoring and registry domains.
 
 ## Market data contract
 
-Runs load market data from Aegis Data's Nautilus `ParquetDataCatalog` through the
-shared DataProvider port. A run config declares native Nautilus `InstrumentId`
-strings:
+Runs call one deep `load_run_data` operation over Aegis Data's Nautilus
+`ParquetDataCatalog` port. It resolves tradeables, materialises continuous
+futures, loads custom Arrays, applies base-currency conversion, validates the
+result, and returns one coherent `RunData` value. A run config declares native
+Nautilus `InstrumentId` strings:
 
 ```yaml
 data:
@@ -78,11 +92,12 @@ data:
 the same catalog and port, but never exposed as tradeable columns. The forward
 data schema has no `source`, `symbols`, or `provider` field.
 
-Each run writes public `data.metadata` with the requested and observed native
-IDs, canonical feature availability, per-instrument diagnostics, quality state,
-timezone and index evidence, and provider-port provenance. Private `data.native`
-preserves VectorBT-native state after public metadata succeeds, and stays
-secret-scanned and fail-closed.
+`RunData` carries the kernel `MarketDataBundle` consumed by Components, the one
+`InstrumentResolution` used by simulation and export, currency and distribution
+facts, catalog size increments, and structural load Evidence. Successful values
+are valid by construction. Environmental failures carry Evidence that is
+persisted before the Run is marked failed; there is no configurable degradation
+or partially usable success state.
 
 ## Why it exists
 

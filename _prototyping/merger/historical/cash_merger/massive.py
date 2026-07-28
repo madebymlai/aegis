@@ -14,24 +14,13 @@ from collections import Counter
 from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
-from statistics import median
-from typing import Any, Protocol
-
-from cash_merger.census import CashMergerEvent, EventStatus
+from typing import Any
 
 _API_ROOT = "https://api.massive.com"
 _DISCLOSURE_PATH = "/stocks/filings/8-K/vX/disclosures"
-_INDEX_PATH = "/stocks/filings/vX/index"
 _TEXT_PATH = "/stocks/filings/8-K/vX/text"
-_AGREEMENT_CATEGORIES = ("merger_agreement", "acquisition_agreement")
-_COMPLETION_CATEGORIES = ("merger_completion", "acquisition_completion")
-_TERMINATION_CATEGORIES = (
-    "deal_termination",
-    "deal_withdrawal",
-    "deal_breach_default",
-)
 _OFFER_PATTERNS = (
     re.compile(
         r"(?:agreement|transaction).{0,500}?\$\s*(\d{1,4}(?:\.\d{1,4})?)\s+"
@@ -78,25 +67,8 @@ _EQUITY_AWARD = re.compile(
     r"\bRSUs?\b|restricted\s+stock|stock\s+options?|equity\s+awards?|notional\s+units?",
     re.I,
 )
-_RESOLUTION_LANGUAGE = re.compile(r"merger|acqui(?:sition|red)|transaction", re.I)
-
-
 class MassiveSourceError(RuntimeError):
     """Massive did not return a complete, interpretable response."""
-
-
-@dataclass(frozen=True)
-class PricePoint:
-    trading_date: date
-    close: float
-
-
-class MassiveDataClient(Protocol):
-    def disclosures(self, category: str, start: date, end: date) -> Iterable[dict[str, Any]]: ...
-
-    def daily_closes(self, ticker: str, start: date, end: date) -> Iterable[PricePoint]: ...
-
-    def filing_text(self, accession: str, cik: str, filed_on: date) -> str | None: ...
 
 
 @dataclass
@@ -131,65 +103,6 @@ class MassiveClient:
             url = str(next_url) if next_url else ""
             params = None
         return tuple(rows)
-
-    def filing_index(
-        self, form_type: str, start: date, end: date
-    ) -> tuple[dict[str, Any], ...]:
-        return self._paged(
-            _INDEX_PATH,
-            {
-                "form_type": form_type,
-                "filing_date.gte": start.isoformat(),
-                "filing_date.lte": end.isoformat(),
-                "limit": 10000,
-                "sort": "filing_date.asc",
-            },
-            f"filing index for {form_type}",
-        )
-
-    def filing_index_tickers(
-        self,
-        tickers: Iterable[str],
-        form_type: str,
-        start: date,
-        end: date,
-        *,
-        batch_size: int = 75,
-    ) -> tuple[dict[str, Any], ...]:
-        normalized = tuple(sorted({str(ticker).upper() for ticker in tickers}))
-        rows: list[dict[str, Any]] = []
-        for offset in range(0, len(normalized), batch_size):
-            batch = normalized[offset : offset + batch_size]
-            rows.extend(
-                self._paged(
-                    _INDEX_PATH,
-                    {
-                        "ticker.any_of": ",".join(batch),
-                        "form_type": form_type,
-                        "filing_date.gte": start.isoformat(),
-                        "filing_date.lte": end.isoformat(),
-                        "limit": 10000,
-                        "sort": "filing_date.asc",
-                    },
-                    f"{form_type} index for {len(batch)} tickers",
-                )
-            )
-        return tuple(rows)
-
-    def filing_texts(
-        self, cik: str, start: date, end: date
-    ) -> tuple[dict[str, Any], ...]:
-        return self._paged(
-            _TEXT_PATH,
-            {
-                "cik": cik.zfill(10),
-                "filing_date.gte": start.isoformat(),
-                "filing_date.lte": end.isoformat(),
-                "limit": 100,
-                "sort": "filing_date.asc",
-            },
-            f"8-K text for CIK {cik}",
-        )
 
     def filing_texts_many(
         self,
@@ -239,34 +152,16 @@ class MassiveClient:
             query = None
         return tuple(rows)
 
-    def daily_closes(self, ticker: str, start: date, end: date) -> tuple[PricePoint, ...]:
-        encoded = urllib.parse.quote(ticker, safe="")
-        payload = self._get(
-            f"/v2/aggs/ticker/{encoded}/range/1/day/{start.isoformat()}/{end.isoformat()}",
-            {"adjusted": "true", "sort": "asc", "limit": 50000},
-        )
-        return tuple(
-            PricePoint(
-                trading_date=datetime.fromtimestamp(row["t"] / 1000, UTC).date(),
-                close=float(row["c"]),
-            )
-            for row in payload.get("results") or ()
-        )
+    def aggregate_bars(
+        self, ticker: str, start: date, end: date
+    ) -> dict[str, Any]:
+        """Return one adjusted daily aggregate response through the cache boundary."""
 
-    def filing_text(self, accession: str, cik: str, filed_on: date) -> str | None:
-        payload = self._get(
-            _TEXT_PATH,
-            {
-                "cik": cik.zfill(10),
-                "filing_date": filed_on.isoformat(),
-                "limit": 100,
-                "sort": "filing_date.asc",
-            },
+        encoded = urllib.parse.quote(ticker, safe="")
+        return self._get(
+            f"/v2/aggs/ticker/{encoded}/range/1/day/{start.isoformat()}/{end.isoformat()}",
+            {"adjusted": "true", "sort": "asc", "limit": 50_000},
         )
-        for row in payload.get("results") or ():
-            if str(row.get("accession_number") or "") == accession:
-                return str(row.get("items_text") or "")
-        return None
 
     def _get(self, path_or_url: str, params: dict[str, object] | None) -> dict[str, Any]:
         url = path_or_url if path_or_url.startswith("http") else _API_ROOT + path_or_url
@@ -301,139 +196,6 @@ class MassiveClient:
     def _cached_response(self, url: str) -> Path:
         identity = hashlib.sha256(url.encode()).hexdigest()
         return self.cache_dir / f"massive-{identity}.json"
-
-
-@dataclass(frozen=True)
-class MassiveCashMergerEventSource:
-    """Resolve target-side cash deals before emitting lifecycle observations."""
-
-    client: MassiveDataClient
-
-    def events(self, start: date, end: date) -> tuple[CashMergerEvent, ...]:
-        agreement_rows = tuple(
-            row
-            for category in _AGREEMENT_CATEGORIES
-            for row in self.client.disclosures(category, start, end)
-        )
-        pending = self._target_pending_events(agreement_rows)
-        known_targets = {_identity(event.target_cik, event.target_symbol) for event in pending}
-        completion_rows = tuple(
-            row
-            for category in _COMPLETION_CATEGORIES
-            for row in self.client.disclosures(category, start, end)
-        )
-        termination_rows = tuple(
-            row
-            for category in _TERMINATION_CATEGORIES
-            for row in self.client.disclosures(category, start, end)
-        )
-        resolutions = tuple(
-            event
-            for status, rows in (
-                ("completed", completion_rows),
-                ("terminated", termination_rows),
-            )
-            for row in rows
-            if (event := _resolution_event(row, status)) is not None
-            and _identity(event.target_cik, event.target_symbol) in known_targets
-        )
-        return tuple(
-            sorted(
-                {event.accession: event for event in pending + resolutions}.values(),
-                key=lambda event: (event.available_at, event.target_cik, event.accession),
-            )
-        )
-
-    def _target_pending_events(
-        self, rows: tuple[dict[str, Any], ...]
-    ) -> tuple[CashMergerEvent, ...]:
-        accepted_targets: set[str] = set()
-        events: list[CashMergerEvent] = []
-        ordered = sorted(rows, key=lambda row: (str(row.get("filing_date")), str(row.get("cik"))))
-        for row in ordered:
-            ticker = _ticker(row)
-            supporting_text = str(row.get("supporting_text") or "")
-            offer = _offer(supporting_text)
-            if ticker is None or offer is None:
-                continue
-            candidate = _event(row, ticker=ticker, status="pending", offer_price=offer)
-            identity = _identity(candidate.target_cik, candidate.target_symbol)
-            if identity not in accepted_targets and not self._has_target_price_signature(
-                ticker,
-                date.fromisoformat(candidate.available_at[:10]),
-                offer,
-            ):
-                continue
-            accession = str(row.get("accession_number") or "")
-            cik = str(row.get("cik") or "")
-            filed_on = date.fromisoformat(str(row["filing_date"]))
-            filing_text = self.client.filing_text(accession, cik, filed_on)
-            if filing_text is None or _NON_CASH.search(filing_text):
-                continue
-            accepted_targets.add(identity)
-            events.append(candidate)
-        return tuple(events)
-
-    def _has_target_price_signature(self, ticker: str, announced: date, offer: float) -> bool:
-        prices = tuple(
-            self.client.daily_closes(
-                ticker,
-                announced - timedelta(days=45),
-                announced + timedelta(days=10),
-            )
-        )
-        before = [point.close for point in prices if point.trading_date < announced][-20:]
-        after = [point.close for point in prices if point.trading_date > announced]
-        if len(before) < 10 or not after:
-            return False
-        unaffected = median(before)
-        entry = after[0]
-        return 0.0 < unaffected < entry < offer and offer / entry <= 3.0
-
-
-def _resolution_event(row: dict[str, Any], status: EventStatus) -> CashMergerEvent | None:
-    ticker = _ticker(row)
-    text = str(row.get("supporting_text") or "")
-    if ticker is None or _RESOLUTION_LANGUAGE.search(text) is None:
-        return None
-    return _event(row, ticker=ticker, status=status, offer_price=None)
-
-
-def _event(
-    row: dict[str, Any],
-    *,
-    ticker: str,
-    status: EventStatus,
-    offer_price: float | None,
-) -> CashMergerEvent:
-    cik = str(row.get("cik") or "").lstrip("0")
-    accession = str(row.get("accession_number") or "")
-    if not accession:
-        accession = f"massive-{cik}-{row['filing_date']}-{status}"
-    return CashMergerEvent(
-        target_cik=cik or f"ticker:{ticker}",
-        target_name=ticker,
-        target_symbol=ticker,
-        status=status,
-        available_at=_available_at(str(row["filing_date"])),
-        offer_price=offer_price,
-        source_form="8-K",
-        source_url=str(
-            row.get("filing_url")
-            or row.get("source_url")
-            or f"https://api.massive.com/stocks/filings/{accession}"
-        ),
-        accession=accession,
-    )
-
-
-def _ticker(row: dict[str, Any]) -> str | None:
-    candidates = [
-        str(value).upper()
-        for value in row.get("tickers") or ()
-        if re.fullmatch(r"[A-Z]{1,5}", str(value).upper())
-    ]
-    return candidates[0] if candidates else None
 
 
 def _offer(text: str) -> float | None:
@@ -477,10 +239,6 @@ def _non_cash_consideration(text: str) -> bool:
                 continue
             return True
     return False
-
-
-def _identity(cik: str, ticker: str) -> str:
-    return cik if cik and not cik.startswith("ticker:") else f"ticker:{ticker}"
 
 
 def _available_at(filing_date: str) -> str:

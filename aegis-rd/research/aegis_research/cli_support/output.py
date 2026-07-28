@@ -128,22 +128,9 @@ def write_error(
     return exit_code
 
 
-
 def run_refs(refs: Mapping[str, Any]) -> dict[str, Any]:
-    """Project a run-identity block with real, resolved absolute paths — no
-    path scrubbing (ADR-0021).
-
-    Consumed by both the success payload and the error envelope so the
-    two run blocks cannot drift.
-    """
-    return {
-        "id": refs.get("run_id") or refs.get("id"),
-        "status": refs.get("status"),
-        "run_dir": real_path_text(refs.get("run_dir")),
-        "manifest_path": real_path_text(refs.get("manifest_path")),
-        "started_at": refs.get("started_at"),
-        "finished_at": refs.get("finished_at"),
-    }
+    """Project the attempted Run ID shared by success and error envelopes."""
+    return {"id": refs.get("run_id") or refs.get("id")}
 
 
 def real_path_text(value: Any) -> str | None:
@@ -172,8 +159,7 @@ def jsonable_value(value: Any, *, clip_strings: bool = True) -> Any:
         return real_path_text(value)
     if isinstance(value, Mapping):
         return {
-            str(key): jsonable_value(item, clip_strings=clip_strings)
-            for key, item in value.items()
+            str(key): jsonable_value(item, clip_strings=clip_strings) for key, item in value.items()
         }
     if isinstance(value, list | tuple):
         return [jsonable_value(item, clip_strings=clip_strings) for item in value]

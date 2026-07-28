@@ -10,6 +10,12 @@ from types import MappingProxyType as _MappingProxyType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.array_names import OHLCV_ARRAY_NAMES
+from aegis_data.custom_data import (
+    AVAILABILITY_BY_VALUE,
+    KNOWN_CUSTOM_ARRAY_NAMES,
+    VOCABULARY,
+)
 from aegis_runtime import DriftBand, ExecutionBundle
 
 from aegis_trader.bundles.bands import BundleBands, InstrumentBandError
@@ -20,10 +26,6 @@ from aegis_trader.domain.streams import MarketStream, StreamRequirement, stream_
 from aegis_trader.domain.types import SleeveName
 
 _log = _logging.getLogger(__name__)
-
-# The five bar-derived arrays are the only ones any data path can materialize;
-# the Custom Data module's vocabulary will widen this set (aegis-rd-iecr).
-_DELIVERABLE_ARRAY_NAMES = frozenset({"Open", "High", "Low", "Close", "Volume"})
 
 @_dataclass(frozen=True)
 class ContinuousRootDeclaration:
@@ -75,7 +77,38 @@ class UndeliverableArrayError(ValueError):
         super().__init__(
             f"sleeve {sleeve.value!r} requires array(s) {list(arrays)} that no "
             f"data path can materialize; deliverable arrays are "
-            f"{sorted(_DELIVERABLE_ARRAY_NAMES)}"
+            f"{sorted((*OHLCV_ARRAY_NAMES, *VOCABULARY))}"
+        )
+
+
+class UnprovisionedArrayError(ValueError):
+    """A Sleeve names a known custom kind with no provider wired."""
+
+    def __init__(self, *, sleeve: SleeveName, arrays: tuple[str, ...]) -> None:
+        self.sleeve = sleeve
+        self.arrays = arrays
+        super().__init__(
+            f"sleeve {sleeve.value!r} requires known custom array(s) {list(arrays)} "
+            "whose kind has no provider wired"
+        )
+
+
+class MissingAvailabilityArrayError(ValueError):
+    """A custom value is declared without its availability signal."""
+
+    def __init__(
+        self,
+        *,
+        sleeve: SleeveName,
+        value_array: str,
+        availability_array: str,
+    ) -> None:
+        self.sleeve = sleeve
+        self.value_array = value_array
+        self.availability_array = availability_array
+        super().__init__(
+            f"sleeve {sleeve.value!r} declares value array {value_array!r} without "
+            f"required availability array {availability_array!r}"
         )
 
 
@@ -131,11 +164,23 @@ def _validate_required_arrays(
     sleeves: _Mapping[SleeveName, ExecutionBundle],
 ) -> None:
     for sleeve_name, bundle in sleeves.items():
+        required = set(bundle.contract.required_arrays)
+        known = set(OHLCV_ARRAY_NAMES) | KNOWN_CUSTOM_ARRAY_NAMES
         undeliverable = tuple(
-            sorted(set(bundle.contract.required_arrays) - _DELIVERABLE_ARRAY_NAMES)
+            sorted(required - known)
         )
         if undeliverable:
             raise UndeliverableArrayError(sleeve=sleeve_name, arrays=undeliverable)
+        unprovisioned = tuple(sorted(required & (KNOWN_CUSTOM_ARRAY_NAMES - VOCABULARY)))
+        if unprovisioned:
+            raise UnprovisionedArrayError(sleeve=sleeve_name, arrays=unprovisioned)
+        for value_array, availability_array in AVAILABILITY_BY_VALUE.items():
+            if value_array in required and availability_array not in required:
+                raise MissingAvailabilityArrayError(
+                    sleeve=sleeve_name,
+                    value_array=value_array,
+                    availability_array=availability_array,
+                )
 
 
 def _contract_history_bars(bundle: ExecutionBundle) -> int:

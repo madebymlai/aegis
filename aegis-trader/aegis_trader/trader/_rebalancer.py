@@ -362,8 +362,9 @@ def _clamp_to_gross_cap(
 ) -> dict[InstrumentId, float]:
     """Down-only vol-target clamp (ADR-0004 amendment).
 
-    Vol-targeting may over-lever an unlevered book when realized volatilities are
-    low.  Scale the netted book down so its gross does not exceed
+    The vol-target solve is a two-sided peg that levers the book up toward the
+    target when realized volatilities are low; it may want more gross than
+    ``gross_cap`` allows.  Scale the netted book down so its gross does not exceed
     ``gross_cap``; never scale it up — when the book is already within the
     ceiling it is returned unchanged. The explicit net-cap gate downstream is
     independent because a directional breach must surface rather than be scaled.

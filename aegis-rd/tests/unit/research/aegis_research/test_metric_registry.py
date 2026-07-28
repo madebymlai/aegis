@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from unittest.mock import Mock
+
+import pandas as pd
 import pytest
 
 from research.aegis_research.metrics import (
@@ -7,6 +10,7 @@ from research.aegis_research.metrics import (
     MetricDefinition,
     MetricRegistry,
     MetricRegistryError,
+    ResolvedMetrics,
     make_default_metric_registry,
 )
 from research.aegis_research.metrics.contracts import ExtractorSpec
@@ -15,8 +19,9 @@ from research.aegis_research.metrics.stats import (
     PORTFOLIO_METRIC_VALUE_KEYS,
     register_vbt_stats_metrics,
 )
+from tests.support.research.aegis_research.factories import make_report_config
 
-_SPEC = ExtractorSpec(lambda pf, config: None)
+_SPEC = ExtractorSpec(lambda pf, config: None, contract_version=1)
 _STATS_TITLES = {m: {"title": m} for m in PORTFOLIO_METRIC_VALUE_KEYS}
 
 
@@ -30,6 +35,40 @@ def test_metric_registry_freezes_definitions_and_fingerprint() -> None:
     assert frozen.ids() == ("sharpe_ratio", "total_return")
     assert frozen.get("total_return").title == "Total Return"
     assert len(frozen.fingerprint) == 64
+
+
+def test_resolved_metrics_carries_the_registry_canonical_ranking_metric() -> None:
+    registry = make_default_metric_registry()
+
+    resolved = ResolvedMetrics.resolve(registry, "total_return")
+
+    assert resolved.registry is registry
+    assert resolved.ranking is registry.get("total_return")
+
+
+def test_resolved_metrics_rejects_an_unknown_ranking_metric() -> None:
+    registry = make_default_metric_registry()
+
+    with pytest.raises(MetricRegistryError, match="unknown metric id: not_a_metric"):
+        ResolvedMetrics.resolve(registry, "not_a_metric")
+
+
+def test_resolved_metrics_rejects_zero_argument_construction() -> None:
+    with pytest.raises(
+        TypeError,
+        match=r"ResolvedMetrics must be constructed with ResolvedMetrics\.resolve",
+    ):
+        ResolvedMetrics()
+
+
+def test_resolved_metrics_rejects_direct_field_construction() -> None:
+    registry = make_default_metric_registry()
+
+    with pytest.raises(TypeError):
+        ResolvedMetrics(  # type: ignore[call-arg]
+            registry=registry,
+            ranking=registry.get("total_return"),
+        )
 
 
 def test_register_requires_an_extractor() -> None:
@@ -72,24 +111,47 @@ def test_default_registry_extractors_preserve_catalog_order() -> None:
     assert tuple(frozen.extractors) == PORTFOLIO_METRIC_VALUE_KEYS
 
 
+def test_max_drawdown_range_preserves_the_full_path_high_water_mark() -> None:
+    portfolio = Mock()
+    portfolio.get_drawdown.return_value = pd.DataFrame({"candidate": [0.0, -0.3, -0.2, -0.1]})
+    factory = BUILTIN_EXTRACTORS["max_dd"].range_factory
+    assert factory is not None
+
+    result = factory(make_report_config())(portfolio, sim_start=1, sim_end=3)
+
+    pd.testing.assert_series_equal(result, pd.Series({"candidate": -0.3}))
+    portfolio.get_drawdown.assert_called_once_with(rec_sim_range=False)
+    portfolio.get_max_drawdown.assert_not_called()
+
+
 def test_metric_registry_for_registers_only_requested_custom_metrics() -> None:
     """Custom metrics are opt-in per run: present only when a requested id names one.
 
     The no-request registry must be byte-identical to the default one, so runs
-    that never ask for a custom metric keep their Evidence fingerprint.
+    that never ask for a custom metric keep their registry fingerprint.
     """
     from research.aegis_research.metrics import make_metric_registry_for
 
     frozen = make_metric_registry_for(("ulcer_performance_index",))
 
     assert "ulcer_performance_index" in frozen
-    assert tuple(frozen.extractors) == (
-        *PORTFOLIO_METRIC_VALUE_KEYS, "ulcer_performance_index"
-    )
+    assert tuple(frozen.extractors) == (*PORTFOLIO_METRIC_VALUE_KEYS, "ulcer_performance_index")
+    assert frozen.extractors["ulcer_performance_index"].range_factory is not None
     assert frozen.fingerprint != make_default_metric_registry().fingerprint
-    assert (
-        make_metric_registry_for(()).fingerprint
-        == make_default_metric_registry().fingerprint
+    assert make_metric_registry_for(()).fingerprint == make_default_metric_registry().fingerprint
+
+
+def test_every_optional_custom_metric_registers_a_bounds_aware_extractor() -> None:
+    from research.aegis_research.metrics import make_metric_registry_for
+    from research.aegis_research.metrics.custom import optional_custom_metrics
+
+    optional = optional_custom_metrics()
+    frozen = make_metric_registry_for(tuple(optional))
+
+    assert all(frozen.extractors[metric_id].range_factory is not None for metric_id in optional)
+    assert all(
+        frozen.get(metric_id).boundary_semantics in {"inherited_path", "block_local"}
+        for metric_id in optional
     )
 
 
@@ -143,29 +205,40 @@ def test_metric_registry_fingerprint_is_order_independent() -> None:
     assert first.freeze().fingerprint != changed.freeze().fingerprint
 
 
-def test_fingerprint_is_independent_of_the_extractor() -> None:
-    """The extractor carries a callable and must never enter the fingerprint.
-
-    Two registries with identical definitions but different extractors hash the
-    same — the fingerprint is a property of the definitions alone.
-    """
+def test_fingerprint_uses_extractor_contract_version_not_callable_identity() -> None:
     one = MetricRegistry()
-    one.register(_definition("total_return"), ExtractorSpec(lambda pf, config: None))
+    one.register(
+        _definition("total_return"),
+        ExtractorSpec(lambda pf, config: None, contract_version=1),
+    )
     other = MetricRegistry()
-    other.register(_definition("total_return"), ExtractorSpec(lambda pf, config: 1.0, scale="percent"))
+    other.register(
+        _definition("total_return"),
+        ExtractorSpec(
+            lambda pf, config: 1.0,
+            contract_version=1,
+            scale="percent",
+        ),
+    )
+    changed_contract = MetricRegistry()
+    changed_contract.register(
+        _definition("total_return"),
+        ExtractorSpec(lambda pf, config: None, contract_version=2),
+    )
 
     assert one.freeze().fingerprint == other.freeze().fingerprint
+    assert one.freeze().fingerprint != changed_contract.freeze().fingerprint
 
 
 def test_default_registry_fingerprint_is_byte_stable() -> None:
     """Golden fingerprint: guards against a silent change to the recorded hash.
 
-    The fingerprint flows into Evidence; if a definition field or its
+    The fingerprint flows into Candidate provenance; if a definition field or its
     serialization ever shifts, this pinned value catches it deterministically.
     """
     assert (
         make_default_metric_registry().fingerprint
-        == "25995c4bdb5f6c98e4bf62fc60bc38a534e927d2ff469e02102e075d3bdaa3ae"
+        == "da71f153812ca785c6208fa979f435b7cbacffdf0be341c95c48353ddc4a0302"
     )
 
 

@@ -1,14 +1,11 @@
 """Registry cross-check tests driven through the module's public seam.
 
-Every test calls ``cross_check_registries`` directly with an in-memory
-component registry (from the test factory), a metric registry, and either a
-factory-built ``RunConfig`` or a raw dict. No tmp dirs, no component files,
-no discovery.
+Every test calls ``cross_check_registries`` directly with a factory-built
+``RunConfig`` and in-memory Component and Metric registries. No tmp dirs,
+component files, or discovery.
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 from research.aegis_research.component_registry.contracts import ComponentDefinition
 from research.aegis_research.component_registry.registry import FrozenComponentRegistry
@@ -74,10 +71,12 @@ def _component_registry(
     indicators: dict[str, ComponentDefinition] | None = None,
     strategies: dict[str, ComponentDefinition] | None = None,
 ) -> FrozenComponentRegistry:
-    return make_component_registry({
-        "indicators": indicators or {},
-        "strategies": strategies or {},
-    })
+    return make_component_registry(
+        {
+            "indicators": indicators or {},
+            "strategies": strategies or {},
+        }
+    )
 
 
 def _default_component_registry() -> FrozenComponentRegistry:
@@ -90,6 +89,7 @@ def _default_component_registry() -> FrozenComponentRegistry:
 
 def _default_metric_registry() -> FrozenMetricRegistry:
     from research.aegis_research.metrics import make_default_metric_registry
+
     return make_default_metric_registry()
 
 
@@ -104,7 +104,7 @@ def _issues_by_path(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# full dialect: strategy membership
+# strategy membership
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -155,7 +155,7 @@ def test_strategy_rejects_all_id() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# full dialect: indicator membership
+# indicator membership
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -225,7 +225,7 @@ def test_indicators_flag_duplicate_component_id() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# full dialect: output contract
+# output contract
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -288,7 +288,7 @@ def test_output_contract_detects_duplicate_produced_outputs() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# full dialect: component params
+# component params
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -309,7 +309,10 @@ def test_params_unknown_rejected_on_strategy() -> None:
     )
     by_path = _issues_by_path(issues)
     assert "strategy.params" in by_path
-    assert any("params must be declared by the component manifest" in msg for msg in by_path["strategy.params"])
+    assert any(
+        "params must be declared by the component manifest" in msg
+        for msg in by_path["strategy.params"]
+    )
 
 
 def test_params_unknown_rejected_on_indicator() -> None:
@@ -329,7 +332,10 @@ def test_params_unknown_rejected_on_indicator() -> None:
     )
     by_path = _issues_by_path(issues)
     assert "indicators[0].params" in by_path
-    assert any("params must be declared by the component manifest" in msg for msg in by_path["indicators[0].params"])
+    assert any(
+        "params must be declared by the component manifest" in msg
+        for msg in by_path["indicators[0].params"]
+    )
 
 
 def test_params_missing_satisfied_by_default() -> None:
@@ -359,7 +365,11 @@ def test_params_missing_satisfied_by_default() -> None:
 def test_params_missing_rejected_when_not_defaulted() -> None:
     reg = _component_registry(
         indicators={"demo.signal": _indicator(param_names=(), output_names=("value",))},
-        strategies={"demo.strategy": _strategy(param_names=("lookback", "threshold"), consumes_outputs=("value",))},
+        strategies={
+            "demo.strategy": _strategy(
+                param_names=("lookback", "threshold"), consumes_outputs=("value",)
+            )
+        },
     )
     config = make_run_config(
         strategy=make_run_source_ref_config(id="demo.strategy", params={"lookback": 20}),
@@ -401,7 +411,7 @@ def test_params_waived_by_param_space_function() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# full dialect: metric membership
+# metric membership
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -433,146 +443,3 @@ def test_ranking_rejects_unknown_metric() -> None:
     by_path = _issues_by_path(issues)
     assert "ranking.metric" in by_path
     assert any("must be one of" in msg for msg in by_path["ranking.metric"])
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# raw dialect: best-effort membership
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def test_raw_strategy_rejects_unknown_id() -> None:
-    raw: dict[str, Any] = {
-        "strategy": {"id": "missing.strategy"},
-        "indicators": [{"id": "demo.signal"}],
-        "ranking": {"metric": "total_return"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    by_path = _issues_by_path(issues)
-    assert "strategy.id" in by_path
-    assert any("unknown strategy component id" in msg for msg in by_path["strategy.id"])
-
-
-def test_raw_indicator_rejects_unknown_id() -> None:
-    raw: dict[str, Any] = {
-        "strategy": {"id": "demo.strategy"},
-        "indicators": [{"id": "missing.indicator"}],
-        "ranking": {"metric": "total_return"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    by_path = _issues_by_path(issues)
-    assert "indicators[0].id" in by_path
-    assert any("unknown indicator component id" in msg for msg in by_path["indicators[0].id"])
-
-
-def test_raw_strategy_rejects_all_id() -> None:
-    raw: dict[str, Any] = {
-        "strategy": {"id": "all"},
-        "indicators": [{"id": "demo.signal"}],
-        "ranking": {"metric": "total_return"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    by_path = _issues_by_path(issues)
-    assert "strategy.id" in by_path
-    assert any("must select one component id" in msg for msg in by_path["strategy.id"])
-
-
-def test_raw_indicator_rejects_all_id() -> None:
-    raw: dict[str, Any] = {
-        "strategy": {"id": "demo.strategy"},
-        "indicators": [{"id": "all"}],
-        "ranking": {"metric": "total_return"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    by_path = _issues_by_path(issues)
-    assert "indicators[0].id" in by_path
-    assert any("must select one component id" in msg for msg in by_path["indicators[0].id"])
-
-
-def test_raw_indicators_flag_duplicate_component_id() -> None:
-    raw: dict[str, Any] = {
-        "strategy": {"id": "demo.strategy"},
-        "indicators": [{"id": "demo.signal"}, {"id": "demo.signal"}],
-        "ranking": {"metric": "total_return"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    by_path = _issues_by_path(issues)
-    assert "indicators[1].id" in by_path
-    assert any("duplicates indicator component id" in msg for msg in by_path["indicators[1].id"])
-
-
-def test_raw_ranking_rejects_unknown_metric() -> None:
-    raw: dict[str, Any] = {
-        "strategy": {"id": "demo.strategy"},
-        "indicators": [{"id": "demo.signal"}],
-        "ranking": {"metric": "not_a_metric"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    by_path = _issues_by_path(issues)
-    assert "ranking.metric" in by_path
-    assert any("must be one of" in msg for msg in by_path["ranking.metric"])
-
-
-def test_raw_skips_non_mapping_strategy() -> None:
-    raw: dict[str, Any] = {
-        "strategy": "not_a_dict",
-        "indicators": [{"id": "demo.signal"}],
-        "ranking": {"metric": "total_return"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    assert issues == []
-
-
-def test_raw_skips_non_list_indicators() -> None:
-    raw: dict[str, Any] = {
-        "strategy": {"id": "demo.strategy"},
-        "indicators": "not_a_list",
-        "ranking": {"metric": "total_return"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    assert issues == []
-
-
-def test_raw_accepts_valid_ids() -> None:
-    raw: dict[str, Any] = {
-        "strategy": {"id": "demo.strategy"},
-        "indicators": [{"id": "demo.signal"}],
-        "ranking": {"metric": "total_return"},
-    }
-    issues = cross_check_registries(
-        raw,
-        component_registry=_default_component_registry(),
-        metric_registry=_default_metric_registry(),
-    )
-    assert issues == []

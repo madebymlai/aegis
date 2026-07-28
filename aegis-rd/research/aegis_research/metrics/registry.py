@@ -34,13 +34,34 @@ class FrozenMetricRegistry:
         return {
             "fingerprint": self.fingerprint,
             "metrics": {
-                metric_id: definition.public_snapshot()
+                metric_id: {
+                    **definition.public_snapshot(),
+                    "extractor_contract_version": self.extractors[metric_id].contract_version,
+                }
                 for metric_id, definition in self.definitions.items()
             },
         }
 
     def __contains__(self, metric_id: str) -> bool:
         return metric_id in self.definitions
+
+
+@dataclass(frozen=True, init=False)
+class ResolvedMetrics:
+    registry: FrozenMetricRegistry
+    ranking: MetricDefinition
+
+    def __init__(self) -> None:
+        raise TypeError("ResolvedMetrics must be constructed with ResolvedMetrics.resolve")
+
+    @classmethod
+    def resolve(
+        cls, registry: FrozenMetricRegistry, ranking_id: str
+    ) -> ResolvedMetrics:
+        resolved = object.__new__(cls)
+        object.__setattr__(resolved, "registry", registry)
+        object.__setattr__(resolved, "ranking", registry.get(ranking_id))
+        return resolved
 
 
 class MetricRegistry:
@@ -67,7 +88,7 @@ class MetricRegistry:
         definitions = dict(sorted(self._definitions.items()))
         return FrozenMetricRegistry(
             definitions=MappingProxyType(definitions),
-            fingerprint=_registry_fingerprint(definitions),
+            fingerprint=_registry_fingerprint(definitions, self._extractors),
             extractors=MappingProxyType(dict(self._extractors)),
         )
 
@@ -90,7 +111,9 @@ def _validate_definition(definition: MetricDefinition) -> None:
     if not definition.id:
         raise MetricRegistryError("metric id must be non-empty")
     if definition.id.strip() != definition.id:
-        raise MetricRegistryError(f"metric id must not contain surrounding whitespace: {definition.id!r}")
+        raise MetricRegistryError(
+            f"metric id must not contain surrounding whitespace: {definition.id!r}"
+        )
     if not definition.title:
         raise MetricRegistryError(f"metric {definition.id} title must be non-empty")
     if definition.source_type not in METRIC_SOURCE_TYPES:
@@ -99,11 +122,27 @@ def _validate_definition(definition: MetricDefinition) -> None:
         raise MetricRegistryError(f"metric {definition.id} unit must be non-empty")
     if not definition.value_semantics:
         raise MetricRegistryError(f"metric {definition.id} value semantics must be non-empty")
+    if definition.direction not in ("maximize", "minimize"):
+        raise MetricRegistryError(f"metric {definition.id} direction is unsupported")
+    if definition.missing_value_policy != "worst":
+        raise MetricRegistryError(f"metric {definition.id} missing-value policy is unsupported")
+    if definition.boundary_semantics not in (
+        "native_continuous",
+        "inherited_path",
+        "block_local",
+    ):
+        raise MetricRegistryError(f"metric {definition.id} boundary semantics are unsupported")
 
 
-def _registry_fingerprint(definitions: Mapping[str, MetricDefinition]) -> str:
+def _registry_fingerprint(
+    definitions: Mapping[str, MetricDefinition],
+    extractors: Mapping[str, ExtractorSpec],
+) -> str:
     payload = {
-        metric_id: definition.fingerprint_payload()
+        metric_id: {
+            "definition": definition.fingerprint_payload(),
+            "extractor_contract_version": extractors[metric_id].contract_version,
+        }
         for metric_id, definition in sorted(definitions.items())
     }
     return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()

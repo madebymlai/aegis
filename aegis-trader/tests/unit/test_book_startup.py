@@ -35,6 +35,8 @@ from aegis_trader.trader.book_startup import (
     SubscribeQuoteTicks,
     bootstrap,
 )
+from aegis_trader.trader.pipeline import RebalancePipeline
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import assemble_test_book
 
 _NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone.utc)
@@ -217,12 +219,17 @@ def _bootstrap(
             for sleeve in config.sleeves
         },
     )
+    pipeline = RebalancePipeline(
+        book_state=book_state or _BookState(),
+        market_data=_MarketData(),
+        book=assembled,
+        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+        arrays=SleeveArrays.bar_only(),
+    )
     return bootstrap(
         now=_NOW,
         book=assembled,
-        ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
-        book_state=book_state or _BookState(),
-        market_data=_MarketData(),
+        pipeline=pipeline,
         roll_desk=roll_desk or _RollDesk(),
         fx_reference_pairs=fx_reference_pairs,
         warmup_cache_on_start=warmup_cache_on_start,

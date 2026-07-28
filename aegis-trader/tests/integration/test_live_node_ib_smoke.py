@@ -33,6 +33,7 @@ from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import RequestInstrument, SubscribeBars, UnsubscribeBars
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.trader.node import build_live_node_config
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.trader.strategy import RebalanceStrategy, RebalanceStrategyConfig
 
 _PORT = os.environ.get("IB_PORT")
@@ -55,7 +56,7 @@ class _RollIntentProbe(RebalanceStrategy):
     """Routes the Roll Desk's live subscribe/unsubscribe intent shape through IB clients."""
 
     def __init__(self, config: RebalanceStrategyConfig) -> None:
-        super().__init__(config)
+        super().__init__(config, arrays=SleeveArrays.bar_only())
         self.loaded: list[InstrumentId] = []
         self.roll_commands_routed = False
 

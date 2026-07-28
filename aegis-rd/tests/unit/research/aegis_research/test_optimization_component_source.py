@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from aegis_runtime import MarketDataBundle
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import discover_component_registry
@@ -14,7 +15,6 @@ from research.aegis_research.configuration import (
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
 )
-from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
     _ComponentRuntime,
@@ -64,9 +64,8 @@ def test_component_source_composes_indicator_and_strategy_param_spaces(tmp_path:
     source = build_component_optimization_source(config, component_registry=registry, data=data)
 
     assert set(source.params) == {_INDICATOR_WINDOW_KEY, _STRATEGY_THRESHOLD_KEY}
-    assert source.output_name == "active"
-    assert source.evidence["produced_outputs"] == ["trend"]
-    assert source.evidence["consumed_outputs"] == ["trend"]
+    assert source.identity["produced_outputs"] == ["trend"]
+    assert source.identity["consumed_outputs"] == ["trend"]
 
     close = data.array("Close")
     n_candidates = 1
@@ -93,9 +92,37 @@ def test_component_source_fixed_params_override_param_space_axes(tmp_path: Path)
     )
 
     assert list(source.params) == [FIXED_CANDIDATE_PARAM]
-    assert source.evidence["fixed_candidate_param"] == FIXED_CANDIDATE_PARAM
-    assert source.evidence["strategy"]["param_mode"] == "fixed"
-    assert source.evidence["indicators"][0]["param_mode"] == "fixed"
+    assert source.identity["fixed_candidate_param"] == FIXED_CANDIDATE_PARAM
+    assert source.identity["strategy"]["param_mode"] == "fixed"
+    assert source.identity["indicators"][0]["param_mode"] == "fixed"
+
+
+def test_component_source_resolves_lookbacks_from_swept_and_fixed_params(
+    tmp_path: Path,
+) -> None:
+    registry = _registry(tmp_path)
+    swept = build_component_optimization_source(
+        _config(), component_registry=registry, data=_data_bundle()
+    )
+
+    assert swept.resolve_lookbacks({_INDICATOR_WINDOW_KEY: 3, _STRATEGY_THRESHOLD_KEY: 0.95}) == {
+        "indicators/demo.trend@demo.trend": 3,
+        "strategies/demo.strategy@strategy": 9,
+    }
+
+    fixed = build_component_optimization_source(
+        _config(
+            strategy=make_run_source_ref_config(id="demo.strategy", params={"threshold": 1.0}),
+            indicators=[make_run_indicator_source_config(id="demo.trend", params={"window": 2})],
+        ),
+        component_registry=registry,
+        data=_data_bundle(),
+    )
+
+    assert fixed.resolve_lookbacks({FIXED_CANDIDATE_PARAM: 0}) == {
+        "indicators/demo.trend@demo.trend": 2,
+        "strategies/demo.strategy@strategy": 10,
+    }
 
 
 def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Path) -> None:
@@ -119,9 +146,9 @@ def test_component_source_uses_resolved_locked_params_as_constants(tmp_path: Pat
     )
 
     assert _INDICATOR_WINDOW_KEY not in source.params
-    assert source.evidence["indicators"][0]["param_mode"] == "locked"
-    assert source.evidence["indicators"][0]["fixed_params"] == {"window": 3}
-    assert source.evidence["strategy"]["param_mode"] == "locked"
+    assert source.identity["indicators"][0]["param_mode"] == "locked"
+    assert source.identity["indicators"][0]["fixed_params"] == {"window": 3}
+    assert source.identity["strategy"]["param_mode"] == "locked"
 
 
 def test_component_source_rejects_unresolved_lock_refs(tmp_path: Path) -> None:
@@ -243,7 +270,7 @@ def test_two_output_indicator_outputs_remain_distinct_for_strategy(tmp_path: Pat
     np.testing.assert_array_equal(result.to_numpy(), np.ones_like(result.to_numpy()))
 
 
-def test_component_source_evidence_preserves_manifest_output_order(tmp_path: Path) -> None:
+def test_component_source_identity_preserves_declared_output_order(tmp_path: Path) -> None:
     root = tmp_path / "research" / "components"
     _write_two_output_indicator(root / "indicators" / "trend.py")
     _write_two_output_strategy(root / "strategies" / "strategy.py")
@@ -255,7 +282,7 @@ def test_component_source_evidence_preserves_manifest_output_order(tmp_path: Pat
         data=_data_bundle(),
     )
 
-    assert source.evidence["produced_outputs"] == ["trend", "inverse_trend"]
+    assert source.identity["produced_outputs"] == ["trend", "inverse_trend"]
 
 
 @pytest.mark.parametrize(
@@ -308,7 +335,9 @@ def test_strategy_allocation_shape_gate_rejects_wrong_rows_and_columns(
 ) -> None:
     root = tmp_path / "research" / "components"
     _write_indicator_template(root / "indicators" / "trend.py")
-    _write_strategy_template(root / "strategies" / "strategy.py", return_expression=return_expression)
+    _write_strategy_template(
+        root / "strategies" / "strategy.py", return_expression=return_expression
+    )
     registry = discover_component_registry(root=root, repo_root=tmp_path)
     source = build_component_optimization_source(
         _config(), component_registry=registry, data=_data_bundle()
@@ -326,9 +355,7 @@ def test_component_optimization_source_schema_version_is_v2(tmp_path: Path) -> N
         data=_data_bundle(),
     )
 
-    assert source.evidence["schema_version"] == "component_optimization_source.v2"
-    assert source.diagnostics["schema_version"] == "component_optimization_source.v2"
-    assert source.metadata["schema_version"] == "component_optimization_source.v2"
+    assert source.identity["schema_version"] == "component_optimization_source.v2"
 
 
 def _single_candidate_params() -> dict[str, list[object]]:
@@ -382,6 +409,8 @@ def _write_indicator(path: Path, *, component_id: str) -> None:
         "# %% parameter space\n"
         "def param_space():\n"
         "    return {'window': vbt.Param([2, 3])}\n"
+        "def lookback(window):\n"
+        "    return int(window)\n"
         "# %% main compute\n"
         "def run(data, window):\n"
         "    '''Return a rolling trend frame.'''\n"
@@ -419,6 +448,8 @@ def _write_strategy(path: Path) -> None:
         "# %% parameter space\n"
         "def param_space():\n"
         "    return {'threshold': vbt.Param([0.95, 1.0])}\n"
+        "def lookback(threshold):\n"
+        "    return int(float(threshold) * 10)\n"
         "# %% main compute\n"
         "def run(inputs, threshold):\n"
         "    '''Return active allocation derived from thresholded trend signals.'''\n"
@@ -731,7 +762,8 @@ def _stub_runtime(
     param_keys: dict[str, str] | None = None,
     param_space: dict[str, vbt.Param] | None = None,
     fixed_params: dict[str, object] | None = None,
-    output_names: tuple[str, ...] = (),
+    # An Indicator with no outputs is unrepresentable, so the default declares one.
+    output_names: tuple[str, ...] = ("value",),
     consumes_outputs: tuple[str, ...] = (),
     input_names: tuple[str, ...] = ("Close",),
 ) -> _ComponentRuntime:

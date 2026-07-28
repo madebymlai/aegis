@@ -294,9 +294,7 @@ def _component_definition_field_names() -> set[str]:
 
 
 def _component_definition_public_members() -> set[str]:
-    return {
-        name for name in dir(ComponentDefinition) if not name.startswith("_")
-    }
+    return {name for name in dir(ComponentDefinition) if not name.startswith("_")}
 
 
 def test_undeclared_params_empty_when_all_provided_are_declared() -> None:
@@ -476,10 +474,12 @@ def test_factory_registry_with_one_strategy_defines_id_and_snapshot() -> None:
 def test_factory_registry_with_both_families() -> None:
     ind = _indicator(id="demo.ind")
     strat = _strategy(id="demo.strat")
-    registry = make_component_registry({
-        "indicators": {"demo.ind": ind},
-        "strategies": {"demo.strat": strat},
-    })
+    registry = make_component_registry(
+        {
+            "indicators": {"demo.ind": ind},
+            "strategies": {"demo.strat": strat},
+        }
+    )
     assert registry.ids("indicators") == ("demo.ind",)
     assert registry.ids("strategies") == ("demo.strat",)
     assert registry.get(ComponentSelection("indicators", "demo.ind")).id == "demo.ind"
@@ -525,23 +525,27 @@ def test_component_registry_fingerprint_golden_bytes_pin() -> None:
     """Golden pin of the re-based component registry fingerprint (ADR-0003,
     second amendment). A byte move here is a deliberate re-baseline — refresh
     the pin and record why; do not revert to the raw-payload hash."""
-    registry = make_component_registry({
-        "indicators": {"demo.indicator": _indicator()},
-        "strategies": {"demo.strategy": _strategy()},
-    })
+    registry = make_component_registry(
+        {
+            "indicators": {"demo.indicator": _indicator()},
+            "strategies": {"demo.strategy": _strategy()},
+        }
+    )
     assert registry.fingerprint == (
         "b2cd17f0d35ddd6ee252a66042058b6952200d47fc6608b8c4dc18d559fbd023"
     )
 
 
 def test_factory_sorts_ids_within_family() -> None:
-    registry = make_component_registry({
-        "indicators": {
-            "z.third": _indicator(id="z.third"),
-            "a.first": _indicator(id="a.first"),
-            "m.middle": _indicator(id="m.middle"),
-        },
-    })
+    registry = make_component_registry(
+        {
+            "indicators": {
+                "z.third": _indicator(id="z.third"),
+                "a.first": _indicator(id="a.first"),
+                "m.middle": _indicator(id="m.middle"),
+            },
+        }
+    )
     assert registry.ids("indicators") == ("a.first", "m.middle", "z.third")
 
 
@@ -570,9 +574,7 @@ def test_non_finite_default_is_normalised_to_null_in_fingerprint() -> None:
     snapshot = definition.public_snapshot()
     assert snapshot["params"]["defaults"]["window"] is None
 
-    registry = make_component_registry(
-        {"indicators": {"demo.nan_default": definition}}
-    )
+    registry = make_component_registry({"indicators": {"demo.nan_default": definition}})
     # The fingerprint must still be a valid 64-char hex string.
     assert len(registry.fingerprint) == 64
     assert all(c in "0123456789abcdef" for c in registry.fingerprint)

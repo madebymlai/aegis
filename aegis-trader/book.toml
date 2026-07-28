@@ -36,6 +36,53 @@ sleeve_reversion_fraction = 0.5
 # leverager.
 gross_cap = 1.75
 
+# Book-level drawdown governor: a RUIN BACKSTOP, deliberately dormant in normal
+# operation. Exposure holds at 1.0x until running NAV drawdown reaches
+# start_drawdown, ramps linearly to floor_multiplier at end_drawdown, and never
+# increases exposure. Calibrated 2026-07-24 against this book's own measurements
+# and the drawdown-rule literature; the thresholds sit ABOVE the validated
+# envelope on purpose:
+#
+#   1. Measured maxDD is -10.2% at gross 1.75 over 2018-2024 (runs/aegis/2026-07-05,
+#      B1/GH #79; -7.5% at gross 1.0). start_drawdown = 0.15 is ~1.5x that, so the
+#      governor would NOT have fired once across the validated window - COVID 2020
+#      and 2022 included. It engages only on a path with no precedent in our data.
+#   2. Firing it inside the normal range is MEASURED to cost. Same diary, finding 2:
+#      in 2020 the hedged book beat tail-off by +4.9 to +5.2pp, of which only ~1.9pp
+#      is sleeve-own - the rest was the governor NOT delevering the hedged book into
+#      the drawdown. De-levering into a recoverable drawdown sells the bottom and
+#      fights the net-convex construction (trend is the crisis engine; it is supposed
+#      to earn in the fall).
+#   3. The literature is hostile to mechanical drawdown rules that fire in-envelope.
+#      Varma, "The False Promise of Drawdown Rules" (JPM 2025, 52(1):145-171): ~30yr,
+#      dozens of ETFs - repeated threshold exits produce "death by a thousand cuts",
+#      cumulatively worse than riding one larger drawdown, and rules must be embedded
+#      and backtested inside the system, never bolted on. Kaminski & Lo / the York
+#      trend study find stop-loss rules add no value to trend following. Hsieh &
+#      Barmish (2017) show drawdown modulation CAN bound maxDD with probability one,
+#      but degenerates to a stop-loss as the limit nears, missing the recovery.
+#      What survives all three: keep the bound, keep it out of the working range.
+#   4. What it is FOR: 1.75x gross introduces an absorbing barrier (forced
+#      liquidation) that an unlevered book does not have. Vol-targeting de-levers on
+#      LAGGED realized vol, so it is structurally blind to an opening gap; this is the
+#      only channel that responds to realized NAV. Ramp end 0.30 is deep distress
+#      (recovering -30% needs +43%); floor 0.40 forces the book well under 1.0x gross
+#      there.
+#
+# Mechanism note: the curve is applied in the Allocator (before the rebalancer's
+# gross clamp), so its cut is partly absorbed whenever the clamp is already binding
+# in calm regimes. It bites directly in high-vol states, where the vol-target solve
+# already sits below the cap - i.e. exactly the crisis path it is meant to govern.
+#
+# NOT yet backtested as configured (it never triggers on the 2018-2024 window by
+# design, so that run is a no-op check, not a validation). Per Varma's own
+# prescription, a stress/synthetic path that actually reaches -15% is the honest
+# test before this is trusted live.
+[drawdown_delever]
+start_drawdown = 0.15
+end_drawdown = 0.30
+floor_multiplier = 0.40
+
 # Backtest funding: 5,000 EUR only (foreign legs reached via per-currency margin loans).
 # RE-SCALED to the LIVE account size 2026-07-06 (was 1,000,000): per-order minimums and
 # tier-I financing only price honestly at true scale - the 1M runs flattered fixed fees.

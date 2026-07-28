@@ -22,9 +22,7 @@ from research.aegis_research.execution_bundle_wheel import (
 )
 
 
-def _artifact(
-    *, candidate_key: str = "0123456789abcdef", version: str = "1.2.3"
-) -> BundleArtifact:
+def _artifact(*, candidate_key: str = "0123456789abcdef", version: str = "1.2.3") -> BundleArtifact:
     candidate_prefix = candidate_key[:8]
     package_name = f"aegis_exec_tests_strategy_{candidate_prefix}"
     dist_name = f"aegis-exec-tests-strategy-{candidate_prefix}"
@@ -77,9 +75,7 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
     with zipfile.ZipFile(wheel_path) as zf:
         names = set(zf.namelist())
         loader = zf.read("aegis_exec_tests_strategy_01234567/__init__.py").decode()
-        manifest = json.loads(
-            zf.read("aegis_exec_tests_strategy_01234567/bundle_manifest.json")
-        )
+        manifest = json.loads(zf.read("aegis_exec_tests_strategy_01234567/bundle_manifest.json"))
 
     assert "aegis_exec_tests_strategy_01234567/strategy.py" in names
     assert "aegis_exec_tests_strategy_01234567/bundle_manifest.json" in names
@@ -113,9 +109,7 @@ def test_write_wheel_requires_the_first_v4_capable_runtime(tmp_path) -> None:
     wheel_path = write_wheel(artifact, tmp_path)
 
     with zipfile.ZipFile(wheel_path) as zf:
-        metadata_path = next(
-            name for name in zf.namelist() if name.endswith(".dist-info/METADATA")
-        )
+        metadata_path = next(name for name in zf.namelist() if name.endswith(".dist-info/METADATA"))
         metadata = zf.read(metadata_path).decode()
 
     assert "Requires-Dist: aegis-runtime>=0.3.0" in metadata
@@ -146,9 +140,7 @@ def test_write_wheel_fails_closed_when_package_name_collides_with_different_cand
 
     wheel_path = tmp_path / "aegis_exec_tests_strategy_01234567-1.2.3-py3-none-any.whl"
     with zipfile.ZipFile(wheel_path) as zf:
-        manifest = json.loads(
-            zf.read("aegis_exec_tests_strategy_01234567/bundle_manifest.json")
-        )
+        manifest = json.loads(zf.read("aegis_exec_tests_strategy_01234567/bundle_manifest.json"))
     assert manifest["manifest"]["candidate_key"] == "0123456700000000"
 
 

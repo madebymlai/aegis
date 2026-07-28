@@ -4,18 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 from .artifacts import canonical_bytes, write_once
-from .decision import (
-    FrozenQ70Policy,
-    ShadowDecision,
-    ShadowPosition,
-)
+from .edgar import SourceRefresh
 from .ledger import (
     EventObservation,
     EventStatus,
@@ -23,7 +19,22 @@ from .ledger import (
     ShadowQualification,
 )
 from .market import MarketMarkBatch, MarketUnavailable
-from .sec_api import SourceRefresh
+from .selection import (
+    CashMergerSelector,
+    SelectionAssessment,
+    SelectionEngineIdentity,
+    SelectionExclusion,
+    SelectionExclusionReason,
+    SelectionResult,
+    ShadowDecision,
+    ShadowPosition,
+)
+
+_EVIDENCE_SCHEMA_VERSION = 7
+
+
+class ShadowEvidenceError(ValueError):
+    """Persisted current-schema shadow evidence is malformed or ambiguous."""
 
 
 class ShadowEventSource(Protocol):
@@ -54,9 +65,9 @@ class ShadowRunEvidence:
     reviews: int
     market_unavailable: int
     market_unavailable_items: tuple[MarketUnavailable, ...]
-    decision_formed: bool
+    selection_formed: bool
     terminal_exit_event_ids: tuple[str, ...]
-    decision: ShadowDecision
+    selection: SelectionResult
     qualification: ShadowQualification
     evidence_path: Path
 
@@ -64,19 +75,23 @@ class ShadowRunEvidence:
 class CashMergerShadow:
     """Refresh sources, replay the ledger, decide, and persist one Evidence record."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, selector: CashMergerSelector | None = None) -> None:
         self._root = root
         self._ledger = ShadowLedger(root / "ledger")
+        self._selector = selector or CashMergerSelector()
 
-    def next_refresh_start(self, *, end: date) -> date:
-        """Resume after the newest evidence window, or begin prospectively today."""
+    def next_refresh_start(self, *, end: date, bootstrap_start: date) -> date:
+        """Resume after persisted evidence, or replay from an explicit first date."""
+
+        if bootstrap_start > end:
+            raise ValueError("shadow bootstrap start exceeds refresh end")
 
         covered_ends = tuple(
             date.fromisoformat(str(json.loads(path.read_text())["source_window"]["end"]))
             for path in (self._root / "evidence").glob("*.json")
         )
         if not covered_ends:
-            return end
+            return bootstrap_start
         return min(max(covered_ends) + timedelta(days=1), end)
 
     def run(
@@ -98,27 +113,34 @@ class CashMergerShadow:
         write = self._ledger.record(refresh.observations)
         states = self._ledger.states(as_of=as_of)
         market = marks.load(states, as_of=as_of)
-        previous = _formed_decision(self._root / "evidence", as_of, capital)
-        decision_formed = previous is None
-        decision = previous or FrozenQ70Policy().decide(
+        previous = _formed_selection(
+            self._root / "evidence",
+            as_of,
+            capital,
+            engine=self._selector.engine_identity,
+            decision_engine_id=self._selector.decision_engine_id,
+        )
+        selection_formed = previous is None
+        selection = previous or self._selector.select(
             self._ledger.events(as_of=as_of),
             market.marks,
             as_of=as_of,
             capital=capital,
         )
+        decision = selection.decision
         terminal_exit_event_ids = _terminal_exits(decision, states)
         qualification = self._ledger.qualification(as_of=as_of)
         payload = {
-            "schema_version": 1,
+            "schema_version": _EVIDENCE_SCHEMA_VERSION,
             "as_of": as_of.isoformat(),
             "source_window": {"start": start.isoformat(), "end": end.isoformat()},
             "recorded_observations": write.added,
             "existing_observations": write.existing,
             "source_reviews": [asdict(review) for review in refresh.reviews],
             "market_unavailable": [asdict(item) for item in market.unavailable],
-            "decision_formed": decision_formed,
+            "selection_formed": selection_formed,
             "terminal_exit_event_ids": terminal_exit_event_ids,
-            "decision": asdict(decision),
+            "selection": asdict(selection),
             "qualification": asdict(qualification),
         }
         encoded = canonical_bytes(payload)
@@ -131,43 +153,121 @@ class CashMergerShadow:
             reviews=len(refresh.reviews),
             market_unavailable=len(market.unavailable),
             market_unavailable_items=market.unavailable,
-            decision_formed=decision_formed,
+            selection_formed=selection_formed,
             terminal_exit_event_ids=terminal_exit_event_ids,
-            decision=decision,
+            selection=selection,
             qualification=qualification,
             evidence_path=evidence_path,
         )
 
 
-def _formed_decision(
+def _formed_selection(
     evidence_dir: Path,
     as_of: datetime,
     capital: float,
-) -> ShadowDecision | None:
+    *,
+    engine: SelectionEngineIdentity,
+    decision_engine_id: str,
+) -> SelectionResult | None:
     month = as_of.strftime("%Y-%m")
-    matches: list[ShadowDecision] = []
-    for path in evidence_dir.glob("*.json"):
-        payload = json.loads(path.read_text())
-        decision = payload.get("decision")
-        if not payload.get("decision_formed") or not isinstance(decision, dict):
+    matches: list[SelectionResult] = []
+    for path in sorted(evidence_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise ShadowEvidenceError(f"cannot read shadow evidence {path}") from error
+        if not isinstance(payload, dict):
+            raise ShadowEvidenceError(f"malformed shadow evidence {path}")
+        if payload.get("schema_version") != _EVIDENCE_SCHEMA_VERSION:
             continue
-        if not str(decision.get("as_of", "")).startswith(month):
+        selection = payload.get("selection")
+        if payload.get("selection_formed") is False:
             continue
-        if float(decision["capital"]) != capital:
-            raise ValueError("shadow capital changed within a frozen decision month")
-        matches.append(
-            ShadowDecision(
-                as_of=str(decision["as_of"]),
-                capital=float(decision["capital"]),
-                positions=tuple(ShadowPosition(**position) for position in decision["positions"]),
-                estimated_commissions=float(decision["estimated_commissions"]),
-                estimated_slippage=float(decision["estimated_slippage"]),
-                cash_reserve=float(decision["cash_reserve"]),
+        if payload.get("selection_formed") is not True or not isinstance(
+            selection, dict
+        ):
+            raise ShadowEvidenceError(f"malformed shadow evidence {path}")
+        formed_selection = _decode_selection(selection, path=path)
+        if not formed_selection.decision.as_of.startswith(month):
+            continue
+        if formed_selection.engine != engine:
+            continue
+        if formed_selection.decision_engine_id != decision_engine_id:
+            continue
+        if formed_selection.decision.capital != capital:
+            raise ShadowEvidenceError(
+                "shadow capital changed within a frozen selection month"
             )
-        )
+        matches.append(formed_selection)
     if len(matches) > 1:
-        raise ValueError(f"multiple formed shadow decisions found for {month}")
+        raise ShadowEvidenceError(
+            f"multiple formed shadow selections found for {month} and engine"
+        )
     return matches[0] if matches else None
+
+
+def _decode_selection(payload: dict[str, object], *, path: Path) -> SelectionResult:
+    engine_payload = payload.get("engine")
+    decision_payload = payload.get("decision")
+    if not isinstance(engine_payload, dict) or not isinstance(decision_payload, dict):
+        raise ShadowEvidenceError(f"malformed shadow evidence {path}")
+    positions = _records(decision_payload, "positions", path=path)
+    assessments = _records(payload, "assessments", path=path)
+    exclusions = _records(payload, "exclusions", path=path)
+    try:
+        engine = SelectionEngineIdentity(
+            engine_id=str(engine_payload["engine_id"]),
+            model_artifact_id=str(engine_payload["model_artifact_id"]),
+            training_cutoff=(
+                str(engine_payload["training_cutoff"])
+                if engine_payload["training_cutoff"] is not None
+                else None
+            ),
+        )
+        decision = ShadowDecision(
+            as_of=str(decision_payload["as_of"]),
+            capital=float(decision_payload["capital"]),
+            positions=tuple(ShadowPosition(**position) for position in positions),
+            estimated_base_commission=float(
+                decision_payload["estimated_base_commission"]
+            ),
+            estimated_slippage=float(decision_payload["estimated_slippage"]),
+            estimated_fx_conversion=float(
+                decision_payload["estimated_fx_conversion"]
+            ),
+            cash_reserve=float(decision_payload["cash_reserve"]),
+        )
+        return SelectionResult(
+            engine=engine,
+            decision_engine_id=str(payload["decision_engine_id"]),
+            assessments=tuple(SelectionAssessment(**assessment) for assessment in assessments),
+            exclusions=tuple(
+                SelectionExclusion(
+                    event_id=str(exclusion["event_id"]),
+                    instrument_id=str(exclusion["instrument_id"]),
+                    ticker=str(exclusion["ticker"]),
+                    reason=SelectionExclusionReason(exclusion["reason"]),
+                )
+                for exclusion in exclusions
+            ),
+            decision=decision,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ShadowEvidenceError(f"malformed shadow evidence {path}") from error
+
+
+def _records(
+    payload: Mapping[str, object],
+    field: str,
+    *,
+    path: Path,
+) -> tuple[dict[str, Any], ...]:
+    records = payload.get(field)
+    if not isinstance(records, list) or not all(
+        isinstance(record, dict) for record in records
+    ):
+        raise ShadowEvidenceError(f"malformed shadow evidence {path}")
+    return cast(tuple[dict[str, Any], ...], tuple(records))
 
 
 def _terminal_exits(

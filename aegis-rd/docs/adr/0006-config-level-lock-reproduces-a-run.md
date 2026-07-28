@@ -76,3 +76,18 @@ lock: 20260527T000603791760Z_etf_momentum:median   # non-best representative
 
 This makes the ADR's "no separate storage" principle hold *better*: the ergonomic handle is a
 pure query over rankings the Run already persists.
+
+**Amendment (2026-07-23).** `strategy_run.json` is deleted. CandidateStore is the durable authority
+for Candidate rows, roles, activation, Candidate Keys, and Lock resolution; its provenance no
+longer names a strategy artifact. The CLI still returns representative Candidate summaries and
+copy-paste Lock handles directly from the completed in-memory result. Lock resolution and exact
+Candidate reproduction therefore depend only on the authority this ADR established.
+
+**Amendment (2026-07-23) — Run IDs outlive the directory layout.** A Lock handle continues to use
+the Run ID recorded in Candidate Store; it is no longer described as a folder name. Flattening Run
+storage to `<run-id>.json` changes neither Lock parsing nor Candidate lookup.
+
+**Amendment (2026-07-23) — commit is visibility.** Candidate Store no longer carries pending or
+active publication state. One transaction commits the full Candidate Set and all representative
+role mappings; Lock resolution can use them immediately. Exact recommit is idempotent, while
+divergent reuse of a Run ID fails without changing the original set.

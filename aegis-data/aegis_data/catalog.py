@@ -9,13 +9,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
+from nautilus_trader.core.data import Data
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import FuturesContract
 from platformdirs import user_data_dir
 
 from aegis_data.bar_type import mic_canonical_instrument_id, raw_bar_type
-from aegis_data.distributions import Distribution, query_distribution_data
-from aegis_data.instrument import native_size_increment
+from aegis_data._ensure_coverage import (
+    CoverageInterval,
+    ServedRecords,
+    ensure_coverage,
+)
+from aegis_data.distributions import Distribution, distribution_records
+from aegis_data.instrument import native_multiplier, native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.ohlcv import bars_to_ohlcv
 from aegis_data.roll import DatedContract
@@ -23,8 +29,6 @@ from aegis_data.roll import DatedContract
 if TYPE_CHECKING:
     from nautilus_trader.model.data import Bar, BarType
     from nautilus_trader.model.instruments import Instrument
-
-    from aegis_data._distribution_coverage import DistributionCoverageService
 
 AEGIS_DATA_DIR_ENV = "AEGIS_DATA_DIR"
 CATALOG_DIRNAME = "catalog"
@@ -124,15 +128,21 @@ class CatalogWindow:
     """One coherent catalog read: the requested window's run-constant facts (ADR-0012).
 
     OHLCV per requested id, complete definitions (guaranteed — the read fails
-    loud naming every missing id before verification), native size increments,
+    loud naming every missing id before verification), native sizing facts,
     verified distributions, and their coverage report.
     """
 
     ohlcv: dict[InstrumentId, pd.DataFrame]
     instruments: dict[InstrumentId, "Instrument"]
     size_increment_by_instrument: dict[InstrumentId, float]
-    distributions: tuple[Distribution, ...]
+    multiplier_by_instrument: dict[InstrumentId, float]
+    records: tuple[Data, ...]
     distribution_coverage: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def distributions(self) -> tuple[Distribution, ...]:
+        """Distribution records consumed by return and cash projections."""
+        return distribution_records(self.records)
 
 
 @dataclass(frozen=True)
@@ -152,6 +162,14 @@ def continuous_root_legs(catalog: Any, root: str) -> tuple[DatedContract, ...]:
         if instrument.underlying == root
     ]
     return tuple(sorted(legs, key=lambda leg: leg.last_trade))
+
+
+def continuous_instrument_legs(
+    catalog: Any, instrument_id: InstrumentId
+) -> tuple[DatedContract, ...]:
+    """List dated legs for the root carried by an instrument identifier."""
+    root, _separator, _venue = instrument_id.value.rpartition(".")
+    return continuous_root_legs(catalog, root)
 
 
 def catalog_definitions(
@@ -210,13 +228,32 @@ class CatalogBackedDataPort:
         definition completeness needs), definition completeness is judged
         BEFORE distribution verification (a missing definition is an authoring
         fault and must never surface as the environmental coverage-gap error),
-        and ONE verification pass serves both the returned distributions and
-        the coverage report.
+        and ONE verification command gates the subsequent warm record/report
+        query.
         """
         ohlcv = self._load_raw_bars(request)
         instruments = self._complete_definitions(request.instrument_ids)
-        distribution_coverage = self._coverage_service().verify_window(
-            request.instrument_ids, start=request.start, end=request.end
+        from aegis_data._distribution_verification import (
+            ensure_distribution_window,
+            read_distribution_window,
+        )
+
+        ensure_distribution_window(
+            self.catalog,
+            request.instrument_ids,
+            start=request.start,
+            end=request.end,
+            provider=self.distribution_provider,
+            clock_ns=self.clock_ns,
+            mark_bars=self._mark_bars,
+            ensure_bar_coverage=self._ensure_bar_interval,
+        )
+        verified = read_distribution_window(
+            self.catalog,
+            request.instrument_ids,
+            start=request.start,
+            end=request.end,
+            mark_bars=self._mark_bars,
         )
         return CatalogWindow(
             ohlcv=ohlcv,
@@ -225,13 +262,12 @@ class CatalogBackedDataPort:
                 instrument_id: native_size_increment(instrument)
                 for instrument_id, instrument in instruments.items()
             },
-            distributions=query_distribution_data(
-                self.catalog,
-                request.instrument_ids,
-                start=request.start,
-                end=request.end,
-            ),
-            distribution_coverage=distribution_coverage,
+            multiplier_by_instrument={
+                instrument_id: native_multiplier(instrument)
+                for instrument_id, instrument in instruments.items()
+            },
+            records=verified.records,
+            distribution_coverage=verified.coverage,
         )
 
     def _complete_definitions(
@@ -295,7 +331,9 @@ class CatalogBackedDataPort:
                 frames[instrument_id] = sided
         return frames
 
-    def read_native_bars(self, request: CatalogWindowRequest) -> dict[InstrumentId, list[Bar]]:
+    def read_native_bars(
+        self, request: CatalogWindowRequest
+    ) -> dict[InstrumentId, list[Bar]]:
         """The window's stored native ``Bar``\\ s per instrument — a pure warm read.
 
         The single owner of the catalog ``Bar`` query (the window read's bar pass
@@ -313,7 +351,9 @@ class CatalogBackedDataPort:
             for instrument_id in request.instrument_ids
         }
 
-    def _query_bars(self, bar_type: BarType, request: CatalogWindowRequest) -> list[Bar]:
+    def _query_bars(
+        self, bar_type: BarType, request: CatalogWindowRequest
+    ) -> list[Bar]:
         bars = self.catalog.query(
             _bar_cls(),
             identifiers=[str(bar_type)],
@@ -329,7 +369,9 @@ class CatalogBackedDataPort:
         by_ts_event: dict[int, Bar] = {bar.ts_event: bar for bar in bars}
         return [by_ts_event[ts_event] for ts_event in sorted(by_ts_event)]
 
-    def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
+    def _mark_bars(
+        self, instrument_id: InstrumentId, timeframe: str
+    ) -> tuple[BarType, ...]:
         return self.resolver.resolve(instrument_id, timeframe).mark_bars
 
     def instruments(
@@ -350,24 +392,51 @@ class CatalogBackedDataPort:
         definitions = self._complete_definitions((instrument_id,))
         return native_size_increment(definitions[instrument_id])
 
+    def multiplier_for(self, instrument_id: InstrumentId) -> float:
+        """Return the native multiplier from one stored instrument definition."""
+
+        definitions = self._complete_definitions((instrument_id,))
+        return native_multiplier(definitions[instrument_id])
+
     def continuous_size_increment(self, root: str) -> float:
         """Return the one native increment shared by a root's dated legs."""
+
+        return self._continuous_instrument_fact(
+            root,
+            fact_name="size increments",
+            extract=native_size_increment,
+        )
+
+    def continuous_multiplier(self, root: str) -> float:
+        """Return the one native multiplier shared by a root's dated legs."""
+
+        return self._continuous_instrument_fact(
+            root,
+            fact_name="multipliers",
+            extract=native_multiplier,
+        )
+
+    def _continuous_instrument_fact(
+        self,
+        root: str,
+        *,
+        fact_name: str,
+        extract: Callable[["Instrument"], float],
+    ) -> float:
+        """Resolve one run-constant native fact shared by all dated legs."""
 
         leg_ids = tuple(
             InstrumentId.from_str(leg.symbol)
             for leg in self.resolve_continuous(root).legs
         )
         definitions = self._complete_definitions(leg_ids)
-        increments = {
-            native_size_increment(definitions[instrument_id])
-            for instrument_id in leg_ids
-        }
-        if len(increments) != 1:
+        values = {extract(definitions[instrument_id]) for instrument_id in leg_ids}
+        if len(values) != 1:
             raise ValueError(
-                f"continuous-future root {root!r} has inconsistent native size "
-                f"increments across dated legs: {sorted(increments)}"
+                f"continuous-future root {root!r} has inconsistent native "
+                f"{fact_name} across dated legs: {sorted(values)}"
             )
-        return next(iter(increments))
+        return next(iter(values))
 
     def distribution_coverage_report(
         self,
@@ -383,8 +452,14 @@ class CatalogBackedDataPort:
         raw bars, yet its not-applicable rows are real Run evidence.  An
         unresolvable id still fails loud.
         """
-        return self._coverage_service().coverage_report(
-            tuple(instrument_ids), start=start, end=end
+        from aegis_data._distribution_verification import distribution_coverage_report
+
+        return distribution_coverage_report(
+            self.catalog,
+            tuple(instrument_ids),
+            start=start,
+            end=end,
+            mark_bars=self._mark_bars,
         )
 
     def force_reverify_distribution_coverage(
@@ -394,8 +469,19 @@ class CatalogBackedDataPort:
         start: str | int | pd.Timestamp,
         end: str | int | pd.Timestamp,
     ) -> None:
-        self._coverage_service().force_reverify(
-            tuple(instrument_ids), start=start, end=end
+        from aegis_data._distribution_verification import (
+            force_reverify_distribution_window,
+        )
+
+        force_reverify_distribution_window(
+            self.catalog,
+            tuple(instrument_ids),
+            start=start,
+            end=end,
+            provider=self.distribution_provider,
+            clock_ns=self.clock_ns,
+            mark_bars=self._mark_bars,
+            ensure_bar_coverage=self._ensure_bar_interval,
         )
 
     def fetch_contract_ohlcv(
@@ -439,17 +525,8 @@ class CatalogBackedDataPort:
                 f"continuous-future root {root!r} legs span multiple venues "
                 f"{sorted(venue.value for venue in venues)}; expected one"
             )
-        return ResolvedContinuousRoot(InstrumentId(Symbol(root), next(iter(venues))), legs)
-
-    def _coverage_service(self) -> DistributionCoverageService:
-        from aegis_data._distribution_coverage import DistributionCoverageService
-
-        return DistributionCoverageService(
-            self.catalog,
-            self.distribution_provider,
-            clock_ns=self.clock_ns,
-            resolver=self.resolver,
-            ensure_bar_coverage=self._ensure_bar_interval,
+        return ResolvedContinuousRoot(
+            InstrumentId(Symbol(root), next(iter(venues))), legs
         )
 
     def _ensure_bar_interval(
@@ -468,49 +545,54 @@ class CatalogBackedDataPort:
         )
 
     def _ensure_covered(self, bar_type: BarType, request: CatalogWindowRequest) -> None:
-        missing = self._missing_intervals(bar_type, request)
-        if not missing:
-            return
-        if self.provider is None:
-            raise _coverage_gap(bar_type, missing)
-        for start_ns, end_ns in missing:
-            with gap_fill_boundary(str(bar_type)):
-                served = self.provider.request_bars(
-                    bar_type,
-                    start=pd.Timestamp(start_ns, tz="UTC"),
-                    end=pd.Timestamp(end_ns, tz="UTC"),
-                )
-            if served.bars:
-                # Claim coverage only from where the source's history actually
-                # reached (#75): a pre-wall head stays missing for the gate below,
-                # while a fully walked interval is covered edge to edge even where
-                # no bars trade (weekends, holidays).
-                self.catalog.write_data(
-                    list(served.bars),
-                    start=max(start_ns, served.served_from.value),
-                    end=end_ns,
-                )
-        self.catalog.consolidate_data(
-            _bar_cls(), identifier=str(bar_type), deduplicate=True
-        )
-        remaining = self._missing_intervals(bar_type, request)
-        if remaining:
-            raise _coverage_gap(bar_type, remaining)
-        # The fill served this instrument's bars; persist its definition too so the
-        # shared corpus never holds bars without a definition (ADR-0008).
+        fetchers: tuple[
+            Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[Any]], ...
+        ] = ()
+        if self.provider is not None:
+            fetchers = (_bar_fetcher(self.provider, bar_type),)
+        on_coverage_filled = None
         if self.definition_seeder is not None:
-            with gap_fill_boundary(str(bar_type)):
-                self.definition_seeder(bar_type.instrument_id)
+            definition_seeder = self.definition_seeder
+
+            def seed_definition() -> None:
+                definition_seeder(bar_type.instrument_id)
+
+            on_coverage_filled = seed_definition
+        ensure_coverage(
+            subject=str(bar_type),
+            fetchers=fetchers,
+            missing_intervals=lambda: self._missing_intervals(bar_type, request),
+            commit=lambda verified, records: self.catalog.write_data(
+                list(records),
+                data_cls=_bar_cls(),
+                identifier=str(bar_type),
+                start=verified.start_ns,
+                end=verified.end_ns,
+            )
+            if records
+            else None,
+            coverage_error=lambda missing: _coverage_gap(bar_type, missing),
+            provider_boundary=gap_fill_boundary,
+            finalize=lambda: self.catalog.consolidate_data(
+                _bar_cls(),
+                identifier=str(bar_type),
+                deduplicate=True,
+            ),
+            on_coverage_filled=on_coverage_filled,
+        )
 
     def _missing_intervals(
         self, bar_type: BarType, request: CatalogWindowRequest
-    ) -> list[tuple[int, int]]:
-        return self.catalog.get_missing_intervals_for_request(
-            _timestamp_ns(request.start),
-            _timestamp_ns(request.end),
-            _bar_cls(),
-            identifier=str(bar_type),
-        )
+    ) -> list[CoverageInterval]:
+        return [
+            CoverageInterval(start_ns, end_ns)
+            for start_ns, end_ns in self.catalog.get_missing_intervals_for_request(
+                _timestamp_ns(request.start),
+                _timestamp_ns(request.end),
+                _bar_cls(),
+                identifier=str(bar_type),
+            )
+        ]
 
 
 def catalog_root(env: Mapping[str, str] | None = None) -> Path:
@@ -521,8 +603,13 @@ def catalog_root(env: Mapping[str, str] | None = None) -> Path:
     return Path(base).expanduser() / CATALOG_DIRNAME
 
 
+def resolve_catalog_path(path: str | Path | None = None) -> Path:
+    """Resolve an explicit or configured catalog path without opening it."""
+    return catalog_root() if path is None else Path(path).expanduser()
+
+
 def parquet_data_catalog(path: str | Path | None = None) -> Any:
-    root = catalog_root() if path is None else Path(path).expanduser()
+    root = resolve_catalog_path(path)
     root.mkdir(parents=True, exist_ok=True)
     from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
@@ -580,6 +667,17 @@ def gap_fill_boundary(subject: str) -> Iterator[None]:
         raise _gap_fill_failure(subject, exc) from exc
 
 
+def _bar_fetcher(
+    provider: NautilusDataProviderPort,
+    bar_type: BarType,
+) -> Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[Any]]:
+    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ServedRecords[Any]:
+        served = provider.request_bars(bar_type, start=start, end=end)
+        return ServedRecords(served.bars, served.served_from)
+
+    return fetch
+
+
 def _gap_fill_failure(subject: str, exc: Exception) -> GapFillProviderError:
     return GapFillProviderError(
         f"the gap-fill provider could not serve {subject}: "
@@ -595,11 +693,11 @@ def _cause_summary(exc: Exception) -> str:
 
 
 def _coverage_gap(
-    bar_type: BarType, intervals: Sequence[tuple[int, int]]
+    bar_type: BarType, intervals: Sequence[CoverageInterval]
 ) -> CatalogCoverageGapError:
     ranges = [
-        f"{pd.Timestamp(start, tz='UTC').isoformat()}..{pd.Timestamp(end, tz='UTC').isoformat()}"
-        for start, end in intervals
+        f"{interval.start.isoformat()}..{interval.end.isoformat()}"
+        for interval in intervals
     ]
     return CatalogCoverageGapError(
         f"catalog cannot serve {bar_type} for requested window; missing={ranges}"

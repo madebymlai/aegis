@@ -11,10 +11,9 @@ from dataclasses import dataclass
 
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_trader.domain.types import OrderIntent, WeightDelta
+from aegis_runtime.currency_units import resolve_quote_currency
 
-_PENCE_FACTOR = 100.0
-_GBP_CURRENCY = "GBp"
+from aegis_trader.domain.types import OrderIntent, WeightDelta
 
 
 @dataclass(frozen=True)
@@ -54,10 +53,12 @@ def size_order(
     if notional_eur <= 0.0 or price <= 0.0 or fx_rate <= 0.0:
         return None
 
-    notional_native = notional_eur * fx_rate
-
-    if instrument.currency == _GBP_CURRENCY:
-        notional_native *= _PENCE_FACTOR
+    # A minor-unit quote currency (GBp = pence) prices in 1/N of its major, so
+    # scale the major-currency notional into the native minor unit (×100 for
+    # pence, ×1 otherwise). The factor is owned by aegis_runtime.currency_units,
+    # the same source the read-side FX conversion uses, so the two cannot disagree.
+    _major, minor_units_per_major = resolve_quote_currency(instrument.currency)
+    notional_native = notional_eur * fx_rate * minor_units_per_major
 
     # One contract controls ``price × multiplier`` of native notional (the
     # contract multiplier is 1 for equities/FX, ≠1 for futures — e.g. ES ×50).

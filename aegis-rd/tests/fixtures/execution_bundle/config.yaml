@@ -25,9 +25,4 @@ ranking:
 
 optimization:
   search: grid
-  split:
-    method: from_rolling
-    params:
-      length: 20
-      offset: 0
-      split: 0.5
+  observation_block_bars: 10

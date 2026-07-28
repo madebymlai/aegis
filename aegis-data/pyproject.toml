@@ -29,7 +29,8 @@ testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["aegis_data"]
+files = ["aegis_data", "tests"]
+exclude = ["^scripts/"]
 
 [[tool.mypy.overrides]]
 module = [

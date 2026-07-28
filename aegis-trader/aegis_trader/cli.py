@@ -17,11 +17,42 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from aegis_trader.config import IBConnectionSettings, find_book_config
 
 _log = logging.getLogger("aegis_trader")
+
+
+def _recovery_logger() -> Callable[[object], None]:
+    """Render typed startup recovery updates at the operator-facing boundary."""
+    from aegis_trader.trader.startup_fast_forward import Ready, Recovering
+
+    reported_requests: tuple[int, int] | None = None
+
+    def report(update: object) -> None:
+        nonlocal reported_requests
+        if isinstance(update, Recovering):
+            progress = update.progress
+            request_progress = (
+                progress.loaded_requests,
+                progress.planned_requests,
+            )
+            if request_progress == reported_requests:
+                return
+            reported_requests = request_progress
+            _log.info(
+                "Startup recovery: requests_remaining=%d, historical_events=%d",
+                progress.planned_requests - progress.loaded_requests,
+                progress.received_events,
+            )
+        elif isinstance(update, Ready):
+            _log.info(
+                "Startup recovery complete; book_activity=%s", update.book_activity
+            )
+
+    return report
 
 
 def _run_backtest(args: argparse.Namespace) -> int:
@@ -89,7 +120,12 @@ def _trader_start(args: argparse.Namespace) -> int:
         "Starting live trader for account %s on IB_PORT=%d (port decides paper vs live)",
         connection.account_id, connection.port,
     )
-    return start_trader(book_path, connection, pid_file=args.pid_file)
+    return start_trader(
+        book_path,
+        connection,
+        pid_file=args.pid_file,
+        recovery_handler=_recovery_logger(),
+    )
 
 
 def _trader_stop(args: argparse.Namespace) -> int:
@@ -166,10 +202,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backtest":
         return _run_backtest(args)
     if args.command == "trader":
-        if args.trader_command == "start":
-            return _trader_start(args)
-        if args.trader_command == "stop":
-            return _trader_stop(args)
+        from aegis_trader.trader.node import (
+            TraderAlreadyRunningError,
+            TraderNotRunningError,
+        )
+
+        try:
+            if args.trader_command == "start":
+                return _trader_start(args)
+            if args.trader_command == "stop":
+                return _trader_stop(args)
+        except (TraderAlreadyRunningError, TraderNotRunningError) as exc:
+            # Expected operator states, not faults: report them as a message and
+            # an exit code rather than as a traceback.
+            _log.error("%s", exc)
+            return 1
         parser.error("trader requires a subcommand: 'start' or 'stop'")
 
     parser.error("a command is required: 'backtest' or 'trader start|stop'")

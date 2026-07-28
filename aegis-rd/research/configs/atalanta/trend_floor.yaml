@@ -1,7 +1,14 @@
 name: atalanta_trend_buy_hold_spread
 schema_version: 11
 output_dir: runs/atalanta/trend-buy-hold-spread
-lock: 20260709T232701314885Z_atalanta_trend_buy_hold_spread
+# RE-LOCKED 2026-07-25, same cause as the demeter counterpart: the 2026-07-22 store was
+# candidate-store schema v7 and the code now requires v8, so resolve_lock_run could not open
+# it. Re-ran unlocked to regenerate; the run reported candidate_count: 1, confirming the grid
+# collapses to the cell pinned in strategy.params - the SAME candidate re-minted under the
+# current schema, not a re-crowning. Previous lock:
+# 20260722T121727832118Z_atalanta_trend_buy_hold_spread (store preserved at
+# .candidate_store.v7-backup/).
+lock: 20260724T233648786783Z_atalanta_trend_buy_hold_spread
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # ATALANTA — the definitive convex trend sleeve (the floor's long-gamma "drawdown payer").
@@ -109,10 +116,4 @@ ranking:
 optimization:
   search: grid
   seed: 42
-  split:
-    method: from_rolling
-    params:
-      length: 504
-      offset: 0
-      split: 0.5
-    max_splits: 10
+  observation_block_bars: 252

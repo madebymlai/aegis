@@ -215,7 +215,7 @@ def test_bundle_payload_rejects_unknown_and_forward_adjustment_modes(bad_value: 
     )
     payload["contract"]["adjustment_mode"] = bad_value
 
-    with pytest.raises(BundlePayloadFieldError, match="not a supported mode"):
+    with pytest.raises(BundlePayloadFieldError, match="adjustment_mode"):
         load_bundle_payload(payload)
 
 
@@ -373,7 +373,7 @@ def test_bundle_payload_rejects_invalid_instrument_id() -> None:
     )
     payload["manifest"]["instrument_ids"][1] = ""
 
-    with pytest.raises(ValueError, match="InstrumentId"):
+    with pytest.raises(ValueError, match="instrument_ids"):
         load_bundle_payload(payload)
 
 

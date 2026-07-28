@@ -647,6 +647,84 @@ def test_drawdown_delever_keeps_gross_within_the_ceiling() -> None:
     assert signed_order_weights(result) == {"AAA": pytest.approx(0.20)}
 
 
+# ---------------------------------------------------------------------------
+# The live drawdown governor (book.toml), driven synthetically.
+#
+# The armed calibration is dormant across the whole validated window by design:
+# measured maxDD is -10.2% at gross 1.75 over 2018-2024 including COVID and 2022
+# (runs/aegis/2026-07-05, B1/GH #79), and the ramp starts at -15%. No backtest
+# therefore exercises it, so a synthetic drawdown is the only coverage it gets.
+
+_LIVE_GOVERNOR = DrawdownDeleverCurve(
+    start_drawdown=0.15, end_drawdown=0.30, floor_multiplier=0.40
+)
+_MEASURED_MAX_DRAWDOWN = 0.102
+# The harness sizes each order to a whole micro-NAV unit, so a summed gross of
+# two instruments carries a couple of those units of rounding.
+_MICRO_NAV = 1e-6
+
+
+def _live_governor_gross(drawdown: float) -> float:
+    """Netted book gross under the live governor at one drawdown depth.
+
+    Sleeve vols are high enough that the vol-target solve lands far below
+    ``gross_cap``, so the clamp never binds and the governor's cut shows through
+    instead of being absorbed by the ceiling.
+    """
+    harness = build_harness(
+        [
+            SleeveSpec("alpha", 0.5, {"AAA": 1.0}),
+            SleeveSpec("beta", 0.5, {"BBB": 1.0}),
+        ],
+        ledger=StagedLedger(
+            covariances=[_diagonal_covariance({"alpha": 0.30, "beta": 0.30})],
+            drawdown=drawdown,
+        ),
+        book_vol_target=0.09,
+        gross_cap=1.75,
+        drawdown_delever=_LIVE_GOVERNOR,
+    )
+    return sum(abs(weight) for weight in signed_order_weights(harness.run()).values())
+
+
+@pytest.mark.parametrize(
+    ("drawdown", "expected_multiplier"),
+    [
+        (0.0, 1.0),
+        (_MEASURED_MAX_DRAWDOWN, 1.0),
+        (0.15, 1.0),
+        (0.18, 0.88),
+        (0.20, 0.80),
+        (0.25, 0.60),
+        (0.30, 0.40),
+        (0.45, 0.40),
+    ],
+)
+def test_live_drawdown_governor_scales_the_book_along_its_ramp(
+    drawdown: float, expected_multiplier: float
+) -> None:
+    """Exposure tracks the ramp: flat to -15%, linear to the floor at -30%, then
+    pinned. Asserted as a ratio to the undelevered book so this covers the
+    governor's response, not the vol-target arithmetic other tests already pin."""
+    undelevered = _live_governor_gross(0.0)
+
+    assert _live_governor_gross(drawdown) == pytest.approx(
+        undelevered * expected_multiplier, abs=2 * _MICRO_NAV
+    )
+
+
+def test_live_drawdown_governor_is_dormant_through_the_measured_envelope() -> None:
+    """Calibration invariant: the governor must not fire on a drawdown the book
+    has actually produced. De-levering inside the validated range is *measured* to
+    cost 4.1-4.8pp at book level (runs/aegis/2026-07-05 finding 2 — the 2020 gain
+    was the governor NOT firing), so the ramp starts above measured maxDD with
+    headroom. Re-tuning ``start_drawdown`` below -10.2% breaks this."""
+    assert _LIVE_GOVERNOR.multiplier_for(_MEASURED_MAX_DRAWDOWN) == 1.0
+    assert _live_governor_gross(_MEASURED_MAX_DRAWDOWN) == pytest.approx(
+        _live_governor_gross(0.0)
+    )
+
+
 def test_within_band_drift_over_the_ceiling_is_clamped_not_failed() -> None:
     result = build_harness(
         [

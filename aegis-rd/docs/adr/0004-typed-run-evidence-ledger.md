@@ -21,3 +21,21 @@ The ledger is the **sole writer** of `manifest.evidence`: one canonical store, o
 - Persist-on-failure becomes uniform: every stage failure records a typed failure section and persists the accumulated evidence, closing the `publishing`-stage gap where partial evidence was previously lost.
 - No dependency on the canonical-serialization work (ADR-0003): the ledger appends builtins, and serialization stays in the Manifest layer. The two are hash-orthogonal and can land in either order.
 - Amends ADR-0001: its deferred "evidence accumulator" is now the `RunEvidence` ledger. Module boundaries are unchanged — the four stage seams stay exactly where ADR-0001 placed them.
+
+**Amendment (2026-07-23).** `RunEvidence.fail(stage, err)` now retains the failure stage only in
+memory and persists the Evidence accumulated so far; it no longer writes a second diagnostic into
+optimization Evidence. The recorder writes the one terminal failure fact under the Manifest's Run
+lifecycle, with stage, exception type, and bounded message. This keeps partial Evidence durable
+without allowing Evidence and lifecycle diagnostics to disagree.
+
+**Amendment (2026-07-23) — package names the surviving responsibility.** After the generic
+artifact subsystem and auxiliary Run artifacts were removed, `aegis_research.provenance` was
+renamed to `aegis_research.run_record`. The package now names its concrete responsibility: the
+Manifest domain record, lifecycle recorder, Run-path allocation, and config Evidence capture.
+The domain terms **Provenance** and **Evidence** remain unchanged; only the Python package boundary
+was renamed, with no compatibility import shim.
+
+**Amendment (2026-07-23) — Evidence ledger removed.** The last Evidence consumer was the
+Manifest itself. Typed stage values now carry operational facts directly, Candidate Store retains
+only Lock-reproduction provenance, and the ledger, section schema, diagnostic projections, and
+Manifest writer are deleted. No logger-shaped replacement is introduced.

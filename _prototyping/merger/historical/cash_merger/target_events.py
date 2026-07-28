@@ -5,17 +5,15 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from typing import Any, Protocol
 
-from cash_merger.census import CashMergerEvent, EventStatus
+from cash_merger.events import CashMergerEvent, EventStatus
 from cash_merger.massive import _available_at, _non_cash_consideration, _offer
 
 _AGREEMENTS = ("merger_agreement", "acquisition_agreement")
 _COMPLETIONS = ("merger_completion", "acquisition_completion")
 _TERMINATIONS = ("deal_termination", "deal_withdrawal", "deal_breach_default")
-_TARGET_FORMS = ("PREM14A", "DEFM14A", "SC 14D9", "SC 14D9/A")
-_TARGET_FORM_LAG = timedelta(days=240)
 _SPAC = re.compile(
     r"business\s+combination\s+agreement|de[- ]SPAC|special\s+purpose\s+acquisition",
     re.I,
@@ -53,11 +51,6 @@ class TargetEventClient(Protocol):
         self, ciks: Iterable[str], start: date, end: date
     ) -> Iterable[dict[str, Any]]: ...
 
-    def filing_index(
-        self, form_type: str, start: date, end: date
-    ) -> Iterable[dict[str, Any]]: ...
-
-
 @dataclass(frozen=True)
 class MassiveTargetEventSource:
     """Emit only fixed-cash events whose filing text identifies the listed target."""
@@ -75,20 +68,21 @@ class MassiveTargetEventSource:
             for category in _AGREEMENTS
             for row in self.client.disclosures(category, start, end)
         )
-        target_forms = tuple(
-            row
-            for form_type in _TARGET_FORMS
-            for row in self.client.filing_index(form_type, start, end)
+        unresolved_identity_accessions = tuple(
+            sorted(
+                str(row.get("accession_number") or "")
+                for row in agreements
+                if _ticker(row) is None
+            )
         )
         explicitly_confirmed = {
             _cik(row) for row in agreements if _cik(row) and _is_target_filer(row)
-        } | _proxy_confirmed_ciks(agreements, target_forms)
+        }
         provisional_ciks = explicitly_confirmed | {
             _cik(row)
             for row in agreements
             if _cik(row) and _offer(str(row.get("supporting_text") or "")) is not None
         }
-        target_tickers = _target_form_tickers(target_forms)
         filing_rows = tuple(
             self.client.filing_texts_many(provisional_ciks, start, end)
         )
@@ -113,7 +107,7 @@ class MassiveTargetEventSource:
                 event := _pending_event(
                     row,
                     texts,
-                    ticker=target_tickers.get(_cik(row)) or _ticker(row),
+                    ticker=_ticker(row),
                 )
             )
             is not None
@@ -140,6 +134,7 @@ class MassiveTargetEventSource:
                 key=lambda event: (event.available_at, event.target_cik, event.accession),
             )),
             filing_rows=filing_rows,
+            unresolved_identity_accessions=unresolved_identity_accessions,
         )
 
 
@@ -147,6 +142,7 @@ class MassiveTargetEventSource:
 class TargetEventTape:
     events: tuple[CashMergerEvent, ...]
     filing_rows: tuple[dict[str, Any], ...]
+    unresolved_identity_accessions: tuple[str, ...]
 
 
 def _is_target_filer(row: dict[str, Any]) -> bool:
@@ -230,46 +226,14 @@ def _cik(row: dict[str, Any]) -> str:
 
 
 def _ticker(row: dict[str, Any]) -> str | None:
-    for value in row.get("tickers") or ():
-        ticker = str(value).upper()
-        if re.fullmatch(r"[A-Z]{1,5}", ticker):
-            return ticker
-    return None
-
-
-def _proxy_confirmed_ciks(
-    agreements: Iterable[dict[str, Any]],
-    target_forms: Iterable[dict[str, Any]],
-) -> set[str]:
-    agreement_dates: dict[str, list[date]] = {}
-    for row in agreements:
-        if cik := _cik(row):
-            agreement_dates.setdefault(cik, []).append(date.fromisoformat(str(row["filing_date"])))
-    confirmed: set[str] = set()
-    for row in target_forms:
-        cik = _cik(row)
-        filed_on = date.fromisoformat(str(row["filing_date"]))
-        if any(
-            timedelta(0) <= filed_on - agreement_on <= _TARGET_FORM_LAG
-            for agreement_on in agreement_dates.get(cik, ())
-        ):
-            confirmed.add(cik)
-    return confirmed
-
-
-def _target_form_tickers(
-    rows: Iterable[dict[str, Any]],
-) -> dict[str, str]:
-    tickers: dict[str, tuple[str, str]] = {}
-    for row in rows:
-        cik = _cik(row)
-        ticker = str(row.get("ticker") or "").upper()
-        if not cik or re.fullmatch(r"[A-Z]{1,5}", ticker) is None:
-            continue
-        filed_on = str(row.get("filing_date") or "")
-        if cik not in tickers or filed_on > tickers[cik][0]:
-            tickers[cik] = (filed_on, ticker)
-    return {cik: ticker for cik, (_, ticker) in tickers.items()}
+    candidates = tuple(
+        dict.fromkeys(
+            str(value).upper()
+            for value in row.get("tickers") or ()
+            if re.fullmatch(r"[A-Z]{1,5}", str(value).upper())
+        )
+    )
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _coalesce_disclosures(

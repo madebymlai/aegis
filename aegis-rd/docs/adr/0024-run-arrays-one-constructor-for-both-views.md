@@ -1,5 +1,7 @@
 # Run market-data preparation is one constructor: RunArrays carries both views, proven coherent
 
+Status: superseded by [ADR-0028](0028-run-data-is-the-single-research-data-interface.md)
+
 Status: accepted. ADR-0026 extends this lesson one layer up: the run-constant book
 facts (fees, bands, futures roots) become one `ResolvedBook` value the same way.
 

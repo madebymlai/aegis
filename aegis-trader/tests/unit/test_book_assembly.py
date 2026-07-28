@@ -14,7 +14,9 @@ from aegis_trader.bundles.book import (
     ContinuousDeclarationConflictError,
     ContinuousRootDeclaration,
     InstrumentBandError,
+    MissingAvailabilityArrayError,
     UndeliverableArrayError,
+    UnprovisionedArrayError,
     assemble_book,
 )
 from aegis_trader.bundles.bands import BundleBands
@@ -28,6 +30,7 @@ from aegis_trader.trader.strategy import (
     RebalanceStrategy,
     RebalanceStrategyConfig,
 )
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import make_bundle
 
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")
@@ -359,6 +362,48 @@ def test_assemble_book_accepts_every_bar_derived_array() -> None:
     assert assembled.sleeves == {SleeveName("trend"): bundle}
 
 
+def test_assemble_book_accepts_provisioned_custom_arrays() -> None:
+    config = _book(("event", "event.whl"))
+    bundle = make_bundle(
+        required_arrays=("Close", "FixtureValue", "FixtureAvailable")
+    )
+    registry = StubBundleRegistry({"event.whl": bundle})
+
+    assembled = assemble_book(config, registry)
+
+    assert assembled.sleeves == {SleeveName("event"): bundle}
+
+
+def test_assemble_book_rejects_known_unprovisioned_arrays_distinctly() -> None:
+    config = _book(("event", "event.whl"))
+    bundle = make_bundle(
+        required_arrays=("DormantFixtureValue", "DormantFixtureAvailable")
+    )
+    registry = StubBundleRegistry({"event.whl": bundle})
+
+    with pytest.raises(UnprovisionedArrayError) as excinfo:
+        assemble_book(config, registry)
+
+    assert excinfo.value.arrays == (
+        "DormantFixtureAvailable",
+        "DormantFixtureValue",
+    )
+    assert "known" in str(excinfo.value)
+    assert "provider" in str(excinfo.value)
+
+
+def test_assemble_book_requires_availability_with_a_custom_value() -> None:
+    config = _book(("event", "event.whl"))
+    bundle = make_bundle(required_arrays=("Close", "FixtureValue"))
+    registry = StubBundleRegistry({"event.whl": bundle})
+
+    with pytest.raises(MissingAvailabilityArrayError) as excinfo:
+        assemble_book(config, registry)
+
+    assert excinfo.value.value_array == "FixtureValue"
+    assert excinfo.value.availability_array == "FixtureAvailable"
+
+
 def test_assemble_book_rejects_conflicting_continuous_root_declarations() -> None:
     config = _book(("trend", "trend.whl"), ("carry", "carry.whl"))
     registry = StubBundleRegistry(
@@ -460,7 +505,8 @@ def test_register_book_rejects_a_different_strategy_book_config() -> None:
         StubBundleRegistry({"trend.whl": make_bundle()}),
     )
     strategy = RebalanceStrategy(
-        RebalanceStrategyConfig(book=_book(("trend", "other.whl")))
+        RebalanceStrategyConfig(book=_book(("trend", "other.whl"))),
+        arrays=SleeveArrays.bar_only(),
     )
 
     with pytest.raises(BookConfigMismatchError, match="configured Book Config"):

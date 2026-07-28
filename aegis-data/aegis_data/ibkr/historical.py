@@ -4,21 +4,20 @@
 port (``request_bars`` *returns* bars; :class:`CatalogBackedDataPort` is the
 single writer of record, ADR-0008), hides ``asyncio`` behind a synchronous
 surface, and resolves identity through IB simplified symbology (ADR-0005).
-The raw-``ibapi`` ``ADJUSTED_LAST`` machinery and the process-singleton
-connection live here with it; :func:`seed_instrument_definitions` is the
-separate Step-1 definition write.  Every ``ibapi``/Nautilus-adapter import is
-lazy — importing this module never requires ``ibapi``.
+The ``ADJUSTED_LAST`` extension and process-singleton connection live here with
+it; :func:`seed_instrument_definitions` is the separate Step-1 definition write.
+Every ``ibapi``/Nautilus-adapter import is lazy — importing this module never
+requires ``ibapi``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import atexit
-import itertools
+import functools
 import math
-import threading
-import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -28,10 +27,12 @@ import pandas as pd
 from nautilus_trader.common.config import msgspec_encoding_hook
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import ServedBars
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
 if TYPE_CHECKING:
+    from nautilus_trader.adapters.interactive_brokers.common import IBContract
     from nautilus_trader.model.data import Bar, BarType
     from nautilus_trader.model.instruments import Instrument
 
@@ -49,6 +50,7 @@ IB_CALL_DEADLINE = 600
 # IB ``MarketDataTypeEnum`` member names — validated up front so a bad value fails
 # at construction, not at connect time, without importing ``ibapi`` to do it.
 _IB_MARKET_DATA_TYPES = frozenset({"REALTIME", "FROZEN", "DELAYED", "DELAYED_FROZEN"})
+_ADJUSTED_LAST_WHAT_TO_SHOW = "ADJUSTED_LAST"
 
 # Nautilus initializes a **process-global** Rust logger when an IB client is
 # constructed, so a second client in the same process aborts
@@ -56,7 +58,6 @@ _IB_MARKET_DATA_TYPES = frozenset({"REALTIME", "FROZEN", "DELAYED", "DELAYED_FRO
 # The real connection is therefore a per-process singleton (one loop + one client),
 # created once and reused by every call across every provider instance.
 _IB_CONNECTION: dict[str, Any] = {}
-_RAW_CLIENT_ID_SEQUENCE = itertools.count(1)
 
 
 class IbkrRequestError(RuntimeError):
@@ -73,6 +74,45 @@ class IbkrRequestError(RuntimeError):
     resolve to one asset) — every session await is therefore deadline-bounded
     (``call_deadline``), so a dead call surfaces here instead of hanging (#75).
     """
+
+
+class _QualificationCardinalityError(ValueError):
+    """Qualification did not return exactly one instrument."""
+
+
+class _QualificationIdentityError(ValueError):
+    """Qualification returned an instrument other than the requested identity."""
+
+
+class _QualificationMetadataError(ValueError):
+    """A qualified instrument did not carry a valid IB contract."""
+
+
+class _QualificationConIdError(ValueError):
+    """A qualified IB contract did not carry a positive contract ID."""
+
+
+class _QualificationCurrencyError(ValueError):
+    """A qualified IB contract used a currency other than the requested one."""
+
+
+class _AdjustedLastRegistrationError(RuntimeError):
+    """Nautilus could not register an adjusted-history request."""
+
+
+class _AdjustedLastCompletionError(RuntimeError):
+    """A registered Nautilus adjusted-history request did not complete."""
+
+
+class _HistoricalRequestCompletionError(RuntimeError):
+    """A registered IBKR historical-bars request did not complete."""
+
+
+_PRESERVE_HISTORICAL_FAILURE: ContextVar[bool] = ContextVar(
+    "preserve_historical_failure",
+    default=False,
+)
+_HISTORICAL_REQUEST_FAILED = object()
 
 
 @dataclass(frozen=True)
@@ -100,7 +140,6 @@ class IbkrHistoricalProvider:
     call_deadline: float = IB_CALL_DEADLINE
     include_expired_futures: bool = False
     client_factory: Callable[[], Any] | None = None
-    adjusted_last_client_factory: Callable[[], Any] | None = None
 
     def __post_init__(self) -> None:
         if self.market_data_type not in _IB_MARKET_DATA_TYPES:
@@ -156,6 +195,10 @@ class IbkrHistoricalProvider:
         end: pd.Timestamp,
         instrument_kwargs: Mapping[str, Any],
     ) -> ServedBars:
+        # The session turns its own timeout into an empty response. Keep that fallback
+        # strictly later so Aegis can preserve the provider failure as an exception.
+        request_deadline = min(float(self.timeout), self.call_deadline)
+        session_timeout = int(max(float(self.timeout), self.call_deadline)) + 1
         pulled = await asyncio.wait_for(
             session.request_bars(
                 bar_specifications=[str(bar_type.spec)],
@@ -163,16 +206,18 @@ class IbkrHistoricalProvider:
                 duration=_ib_duration(start, end),
                 tz_name="UTC",
                 use_rth=self.use_rth,
-                timeout=self.timeout,
+                timeout=session_timeout,
                 **instrument_kwargs,
             ),
-            timeout=self.call_deadline,
+            timeout=request_deadline,
         )
         # The whole-unit duration can reach before `start`; keep only the window.
         bars = [bar for bar in (pulled or []) if bar.ts_event >= start.value]
         # Coverage is served from `start` when history reaches it (contiguous with any
         # prior file), else from the oldest bar IB clamped at (#75, the unclaimed head).
-        served_from = start if _history_reached(bars, start) else _first_bar_instant(bars, end)
+        served_from = (
+            start if _history_reached(bars, start) else _first_bar_instant(bars, end)
+        )
         return ServedBars(tuple(bars), served_from)
 
     def request_instruments(
@@ -196,35 +241,36 @@ class IbkrHistoricalProvider:
         end: pd.Timestamp,
         currency: str = "USD",
     ) -> pd.Series:
-        """The raw-``ibapi`` daily ``ADJUSTED_LAST`` close series.
+        """The daily IBKR ``ADJUSTED_LAST`` close series.
 
         Nautilus' historic bar path cannot express IBKR's ``ADJUSTED_LAST``
-        ``whatToShow`` value, so this one derivation source uses a deliberately
-        narrow raw-IB seam.  Normal production ``TRADES`` bars still ride
-        :meth:`request_bars` through the generic data-provider port.  The IB
-        ``primaryExchange`` is derived here from the instrument's corpus venue
-        (vendor symbology is the provider's secret, ADR-0005): callers name the
-        instrument, never an exchange.
+        ``whatToShow`` value, so the historic-session adapter adds that one request
+        shape to Nautilus' existing connection, request registry, and callbacks.
+        The existing instrument path qualifies the requested identity first; the
+        same session submits that complete IB contract without reconstructing it.
         """
         subject = f"ADJUSTED_LAST closes {instrument_id.value}"
-        try:
-            rows = self._adjusted_last_client().request_daily_closes(
-                instrument_id=instrument_id,
-                what_to_show="ADJUSTED_LAST",
-                start=start,
-                end=end,
-                primary_exchange=_ib_primary_exchange(instrument_id),
-                currency=currency,
-                timeout=self.timeout,
-            )
-        except Exception as exc:  # noqa: BLE001 - any IB/raw socket fault -> one named error
-            raise IbkrRequestError(
-                f"IBKR could not fetch {subject}: {type(exc).__name__}: {exc}"
-            ) from exc
+        rows = self._request(
+            subject,
+            lambda session: asyncio.wait_for(
+                session.request_adjusted_last(
+                    instrument_id=instrument_id,
+                    start=start,
+                    end=end,
+                    expected_currency=currency,
+                    deadline=self.call_deadline,
+                    timeout=self.timeout,
+                    use_rth=self.use_rth,
+                ),
+                timeout=self.call_deadline,
+            ),
+        )
         if not rows:
             return pd.Series(dtype=float)
         index = pd.DatetimeIndex([timestamp for timestamp, _close in rows])
-        return pd.Series([close for _timestamp, close in rows], index=index).sort_index()
+        return pd.Series(
+            [close for _timestamp, close in rows], index=index
+        ).sort_index()
 
     def _request(self, subject: str, call: Callable[[Any], Awaitable[Any]]) -> Any:
         """Run an IBKR fetch, surfacing any fault as a named :class:`IbkrRequestError`.
@@ -287,16 +333,6 @@ class IbkrHistoricalProvider:
                 market_data_type=getattr(MarketDataTypeEnum, self.market_data_type),
                 instrument_provider_config=mic_instrument_provider_config(),
             )
-        )
-
-    def _adjusted_last_client(self) -> Any:
-        if self.adjusted_last_client_factory is not None:
-            return self.adjusted_last_client_factory()
-        return _IbapiDailyCloseClient(
-            host=self.host,
-            port=self.port,
-            client_id=self.client_id + 7_000 + next(_RAW_CLIENT_ID_SEQUENCE),
-            use_rth=self.use_rth,
         )
 
     def _instrument_request_parts(
@@ -371,19 +407,66 @@ async def _request_instrument_parts(
     return instruments
 
 
-def _ib_primary_exchange(instrument_id: InstrumentId) -> str:
-    """The IB exchange code for an instrument's corpus (MIC) venue.
-
-    The corpus pins MIC venues (``XAMS``), but IB contracts only accept IB's own
-    exchange codes (``AEB``) — a MIC as ``primaryExchange`` is rejected with IB
-    error 200 "exchange invalid".  A venue with no MIC mapping (``ARCA``) is
-    already an IB code and passes through unchanged.
-    """
-    from nautilus_trader.adapters.interactive_brokers.parsing.instruments import (
-        possible_exchanges_for_venue,
+async def _request_qualified_contract(
+    session: Any,
+    instrument_id: InstrumentId,
+    *,
+    expected_currency: str,
+    deadline: float,
+) -> IBContract:
+    instruments = await _request_instrument_parts(
+        session,
+        [instrument_id.value],
+        [],
+        deadline=deadline,
+    )
+    return _qualified_contract_from_instruments(
+        instruments,
+        instrument_id,
+        expected_currency=expected_currency,
     )
 
-    return possible_exchanges_for_venue(instrument_id.venue.value)[0]
+
+def _qualified_contract_from_instruments(
+    instruments: Sequence[Instrument],
+    instrument_id: InstrumentId,
+    *,
+    expected_currency: str,
+) -> IBContract:
+    from nautilus_trader.adapters.interactive_brokers.common import IBContract
+
+    if len(instruments) != 1:
+        raise _QualificationCardinalityError(
+            f"expected one qualified instrument for {instrument_id.value}, "
+            f"received {len(instruments)}"
+        )
+    instrument = instruments[0]
+    if instrument.id != instrument_id:
+        raise _QualificationIdentityError(
+            f"qualified instrument identity {instrument.id} does not match "
+            f"{instrument_id.value}"
+        )
+    info = instrument.info
+    if not isinstance(info, Mapping) or not isinstance(info.get("contract"), Mapping):
+        raise _QualificationMetadataError(
+            f"qualified instrument {instrument_id.value} has no IB contract"
+        )
+    try:
+        contract = IBContract(**dict(info["contract"]))
+    except (TypeError, ValueError) as exc:
+        raise _QualificationMetadataError(
+            f"qualified instrument {instrument_id.value} has malformed IB contract: {exc}"
+        ) from exc
+    if contract.conId <= 0:
+        raise _QualificationConIdError(
+            f"qualified instrument {instrument_id.value} has no positive IB conId"
+        )
+    if contract.currency.upper() != expected_currency.upper():
+        raise _QualificationCurrencyError(
+            f"qualified instrument {instrument_id.value} currency {contract.currency!r} "
+            f"does not match requested {expected_currency!r}"
+        )
+    return contract
 
 
 def _expired_future_contract(instrument_id: InstrumentId) -> Any | None:
@@ -406,133 +489,177 @@ def _expired_future_contract(instrument_id: InstrumentId) -> Any | None:
 class _HistoricSession:
     """Anti-corruption wrapper over ``HistoricInteractiveBrokersClient``.
 
-    The historic client exposes a connect-only public surface — no teardown and no
-    context manager — so this adapts it to a uniform ``connect`` / ``request_*`` /
-    ``aclose`` session, driving the inner client's connection lifecycle on close
-    (the only available teardown).  Isolating that one private reach here keeps the
-    provider testable against a clean session interface.
+    The historic client has no teardown or public ``ADJUSTED_LAST`` request.  This
+    adapter supplies both while preserving its connection lifecycle, request IDs,
+    registry, callbacks, cancellation, and bar decoding.  Isolating those private
+    upstream reaches here keeps the provider on a clean session interface.
     """
 
     def __init__(self, client: Any) -> None:
         self._client = client
+        # Composition-root reach into Nautilus' missing public historic-session
+        # interface.  Every request method talks only to this owned collaborator.
+        self._native_client = client._client
+        self._await_vendor_request = self._native_client._await_request
+        self._native_client._await_request = self._await_request_preserving_failure
 
     async def connect(self) -> None:
         await self._client.connect()
 
     async def request_bars(self, **kwargs: Any) -> Sequence[Bar]:
-        return await self._client.request_bars(**kwargs)
+        token = _PRESERVE_HISTORICAL_FAILURE.set(True)
+        try:
+            return await self._client.request_bars(**kwargs)
+        finally:
+            _PRESERVE_HISTORICAL_FAILURE.reset(token)
+
+    async def _await_request_preserving_failure(
+        self,
+        request: Any,
+        timeout: int,
+        default_value: Any | None = None,
+        suppress_timeout_warning: bool = False,
+    ) -> Any:
+        preserve_failure = (
+            _PRESERVE_HISTORICAL_FAILURE.get()
+            and isinstance(default_value, list)
+            and not default_value
+        )
+        if not preserve_failure:
+            if default_value is None and not suppress_timeout_warning:
+                return await self._await_vendor_request(request, timeout)
+            return await self._await_vendor_request(
+                request,
+                timeout,
+                default_value=default_value,
+                suppress_timeout_warning=suppress_timeout_warning,
+            )
+
+        result = await self._await_vendor_request(
+            request,
+            timeout,
+            default_value=_HISTORICAL_REQUEST_FAILED,
+            suppress_timeout_warning=suppress_timeout_warning,
+        )
+        if result is not _HISTORICAL_REQUEST_FAILED:
+            return result
+
+        error = _HistoricalRequestCompletionError(
+            f"IBKR historical request {request.req_id} did not complete"
+        )
+        cause = _completed_request_failure(request)
+        if cause is not None:
+            raise error from cause
+        raise error
 
     async def request_instruments(self, **kwargs: Any) -> Sequence[Instrument]:
         return await self._client.request_instruments(**kwargs)
 
-    async def aclose(self) -> None:
-        # The historic client has no public teardown; stopping the inner client
-        # drains its background tasks cleanly (so closing the loop is quiet).
-        await self._client._client._stop_async()
-
-
-@dataclass(frozen=True)
-class _IbapiDailyCloseClient:
-    """Small raw-``ibapi`` client for daily ``whatToShow`` close series."""
-
-    host: str
-    port: int
-    client_id: int
-    use_rth: bool
-
-    def request_daily_closes(
+    async def request_adjusted_last(
         self,
         *,
         instrument_id: InstrumentId,
-        what_to_show: str,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        primary_exchange: str,
-        currency: str,
+        expected_currency: str,
+        deadline: float,
         timeout: int,
+        use_rth: bool,
     ) -> list[tuple[pd.Timestamp, float]]:
-        app = _build_raw_historical_app()
-        app.connect(self.host, self.port, clientId=self.client_id)
-        threading.Thread(target=app.run, daemon=True).start()
-        if not app.ready.wait(timeout=15):
-            app.disconnect()
-            raise TimeoutError("IBKR raw client did not receive nextValidId")
-        req_id = 1
-        app.reqHistoricalData(
+        contract = await _request_qualified_contract(
+            self,
+            instrument_id,
+            expected_currency=expected_currency,
+            deadline=deadline,
+        )
+        bars = await _request_native_adjusted_last(
+            self._native_client,
+            bar_type=raw_bar_type(instrument_id, "1D"),
+            contract=contract,
+            duration=_adjusted_last_duration(start, end),
+            timeout=timeout,
+            use_rth=use_rth,
+        )
+        return _bounded_adjusted_closes(bars, start=start, end=end)
+
+    async def aclose(self) -> None:
+        # The historic client has no public teardown; stopping the inner client
+        # drains its background tasks cleanly (so closing the loop is quiet).
+        await self._native_client._stop_async()
+
+
+def _completed_request_failure(request: Any) -> BaseException | None:
+    future = request.future
+    if future.cancelled():
+        return None
+    return future.exception()
+
+
+async def _request_native_adjusted_last(
+    client: Any,
+    *,
+    bar_type: BarType,
+    contract: IBContract,
+    duration: str,
+    timeout: int,
+    use_rth: bool,
+) -> Sequence[Bar]:
+    request = _register_native_adjusted_last(
+        client,
+        bar_type=bar_type,
+        contract=contract,
+        duration=duration,
+        use_rth=use_rth,
+    )
+    request.handle()
+    bars = await client._await_request(request, timeout)
+    if bars is None:
+        raise _AdjustedLastCompletionError(
+            f"Nautilus did not complete {_ADJUSTED_LAST_WHAT_TO_SHOW} "
+            f"request {request.req_id}"
+        )
+    return bars
+
+
+def _register_native_adjusted_last(
+    client: Any,
+    *,
+    bar_type: BarType,
+    contract: IBContract,
+    duration: str,
+    use_rth: bool,
+) -> Any:
+    from nautilus_trader.adapters.interactive_brokers.parsing.data import (
+        bar_spec_to_bar_size,
+    )
+
+    req_id = client._next_req_id()
+    request = client._requests.add(
+        req_id=req_id,
+        name=(str(bar_type), _ADJUSTED_LAST_WHAT_TO_SHOW, duration),
+        handle=functools.partial(
+            client._eclient.reqHistoricalData,
             reqId=req_id,
-            contract=_stock_contract(
-                instrument_id,
-                primary_exchange=primary_exchange,
-                currency=currency,
-            ),
-            endDateTime=_ib_request_end_datetime(what_to_show, end),
-            durationStr=_ib_request_duration(what_to_show, start, end),
-            barSizeSetting="1 day",
-            whatToShow=what_to_show,
-            useRTH=1 if self.use_rth else 0,
-            formatDate=1,
+            contract=contract,
+            endDateTime="",
+            durationStr=duration,
+            barSizeSetting=bar_spec_to_bar_size(bar_type.spec),
+            whatToShow=_ADJUSTED_LAST_WHAT_TO_SHOW,
+            useRTH=use_rth,
+            formatDate=2,
             keepUpToDate=False,
             chartOptions=[],
+        ),
+        cancel=functools.partial(
+            client._eclient.cancelHistoricalData,
+            reqId=req_id,
+        ),
+    )
+    if request is None:
+        raise _AdjustedLastRegistrationError(
+            f"Nautilus did not register {_ADJUSTED_LAST_WHAT_TO_SHOW} request {req_id}"
         )
-        deadline = time.time() + timeout
-        while time.time() < deadline and req_id not in app.done:
-            time.sleep(0.05)
-        app.disconnect()
-        if req_id not in app.done:
-            raise TimeoutError(f"IBKR raw {what_to_show} request timed out")
-        if app.errors.get(req_id) and not app.bars.get(req_id):
-            raise RuntimeError("; ".join(app.errors[req_id]))
-        return _bounded_daily_closes(app.bars.get(req_id, []), start=start, end=end)
-
-
-def _build_raw_historical_app() -> Any:
-    from collections import defaultdict
-
-    from ibapi.client import EClient
-    from ibapi.wrapper import EWrapper
-
-    class _RawHistoricalApp(EWrapper, EClient):
-        def __init__(self) -> None:
-            EClient.__init__(self, self)
-            self.bars: dict[int, list[tuple[str, float]]] = defaultdict(list)
-            self.done: set[int] = set()
-            self.errors: dict[int, list[str]] = defaultdict(list)
-            self.ready = threading.Event()
-
-        def nextValidId(self, orderId: int) -> None:  # noqa: N802, ARG002
-            self.ready.set()
-
-        def historicalData(self, reqId, bar) -> None:  # noqa: N802, ANN001
-            self.bars[reqId].append((bar.date, float(bar.close)))
-
-        def historicalDataEnd(self, reqId, start, end) -> None:  # noqa: N802, ANN001, ARG002
-            self.done.add(reqId)
-
-        def error(self, reqId, *args) -> None:  # noqa: ANN001
-            msg = " ".join(str(arg) for arg in args)
-            if reqId is not None and reqId >= 0:
-                self.errors[reqId].append(msg)
-                if any(code in msg for code in ("354", "10167", "162", "200", "165", "321")):
-                    self.done.add(reqId)
-
-    return _RawHistoricalApp()
-
-
-def _stock_contract(
-    instrument_id: InstrumentId,
-    *,
-    primary_exchange: str,
-    currency: str,
-) -> Any:
-    from ibapi.contract import Contract
-
-    contract = Contract()
-    contract.symbol = instrument_id.symbol.value
-    contract.secType = "STK"
-    contract.exchange = "SMART"
-    contract.primaryExchange = primary_exchange
-    contract.currency = currency.upper()
-    return contract
+    return request
 
 
 def _ib_duration(start: pd.Timestamp, end: pd.Timestamp) -> str:
@@ -542,28 +669,12 @@ def _ib_duration(start: pd.Timestamp, end: pd.Timestamp) -> str:
     return f"{math.ceil(days / 365)} Y"
 
 
-def _ib_request_end_datetime(what_to_show: str, end: pd.Timestamp) -> str:
-    if what_to_show.upper() == "ADJUSTED_LAST":
-        return ""
-    return _ib_datetime(end)
+def _adjusted_last_duration(start: pd.Timestamp, end: pd.Timestamp) -> str:
+    return _ib_duration(start, max(_utc(end), pd.Timestamp.now(tz="UTC")))
 
 
-def _ib_request_duration(
-    what_to_show: str,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-) -> str:
-    if what_to_show.upper() == "ADJUSTED_LAST":
-        return _ib_duration(start, max(_utc(end), pd.Timestamp.now(tz="UTC")))
-    return _ib_duration(start, end)
-
-
-def _ib_datetime(timestamp: pd.Timestamp) -> str:
-    return _utc(timestamp).strftime("%Y%m%d %H:%M:%S UTC")
-
-
-def _bounded_daily_closes(
-    rows: Sequence[tuple[str, float]],
+def _bounded_adjusted_closes(
+    bars: Sequence[Bar],
     *,
     start: pd.Timestamp,
     end: pd.Timestamp,
@@ -571,10 +682,10 @@ def _bounded_daily_closes(
     start_ts = _utc(start)
     end_ts = _utc(end)
     bounded: list[tuple[pd.Timestamp, float]] = []
-    for date_value, close in rows:
-        timestamp = pd.Timestamp(str(date_value), tz="UTC")
+    for bar in bars:
+        timestamp = pd.Timestamp(bar.ts_event, unit="ns", tz="UTC")
         if start_ts <= timestamp <= end_ts:
-            bounded.append((timestamp, close))
+            bounded.append((timestamp, bar.close.as_double()))
     return bounded
 
 
@@ -647,7 +758,11 @@ def _missing_definitions(
             instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
         )
     }
-    return [instrument_id for instrument_id in instrument_ids if instrument_id not in present]
+    return [
+        instrument_id
+        for instrument_id in instrument_ids
+        if instrument_id not in present
+    ]
 
 
 _DROP_INFO_VALUE = object()

@@ -75,3 +75,25 @@ capturing stdout. That seam also pins the ADR's real-path requirement against th
 success-envelope serializer: success payload strings are preserved in full, so long
 resolved artifact and Candidate Store paths are not clipped. Error messages and error
 details keep their clipping behavior.
+
+**Amendment (2026-07-23).** Every invocation creates a uniquely identified immutable Run.
+`--rerun-mode`, `--parent-run-id`, and `--supersedes-run-id` are removed rather than accepted as
+no-ops. The Manifest likewise drops mode, lineage, and the duplicate Run label; the resolved Run
+Config remains the sole home of the configured name.
+
+The same 2026-07-23 contract removes the `artifacts` block and strategy artifact path from Run
+success output. The command returns only live references: Run lifecycle refs, Manifest path,
+CandidateStore path, optimization accounting, and representative Candidate summaries. No
+placeholder or renamed report projection replaces the deleted file.
+
+**Amendment (2026-07-23) — one path for one Run document.** Run storage is flattened from
+`<run-root>/<run-id>/manifest.json` to `<run-root>/<run-id>.json`. The shared success/error Run
+block consequently has five fields (`id`, `status`, `manifest_path`, `started_at`, `finished_at`)
+and no `run_dir`. `manifest_path` remains a real resolved absolute path. Candidate Store output
+continues to name its separate shared database, while Execution Bundle creation remains an
+explicit export command independent of Run storage.
+
+**Amendment (2026-07-23) — serialize Run Result, not lifecycle storage.** Run success JSON is now
+adapted from the typed `RunResult` and contains the Run ID, Candidate Store reference,
+optimization summary, and representative Candidate summaries. Manifest path, status, lifecycle
+timestamps, and Evidence are removed. Failure JSON carries the attempted Run ID when available.

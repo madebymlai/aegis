@@ -19,7 +19,6 @@ from tests.support.research.aegis_research.factories import (
     make_run_config,
     make_run_indicator_source_config,
     make_run_source_ref_config,
-    make_run_split_config,
 )
 from tests.support.research.aegis_research.market_data_fixtures import (
     native_data_config_payload,
@@ -45,10 +44,7 @@ def test_run_config_resolves_from_raw_dict(tmp_path: Path) -> None:
         portfolio=make_portfolio_config(direction="longonly"),
         optimization=make_optimization_config(
             search="grid",
-            split=make_run_split_config(
-                method="from_rolling",
-                params={"length": 20, "offset": 20, "split": 0.5},
-            ),
+            observation_block_bars=20,
         ),
     )
 
@@ -227,7 +223,7 @@ def test_run_ranking_accepts_vbt_metric_id(tmp_path: Path) -> None:
     resolved = resolve_run_config(raw, component_registry=registry)
 
     assert resolved.config.ranking.metric == "total_return"
-    assert resolved.metric_registry is not None
+    assert resolved.metrics.ranking.id == "total_return"
     assert len(resolved.manifest()["metric_registry_fingerprint"]) == 64
 
 
@@ -281,93 +277,20 @@ def test_run_ranking_rejects_invalid_min_trades(
     assert "ranking.min_trades" in str(error.value)
 
 
-def test_run_accepts_dynamic_vbt_splitter_config(tmp_path: Path) -> None:
+def test_run_rejects_removed_splitter_configuration(tmp_path: Path) -> None:
     registry = _component_registry(tmp_path)
-    raw = _run_config_with_split(
-        {
-            "method": "from_rolling",
-            "params": {"length": 20, "split": 0.8},
-            "max_splits": 10,
-        }
-    )
-
-    resolved = resolve_run_config(raw, component_registry=registry)
-
-    assert resolved.config.optimization is not None
-    assert resolved.config.optimization.split.method == "from_rolling"
-    assert resolved.config.optimization.split.params == {"length": 20, "split": 0.8}
-    assert resolved.config.optimization.split.max_splits == 10
-
-
-def test_run_accepts_purged_kfold_splitter_method(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config_with_split({"method": "from_purged_kfold", "params": {"n_folds": 4}})
-
-    resolved = resolve_run_config(raw, component_registry=registry)
-
-    assert resolved.config.optimization is not None
-    assert resolved.config.optimization.split.method == "from_purged_kfold"
-
-
-def test_run_rejects_unknown_splitter_method(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config_with_split({"method": "walk_forward", "params": {}})
+    raw = _run_config()
+    raw["optimization"] = {
+        "search": "grid",
+        "observation_block_bars": 20,
+        "split": {"method": "from_rolling", "params": {"length": 20}},
+    }
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(raw, component_registry=registry)
 
-    assert "optimization.split.method" in str(error.value)
-    assert "from_rolling" in str(error.value)
-
-
-def test_run_rejects_unknown_splitter_param(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config_with_split(
-        {"method": "from_rolling", "params": {"length": 20, "made_up": 1}}
-    )
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "optimization.split.params.made_up" in str(error.value)
-
-
-def test_run_rejects_missing_required_splitter_param(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config_with_split({"method": "from_rolling", "params": {}})
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "optimization.split.params.length" in str(error.value)
-    assert "is required" in str(error.value)
-
-
-def test_run_rejects_splitter_method_requiring_runtime_object(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config_with_split({"method": "from_split_func", "params": {}})
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "optimization.split.method" in str(error.value)
-    assert "split_func" in str(error.value)
-
-
-def test_run_rejects_internal_splitter_param(tmp_path: Path) -> None:
-    registry = _component_registry(tmp_path)
-    raw = _run_config_with_split(
-        {
-            "method": "from_rolling",
-            "params": {"length": 20, "template_context": {"x": "y"}},
-        }
-    )
-
-    with pytest.raises(ConfigValidationError) as error:
-        resolve_run_config(raw, component_registry=registry)
-
-    assert "optimization.split.params.template_context" in str(error.value)
-    assert "managed internally" in str(error.value)
+    assert "optimization.split" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def _run_config() -> dict[str, object]:
@@ -381,18 +304,9 @@ def _run_config() -> dict[str, object]:
         "ranking": {"metric": "sharpe_ratio"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 20, "offset": 20, "split": 0.5},
-            },
+            "observation_block_bars": 20,
         },
     }
-
-
-def _run_config_with_split(split: dict[str, object]) -> dict[str, object]:
-    raw = _run_config()
-    raw["optimization"] = {"search": "grid", "split": split}
-    return raw
 
 
 def _component_registry(tmp_path: Path):

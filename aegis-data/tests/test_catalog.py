@@ -28,6 +28,7 @@ from aegis_data.catalog import (
     catalog_root,
     continuous_root_legs,
     raw_bar_type,
+    resolve_catalog_path,
 )
 from aegis_data.distributions import (
     Distribution,
@@ -99,9 +100,23 @@ class _AdjustedLastProvider:
         self.adjusted_last = adjusted_last
         self.requests: list[dict[str, Any]] = []
 
-    def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
-        self.requests.append(kwargs)
-        return self.adjusted_last[kwargs["instrument_id"]]
+    def request_adjusted_last(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        currency: str = "USD",
+    ) -> pd.Series:
+        self.requests.append(
+            {
+                "instrument_id": instrument_id,
+                "start": start,
+                "end": end,
+                "currency": currency,
+            }
+        )
+        return self.adjusted_last[instrument_id]
 
 
 def _seed_fx_pair(catalog: ParquetDataCatalog, fx_pair: InstrumentId) -> None:
@@ -174,6 +189,17 @@ def test_catalog_root_uses_aegis_data_dir_catalog_subpath(tmp_path: Path) -> Non
     root = catalog_root({"AEGIS_DATA_DIR": str(tmp_path / "aegis-data")})
 
     assert root == tmp_path / "aegis-data" / "catalog"
+
+
+def test_resolve_catalog_path_expands_an_explicit_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    path = resolve_catalog_path("~/catalog")
+
+    assert path == tmp_path / "catalog"
 
 
 def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:
@@ -727,7 +753,15 @@ def test_catalog_port_translates_a_distribution_fetch_failure_into_a_port_error(
     _write_definition(catalog, instrument_id)
 
     class _BrokenAdjustedLast:
-        def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
+        def request_adjusted_last(
+            self,
+            instrument_id: InstrumentId,
+            *,
+            start: pd.Timestamp,
+            end: pd.Timestamp,
+            currency: str = "USD",
+        ) -> pd.Series:
+            del instrument_id, start, end, currency
             raise IbkrRequestError("IBKR could not fetch ADJUSTED_LAST closes: ib down")
 
     port = CatalogBackedDataPort(
@@ -1270,7 +1304,7 @@ def test_catalog_port_rejects_uncovered_distributions_with_bar_only_provider(
     with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
         CatalogBackedDataPort(
             catalog,
-            distribution_provider=_ProviderPort([]),
+            provider=_ProviderPort([]),
         ).load_window(CatalogWindowRequest(
             (instrument_id,),
             start="2024-01-01",
@@ -1580,6 +1614,7 @@ def test_catalog_port_load_window_returns_one_coherent_value(
     assert set(window.ohlcv) == {equity_id, fx_pair}
     assert list(window.ohlcv[equity_id]["Close"]) == [100.0, 100.0, 100.0]
     assert set(window.instruments) == {equity_id, fx_pair}
+    assert window.multiplier_by_instrument == {equity_id: 1.0, fx_pair: 1.0}
     assert [(event.ex_date, event.amount) for event in window.distributions] == [
         (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
     ]

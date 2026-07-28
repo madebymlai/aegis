@@ -85,11 +85,7 @@ def _raw_config(**overrides: Any) -> dict[str, Any]:
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 40, "offset": 40, "split": 0.5},
-                "max_splits": 2,
-            },
+            "observation_block_bars": 20,
         },
     }
     raw.update(overrides)
@@ -143,8 +139,18 @@ def test_scalar_lock_empty_run_id_fails_validation(registry) -> None:
             _raw_config(lock=":best"),
             component_registry=registry,
         )
-    assert any(
-        issue.path == "lock" and "run_id" in issue.message for issue in excinfo.value.issues
+    assert any(issue.path == "lock" and "run_id" in issue.message for issue in excinfo.value.issues)
+
+
+def test_mapping_lock_empty_run_id_fails_validation(registry) -> None:
+    with pytest.raises(ConfigValidationError) as excinfo:
+        resolve_run_config(
+            _raw_config(lock={"run_id": "", "candidate_id": "candidate-key"}),
+            component_registry=registry,
+        )
+
+    assert str(excinfo.value) == (
+        "Invalid run config: lock.run_id: String should have at least 1 character"
     )
 
 
@@ -185,7 +191,7 @@ def test_lock_unknown_field_fails_validation(registry) -> None:
 def test_lock_with_component_params_is_accepted(registry) -> None:
     # Relaxed from the interim reject rule (slice 396.1): a top-level lock: may now
     # overlay a tuning config. The lock wins; the overridden params: are recorded in
-    # Evidence (asserted in the locked-run behaviour tests).
+    # Candidate provenance (asserted in the locked-run behaviour tests).
     resolved = resolve_run_config(
         _raw_config(
             lock={"run_id": "run-a", "candidate_id": "cand_123"},

@@ -10,7 +10,7 @@ def test_active_cli_docs_use_aerd_contract() -> None:
     assert "aerd run --train" not in docs
     assert "aerd play" not in docs
     assert "aerd exp" not in docs
-    assert "Both run configs require explicit config paths" in docs
+    assert "Run configs require explicit config paths" in docs
     assert "| `execution_failure` | 10 |" in docs
     assert "aegis-research run" not in docs
     assert "python -m research.aegis_research.cli" not in docs
@@ -119,10 +119,10 @@ def test_docs_describe_composed_strategy_candidates_and_manual_lock() -> None:
 def test_component_placeholders_point_to_examples() -> None:
     expected = {
         "research/components/indicators/README.md": (
-            "research/aegis_research/component_registry/indicator_example.py"
+            "research/aegis_research/component_registry/authoring/indicator_example.py"
         ),
         "research/components/strategies/README.md": (
-            "research/aegis_research/component_registry/strategy_example.py"
+            "research/aegis_research/component_registry/authoring/strategy_example.py"
         ),
     }
 
@@ -190,8 +190,8 @@ def test_docs_examples_are_pointers_to_packaged_examples() -> None:
     indicator = Path("docs/examples/components/indicator_component_example.py").read_text()
     strategy = Path("docs/examples/components/strategy_component_example.py").read_text()
 
-    assert "research/aegis_research/component_registry/indicator_example.py" in indicator
-    assert "research/aegis_research/component_registry/strategy_example.py" in strategy
+    assert "research/aegis_research/component_registry/authoring/indicator_example.py" in indicator
+    assert "research/aegis_research/component_registry/authoring/strategy_example.py" in strategy
 
     # No actual component source (def run, COMPONENT_MANIFEST, imports)
     assert "COMPONENT_MANIFEST = {" not in indicator

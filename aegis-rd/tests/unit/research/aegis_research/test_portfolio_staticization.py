@@ -2,10 +2,10 @@ from pathlib import Path
 
 from aegis_runtime import debit_interest, gate
 
-from research.aegis_research.optimization.window_evaluation import (
+from research.aegis_research.portfolio_simulation import (
     _callbacks as portfolio_callbacks,
 )
-from research.aegis_research.optimization.window_evaluation._simulation import (
+from research.aegis_research.portfolio_simulation._simulation import (
     VBT_STATICIZED_CACHE_ENV,
     _band_pre_order_segment_nb,
     _vbt_staticized_cache_dir,
@@ -32,7 +32,7 @@ def test_staticized_cache_dir_uses_xdg_cache_home(tmp_path, monkeypatch) -> None
     resolved = _vbt_staticized_cache_dir()
 
     assert resolved.parent == xdg_cache / "aegis-rd" / "vbt-staticization"
-    assert resolved.name.startswith("driftband-")
+    assert resolved.name.startswith("pre-order-segment-")
     assert resolved.is_dir()
 
 

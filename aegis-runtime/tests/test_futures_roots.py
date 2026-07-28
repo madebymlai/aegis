@@ -13,7 +13,12 @@ import pytest
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime import DataContract, DataContractError, MissingIndexPolicy, validate_bare_root
+from aegis_runtime import (
+    DataContract,
+    DataContractError,
+    MissingIndexPolicy,
+    validate_bare_root,
+)
 
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")
 _ES = InstrumentId.from_str("ES.XCME")
@@ -59,7 +64,9 @@ def test_empty_root_is_rejected() -> None:
         validate_bare_root("")
 
 
-@pytest.mark.parametrize("garbage", ["ES.", ".", "ES..XCME", "ES XCME", "ES ", " ES", "ES/", "ES.X"])
+@pytest.mark.parametrize(
+    "garbage", ["ES.", ".", "ES..XCME", "ES XCME", "ES ", " ES", "ES/", "ES.X"]
+)
 def test_malformed_or_whitespaced_root_is_rejected(garbage: str) -> None:
     # A config typo must fail here, not later when aegis-data builds Symbol(root).
     with pytest.raises(ValueError, match="bare root"):
@@ -88,6 +95,39 @@ def test_data_contract_returns_declared_continuous_instrument_ids() -> None:
 
     assert contract.continuous_instrument_ids == (_ES, _KC)
     assert contract.native_instrument_ids == (_AAPL,)
+
+
+@pytest.mark.parametrize(
+    ("futures", "instrument_ids", "exchange", "expected_continuous", "expected_native"),
+    [
+        ((), (_AAPL,), (), (), (_AAPL,)),
+        (("ES",), (_AAPL, _ES), (), (_ES,), (_AAPL,)),
+        (("ES", "KC"), (_ES, _AAPL, _KC), (), (_ES, _KC), (_AAPL,)),
+        ((), (_AAPL,), (_EURUSD,), (), (_AAPL,)),
+        (("ES",), (_ES, _AAPL), (_EURUSD,), (_ES,), (_AAPL,)),
+    ],
+)
+def test_native_and_continuous_ids_partition_the_declared_universe(
+    futures: tuple[str, ...],
+    instrument_ids: tuple[InstrumentId, ...],
+    exchange: tuple[InstrumentId, ...],
+    expected_continuous: tuple[InstrumentId, ...],
+    expected_native: tuple[InstrumentId, ...],
+) -> None:
+    """`native` and `continuous` partition `instrument_ids` — nothing else is a target.
+
+    Each row's two expectations reconstitute that row's `instrument_ids` exactly,
+    and an `exchange` leg appears in neither: data-only legs are kept out of the
+    declared universe by the no-overlap rule, not by the partition. This is what
+    lets a caller take `instrument_ids` as the rebalance-target set instead of
+    re-deriving one.
+    """
+    contract = _contract(
+        futures=futures, instrument_ids=instrument_ids, exchange=exchange
+    )
+
+    assert contract.continuous_instrument_ids == expected_continuous
+    assert contract.native_instrument_ids == expected_native
 
 
 def test_data_contract_continuous_identity_agrees_across_sleeves() -> None:

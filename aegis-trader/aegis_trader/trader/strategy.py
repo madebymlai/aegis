@@ -12,9 +12,8 @@ submitted on bar t+1 and fills at bar t+1's close — one-bar lag, no look-ahead
 Identity is the native ``InstrumentId`` declared by each Execution Bundle.  The
 strategy never resolves symbols, FIGIs, or broker-specific aliases at runtime.
 
-RiskEngine guards (Slice 8): the ``RiskGuard`` computes per-instrument
-max-notional caps from NAV; the strategy logs every ``OrderDenied`` event
-so operators can trace rejected orders.
+The strategy logs every ``OrderDenied`` event so operators can trace rejected
+orders.
 
 Per-Sleeve cadence (aegis-rd-9qkr):
 - Each Sleeve rebalances off bar-close at its own DataContract.timeframe;
@@ -36,6 +35,7 @@ from collections.abc import Sequence
 from typing import Any, assert_never
 
 from nautilus_trader.common.component import TimeEvent
+from nautilus_trader.core.data import Data
 from nautilus_trader.model.data import Bar, BarType, MarkPriceUpdate, QuoteTick
 from nautilus_trader.model.enums import OrderSide as NtOrderSide
 from nautilus_trader.model.enums import TimeInForce
@@ -46,7 +46,6 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
-from aegis_data.bar_type import timeframe_to_ns
 from aegis_data.catalog import CatalogBackedDataPort, catalog_root, parquet_data_catalog
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 
@@ -56,7 +55,6 @@ from aegis_trader.data import (
     NautilusMarketData,
 )
 from aegis_trader.domain.book_config import BookConfig
-from aegis_trader.domain.risk_guard import RiskGuard, RiskGuardConfig
 from aegis_trader.domain.roll import (
     Halt,
     RequestBars,
@@ -76,13 +74,13 @@ from aegis_trader.domain.types import (
     SleeveName,
 )
 from aegis_trader.trader.pipeline import (
-    CompletedRebalancePeriod,
     DueSleeve,
     GateOutcome,
     RebalancePipeline,
     RebalanceRequest,
     RebalanceSummary,
 )
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from aegis_trader.portfolio import BookStatePort, NautilusBookState
 from aegis_trader.trader.book_startup import (
     BootIntent,
@@ -90,8 +88,16 @@ from aegis_trader.trader.book_startup import (
     SubscribeQuoteTicks,
     bootstrap,
 )
+from aegis_trader.trader.book_market_clock import BookMarketClock
 from aegis_trader.trader.roll_desk import RollDesk
-
+from aegis_trader.trader.startup_fast_forward import (
+    HistoryRequest,
+    Ready,
+    RECOVERY_TOPIC,
+    Recovering,
+    RecoveryUpdate,
+    StartupFastForward,
+)
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -99,7 +105,6 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
 
     book: BookConfig
     bundle_label: str = "synthetic"
-    risk_guard_config: RiskGuardConfig = RiskGuardConfig()
     warmup_cache_on_start: bool = False
     fill_time_in_force: TimeInForce | None = None
     """Time-in-force for submitted orders (ADR-0001, next-close execution).
@@ -131,30 +136,18 @@ class RebalanceStrategy(Strategy):
         self,
         config: RebalanceStrategyConfig,
         *,
+        arrays: SleeveArrays,
         bar_type_resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
     ) -> None:
         super().__init__(config)
         # The one raw bar-type resolution seam (aegis-rd-tggo.1): every
         # subscribe/unsubscribe/request and cache read resolves through it.
         self._bar_type_resolver = bar_type_resolver
+        self._arrays = arrays
         self._assembled_book: AssembledBook | None = None
-        # ── bar-driven per-Sleeve cadence state (aegis-rd-9qkr.3) ─────────
-        # A Sleeve's clock advances only on bars of streams it consumes; its
-        # period width comes from its own DataContract timeframe.
-        self._consumers_by_bar_type: dict[BarType, tuple[SleeveName, ...]] = {}
         self._timeframe_by_bar_type: dict[BarType, str] = {}
-        self._period_ns_by_sleeve: dict[SleeveName, int] = {}
-        self._current_period_by_sleeve: dict[SleeveName, int | None] = {}
-        # Continuous front-leg bars carry dated-leg BarTypes that change at
-        # rolls; the Roll Desk maps a leg to its root, and the root to its
-        # declaring Sleeves (one owning Sleeve per root — aegis-rd-9qkr.5).
-        self._sleeves_by_continuous_id: dict[InstrumentId, tuple[SleeveName, ...]] = {}
-        # Due transitions accumulated for one event timestamp, flushed by a
-        # native time alert into one deterministic Book re-net.
-        self._pending_due: dict[SleeveName, CompletedRebalancePeriod] = {}
+        self._book_market_clock: BookMarketClock | None = None
         self._pending_due_timestamp: int | None = None
-        # ── Slice 8: RiskEngine guards ───────────────────────────────────
-        self._risk_guard: RiskGuard = RiskGuard(config.risk_guard_config)
         # Slice 7: startup gates + global halt
         self._startup_result: StartupResult | None = None
         self._is_halted: bool = False
@@ -167,6 +160,11 @@ class RebalanceStrategy(Strategy):
         # analytics horizon first becomes known (aegis-rd-cy7l).
         self._sleeve_ledger: SleeveLedger | None = None
         self._pipeline: RebalancePipeline | None = None
+        self._fast_forward: StartupFastForward | None = None
+        self._recovery_ready: Ready | None = None
+        self._is_recovering = False
+        self._book_activity: int | None = None
+        self._stream_watermarks: dict[BarType, int] = {}
         self._last_attribution: dict[SleeveName, float] = {}
         self._last_book_skew: float | None = None
         self._last_sleeve_weights: dict[SleeveName, float] = {}
@@ -192,6 +190,11 @@ class RebalanceStrategy(Strategy):
         """Startup gate decision, for backtest/evidence inspection."""
         return self._startup_result
 
+    @property
+    def book_activity(self) -> int | None:
+        """Latest fully folded market event time across recovery and live."""
+        return self._book_activity
+
     # ── port accessors ──────────────────────────────────────────────────────
     # The reconciled-book and market-data ports are wired in ``on_start``; every
     # trading path runs after it.  These accessors make that lifecycle invariant
@@ -212,6 +215,11 @@ class RebalanceStrategy(Strategy):
             raise RuntimeError("rebalance pipeline queried before on_start wired it")
         return self._pipeline
 
+    def _require_book_market_clock(self) -> BookMarketClock:
+        if self._book_market_clock is None:
+            raise RuntimeError("Book Market Clock queried before on_start wired it")
+        return self._book_market_clock
+
     def _require_assembled_book(self) -> AssembledBook:
         if self._assembled_book is None:
             raise RuntimeError("assembled book queried before registration")
@@ -224,7 +232,9 @@ class RebalanceStrategy(Strategy):
 
     def _require_sleeve_ledger(self) -> SleeveLedger:
         if self._sleeve_ledger is None:
-            raise RuntimeError("sleeve ledger queried before book registration built it")
+            raise RuntimeError(
+                "sleeve ledger queried before book registration built it"
+            )
         return self._sleeve_ledger
 
     def _build_roll_desk(self) -> RollDesk:
@@ -232,8 +242,9 @@ class RebalanceStrategy(Strategy):
         # declarations by book startup, which hands them to RollDesk.start.
         return RollDesk(
             catalog_port=self._continuous_port(),
-            instrument_present=lambda instrument_id: self.cache.instrument(instrument_id)
-            is not None,
+            instrument_present=lambda instrument_id: (
+                self.cache.instrument(instrument_id) is not None
+            ),
         )
 
     def _continuous_port(self) -> CatalogBackedDataPort:
@@ -266,9 +277,7 @@ class RebalanceStrategy(Strategy):
             portfolio=self.portfolio,
             cache=self.cache,
             base_currency=base_ccy,
-            covered_instrument_ids=frozenset(
-                assembled_book.loadable_instrument_ids
-            ),
+            covered_instrument_ids=frozenset(assembled_book.loadable_instrument_ids),
         )
         roll_desk = self._build_roll_desk()
         self._roll_desk = roll_desk
@@ -278,22 +287,46 @@ class RebalanceStrategy(Strategy):
             resolver=self._bar_type_resolver,
         )
 
+        pipeline = RebalancePipeline(
+            book_state=self._require_book_state(),
+            market_data=self._require_market_data(),
+            book=assembled_book,
+            ledger=self._require_sleeve_ledger(),
+            arrays=self._arrays,
+        )
+        self._pipeline = pipeline
+        self._build_mark_timeframe_index(assembled_book)
+        self._book_market_clock = BookMarketClock(
+            book=assembled_book,
+            bar_type_resolver=self._bar_type_resolver,
+        )
+        if self.config.warmup_cache_on_start:
+            self._fast_forward = StartupFastForward(
+                book=assembled_book,
+                pipeline=pipeline,
+                roll_desk=roll_desk,
+                bar_type_resolver=self._bar_type_resolver,
+                book_market_clock=self._require_book_market_clock(),
+                fx_reference_pairs=self._fx_reference_pairs(),
+            )
+            self._is_recovering = True
+            self._handle_recovery(
+                self._fast_forward.begin(through=self.clock.utc_now())
+            )
+            return
+
         boot = bootstrap(
             now=self.clock.utc_now(),
             book=assembled_book,
-            ledger=self._require_sleeve_ledger(),
-            book_state=self._require_book_state(),
-            market_data=self._require_market_data(),
+            pipeline=pipeline,
             roll_desk=roll_desk,
             fx_reference_pairs=self._fx_reference_pairs(),
-            warmup_cache_on_start=self.config.warmup_cache_on_start,
+            warmup_cache_on_start=False,
         )
         if isinstance(boot, Halt):
             self._halt_from_roll_intent(boot)
             return
 
-        self._pipeline = boot.pipeline
-        self._build_sleeve_cadence(assembled_book)
         self._startup_result = boot.startup_result
         self._log_startup_pass(boot.startup_result)
         instrument_ids = assembled_book.loadable_instrument_ids
@@ -305,6 +338,12 @@ class RebalanceStrategy(Strategy):
             f"RebalanceStrategy starting; sleeves={names}, "
             f"instrument_ids={[instrument_id.value for instrument_id in instrument_ids]}"
         )
+
+    def on_historical_data(self, data: Data) -> None:
+        """Relay Nautilus historical deliveries into startup fast-forward."""
+        if self._fast_forward is None or not self._is_recovering:
+            return
+        self._handle_recovery(self._fast_forward.receive_history(data))
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
         """Mirror an FX reference pair's quote into the cache mark xrate.
@@ -320,7 +359,9 @@ class RebalanceStrategy(Strategy):
         mid = (tick.bid_price.as_double() + tick.ask_price.as_double()) / 2.0
         if mid <= 0.0:
             return
-        self.cache.set_mark_xrate(instrument.base_currency, instrument.quote_currency, mid)
+        self.cache.set_mark_xrate(
+            instrument.base_currency, instrument.quote_currency, mid
+        )
 
     def on_bar(self, bar: Bar) -> None:
         """Advance the consuming Sleeves' clocks and coalesce due transitions.
@@ -332,73 +373,51 @@ class RebalanceStrategy(Strategy):
         Book re-net -- orders still submit within the trigger close, preserving
         next-close execution and one-bar lag per cadence (aegis-rd-9qkr.3).
         """
-        if self._assembled_book is None or self._is_halted:
+        if self._assembled_book is None or self._is_halted or self._is_recovering:
+            return
+        if self._recovery_ready is not None:
+            admission = self._recovery_ready.admit_live(bar)
+            if isinstance(admission, Halt):
+                self._halt_from_roll_intent(admission)
+                return
+            if not admission:
+                return
+        watermark = self._stream_watermarks.get(bar.bar_type)
+        if watermark is not None and bar.ts_event <= watermark:
             return
 
         # Drives today's offset-0 append and any in-process roll before the cadence reads the
         # series, so the rebalance window already sees the live continuous bar.
+        continuous_id = self._require_roll_desk().continuous_id(
+            bar.bar_type.instrument_id
+        )
         if self._apply_roll_intents(self._require_roll_desk().on_bar(bar)):
             return
 
         derived_mark = self._resolve_derived_mark(bar)
         if derived_mark is not None:
             self._publish_mark(*derived_mark, bar=bar)
-        self._record_market_observation(bar, derived_mark)
+        self._record_market_observation(bar, derived_mark, continuous_id)
 
-        for sleeve_name in self._bar_consumers(bar.bar_type):
-            self._advance_sleeve_clock(sleeve_name, bar.ts_event)
-
-    def _build_sleeve_cadence(self, book: AssembledBook) -> None:
-        """Wire each Sleeve's period width and its streams' native BarTypes."""
-        consumers: dict[BarType, dict[SleeveName, None]] = {}
-        for sleeve_name, streams in book.sleeve_streams.items():
-            bundle = book.sleeves[sleeve_name]
-            self._period_ns_by_sleeve[sleeve_name] = timeframe_to_ns(
-                bundle.contract.timeframe
-            )
-            self._current_period_by_sleeve[sleeve_name] = None
-            for stream in streams:
-                for bar_type in self._mark_bars(stream.instrument_id, stream.timeframe):
-                    consumers.setdefault(bar_type, {})[sleeve_name] = None
-                    self._timeframe_by_bar_type[bar_type] = stream.timeframe
-        self._consumers_by_bar_type = {
-            bar_type: tuple(names) for bar_type, names in consumers.items()
-        }
-        continuous_consumers: dict[InstrumentId, dict[SleeveName, None]] = {}
-        for sleeve_name, bundle in book.sleeves.items():
-            for continuous_id in bundle.contract.continuous_instrument_ids:
-                continuous_consumers.setdefault(continuous_id, {})[sleeve_name] = None
-        self._sleeves_by_continuous_id = {
-            continuous_id: tuple(names)
-            for continuous_id, names in continuous_consumers.items()
-        }
-
-    def _bar_consumers(self, bar_type: BarType) -> tuple[SleeveName, ...]:
-        """The Sleeves a bar advances: its cash-stream consumers, or — for the
-        dated front legs the Roll Desk subscribes outside the cash map — the
-        Sleeves declaring the leg's continuous root."""
-        consumers = self._consumers_by_bar_type.get(bar_type)
-        if consumers is not None:
-            return consumers
-        continuous_id = self._require_roll_desk().continuous_id(
-            bar_type.instrument_id
+        market_clock = self._require_book_market_clock()
+        market_clock.advance(
+            bar.bar_type,
+            bar.ts_event,
+            continuous_id=continuous_id,
         )
-        if continuous_id is None:
-            return ()
-        return self._sleeves_by_continuous_id.get(continuous_id, ())
+        if market_clock.has_pending_due:
+            self._schedule_re_net(bar.ts_event)
+        self._stream_watermarks[bar.bar_type] = bar.ts_event
+        self._book_activity = max(self._book_activity or bar.ts_event, bar.ts_event)
 
-    def _advance_sleeve_clock(self, sleeve_name: SleeveName, timestamp_ns: int) -> None:
-        period_ns = self._period_ns_by_sleeve[sleeve_name]
-        period = timestamp_ns // period_ns
-        completed = self._current_period_by_sleeve[sleeve_name]
-        self._current_period_by_sleeve[sleeve_name] = period
-        if completed is None or period == completed:
-            return
-        self._pending_due[sleeve_name] = CompletedRebalancePeriod(
-            period=completed,
-            period_ns=period_ns,
-        )
-        self._schedule_re_net(timestamp_ns)
+    def _build_mark_timeframe_index(self, book: AssembledBook) -> None:
+        """Index native mark bars by the Market-Data Stream timeframe they complete."""
+        self._timeframe_by_bar_type = {
+            bar_type: stream.timeframe
+            for streams in book.sleeve_streams.values()
+            for stream in streams
+            for bar_type in self._mark_bars(stream.instrument_id, stream.timeframe)
+        }
 
     def _schedule_re_net(self, trigger_timestamp_ns: int) -> None:
         """One alert per due-transition cluster: 1ns after the trigger event,
@@ -413,15 +432,17 @@ class RebalanceStrategy(Strategy):
         )
 
     def _on_re_net_alert(self, event: TimeEvent) -> None:
-        due = dict(sorted(self._pending_due.items(), key=lambda item: item[0].value))
-        self._pending_due = {}
+        due = self._require_book_market_clock().drain()
         self._pending_due_timestamp = None
         if not due or self._is_halted:
             return
         self._rebalance_due_sleeves(due, event.ts_event)
 
     def _record_market_observation(
-        self, bar: Bar, derived_mark: tuple[InstrumentId, float] | None
+        self,
+        bar: Bar,
+        derived_mark: tuple[InstrumentId, float] | None,
+        continuous_id: InstrumentId | None = None,
     ) -> None:
         """Record the advancing stream's mark as a full-Book observation --
         retained Sleeves stay marked whether or not anything is due."""
@@ -430,7 +451,8 @@ class RebalanceStrategy(Strategy):
         if derived_mark is not None:
             instrument_id, mark = derived_mark
         else:
-            instrument_id, mark = self._observed_instrument(bar), float(bar.close)
+            instrument_id = continuous_id or self._observed_instrument(bar)
+            mark = float(bar.close)
         self._pipeline.record_market_observation(bar.ts_event, {instrument_id: mark})
 
     def _observed_instrument(self, bar: Bar) -> InstrumentId:
@@ -444,6 +466,52 @@ class RebalanceStrategy(Strategy):
         return bar.bar_type.instrument_id
 
     # ── internal helpers ──────────────────────────────────────────────────────
+
+    def _handle_recovery(self, update: RecoveryUpdate) -> None:
+        self.msgbus.publish(RECOVERY_TOPIC, update, external_pub=False)
+        if isinstance(update, Halt):
+            self._halt_from_roll_intent(update)
+            return
+        if isinstance(update, Recovering):
+            for request in update.requests:
+                self._request_recovery_history(request)
+            return
+        if isinstance(update, Ready):
+            self._recovery_ready = update
+            self._startup_result = update.startup_result
+            self._log_startup_pass(update.startup_result)
+            self._stream_watermarks.update(
+                (bar.bar_type, bar.ts_event) for bar in update.boundary_bars
+            )
+            self._book_activity = update.book_activity
+            if self._apply_boot_intents(update.intents):
+                return
+            self._is_recovering = False
+            assembled_book = self._require_assembled_book()
+            names = [name.value for name in assembled_book.sleeves]
+            instrument_ids = assembled_book.loadable_instrument_ids
+            self.log.info(
+                f"RebalanceStrategy starting; sleeves={names}, "
+                f"instrument_ids={[item.value for item in instrument_ids]}"
+            )
+            return
+        assert_never(update)
+
+    def _request_recovery_history(self, request: HistoryRequest) -> None:
+        fast_forward = self._fast_forward
+        if fast_forward is None:
+            raise RuntimeError("recovery history requested without fast-forward")
+
+        def completed(_request_id: object) -> None:
+            self._handle_recovery(fast_forward.history_loaded(request.key))
+
+        self.request_bars(
+            request.bar_type,
+            start=request.start,
+            end=request.end,
+            callback=completed,
+            update_catalog=request.update_catalog,
+        )
 
     def on_instrument(self, instrument: Instrument) -> None:
         """Forward loaded instruments to the Roll Desk relay."""
@@ -498,7 +566,9 @@ class RebalanceStrategy(Strategy):
             return True
         assert_never(intent)
 
-    def _mark_bars(self, instrument_id: InstrumentId, timeframe: str) -> tuple[BarType, ...]:
+    def _mark_bars(
+        self, instrument_id: InstrumentId, timeframe: str
+    ) -> tuple[BarType, ...]:
         return self._bar_type_resolver.resolve(instrument_id, timeframe).mark_bars
 
     def _resolve_derived_mark(self, bar: Bar) -> tuple[InstrumentId, float] | None:
@@ -549,17 +619,14 @@ class RebalanceStrategy(Strategy):
 
     def _rebalance_due_sleeves(
         self,
-        due: dict[SleeveName, CompletedRebalancePeriod],
+        due: tuple[DueSleeve, ...],
         timestamp_ns: int,
     ) -> None:
         """Delegate the coalesced due set to RebalancePipeline as one re-net."""
         pipeline = self._require_pipeline()
         result = pipeline.rebalance(
             RebalanceRequest(
-                due=tuple(
-                    DueSleeve(sleeve=sleeve_name, period=period)
-                    for sleeve_name, period in due.items()
-                ),
+                due=due,
                 timestamp_ns=timestamp_ns,
             )
         )
@@ -584,7 +651,9 @@ class RebalanceStrategy(Strategy):
     def _log_startup_halt(self, result: StartupResult) -> None:
         gate = result.halt_gate.value if result.halt_gate is not None else "unknown"
         reason = result.halt_reason or "unknown startup failure"
-        self.log.error(f"Startup gate FAILED: gate={gate} reason={reason}. HALTING the book.")
+        self.log.error(
+            f"Startup gate FAILED: gate={gate} reason={reason}. HALTING the book."
+        )
 
     def _log_startup_pass(self, result: StartupResult) -> None:
         nav = 0.0 if result.nav is None else result.nav
@@ -655,12 +724,9 @@ class RebalanceStrategy(Strategy):
 
         if attribution:
             total_book_pnl = sum(attribution.values())
-            parts = ", ".join(
-                f"{s.value}={pnl:.2f}" for s, pnl in attribution.items()
-            )
+            parts = ", ".join(f"{s.value}={pnl:.2f}" for s, pnl in attribution.items())
             self.log.info(
-                f"Per-sleeve P&L attribution: {parts} "
-                f"(book total={total_book_pnl:.2f})"
+                f"Per-sleeve P&L attribution: {parts} (book total={total_book_pnl:.2f})"
             )
 
     # -- RiskEngine callbacks ---------------------------------------------------
@@ -668,27 +734,13 @@ class RebalanceStrategy(Strategy):
     def on_order_denied(self, event: OrderDenied) -> None:
         """Log every order denial from the RiskEngine.
 
-        A denial means the RiskEngine rejected the order before submission —
-        protects against oversized orders and other pre-trade violations.
+        A denial means the intended trade did not happen; preserve the engine's
+        reason verbatim for operator diagnosis.
         """
-        self.log.warning(
+        self.log.error(
             f"OrderDenied: instrument={event.instrument_id!r} "
             f"client_order_id={event.client_order_id!r} "
             f"reason={event.reason!r}"
-        )
-
-    def risk_engine_config_dict(self, nav: float) -> dict[str, Any]:
-        """Return a dict suitable for ``RiskEngineConfig`` kwargs.
-
-        Computes per-instrument max notionals from the current NAV, keyed by the
-        native InstrumentIds declared by the loaded bundle contracts.
-        """
-        return self._risk_guard.risk_engine_config_dict(
-            nav=nav,
-            instrument_ids=[
-                instrument_id.value
-                for instrument_id in self._require_assembled_book().loadable_instrument_ids
-            ],
         )
 
     # -- order submission -------------------------------------------------------

@@ -5,10 +5,8 @@ hybrid template: field tables and literal catalogs are interpolated from the
 validating pydantic models and code constants at render time; semantics prose
 is hand-curated.
 
-The rendered guide states the **forward contract**, not the raw pydantic model:
-the prepass overlay (``optimization`` required, ``schema_version`` pinned to the
-current ``CONFIG_SCHEMA_VERSION``) is applied so the
-documented requiredness matches the enforced requiredness (ADR-0019, ADR-0012).
+The validating model is the structural authoring contract. Curated prose adds
+domain semantics that field metadata cannot express (ADR-0019, ADR-0012).
 """
 
 from __future__ import annotations
@@ -19,26 +17,22 @@ from collections.abc import Sequence
 from dataclasses import MISSING
 from dataclasses import Field as DcField
 from dataclasses import fields as dc_fields
-from typing import Any, Literal, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin, get_type_hints
+
+from pydantic import TypeAdapter
 
 from research.aegis_research.configuration.schema import (
     CONFIG_SCHEMA_VERSION,
     DATA_ARRAY_SHORTCUTS,
-    DATA_QUALITY_DEGRADATIONS,
     DEFAULT_LOCK_ROLE,
-    FORWARD_OPTIMIZATION_REQUIRED_MESSAGE,
     LOCK_ROLES,
     MISSING_POLICIES,
     OHLCV_ARRAYS,
-    OPTIMIZATION_EXECUTE_RESERVED_KEYS,
     OPTIMIZATION_SEARCH_POLICIES,
     PORTFOLIO_DIRECTIONS,
-    PREPASS_CONST_FIELDS,
-    PREPASS_REQUIRED_FIELDS,
     SIGNAL_EXECUTION_TIMINGS,
     SIGNAL_POLICIES,
     DataConfig,
-    DataQualityConfig,
     Lock,
     OptimizationConfig,
     PortfolioConfig,
@@ -47,13 +41,8 @@ from research.aegis_research.configuration.schema import (
     RunConfig,
     RunIndicatorSourceConfig,
     RunSourceRefConfig,
-    RunSplitConfig,
     SignalConfig,
 )
-
-# Forward-contract overlay (PREPASS_REQUIRED_FIELDS / PREPASS_CONST_FIELDS) is
-# owned by schema.py and shared with the validation prepass, so the documented
-# requiredness cannot fork from the enforced requiredness (ADR-0019).
 
 GUIDE_SCHEMA_VERSION = "config_schema_guide.v1"
 """Payload schema version for the ``aerd show config-schema`` JSON envelope."""
@@ -64,20 +53,17 @@ GUIDE_SCHEMA_VERSION = "config_schema_guide.v1"
 # Each top-level RunConfig section maps to its pydantic dataclass type.
 _SECTION_TYPES: dict[str, type[object] | list[type[object]]] = {
     "data": DataConfig,
-    "data.quality": DataQualityConfig,
     "portfolio": PortfolioConfig,
     "strategy": RunSourceRefConfig,
     "indicators": [RunIndicatorSourceConfig],  # list item type
     "ranking": RankingConfig,
     "report": ReportConfig,
     "optimization": OptimizationConfig,
-    "optimization.split": RunSplitConfig,
     "signal": SignalConfig,
     "lock": Lock,
 }
 
 # Text anchors for curated prose that reference CLI subcommands.
-_SHOW_SPLITTERS = "`aerd show splitters <method>`"
 _SHOW_COMPONENTS = "`aerd show components`"
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -87,7 +73,7 @@ def render_config_schema_guide() -> str:
     """Render the Run Config forward-contract authoring guide as markdown."""
     sections: list[str] = [
         _render_header(),
-        _render_forward_contract(),
+        _render_structural_contract(),
         _render_top_level_fields(),
         _render_data_section(),
         _render_portfolio_section(),
@@ -99,7 +85,6 @@ def render_config_schema_guide() -> str:
         _render_signal_section(),
         _render_lock_section(),
         _render_literal_catalogs(),
-        _render_split_params_pointer(),
         _render_component_ids_pointer(),
         _render_example(),
         _render_futures_example(),
@@ -115,42 +100,21 @@ def _render_header() -> str:
     # Run Config Forward Contract
 
     The YAML Run Config is the sole authoring surface for `aerd run`. This guide
-    documents the **forward contract** — the exact shape `aerd run` accepts — not
-    the raw pydantic model. Where the model has defaults or optional fields the
-    forward contract overrides, the overridden rule is stated first.""")
+    documents the exact structural shape `aerd run` accepts. Requiredness and
+    literal constraints come from the validating pydantic model.""")
 
 
-def _render_forward_contract() -> str:
-    """The prepass overlay: rules that amend the raw pydantic model."""
+def _render_structural_contract() -> str:
+    """Render top-level structural rules and removed authoring fields."""
     lines = [
-        "## Forward-Contract Overrides",
-        "",
-        "These rules amend the pydantic model for the forward contract. A config that",
-        "satisfies the model alone but not these overrides is **rejected** by `aerd run`.",
-        "",
+        "## Structural Contract",
     ]
-
-    # schema_version const
-    ver = PREPASS_CONST_FIELDS["schema_version"]
-    lines.append(f"- **`schema_version`** — must be present and exactly `{ver}`.")
-
-    # optimization required
-    lines.append(
-        f"- **`optimization`** — required. {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE}"
-    )
 
     # removed fields
     lines.append(
         "- **Removed fields** — `data.source`, `data.symbols`, `data.provider`, "
         "`data.fx_provider`, `labeler`, `train`, `model`, and any key not listed in "
         "this guide are rejected as unknown."
-    )
-
-    # schema_version
-    lines.append(
-        f"\nThe accepted Run Config schema version is **{CONFIG_SCHEMA_VERSION}**. "
-        "Older or newer schema versions are rejected. The `schema_version` field is "
-        "required at the top level with this exact value."
     )
 
     return "\n".join(lines)
@@ -168,15 +132,6 @@ def _render_top_level_fields() -> str:
     for fdef in _walk_dataclass_fields(RunConfig):
         required = "yes" if fdef.is_required else "no"
         default = fdef.default_str or "—"
-
-        if fdef.name in PREPASS_REQUIRED_FIELDS:
-            required = "yes"
-            if fdef.name == "optimization":
-                default = f"*required* (model default `None` ignored; {FORWARD_OPTIMIZATION_REQUIRED_MESSAGE})"
-
-        if fdef.name in PREPASS_CONST_FIELDS:
-            required = "yes"
-            default = f"*const* `{PREPASS_CONST_FIELDS[fdef.name]}`"
 
         notes = fdef.notes or "—"
         lines.append(f"| `{fdef.name}` | `{fdef.type_str}` | {required} | {default} | {notes} |")
@@ -211,7 +166,6 @@ def _render_data_section() -> str:
             "series (Path A); venue and quote currency are catalog-authoritative from its "
             "dated legs. A run needs at least one of `instruments` or `futures`.",
             "",
-            "<br>**`quality.allowed_degradations`**: ",
         ],
     )
 
@@ -279,38 +233,20 @@ def _render_report_section() -> str:
 
 def _render_optimization_section() -> str:
     lines = [
-        "### `optimization` (required per forward contract)",
+        "### `optimization`",
         "",
-        "**Note**: the raw model declares `optimization` optional but the forward "
-        "contract requires it. Every run must declare an optimization section.",
+        "Defines the Run's search policy and Observation Block length.",
         "",
     ]
     lines.append(_render_field_table(OptimizationConfig))
     lines.append("")
 
-    # optimization.split
-    lines.append("#### `optimization.split`")
-    lines.append("")
-    lines.append(_render_field_table(RunSplitConfig))
-    lines.append("")
     lines.append(
-        f"Split parameters depend on the `method`. Use {_SHOW_SPLITTERS} "
-        "to see the parameter catalog for each method."
+        "**`observation_block_bars`** fixes the predeclared analysis duration. "
+        "Aegis derives one common warmup from the sampled Component grid, uses "
+        "all remaining Development rows, and merges a final remainder into the "
+        "preceding block. Splitter construction and application are internal policy."
     )
-    lines.append("")
-    lines.append(
-        "**`split.params.set_labels`** — forbidden. Set roles (`selection`, "
-        "`held_out`) are assigned positionally by Aegis (set 0 = selection, "
-        "set 1 = held_out) and are not configurable."
-    )
-    lines.append("")
-    lines.append(
-        "**`optimization.execute`** forwards raw `vbt.parameterized` engine "
-        "kwargs only (e.g. chunking, engine, progress). The reserved keys below "
-        "are managed by Aegis's optimization layer and must not be set here: "
-        f"{', '.join(f'`{k}`' for k in sorted(OPTIMIZATION_EXECUTE_RESERVED_KEYS))}."
-    )
-
     return "\n".join(lines)
 
 
@@ -344,7 +280,7 @@ def _render_lock_section() -> str:
         "",
         "When `lock` is present, the run takes every Component's parameters from the "
         "locked Candidate rather than searching for new ones. The `optimization` "
-        "section is still required but its `search` / `split` values are ignored.",
+        "section is still required, but locked runs do not perform Candidate search.",
         "",
     ]
     lines.append(_render_field_table(Lock))
@@ -373,11 +309,6 @@ def _render_literal_catalogs() -> str:
             f"E.g. `OHLCV` → `{', '.join(OHLCV_ARRAYS)}`.",
         ),
         (
-            "Allowed Data-Quality Degradations",
-            DATA_QUALITY_DEGRADATIONS,
-            "Valid values for `data.quality.allowed_degradations`.",
-        ),
-        (
             "Lock Roles",
             set(LOCK_ROLES),
             "Representative roles for `lock` handle resolution.",
@@ -397,12 +328,6 @@ def _render_literal_catalogs() -> str:
             MISSING_POLICIES,
             "Valid values for `data.missing_index`.",
         ),
-        (
-            "Reserved `optimization.execute` Keys",
-            set(OPTIMIZATION_EXECUTE_RESERVED_KEYS),
-            "Keys that must NOT appear under `optimization.execute`; "
-            "managed by Aegis's optimization layer.",
-        ),
     ]
 
     for title, values, description in catalogs:
@@ -421,18 +346,6 @@ def _render_literal_catalogs() -> str:
         lines.append("")
 
     return "\n".join(lines)
-
-
-def _render_split_params_pointer() -> str:
-    return textwrap.dedent(f"""\
-    ## Split Parameters
-
-    The `optimization.split.method` field selects a VBT Splitter factory
-    (`from_rolling`, `from_purged_kfold`, `from_purged_walkforward`, etc.),
-    and `optimization.split.params` carries the keyword arguments for that factory.
-
-    Use **{_SHOW_SPLITTERS}** to see the parameter catalog for a given method:
-    which params are required, which have defaults, and which are denied.""")
 
 
 def _render_component_ids_pointer() -> str:
@@ -486,17 +399,12 @@ def _render_example() -> str:
 
     optimization:
       search: grid
-      split:
-        method: from_rolling
-        params:
-          length: 126
-          split: 0.5
-        max_splits: 2
+      observation_block_bars: 63
     ```
 
     This example reads native Nautilus bars from the configured catalog/port, uses
-    the `demo.strategy` and `demo.returns` Component fixtures, and a tiny 2-split
-    rolling window. The `demo.*` Components must exist under
+    the `demo.strategy` and `demo.returns` Component fixtures, and fixed 63-bar
+    Observation Blocks. The `demo.*` Components must exist under
     `research/components/strategies/` and `research/components/indicators/`
     relative to the working directory.""")
 
@@ -544,12 +452,7 @@ def _render_futures_example() -> str:
 
     optimization:
       search: grid
-      split:
-        method: from_rolling
-        params:
-          length: 252
-          split: 0.5
-        max_splits: 2
+      observation_block_bars: 126
     ```
 
     `ESZ6.XCME` is a native Nautilus `InstrumentId` read as raw bars. `ES` is a bare
@@ -577,17 +480,17 @@ def _walk_dataclass_fields(cls: Any) -> list[FieldDef]:
 
     Excludes internal/sentinel fields (names starting with underscore).
     """
+    annotations = get_type_hints(cls, include_extras=True)
     result: list[FieldDef] = []
     for f in dc_fields(cls):
         if f.name.startswith("_"):
             continue
-        result.append(_field_def(f))
+        result.append(_field_def(f, annotation=annotations[f.name]))
     return result
 
 
-def _field_def(field: DcField[Any]) -> FieldDef:
+def _field_def(field: DcField[Any], *, annotation: Any) -> FieldDef:
     name = field.name
-    annotation = field.type
 
     # Unwrap typing constructs
     type_str = _render_type(annotation)
@@ -611,7 +514,25 @@ def _field_def(field: DcField[Any]) -> FieldDef:
         type_str=type_str,
         is_required=is_required,
         default_str=default_str,
+        notes=_render_constraints(annotation),
     )
+
+
+def _render_constraints(annotation: Any) -> str | None:
+    """Render structural constraints from the field's Pydantic JSON Schema."""
+    schema = TypeAdapter(annotation).json_schema()
+    constraints: list[str] = []
+    if "const" in schema:
+        constraints.append(f"exactly `{schema['const']}`")
+    if "minLength" in schema:
+        constraints.append(f"minimum length `{schema['minLength']}`")
+    if "pattern" in schema:
+        constraints.append(f"must match `{schema['pattern']}`")
+    excluded = schema.get("not", {}).get("enum")
+    if excluded:
+        values = ", ".join(f"`{value}`" for value in excluded)
+        constraints.append(f"must not be {values}")
+    return "; ".join(constraints) or None
 
 
 def _render_type(annotation: Any) -> str:
@@ -703,10 +624,6 @@ def _render_nested_section(
         cls = cls[0]
 
     lines = [title, "", f"*{tag}*", "", _render_field_table(cls)]
-
-    quality_cls = _SECTION_TYPES.get(f"{section_key}.quality")
-    if quality_cls is not None and not isinstance(quality_cls, list):
-        lines.extend(["", "**`quality` sub-section:**", "", _render_field_table(quality_cls)])
 
     if extra_lines:
         lines.extend(extra_lines)

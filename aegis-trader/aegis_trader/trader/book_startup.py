@@ -14,11 +14,14 @@ from aegis_trader.bundles.book import (
     AssembledBook,
     ContinuousRootDeclaration,
 )
-from aegis_trader.data.market_data import MarketDataPort
-from aegis_trader.domain.roll import Halt, RequestBars, RollIntent, RollIntentBatch, SubscribeBars
-from aegis_trader.domain.sleeve_ledger import SleeveLedger
+from aegis_trader.domain.roll import (
+    Halt,
+    RequestBars,
+    RollIntent,
+    RollIntentBatch,
+    SubscribeBars,
+)
 from aegis_trader.domain.startup import StartupResult
-from aegis_trader.portfolio import BookStatePort
 from aegis_trader.trader.pipeline import RebalancePipeline
 
 # Calendar inflation from "bars of lookback" to "wall-clock span requested":
@@ -70,20 +73,12 @@ def bootstrap(
     *,
     now: datetime,
     book: AssembledBook,
-    ledger: SleeveLedger,
-    book_state: BookStatePort,
-    market_data: MarketDataPort,
+    pipeline: RebalancePipeline,
     roll_desk: RollStartupPort,
     fx_reference_pairs: Sequence[InstrumentId],
     warmup_cache_on_start: bool,
 ) -> BootResult | Halt:
     """Run the startup gates and return either the boot values or a typed halt."""
-    pipeline = RebalancePipeline(
-        book_state=book_state,
-        market_data=market_data,
-        book=book,
-        ledger=ledger,
-    )
     startup_result = pipeline.startup_check()
     if startup_result.should_halt:
         return _halt_from_startup_result(startup_result)
@@ -109,7 +104,9 @@ def bootstrap(
     for requirement in book.required_streams:
         stream = requirement.stream
         intents.append(
-            SubscribeBars(instrument_id=stream.instrument_id, timeframe=stream.timeframe)
+            SubscribeBars(
+                instrument_id=stream.instrument_id, timeframe=stream.timeframe
+            )
         )
         if warmup_cache_on_start:
             intents.append(

@@ -1,5 +1,7 @@
 # Market data exposes one Array interface (the Bundle), with a typed market_data.v3 metadata model
 
+Status: superseded by [ADR-0028](0028-run-data-is-the-single-research-data-interface.md)
+
 A **Component** (an **Indicator** or **Strategy**) reads the prices a **Run** loaded as **Arrays** — `Close`, `Open`, and any adjacent series it declares. Before this work the seam serving those Arrays was doubled, mis-named, and sat on a bloated wire artifact:
 
 - **Two types both exposed feature access.** `MarketDataResult` (the loader's pre-validation output) and `MarketDataBundle` (the post-validation, Component-facing view) each defined `.feature()`, each re-implemented the "was this Array loaded?" guard, and `MarketDataResult.feature` existed only to be captured as the Bundle's `feature_getter` closure. The Bundle also carried a `native_data` field nobody read and a `loaded_features` set duplicating `metadata["loaded_arrays"]`.

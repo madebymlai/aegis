@@ -15,7 +15,14 @@ output_dir: runs/demeter_eu/credit_carry_sota
 # registered sweep metric, so the cell is pinned directly in strategy.params below (the
 # param_space grid collapses to it) rather than re-crowned by aerd. See
 # runs/demeter/2026-07-04 and [[the-tiered-strategy-roster]].
-lock: 20260704T170256351625Z_demeter_eu_credit_carry_sota
+# RE-LOCKED 2026-07-25. The 2026-07-04 store was candidate-store schema v6 and the code now
+# requires v8, so resolve_lock_run could not open it and the pole could not be evaluated at
+# all. Re-ran the config unlocked to regenerate the store; the run reported
+# candidate_count: 1, confirming the param_space grid does collapse to the cell pinned in
+# strategy.params below - so this is the SAME candidate re-minted under the current schema,
+# not a re-crowning. Previous lock: 20260704T170256351625Z_demeter_eu_credit_carry_sota
+# (its store is preserved at .candidate_store.v6-backup/).
+lock: 20260725T011800661731Z_demeter_eu_credit_carry_sota
 
 
 # THE CONSTRUCTION SWEEP from [[the-ucits-constrained-carry-sleeve]] — the research-backed
@@ -27,8 +34,9 @@ lock: 20260704T170256351625Z_demeter_eu_credit_carry_sota
 #                              premium WITH its negative skew (BIS WP474/775, Burger-
 #                              Warnock); calm-market diversifier only, crash-clustering
 #                              expected (Koijen et al.).
-#   carry_gain {0, 1, 2}     — spread-richness lean (the value half of the signal, the
-#                              half that survives the bond-factor replication crisis).
+#   (carry_gain {0, 1, 2}    — the spread-richness lean. REMOVED in carry_mix v1.2.0: it
+#                              was killed 2026-07-04 and pinned 0.0 thereafter, so the
+#                              axis and its carry_score feed were dead weight.)
 # vol_target is PINNED at 0.10 (mandate) — the 2026-07-03 ranker A/B showed a swept scale
 # axis feeds mu-noise to the utility ranker; on this shape-only grid convergent_income_utility
 # is the legitimate ranker (the payoff SHAPE varies across cells).
@@ -47,10 +55,10 @@ data:
   timeframe: 1D
   missing_index: drop
 
+# demeter_eu.credit_carry was dropped 2026-07-25 with carry_mix v1.2.0: carry_gain was
+# pinned 0.0 here, so its carry_score was computed (a live FRED pull every run) and then
+# multiplied straight out. The indicator is archived; the lean itself was killed 2026-07-04.
 indicators:
-- id: demeter_eu.credit_carry
-  params:
-    carry_window: 252
 - id: demeter.realized_vol
   params:
     vol_window: 63
@@ -61,7 +69,6 @@ strategy:
     at1_weight: 0.0       # v1.1.0 axis pinned OFF here - swept separately in archive/carry_sota_at1.yaml
     defensive: 1.0        # short-duration HY bucket (SDHY replaces broad IHYU)
     fx_weight: 0.0        # EM local-currency leg DROPPED - net-negative for the pairing (P2, 2026-07-04)
-    carry_gain: 0.0       # spread-richness lean DROPPED - lowers income AND hurts the book (P2, 2026-07-04)
 
 portfolio:
   direction: both
@@ -83,15 +90,13 @@ report:
   # capital-loss units for comparison with the incumbent and book loss budget. NOTE the book now runs on
   # TOTAL-RETURN streams: the catalog distribution store is seeded (GH #76), so these
   # coupon-bearing ETFs finally compound their income in the sim.
-  metrics: [convergent_tail_budget, convergent_downside_lskew]
+  # convergent_smoothing_index added 2026-07-25: smoothed marks would flatter every daily
+  # statistic here and bias the downside-correlation guard toward zero. Measured 1.0000
+  # (no smoothing) on this book, but it is a property of the FEED, so it is reported every
+  # run rather than assumed to hold.
+  metrics: [convergent_tail_budget, convergent_downside_lskew, convergent_smoothing_index]
 
 optimization:
   search: grid
   seed: 42
-  split:
-    method: from_rolling
-    params:
-      length: 504
-      offset: 0
-      split: 0.5
-    max_splits: 10
+  observation_block_bars: 252

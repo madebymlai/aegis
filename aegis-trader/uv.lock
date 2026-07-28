@@ -83,6 +83,7 @@ dependencies = [
     { name = "numba" },
     { name = "numpy" },
     { name = "pandas" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
@@ -91,6 +92,7 @@ requires-dist = [
     { name = "numba", specifier = ">=0.66.0" },
     { name = "numpy" },
     { name = "pandas" },
+    { name = "pydantic", specifier = ">=2.12" },
 ]
 
 [package.metadata.requires-dev]
@@ -120,7 +122,7 @@ ib = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
-    { name = "pytest-forked" },
+    { name = "pytest-isolated" },
 ]
 
 [package.metadata]
@@ -141,7 +143,7 @@ provides-extras = ["ib"]
 dev = [
     { name = "pytest", specifier = ">=9.1.0" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
-    { name = "pytest-forked", specifier = ">=1.6.0" },
+    { name = "pytest-isolated", specifier = ">=0.5.0" },
 ]
 
 [[package]]
@@ -611,15 +613,6 @@ wheels = [
 ]
 
 [[package]]
-name = "py"
-version = "1.11.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/98/ff/fec109ceb715d2a6b4c4a85a61af3b40c723a961e8828319fbcb15b868dc/py-1.11.0.tar.gz", hash = "sha256:51c75c4126074b472f746a24399ad32f6053d1b34b68d2fa41e558e6f4a98719", size = 207796, upload-time = "2021-11-04T17:17:01.377Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/f0/10642828a8dfb741e5f3fbaac830550a518a775c7fff6f04a007259b0548/py-1.11.0-py2.py3-none-any.whl", hash = "sha256:607c53218732647dff4acdfcd50cb62615cedf612e72d1724fb1a0cc6405b378", size = 98708, upload-time = "2021-11-04T17:17:00.152Z" },
-]
-
-[[package]]
 name = "pyarrow"
 version = "24.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -791,16 +784,15 @@ wheels = [
 ]
 
 [[package]]
-name = "pytest-forked"
-version = "1.6.0"
+name = "pytest-isolated"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "py" },
     { name = "pytest" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/c9/93ad2ba2413057ee694884b88cf7467a46c50c438977720aeac26e73fdb7/pytest-forked-1.6.0.tar.gz", hash = "sha256:4dafd46a9a600f65d822b8f605133ecf5b3e1941ebb3588e943b4e3eb71a5a3f", size = 9977, upload-time = "2023-02-12T23:22:27.544Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/a8/add62c9d5d7b6fd51aa9888ba28c445e67071b68a8677d769b10a18aaa12/pytest_isolated-0.5.0.tar.gz", hash = "sha256:e7bcb91fa93d32ec7dfd7cb662617f9343538c4d62424d57fdd3f904ab92238d", size = 36892, upload-time = "2026-06-15T15:35:54.895Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/af/9c0bda43e486a3c9bf1e0f876d0f241bc3f229d7d65d09331a0868db9629/pytest_forked-1.6.0-py3-none-any.whl", hash = "sha256:810958f66a91afb1a1e2ae83089d8dc1cd2437ac96b12963042fbb9fb4d16af0", size = 4897, upload-time = "2023-02-12T23:22:26.022Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/c5/6cb2b8246d6ea2ebe50353580c490c53703e214df6f060c9c9cb806f483a/pytest_isolated-0.5.0-py3-none-any.whl", hash = "sha256:009575ed652288a489eef20835393b674b5f674035d63ea1ec38f97c282d3431", size = 19944, upload-time = "2026-06-15T15:35:53.673Z" },
 ]
 
 [[package]]

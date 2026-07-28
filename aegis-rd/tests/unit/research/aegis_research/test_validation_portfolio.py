@@ -55,26 +55,28 @@ def _component_registry(tmp_path: Path):
         "'input_names': ['Close'], 'output_name': 'active', 'consumes_outputs': ['returns'], "
         "}\n"
         "\n# %% main compute\n"
-        "def run(bundle):\n    \"\"\"Fixture strategy, never executed.\"\"\"\n"
+        'def run(bundle):\n    """Fixture strategy, never executed."""\n'
         "    raise RuntimeError('not executed during config tests')\n"
     )
     return discover_component_registry(root=root, repo_root=tmp_path)
 
 
-def _resolve(portfolio: dict[str, Any], *, tmp_path: Path):
+def _resolve(
+    portfolio: dict[str, Any],
+    *,
+    tmp_path: Path,
+    strategy_id: str = "demo.strategy",
+):
     """Resolve a minimal valid Run Config with the given portfolio section."""
     raw: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "val-test",
         "data": native_data_config_payload(instruments=["SYN.XNAS"], end="2024-04-30"),
         "portfolio": portfolio,
-        "strategy": {"id": "demo.strategy"},
+        "strategy": {"id": strategy_id},
         "indicators": [{"id": "demo.returns"}],
         "ranking": {"metric": "total_return"},
-        "optimization": {
-            "search": "grid",
-            "split": {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10},
-        },
+        "optimization": {"search": "grid", "observation_block_bars": 20},
     }
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
@@ -82,6 +84,10 @@ def _resolve(portfolio: dict[str, Any], *, tmp_path: Path):
 def _get_issues(path: str, error: ValidationError) -> list[dict[str, Any]]:
     """Return pydantic error dicts matching the given dotted path."""
     return [e for e in error.errors() if e["loc"] == tuple(path.split("."))]
+
+
+def _issue_paths(error: ConfigValidationError) -> set[str]:
+    return {issue.path for issue in error.issues}
 
 
 # ── smoke tests (constants, defaults, calculator) ────────────────────────────
@@ -185,9 +191,7 @@ def test_portfolio_construction_rejects_negative_band_override_width() -> None:
 
 def test_portfolio_construction_rejects_removed_rebalance_band() -> None:
     with pytest.raises(ValidationError) as e:
-        _PORTFOLIO_ADAPTER.validate_python(
-            {"direction": "longonly", "rebalance_band": 0.02}
-        )
+        _PORTFOLIO_ADAPTER.validate_python({"direction": "longonly", "rebalance_band": 0.02})
     assert any(
         err["loc"] == ("rebalance_band",) and err["type"] == "unexpected_keyword_argument"
         for err in e.value.errors()
@@ -195,9 +199,7 @@ def test_portfolio_construction_rejects_removed_rebalance_band() -> None:
 
 
 def test_portfolio_construction_accepts_one_directional_width_with_other_defaulted() -> None:
-    config = _PORTFOLIO_ADAPTER.validate_python(
-        {"direction": "longonly", "band_up": 0.01}
-    )
+    config = _PORTFOLIO_ADAPTER.validate_python({"direction": "longonly", "band_up": 0.01})
     assert config.band_up == 0.01
     assert config.band_down == 0.0
 
@@ -236,17 +238,13 @@ def test_portfolio_construction_accepts_explicit_zero_margin_interest_rate() -> 
 
 def test_portfolio_construction_rejects_negative_short_borrow_rate() -> None:
     with pytest.raises(ValidationError) as e:
-        _PORTFOLIO_ADAPTER.validate_python(
-            {"direction": "longonly", "short_borrow_rate": -0.001}
-        )
+        _PORTFOLIO_ADAPTER.validate_python({"direction": "longonly", "short_borrow_rate": -0.001})
     assert any(err["loc"] == ("short_borrow_rate",) for err in e.value.errors())
 
 
 def test_portfolio_construction_rejects_negative_short_rebate_rate() -> None:
     with pytest.raises(ValidationError) as e:
-        _PORTFOLIO_ADAPTER.validate_python(
-            {"direction": "longonly", "short_rebate_rate": -0.001}
-        )
+        _PORTFOLIO_ADAPTER.validate_python({"direction": "longonly", "short_rebate_rate": -0.001})
     assert any(err["loc"] == ("short_rebate_rate",) for err in e.value.errors())
 
 
@@ -260,9 +258,7 @@ def test_portfolio_construction_rejects_negative_margin_interest_rate() -> None:
 
 def test_portfolio_construction_rejects_unknown_key() -> None:
     with pytest.raises(ValidationError) as e:
-        _PORTFOLIO_ADAPTER.validate_python(
-            {"direction": "longonly", "bogus": 42}
-        )
+        _PORTFOLIO_ADAPTER.validate_python({"direction": "longonly", "bogus": 42})
     assert any(err["type"] == "unexpected_keyword_argument" for err in e.value.errors())
 
 
@@ -282,6 +278,23 @@ def test_portfolio_band_override_key_must_be_in_tradeable_universe(tmp_path: Pat
         and "SYN.XNAS" in i.message
         for i in e.value.issues
     )
+
+
+def test_typed_band_override_and_registry_issues_are_combined(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as e:
+        _resolve(
+            {
+                "direction": "longonly",
+                "band_overrides": {"OTHER.XNAS": {"up": 0.03, "down": 0.07}},
+            },
+            tmp_path=tmp_path,
+            strategy_id="missing.strategy",
+        )
+
+    assert _issue_paths(e.value) == {
+        "portfolio.band_overrides",
+        "strategy.id",
+    }
 
 
 def test_resolved_config_carries_margin_interest_default(tmp_path: Path) -> None:
@@ -309,11 +322,7 @@ def test_portfolio_band_override_key_accepts_configured_future_root(tmp_path: Pa
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 20, "split": 0.5},
-                "max_splits": 10,
-            },
+            "observation_block_bars": 20,
         },
     }
 
@@ -325,18 +334,10 @@ def test_portfolio_band_override_key_accepts_configured_future_root(tmp_path: Pa
 # ── report structural validation ─────────────────────────────────────────────
 
 
-def test_report_construction_rejects_out_of_range_drawdown() -> None:
-    with pytest.raises(ValidationError) as e:
-        _REPORT_ADAPTER.validate_python({"max_oos_drawdown": 2.0})
-    dd_errors = _get_issues("max_oos_drawdown", e.value)
-    assert dd_errors[0]["msg"] == "Input should be less than or equal to 1"
-
-
 def test_report_construction_accepts_defaults() -> None:
     config = _REPORT_ADAPTER.validate_python({})
-    assert config.min_oos_sharpe == 0.5
-    assert config.max_oos_drawdown == 0.35
-    assert config.min_oos_trades == 5
+    assert config.freq == "1D"
+    assert config.year_freq == "252D"
 
 
 # ── removed fields (no tombstones: rejected as fields that never existed) ─────
@@ -380,13 +381,11 @@ def test_report_construction_rejects_non_timedelta_year_freq() -> None:
     assert _get_issues("year_freq", e.value)
 
 
-def test_report_construction_rejects_negative_min_oos_trades() -> None:
+@pytest.mark.parametrize(
+    "removed",
+    ["min_oos_sharpe", "max_oos_drawdown", "min_oos_trades"],
+)
+def test_report_construction_rejects_removed_oos_gate(removed: str) -> None:
     with pytest.raises(ValidationError) as e:
-        _REPORT_ADAPTER.validate_python({"min_oos_trades": -3})
-    assert _get_issues("min_oos_trades", e.value)
-
-
-def test_report_construction_rejects_string_min_oos_trades() -> None:
-    with pytest.raises(ValidationError) as e:
-        _REPORT_ADAPTER.validate_python({"min_oos_trades": "5"})
-    assert _get_issues("min_oos_trades", e.value)
+        _REPORT_ADAPTER.validate_python({removed: 0})
+    assert _get_issues(removed, e.value)

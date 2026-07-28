@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_runtime import MarketDataBundle
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import (
@@ -20,10 +21,8 @@ from research.aegis_research.configuration import (
     RunSourceRefConfig,
     to_builtin,
 )
-from research.aegis_research.data import MarketDataBundle
 from research.aegis_research.optimization.param_namespace import (
     FIXED_CANDIDATE_PARAM,
-    PARAM_KEY_PREFIX,
     ComponentRef,
     encode,
 )
@@ -117,10 +116,9 @@ class _ComposedSource:
     def precompute(
         self, close: pd.DataFrame, n_candidates: int, **param_lists: Any
     ) -> IndicatorPrecompute:
-        # Run each indicator's batched callable once over ``close`` (the full series in
-        # the selection phase) and return a candidate-major store sliceable by split
-        # range. Candidates whose warmup still exceeds the full series are marked
-        # invalid by the runner before ranking.
+        # Run each indicator's batched callable once over ``close`` and return a
+        # candidate-major store. Candidates whose warmup exceeds the full series are
+        # marked invalid by the runner before ranking.
         data_full = _slice_data(self.data, close, self.input_names)
         n_symbols = len(close.columns)
         outputs: dict[str, np.ndarray] = {}
@@ -160,8 +158,8 @@ class _ComposedSource:
         n_candidates: int,
         **param_lists: Any,
     ) -> pd.DataFrame:
-        # Run the strategy allocation for one window given indicator outputs already
-        # sliced to that window; the central-metrics step prices the allocations.
+        # Run the strategy allocation for the supplied continuous batch using its
+        # aligned indicator outputs; replay then prices the allocations once.
         data_slice = _slice_data(self.data, close_window, self.input_names)
         n_symbols = len(close_window.columns)
         strategy_inputs = ComponentStrategyInputs(
@@ -175,35 +173,37 @@ class _ComposedSource:
                 "component_optimization_source": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
             },
         )
-        strategy_params = _params_for_runtime(
-            self.strategy, param_lists, n_candidates=n_candidates
-        )
+        strategy_params = _params_for_runtime(self.strategy, param_lists, n_candidates=n_candidates)
         alloc_arr = _validated_component_array(
             self.strategy,
-            self.strategy.callable(
-                strategy_inputs, n_candidates=n_candidates, **strategy_params
-            ),
+            self.strategy.callable(strategy_inputs, n_candidates=n_candidates, **strategy_params),
             expected_shape=_candidate_major_shape(close_window, n_candidates),
             output_label="allocation",
         )
         return _build_frame(alloc_arr, close_window, n_candidates, param_lists, self.params)
 
+    def resolve_lookbacks(self, candidate_params: Mapping[str, Any]) -> Mapping[str, int]:
+        """Resolve every configured Component's lookback for one Candidate."""
+        resolved: dict[str, int] = {}
+        for runtime in (*self.indicators, self.strategy):
+            params = dict(runtime.fixed_params)
+            params.update(
+                {
+                    param_name: candidate_params[param_key]
+                    for param_name, param_key in runtime.param_keys.items()
+                }
+            )
+            component_key = f"{runtime.family}/{runtime.definition.id}@{runtime.slot}"
+            resolved[component_key] = runtime.definition.warmup_bars(params)
+        return resolved
+
     def to_optimization_source(self) -> OptimizationSource:
         return OptimizationSource(
             precompute=self.precompute,
             simulate=self.simulate,
+            resolve_lookbacks=self.resolve_lookbacks,
             params=self.params,
-            output_name=self.strategy.definition.allocation_output_name(),
-            evidence=_source_evidence(self.strategy, self.indicators, self.params),
-            diagnostics={
-                "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
-                "candidate_param_count": len(self.params),
-                "uses_fixed_candidate_param": list(self.params) == [FIXED_CANDIDATE_PARAM],
-            },
-            metadata={
-                "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
-                "param_namespace": PARAM_KEY_PREFIX,
-            },
+            identity=_source_identity(self.strategy, self.indicators, self.params),
         )
 
 
@@ -252,9 +252,7 @@ def _build_runtime(
     component_callable = definition.load_callable()
     param_space_callable = None if locked else definition.load_param_space()
     param_space = (
-        {}
-        if param_space_callable is None
-        else _load_param_space(definition, param_space_callable)
+        {} if param_space_callable is None else _load_param_space(definition, param_space_callable)
     )
     fixed_params = _fixed_params_for_ref(
         family,
@@ -360,9 +358,7 @@ def _validate_component_param_sources(
     fixed_params: Mapping[str, Any],
     param_space: Mapping[str, vbt.Param],
 ) -> None:
-    missing = sorted(
-        set(definition.declared_param_names()) - set(fixed_params) - set(param_space)
-    )
+    missing = sorted(set(definition.declared_param_names()) - set(fixed_params) - set(param_space))
     if missing:
         raise ComponentSourceError(
             f"component {definition.family}/{definition.id} has no fixed value or param space "
@@ -509,9 +505,7 @@ def _slice_data(
 ) -> MarketDataBundle:
     arrays: dict[str, pd.DataFrame] = {}
     for name in input_names:
-        arrays[name] = (
-            close_slice if name == "Close" else data.array(name).loc[close_slice.index]
-        )
+        arrays[name] = close_slice if name == "Close" else data.array(name).loc[close_slice.index]
     return MarketDataBundle(arrays=arrays)
 
 
@@ -536,7 +530,7 @@ def _assert_output_contract(
         )
 
 
-def _source_evidence(
+def _source_identity(
     strategy: _ComponentRuntime,
     indicators: tuple[_ComponentRuntime, ...],
     params: Mapping[str, vbt.Param],
@@ -545,8 +539,8 @@ def _source_evidence(
         "schema_version": COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
         "source": "component",
         "kind": "component_composition",
-        "strategy": _runtime_evidence(strategy),
-        "indicators": [_runtime_evidence(runtime) for runtime in indicators],
+        "strategy": _runtime_identity(strategy),
+        "indicators": [_runtime_identity(runtime) for runtime in indicators],
         "param_names": list(params),
         "fixed_candidate_param": FIXED_CANDIDATE_PARAM
         if list(params) == [FIXED_CANDIDATE_PARAM]
@@ -560,7 +554,7 @@ def _source_evidence(
     }
 
 
-def _runtime_evidence(runtime: _ComponentRuntime) -> dict[str, Any]:
+def _runtime_identity(runtime: _ComponentRuntime) -> dict[str, Any]:
     return {
         "family": runtime.family,
         "slot": runtime.slot,

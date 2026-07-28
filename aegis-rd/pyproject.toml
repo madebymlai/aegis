@@ -10,11 +10,10 @@ requires-python = ">=3.12"
 dependencies = [
   "aegis-runtime",
   "aegis-data",
-  "dill",
+  "edgartools==5.42.0",
   "nautilus_trader",
   "numpy",
   "pandas",
-  "pathos>=0.3.5",
   "pydantic>=2.0",
   "pyyaml",
   "tomlkit",
@@ -34,12 +33,6 @@ include = ["research*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-filterwarnings = [
-  # vectorbtpro's pathos parallel engine forks worker processes; on Python 3.13 the
-  # multiprocess backend warns that forking a multi-threaded process is risky. This is
-  # intrinsic to how pathos spawns workers and is not actionable from our code.
-  "ignore:.*use of fork\\(\\) may lead to deadlocks.*:DeprecationWarning",
-]
 
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }
@@ -63,9 +56,13 @@ module = [
   "aegis_runtime.*",
   "aegis_data",
   "aegis_data.*",
+  "edgar",
+  "edgar.*",
   "numba",
   "numba.*",
   "nautilus_trader.*",
+  "scipy",
+  "scipy.*",
 ]
 ignore_missing_imports = true
 

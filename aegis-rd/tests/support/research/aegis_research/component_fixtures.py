@@ -30,6 +30,10 @@ def write_indicator_component(path: Path) -> None:
         "    for i in range(n_candidates):\n"
         "        result[:, i * S:(i + 1) * S] = arr\n"
         "    return {'returns': result}\n"
+        "\n# %% causal lookback\n"
+        "def lookback():\n"
+        '    """The one-bar return needs one preceding Close."""\n'
+        "    return 1\n"
     )
 
 
@@ -70,4 +74,8 @@ def write_strategy_component(path: Path) -> None:
         "        n_sel = np.nansum(selected, axis=1, keepdims=True).clip(min=1)\n"
         "        alloc[:, cols] = np.where(selected, 1.0 / n_sel, 0.0)\n"
         "    return alloc\n"
+        "\n# %% causal lookback\n"
+        "def lookback():\n"
+        '    """The allocation comparison needs one preceding Close."""\n'
+        "    return 1\n"
     )

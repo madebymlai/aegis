@@ -23,6 +23,7 @@ from aegis_trader.trader.pipeline import (
     RebalancePipeline,
     RebalanceRequest,
 )
+from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import assemble_test_book
 
 _INSTRUMENT_ID = InstrumentId.from_str("GBUS.XLON")
@@ -143,6 +144,7 @@ def test_pipeline_collects_sizing_params_by_native_instrument_id() -> None:
         market_data=_MarketData(),
         book=assemble_test_book(book, {"uk.whl": bundle}),
         ledger=SleeveLedger(horizon=derive_horizon(("1D",))),
+        arrays=SleeveArrays.bar_only(),
     )
 
     pipeline.rebalance(

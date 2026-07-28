@@ -128,3 +128,123 @@ and **`builders.py` dissolves** into the models. The serialized type stays a dat
   `data`, `lock`, `metrics`, `optimization`, `portfolio`) — the `validation/` package collapses
   to its coordinator. If the tree does not shrink to roughly this, something leaked.
   `env_references.py` and `configuration/__init__.py` are untouched.
+
+## Amendment — 2026-07-22: the model is the structural authoring contract
+
+The accepted forward contract now makes `schema_version` and `optimization` required,
+keyword-only model fields. `schema_version` is the current-version Literal and
+`optimization` is non-null, so every constructed `RunConfig` represents an executable
+Run. Run-name syntax and scalar Lock-handle shape are likewise owned by Pydantic authoring
+types and validators.
+
+This supersedes the earlier decision to give those fields model defaults and enforce
+their presence with a raw prepass. The prepass constants, special missing-optimization
+message, post-construction name/Lock checks, and downstream null-optimization guards are
+removed. Structural wording is Pydantic's verbatim wording through the existing
+`ConfigValidationIssue` adapter.
+
+The shared Pydantic field vocabulary also moves from the configuration package to a
+neutral Aegis RD authoring leaf consumed by both Run Config schema and Component
+manifests. This removes their import cycle without creating a compatibility surface.
+Registry orchestration and structural-versus-registry co-reporting are addressed
+separately by the ADR-0014 amendment.
+
+## Amendment — 2026-07-22: typed construction is the registry cutoff
+
+Run Config resolution now performs one registry-free whole-tree Pydantic construction
+before any Component discovery, Metric Registry construction, or registry cross-check.
+If construction fails, resolution returns all Pydantic structural issues and stops. Raw
+authoring mappings are retained only as boundary input and authored evidence; they are no
+longer interpreted by a second validation dialect.
+
+When construction succeeds, the coordinator's typed band-override universe issue may be
+combined with typed Component and Metric registry issues. Registry discovery and integrity
+failures remain separate setup errors because there is no trustworthy registry against
+which authoring selections can be checked.
+
+## Amendment — 2026-07-23: Component manifests collapse onto the same rule
+
+The manifest layer now follows the decision this ADR made for Run Config: the model
+validates *and* constructs. `IndicatorManifest`, `StrategyManifest`, and their
+`ComponentManifest` base become `@pydantic_dataclass(frozen=True, extra="forbid")` in
+`component_registry/contracts.py`, carrying the field constraints and
+`@model_validator`s directly. The private `_BaseManifestPayload` /
+`_IndicatorManifestPayload` / `_StrategyManifestPayload` mirror models and both
+`_build_*_manifest` builders are **deleted** — `manifests.py` was still running the
+`builders.py` pattern this ADR dissolved everywhere else, so a manifest field had three
+homes (payload model, domain dataclass, builder) instead of one.
+
+- **Strict stays per-field, as this ADR already requires.** Re-confirmed against pydantic
+  2.13.4: `strict=True` on a dataclass config — or passed to `validate_python` — rejects
+  dict input outright with `dataclass_exact_type` ("Input should be an instance of
+  IndicatorManifest"). The payload models could carry model-level
+  `ConfigDict(strict=True)` because they were `BaseModel`s; the domain dataclasses cannot.
+- **Authored lists, domain tuples.** Authors write `"input_names": ["Close"]`; the frozen
+  type holds a tuple. `AuthoredArrayNames`/`AuthoredParamNames` pair a `BeforeValidator`
+  that converts *only* the authored `list` form with `Field(strict=True)` on the tuple, so
+  every other sequence shape is rejected. This is load-bearing rather than cosmetic: plain
+  lax tuple validation accepts a `set`, which `ast.literal_eval` can produce, and its
+  iteration order would leak through `public_snapshot()` into the registry fingerprint.
+- **Unknown-key wording follows the dataclass, as it did for Run Config.** Manifests now
+  report `"Unexpected keyword argument"` instead of the `BaseModel` phrasing `"Extra inputs
+  are not permitted"`; four assertions in `test_component_registry.py` are updated. Both
+  authoring surfaces now word unknown keys identically. Error accumulation is unaffected —
+  field errors and the unexpected-keyword error still surface together in one
+  `ComponentRegistryError`.
+- **Construction now validates, and that immediately paid.** A test stub was building an
+  Indicator with `output_names=()` — a state the parser has always rejected but the
+  unvalidated dataclass allowed. Making the illegal state unrepresentable surfaced it.
+- **Byte-invisible.** `public_snapshot()` still emits lists via `to_builtin`, so no golden
+  hash moves.
+
+The two families keep their split for a real reason, not a mirroring one: `param_names`
+and `defaults` are common and live on the base with the shared
+`defaults ⊆ param_names` validator; the family-specific required fields are `kw_only`
+so they can sit among the base's defaulted fields — the `DataConfig.arrays` pattern.
+
+## Amendment — 2026-07-24: the msgspec rejection is re-grounded on measurement
+
+The decision stands, but the reasons recorded above do not carry it. Re-examined on a
+challenge to the original rationale.
+
+**What does not discriminate.** "Considered options" rejects msgspec because it is
+fail-fast and because `Struct` is not a stdlib dataclass. The first is a *self-imposed*
+contract — all-errors-at-once is our own `ConfigValidationError` shape, changeable, not a
+physical constraint. And this ADR's headline driver does not discriminate either: msgspec
+Structs also validate *and* construct, derive requiredness from the absence of a default,
+carry field constraints (`msgspec.Meta`), and host cross-field rules in `__post_init__` —
+so "the model validates and constructs, `builders.py` dissolves" is satisfied by both
+libraries. Neither stated ground picks pydantic. This was also never an added-dependency
+question: msgspec is already in the tree via `nautilus_trader`, and `aegis-trader` and
+`aegis-data` import it directly (`node.py`, `live_custom_data.py`, `historical.py`;
+`StrategyConfig` / `ActorConfig` *are* Structs). The real question is only which library
+owns the authoring and wire boundaries.
+
+**What does carry the decision:**
+
+1. **No hot path — measured, not assumed.** msgspec's differentiating property is
+   throughput, and nothing here is on a throughput path: Run Config validates once per run,
+   Component manifests once at registry build, bundles once at load. Measured in `f88a7e37`:
+   pydantic adds **9.9ms to an import already 487ms** (pandas 178, numba 74) and
+   `load_bundle_payload` takes **0.026ms**, with the codec verified confined to startup —
+   `aegis-trader` constructs none of these types in production code and `on_bar` touches
+   none of them. A 100x decode speedup would save tens of microseconds, once.
+2. **The byte oracle is a provenance contract.** `to_builtin` + the `resolved_config.v1`
+   golden hash exist to prove reproducibility. A `Struct` is not a stdlib dataclass, so the
+   serialization path would need teaching and any drift re-bases a hash whose whole purpose
+   is not moving. Real cost, real risk, no upside given (1).
+3. **All-errors-at-once is worth keeping on its merits** — not as a blocker, but because
+   these are *human-authored* surfaces (YAML Run Configs, Component manifests) where
+   reporting every structural error in one pass is a genuine authoring win. That is a
+   product argument, and it should be recorded as one.
+
+**Boundary shape (unchanged, and correct).** `f88a7e37` keeps the bundle types as stdlib
+`@dataclass(frozen=True)` and runs pydantic **only at the wire boundary**, so
+`DataContractError` still raises unwrapped from `__post_init__`. Validation library at the
+edge, plain frozen dataclasses in the domain — swapping the edge library would change
+neither the domain nor the shape, only the risk.
+
+**Consequence.** No migration of Aegis RD, the manifest layer, or `aegis-runtime` to
+msgspec. Should a genuinely per-event codec ever appear in the runtime, msgspec is the
+right tool for *that* surface and is already a dependency — but it is re-argued from
+measurement then, not inherited from this ADR.

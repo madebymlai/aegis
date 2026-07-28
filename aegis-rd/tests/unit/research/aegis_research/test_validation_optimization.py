@@ -1,13 +1,4 @@
-"""Optimization validation — pydantic v2 structural tests.
-
-Tests are driven through the coordinator (``resolve_run_config``) for
-all-errors-at-once reporting and through ``TypeAdapter`` construction for
-single-field structural checks. Assertions use pydantic's wording.
-
-The per-section optimization validator module is deleted; validation lives on
-the pydantic dataclass (``@model_validator``) and in the split-method prepass
-inside the coordinator.
-"""
+"""Public optimization configuration permits only continuous replay policy."""
 
 from __future__ import annotations
 
@@ -22,7 +13,6 @@ from research.aegis_research.configuration import (
     CONFIG_SCHEMA_VERSION,
     ConfigValidationError,
     OptimizationConfig,
-    RunSplitConfig,
     resolve_run_config,
 )
 from tests.support.research.aegis_research.component_fixtures import write_strategy_component
@@ -30,12 +20,16 @@ from tests.support.research.aegis_research.market_data_fixtures import (
     native_data_config_payload,
 )
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+_ADAPTER = TypeAdapter(OptimizationConfig)
+_BLOCK_BARS = 20
 
-_OPTIMIZATION_ADAPTER = TypeAdapter(OptimizationConfig)
-_SPLIT_ADAPTER = TypeAdapter(RunSplitConfig)
 
-_SPLIT = {"method": "from_rolling", "params": {"length": 20, "split": 0.5}, "max_splits": 10}
+def _optimization(**overrides: Any) -> dict[str, Any]:
+    return {
+        "search": "grid",
+        "observation_block_bars": _BLOCK_BARS,
+        **overrides,
+    }
 
 
 def _component_registry(tmp_path: Path):
@@ -44,8 +38,7 @@ def _component_registry(tmp_path: Path):
     return discover_component_registry(root=root, repo_root=tmp_path)
 
 
-def _resolve(optimization: dict[str, Any] | None, *, tmp_path: Path):
-    """Resolve a minimal valid Run Config with the given optimization section."""
+def _resolve(optimization: object | None, *, tmp_path: Path):
     raw: dict[str, Any] = {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "name": "val-test",
@@ -60,206 +53,110 @@ def _resolve(optimization: dict[str, Any] | None, *, tmp_path: Path):
     return resolve_run_config(raw, component_registry=_component_registry(tmp_path))
 
 
-# ── structural validation (TypeAdapter construction) ─────────────────────────
+def test_optimization_requires_search_and_observation_block_bars() -> None:
+    with pytest.raises(ValidationError) as error:
+        _ADAPTER.validate_python({})
+
+    locations = {item["loc"] for item in error.value.errors()}
+    assert ("search",) in locations
+    assert ("observation_block_bars",) in locations
 
 
-def test_optimization_construction_requires_search() -> None:
-    with pytest.raises(ValidationError) as e:
-        _OPTIMIZATION_ADAPTER.validate_python({"split": _SPLIT})
-    assert any(err["loc"] == ("search",) for err in e.value.errors())
+def test_grid_and_seeded_random_search_are_valid() -> None:
+    grid = _ADAPTER.validate_python(_optimization())
+    random = _ADAPTER.validate_python(_optimization(search="random", random_subset=100, seed=42))
+
+    assert grid.observation_block_bars == _BLOCK_BARS
+    assert random.random_subset == 100
+    assert random.seed == 42
 
 
-def test_optimization_construction_requires_split() -> None:
-    with pytest.raises(ValidationError) as e:
-        _OPTIMIZATION_ADAPTER.validate_python({"search": "grid"})
-    assert any(err["loc"] == ("split",) for err in e.value.errors())
+def test_observation_block_bars_must_be_positive() -> None:
+    with pytest.raises(ValidationError) as error:
+        _ADAPTER.validate_python(_optimization(observation_block_bars=0))
+
+    assert any(item["loc"] == ("observation_block_bars",) for item in error.value.errors())
 
 
-def test_optimization_construction_rejects_unknown_search() -> None:
-    with pytest.raises(ValidationError) as e:
-        _OPTIMIZATION_ADAPTER.validate_python({"search": "exhaustive", "split": _SPLIT})
-    assert any(err["loc"] == ("search",) for err in e.value.errors())
-    search_errors = [err for err in e.value.errors() if err["loc"] == ("search",)]
-    assert search_errors
-    assert "grid" in search_errors[0]["msg"] or "literal" in search_errors[0].get("type", "")
-
-
-def test_optimization_construction_accepts_grid_without_subset_or_seed() -> None:
-    config = _OPTIMIZATION_ADAPTER.validate_python({"search": "grid", "split": _SPLIT})
-    assert config.random_subset is None
-    assert config.seed is None
-
-
-def test_optimization_construction_accepts_random_with_subset_and_seed() -> None:
-    config = _OPTIMIZATION_ADAPTER.validate_python(
-        {"search": "random", "split": _SPLIT, "random_subset": 100, "seed": 42}
-    )
-    assert config.random_subset == 100
-    assert config.seed == 42
-
-
-def test_optimization_rejects_portfolio_policy_axes() -> None:
-    with pytest.raises(ValidationError) as e:
-        _OPTIMIZATION_ADAPTER.validate_python(
-            {
-                "search": "grid",
-                "split": _SPLIT,
-                "portfolio": {
-                    "band_up": [0.05],
-                    "band_down": [0.20],
-                    "band_overrides": {
-                        "SYN.XNAS": [{"up": 0.05, "down": 0.20}],
-                    },
-                },
-            }
-        )
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("split", {"method": "from_rolling"}),
+        ("held_out_start", "2024-01-01"),
+        ("warmup_bars", 20),
+        ("scored_start", 20),
+        ("max_splits", 10),
+        ("max_estimated_output_cells", 1_000),
+        ("max_public_artifact_bytes", 1_000),
+        ("squeeze", False),
+        ("fix_ranges", True),
+        ("set_labels", ["selection", "held_out"]),
+        ("iteration", "split_wise"),
+        ("merge_func", "column_stack"),
+        ("wrap_results", True),
+        ("attach_bounds", True),
+        ("right_inclusive", False),
+    ],
+)
+def test_removed_split_warmup_and_vbt_policy_fields_are_rejected(field: str, value: object) -> None:
+    with pytest.raises(ValidationError) as error:
+        _ADAPTER.validate_python(_optimization(**{field: value}))
 
     assert any(
-        err["loc"] == ("portfolio",) and err["type"] == "unexpected_keyword_argument"
-        for err in e.value.errors()
+        item["loc"] == (field,) and item["type"] == "unexpected_keyword_argument"
+        for item in error.value.errors()
     )
 
 
-def test_run_split_construction_accepts_defaults() -> None:
-    config = _SPLIT_ADAPTER.validate_python({"method": "from_rolling"})
-    assert config.params == {}
-    assert config.max_splits == 100
+def test_random_search_requires_random_subset_and_seed(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as subset_error:
+        _resolve(_optimization(search="random", seed=42), tmp_path=tmp_path)
+    assert any("random_subset is required" in issue.message for issue in subset_error.value.issues)
 
-
-def test_run_split_construction_rejects_unknown_key() -> None:
-    with pytest.raises(ValidationError) as e:
-        _SPLIT_ADAPTER.validate_python({"method": "from_rolling", "bogus": 42})
-    assert any(err["type"] == "unexpected_keyword_argument" for err in e.value.errors())
-
-
-# ── search == "random" invariants (model_validator on OptimizationConfig) ─────
-
-
-def test_random_search_requires_random_subset(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"search": "random", "split": _SPLIT, "seed": 42}, tmp_path=tmp_path)
-    issues = [(i.path, i.message) for i in e.value.issues]
-    assert ("optimization", "Value error, random_subset is required when optimization.search is 'random'") in issues
-
-
-def test_random_search_requires_seed(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"search": "random", "split": _SPLIT, "random_subset": 100}, tmp_path=tmp_path)
-    issues = [(i.path, i.message) for i in e.value.issues]
-    assert (
-        "optimization",
-        "Value error, seed is required when optimization.search is 'random' so sampled evidence is deterministic",
-    ) in issues
-
-
-def test_random_search_requires_both_subset_and_seed_reports_first_missing(tmp_path: Path) -> None:
-    """When both are missing, the first model_validator check fails (random_subset).
-
-    pydantic ``@model_validator(mode="after")`` raises at the first ValueError;
-    a second missing field is not reached. This is acceptable — the user fixes
-    one and re-runs.
-    """
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"search": "random", "split": _SPLIT}, tmp_path=tmp_path)
-    assert any(
-        i.path == "optimization" and "random_subset" in i.message
-        for i in e.value.issues
-    )
+    with pytest.raises(ConfigValidationError) as seed_error:
+        _resolve(_optimization(search="random", random_subset=100), tmp_path=tmp_path)
+    assert any("seed is required" in issue.message for issue in seed_error.value.issues)
 
 
 def test_grid_search_rejects_random_subset(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"search": "grid", "split": _SPLIT, "random_subset": 10}, tmp_path=tmp_path)
-    issues = [(i.path, i.message) for i in e.value.issues]
-    assert (
-        "optimization",
-        "Value error, random_subset is only valid when optimization.search is 'random'",
-    ) in issues
+    with pytest.raises(ConfigValidationError) as error:
+        _resolve(_optimization(random_subset=10), tmp_path=tmp_path)
+
+    assert any("random_subset is only valid" in issue.message for issue in error.value.issues)
 
 
-# ── execute reserved keys (model_validator on OptimizationConfig) ─────────────
+def test_execute_is_rejected_as_a_removed_field(tmp_path: Path) -> None:
+    with pytest.raises(ConfigValidationError) as error:
+        _resolve(_optimization(execute={"seed": 1}), tmp_path=tmp_path)
 
-
-def test_execute_rejects_reserved_key(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"search": "grid", "split": _SPLIT, "execute": {"seed": 1}}, tmp_path=tmp_path)
     assert any(
-        i.path == "optimization" and "reserved keys" in i.message
-        for i in e.value.issues
+        issue.path == "optimization.execute" and issue.message == "Unexpected keyword argument"
+        for issue in error.value.issues
     )
-
-
-# ── split.params.set_labels (model_validator on RunSplitConfig) ───────────────
-
-
-def test_split_rejects_set_labels(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve(
-            {"search": "grid", "split": {"method": "from_rolling", "params": {"set_labels": ["a", "b"], "length": 20, "split": 0.5}}},
-            tmp_path=tmp_path,
-        )
-    issues = [(i.path, i.message) for i in e.value.issues]
-    assert any(
-        path == "optimization.split" and "set roles are owned by Aegis" in msg
-        for path, msg in issues
-    )
-
-
-# ── optimization required (legacy top-level check) ───────────────────────────
 
 
 def test_optimization_section_is_required(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
+    with pytest.raises(ConfigValidationError) as error:
         _resolve(None, tmp_path=tmp_path)
+
     assert any(
-        i.path == "optimization" and "is required" in i.message
-        for i in e.value.issues
-    )
-
-
-# ── extra keys (pydantic extra="forbid") ──────────────────────────────────────
-
-
-def test_optimization_rejects_unknown_key(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
-        _resolve({"search": "grid", "split": _SPLIT, "evidence": {"return_grid": "off"}}, tmp_path=tmp_path)
-    issues = [(i.path, i.message) for i in e.value.issues]
-    assert any(
-        path == "optimization.evidence" and "unexpected keyword argument" in msg.lower()
-        for path, msg in issues
+        issue.path == "optimization" and issue.message == "Field required"
+        for issue in error.value.issues
     )
 
 
 def test_optimization_must_be_mapping(tmp_path: Path) -> None:
-    with pytest.raises(ConfigValidationError) as e:
+    with pytest.raises(ConfigValidationError) as error:
         _resolve("not_a_dict", tmp_path=tmp_path)
-    issues = [(i.path, i.message) for i in e.value.issues]
-    assert ("optimization", "Input should be a dictionary or an instance of OptimizationConfig") in issues
+
+    assert any(issue.path == "optimization" for issue in error.value.issues)
 
 
-# ── numeric ranges (reproducibility and split budget knobs) ───────────────────
+def test_random_subset_and_seed_ranges_are_validated() -> None:
+    with pytest.raises(ValidationError) as subset_error:
+        _ADAPTER.validate_python(_optimization(search="random", random_subset=0, seed=7))
+    assert any(item["loc"] == ("random_subset",) for item in subset_error.value.errors())
 
-
-def test_optimization_rejects_non_positive_random_subset() -> None:
-    with pytest.raises(ValidationError) as e:
-        _OPTIMIZATION_ADAPTER.validate_python(
-            {"search": "random", "split": _SPLIT, "random_subset": 0, "seed": 7}
-        )
-    assert [x for x in e.value.errors() if x["loc"] == ("random_subset",)]
-
-
-def test_optimization_rejects_negative_seed() -> None:
-    with pytest.raises(ValidationError) as e:
-        _OPTIMIZATION_ADAPTER.validate_python(
-            {"search": "random", "split": _SPLIT, "random_subset": 16, "seed": -1}
-        )
-    assert [x for x in e.value.errors() if x["loc"] == ("seed",)]
-
-
-@pytest.mark.parametrize(
-    "knob", ["max_splits", "max_estimated_output_cells", "max_public_artifact_bytes"]
-)
-def test_split_rejects_non_positive_budget_knobs(knob: str) -> None:
-    with pytest.raises(ValidationError) as e:
-        _SPLIT_ADAPTER.validate_python({"method": "from_rolling", knob: 0})
-    assert [x for x in e.value.errors() if x["loc"] == (knob,)]
+    with pytest.raises(ValidationError) as seed_error:
+        _ADAPTER.validate_python(_optimization(search="random", random_subset=16, seed=-1))
+    assert any(item["loc"] == ("seed",) for item in seed_error.value.errors())

@@ -3,13 +3,13 @@
 Indicator outputs computed **once over the full series** for a fixed set of
 sampled candidates, held candidate-major (each candidate owns a contiguous
 ``n_symbols`` column block) and aligned to the full-series index. The simulate
-stage slices this store to a split window by row range and gathers the columns
-for the candidates in the current chunk.
+stage gathers the complete aligned rows and the columns for the candidates in
+the current batch.
 
 Causality contract
 ------------------
-Because the simulate stage reads only the values inside a window while the
-indicator was computed over the whole series, this design is leak-free **only
+Because simulation consumes values computed over the whole series, this design
+is leak-free **only
 while every indicator is strictly causal** (the value at bar ``t`` depends only
 on bars ``<= t``). A non-causal transform (centered window, ``shift(-k)``,
 full-series z-score) would inject future bars into the window.
@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cached_property
 from operator import index as operator_index
 from typing import Any
 
@@ -40,10 +39,9 @@ def canonical_param_order(names: Iterable[str]) -> list[str]:
 
     A ``CandidateKey`` is a positional tuple, so its meaning depends entirely on the
     order its elements are placed in. Every path that builds or reads a key orders it
-    through this function — the precompute/store-addressing path (``candidate_keys``)
-    and the scored-grid path (``CandidateGrid.param_levels``) — so a key built by one
-    path compares equal to the same candidate's key built by the other. Owning the
-    order in one place is what stops those paths from silently drifting (aegis-rd-948).
+    through this function — precompute/store addressing and continuous replay — so a
+    key built by one path compares equal to the same Candidate's key built by the
+    other. Owning the order here prevents those paths from silently drifting.
     """
     return sorted(names)
 
@@ -52,7 +50,7 @@ def candidate_keys(param_lists: Mapping[str, Sequence]) -> list[CandidateKey]:
     """Canonical per-candidate identity tuples for a materialised candidate set.
 
     Tuple elements follow :func:`canonical_param_order` (sorted param name) so every
-    stage — the precompute store, the simulate-stage lookup, and the scored grid —
+    stage — the precompute store, simulation lookup, and continuous analysis —
     addresses a candidate by the same key, regardless of the kwargs order the framework
     hands each stage.
     """
@@ -80,7 +78,7 @@ def validate_precompute_no_lookahead(
 ) -> None:
     """Validate the prefix-equivalence no-look-ahead contract for ``precompute``.
 
-    The full-series precompute store is safe to slice into split windows only if
+    The full-series precompute store is safe to consume or slice by row only if
     each row is unchanged when the source series is truncated immediately after
     that row. This check allows causal warmup history before the row and detects
     outputs that use future rows (for example ``shift(-1)``, centered windows, or
@@ -117,9 +115,7 @@ def _prefix_comparison_bounds(range_: slice, full_len: int) -> tuple[int, int]:
 def _non_negative_slice_bound(value, name: str) -> int:
     bound = operator_index(value)
     if bound < 0:
-        raise ValueError(
-            f"precompute no-look-ahead validation requires non-negative {name} bounds"
-        )
+        raise ValueError(f"precompute no-look-ahead validation requires non-negative {name} bounds")
     return bound
 
 
@@ -167,9 +163,7 @@ class IndicatorPrecompute:
     n_symbols: int
     output_candidate_index: Mapping[str, CandidateIndex] | None = None
 
-    def window(
-        self, range_: slice, keys: Sequence[CandidateKey]
-    ) -> dict[str, np.ndarray]:
+    def window(self, range_: slice, keys: Sequence[CandidateKey]) -> dict[str, np.ndarray]:
         """Rows in ``range_`` by the candidate-major columns for ``keys``, in order."""
         windowed: dict[str, np.ndarray] = {}
         for name, array in self.outputs.items():
@@ -187,7 +181,7 @@ class IndicatorPrecompute:
             return self.candidate_index
         return self.output_candidate_index.get(name, self.candidate_index)
 
-    @cached_property
+    @property
     def invalid_keys(self) -> set[CandidateKey]:
         """Keys of the store's candidates whose indicator output is Invalid.
 
@@ -198,11 +192,6 @@ class IndicatorPrecompute:
         being classified. The scan ranges over the store's own ``candidate_index``:
         the store is the authority on which candidates it holds.
 
-        Cached because the verdict is a pure function of the store's immutable
-        outputs and every reader wants the same set. ``cached_property`` writes to
-        ``__dict__`` (bypassing the frozen ``__setattr__``), so when the runner
-        touches this once before the parallel sweep, dill ships the warm cache to
-        every pathos worker instead of each worker re-scanning the full series.
         """
         if not self.outputs or self.n_symbols < 1:
             return set()
@@ -229,9 +218,7 @@ def _has_finite_value(values: Any) -> bool:
     return bool(np.isfinite(values).any())
 
 
-def empty_precompute(
-    close, n_candidates: int, **param_lists: Sequence
-) -> IndicatorPrecompute:
+def empty_precompute(close, n_candidates: int, **param_lists: Sequence) -> IndicatorPrecompute:
     """Store with no indicator outputs, for strategy-only sources (no indicators).
 
     The simulate stage ignores the (empty) windowed outputs and computes

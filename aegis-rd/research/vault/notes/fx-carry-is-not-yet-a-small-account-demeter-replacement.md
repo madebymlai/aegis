@@ -111,6 +111,25 @@ Reconcile real currency balances, settled cash, accrued interest and monthly int
 
 This leaves the roster order unchanged: static credit is the deployable but provisional control; CATB remains the preferred orthogonal successor when its vehicle history matures; cross-sectional FX carry becomes the best **liquid research challenger** only if a forward-like execution route survives the small-account screen.
 
+> [!failure] Superseded 2026-07-24 - both remaining recommendations are dead
+> **CATB is no longer the preferred orthogonal successor.** It fails on economics and on vehicle
+> independently. Tomunen (2026, *RFS*) shows cat-bond premia are rent on an intermediary capital
+> constraint that decayed on post-crisis institutional inflows and barely reacted to the record 2017
+> insured losses, so the premium this note assumed is waiting is the thing that left. Separately the
+> vehicle carries a 128bp TER, traded at roughly a 12% discount to NAV in June 2026, holds about
+> USD 12-14m, is USD-based despite the EUR trading line, and faces a pending ESMA proposal to cap or
+> exclude cat bonds from UCITS. Waiting for its vehicle history to mature does not fix any of that.
+>
+> **FX carry has no reopening threshold.** The financing screen this note called for was run. The
+> kill is arithmetic rather than granularity: IBKR bid-ask plus financing erodes carry from roughly
+> 4% wholesale to roughly 2%, proportionally, so it holds at any account size. The futures route
+> does not rescue it either - CME Euro FX (6E) is EUR 125,000 per contract, and even the Micro at
+> EUR 12,500 leaves integer-lot coarseness that a weighted basket cannot absorb. Record as a
+> structural wall, not a size wall, and do not revisit at a larger NAV.
+>
+> See [[income-must-accrue-not-be-captured]] for the screen these both fail and for the wall
+> taxonomy.
+
 ## Sources
 
 [^kmpv]: Koijen, R. S. J., Moskowitz, T. J., Pedersen, L. H. and Vrugt, E. B., “Carry,” *Journal of Financial Economics* 127(2), 2018. Defines carry and documents cross-sectional and time-series return prediction, with common recession, liquidity and volatility exposure. https://www.nber.org/system/files/working_papers/w19325/w19325.pdf

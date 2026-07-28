@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -11,10 +12,17 @@ from research.aegis_research.configuration import (
     OHLCV_ARRAYS,
     ConfigValidationError,
     load_run_config,
-    resolve_env_refs,
     resolve_run_config,
 )
+from research.aegis_research.configuration import resolution as resolution_module
 from tests.support.research.aegis_research.component_fixtures import write_indicator_component
+
+
+def _prevent_component_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_discovery() -> None:
+        raise AssertionError("component discovery must not run for structurally invalid input")
+
+    monkeypatch.setattr(resolution_module, "discover_component_registry", fail_discovery)
 
 
 def test_public_config_exports_only_run_config_contract() -> None:
@@ -52,6 +60,43 @@ def test_resolve_rejects_non_mapping_input(tmp_path: Path) -> None:
     assert any(issue.path == "$" and "must be a mapping" in issue.message for issue in issues)
 
 
+def test_resolve_accepts_programmatic_mapping_input(tmp_path: Path) -> None:
+    resolved = resolve_run_config(
+        MappingProxyType(_run_config()),
+        component_registry=_component_registry(tmp_path),
+    )
+
+    assert resolved.config.name == "canonical_run"
+
+
+def test_structural_failure_does_not_discover_component_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prevent_component_discovery(monkeypatch)
+    raw = _run_config()
+    raw["optimization"] = None
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw)
+
+    assert str(error.value) == (
+        "Invalid run config: optimization: "
+        "Input should be a dictionary or an instance of OptimizationConfig"
+    )
+
+
+def test_registry_discovery_failure_remains_a_setup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_discovery() -> None:
+        raise RuntimeError("broken Component registry")
+
+    monkeypatch.setattr(resolution_module, "discover_component_registry", fail_discovery)
+
+    with pytest.raises(RuntimeError, match="broken Component registry"):
+        resolve_run_config(_run_config())
+
+
 def test_removed_entry_budget_field_fails_as_unknown_field(tmp_path: Path) -> None:
     raw = _run_config()
     raw["portfolio"] = {"entry_budget": 0.6}
@@ -81,9 +126,7 @@ def test_removed_target_exposure_cap_field_is_rejected(tmp_path: Path) -> None:
         )
 
     issue = next(
-        issue
-        for issue in error.value.issues
-        if issue.path == "portfolio.target_exposure_cap"
+        issue for issue in error.value.issues if issue.path == "portfolio.target_exposure_cap"
     )
     assert "Unexpected keyword argument" in issue.message
 
@@ -298,13 +341,6 @@ def test_load_run_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
     assert "duplicate mapping key" in str(error.value)
 
 
-def test_env_refs_are_resolved_at_runtime(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("BINANCE_API_KEY", "super-secret-token")
-    resolved_kwargs = resolve_env_refs({"api_key": {"env": "BINANCE_API_KEY"}})
-
-    assert resolved_kwargs == {"api_key": "super-secret-token"}
-
-
 def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
     raw = _run_config()
     raw["candidate_grid"] = {"max_candidates": 100, "max_estimated_cells": 10_000, "batch_size": 25}
@@ -319,9 +355,44 @@ def test_run_rejects_candidate_grid_policy(tmp_path: Path) -> None:
     assert "Unexpected keyword argument" in str(error.value)
 
 
-def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
+def test_run_requires_native_optimization_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    _prevent_component_discovery(monkeypatch)
     raw = _run_config()
     raw.pop("optimization")
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw)
+
+    assert str(error.value) == "Invalid run config: optimization: Field required"
+
+
+def test_run_requires_schema_version_from_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    _prevent_component_discovery(monkeypatch)
+    raw = _run_config()
+    raw.pop("schema_version")
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw)
+
+    assert str(error.value) == "Invalid run config: schema_version: Field required"
+
+
+def test_run_rejects_other_schema_version_from_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prevent_component_discovery(monkeypatch)
+    raw = _run_config()
+    raw["schema_version"] = 12
+
+    with pytest.raises(ConfigValidationError) as error:
+        resolve_run_config(raw)
+
+    assert str(error.value) == "Invalid run config: schema_version: Input should be 11"
+
+
+def test_run_rejects_dot_only_name_from_the_model(tmp_path: Path) -> None:
+    raw = _run_config()
+    raw["name"] = "."
 
     with pytest.raises(ConfigValidationError) as error:
         resolve_run_config(
@@ -329,11 +400,14 @@ def test_run_requires_native_optimization_contract(tmp_path: Path) -> None:
             component_registry=_component_registry(tmp_path),
         )
 
-    assert "optimization" in str(error.value)
-    assert "fixed/non-optimized strategy runs are removed" in str(error.value)
+    assert str(error.value) == (
+        "Invalid run config: name: String should match pattern "
+        "'^(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*|\\.[A-Za-z0-9_-]"
+        "[A-Za-z0-9_.-]*|\\.\\.[A-Za-z0-9_.-]+)$'"
+    )
 
 
-def test_run_accepts_grid_optimization_with_nested_split(tmp_path: Path) -> None:
+def test_run_accepts_grid_optimization_with_observation_blocks(tmp_path: Path) -> None:
     raw = _run_config()
     raw["optimization"] = _optimization_block(search="grid")
 
@@ -346,9 +420,7 @@ def test_run_accepts_grid_optimization_with_nested_split(tmp_path: Path) -> None
     assert resolved.config.optimization.search == "grid"
     assert resolved.config.optimization.random_subset is None
     assert resolved.config.optimization.seed is None
-    assert resolved.config.optimization.execute == {}
-    assert resolved.config.optimization.split.method == "from_rolling"
-    assert "set_labels" not in resolved.config.optimization.split.params
+    assert resolved.config.optimization.observation_block_bars == 20
 
 
 def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
@@ -357,7 +429,6 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
         search="random",
         random_subset=5,
         seed=42,
-        execute={"engine": "threadpool", "chunk_len": "auto"},
     )
 
     resolved = resolve_run_config(
@@ -369,7 +440,6 @@ def test_run_accepts_random_optimization_policy(tmp_path: Path) -> None:
     assert resolved.config.optimization.search == "random"
     assert resolved.config.optimization.random_subset == 5
     assert resolved.config.optimization.seed == 42
-    assert resolved.config.optimization.execute == {"engine": "threadpool", "chunk_len": "auto"}
 
 
 def test_run_rejects_per_component_lock_reference_fields(tmp_path: Path) -> None:
@@ -415,13 +485,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         (
             {
                 "search": "grid",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
                 "engine": "custom",
             },
             "optimization.engine",
@@ -430,13 +494,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         (
             {
                 "search": "grid",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
                 "mode": "native",
             },
             "optimization.mode",
@@ -444,14 +502,17 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         ),
         (
             {
+                "search": "grid",
+                "observation_block_bars": 20,
+                "execute": {"engine": "threadpool"},
+            },
+            "optimization.execute",
+            "Unexpected keyword argument",
+        ),
+        (
+            {
                 "search": "random",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
             },
             "optimization",
             "Value error, random_subset is required when optimization.search is 'random'",
@@ -459,28 +520,16 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         (
             {
                 "search": "random",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
                 "random_subset": 5,
             },
             "optimization",
-            "Value error, seed is required when optimization.search is 'random' so sampled evidence is deterministic",
+            "Value error, seed is required when optimization.search is 'random' so the sampled grid is deterministic",
         ),
         (
             {
                 "search": "grid",
-                "split": {
-                    "method": "from_rolling",
-                    "params": {
-                        "length": 20,
-                        "split": 0.5,
-                    },
-                },
+                "observation_block_bars": 20,
                 "random_subset": 5,
             },
             "optimization",
@@ -488,7 +537,7 @@ def test_run_rejects_missing_strategy_consumed_indicator_output(tmp_path: Path) 
         ),
         (
             {"search": "grid"},
-            "optimization.split",
+            "optimization.observation_block_bars",
             "Field required",
         ),
     ],
@@ -512,10 +561,11 @@ def test_run_rejects_invalid_optimization_policy(
     assert expected_message in str(error.value)
 
 
-def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> None:
+def test_run_rejects_removed_split_configuration(tmp_path: Path) -> None:
     raw = _run_config()
     raw["optimization"] = {
         "search": "grid",
+        "observation_block_bars": 20,
         "split": {
             "method": "from_rolling",
             "params": {
@@ -534,12 +584,12 @@ def test_run_rejects_set_labels_in_optimization_split_params(tmp_path: Path) -> 
         )
 
     assert "optimization.split" in str(error.value)
-    assert "owned by Aegis" in str(error.value)
+    assert "Unexpected keyword argument" in str(error.value)
 
 
 def test_run_rejects_top_level_split_as_unknown_field(tmp_path: Path) -> None:
     raw = _run_config()
-    raw["optimization"] = {"search": "grid"}
+    raw["optimization"] = {"search": "grid", "observation_block_bars": 20}
     raw["split"] = _optimization_split()
 
     with pytest.raises(ConfigValidationError) as error:
@@ -619,7 +669,7 @@ def _run_config() -> dict[str, object]:
 
 
 def _optimization_block(search: str, **overrides: object) -> dict[str, object]:
-    return {"search": search, "split": _optimization_split(), **overrides}
+    return {"search": search, "observation_block_bars": 20, **overrides}
 
 
 def _optimization_split() -> dict[str, object]:

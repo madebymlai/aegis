@@ -42,8 +42,14 @@ def _config(*, catalog_path: Path, fx_conversion_cost: float) -> dict:
             {
                 "id": "tests.momentum_score",
                 "params": {
-                    "h1": 15, "h2": 42, "h3": 63, "h4": 84,
-                    "w1": 8.0, "w2": 4.0, "w3": 3.0, "w4": 2.0,
+                    "h1": 15,
+                    "h2": 42,
+                    "h3": 63,
+                    "h4": 84,
+                    "w1": 8.0,
+                    "w2": 4.0,
+                    "w3": 3.0,
+                    "w4": 2.0,
                 },
             },
             {"id": "tests.realized_vol", "params": {"window": 20}},
@@ -51,11 +57,7 @@ def _config(*, catalog_path: Path, fx_conversion_cost: float) -> dict:
         "ranking": {"metric": "total_return"},
         "optimization": {
             "search": "grid",
-            "split": {
-                "method": "from_rolling",
-                "params": {"length": 150, "offset": 0, "split": 0.5},
-                "max_splits": 3,
-            },
+            "observation_block_bars": 84,
         },
     }
 
@@ -66,8 +68,10 @@ def _run(tmp_path: Path, capsys: pytest.CaptureFixture[str], config: dict, run_i
     exit_code = cli.main(["run", str(config_path), "--run-id", run_id])
     output = capsys.readouterr()
     assert exit_code == 0, f"CLI failed for {run_id}: {output.err}"
-    assert json.loads(output.out)["status"] == "success"
-    return json.loads((tmp_path / "runs" / run_id / "strategy_run.json").read_text())
+    payload = json.loads(output.out)
+    assert payload["status"] == "success"
+    assert not (tmp_path / "runs" / run_id).exists()
+    return payload
 
 
 def test_foreign_currency_book_converts_and_charges_the_fx_surcharge_e2e(
@@ -106,6 +110,6 @@ def test_foreign_currency_book_converts_and_charges_the_fx_surcharge_e2e(
     assert [c["role"] for c in foreign["candidates"]] == ["best", "median", "worst"]
     # And it had a real effect: converting the USD legs and charging the surcharge
     # moves the candidate metrics off the all-EUR no-op baseline.
-    assert [c["metrics"] for c in foreign["candidates"]] != [
-        c["metrics"] for c in baseline["candidates"]
+    assert [c["complete_period_metrics"] for c in foreign["candidates"]] != [
+        c["complete_period_metrics"] for c in baseline["candidates"]
     ]

@@ -63,10 +63,4 @@ ranking:
 optimization:
   search: grid
   seed: 42
-  split:
-    method: from_rolling
-    params:
-      length: 504
-      offset: 0
-      split: 0.5
-    max_splits: 10
+  observation_block_bars: 252

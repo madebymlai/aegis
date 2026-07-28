@@ -1,32 +1,34 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
 
 from research.aegis_research.canonical_json import to_builtin
+from research.aegis_research.component_registry import (
+    FrozenComponentRegistry,
+    discover_component_registry,
+)
+from research.aegis_research.configuration.cross_checks import cross_check_registries
 from research.aegis_research.configuration.schema import (
-    ConfigSelectionEvidence,
     ConfigValidationError,
     ConfigValidationIssue,
     RunConfig,
 )
 from research.aegis_research.configuration.validation import (
-    validate_run_config,
+    _validate_run_config,
 )
 from research.aegis_research.metrics import (
     FrozenMetricRegistry,
     MetricRegistry,
+    ResolvedMetrics,
     freeze_metric_registry,
-    make_default_metric_registry,
     make_metric_registry_for,
 )
-
-if TYPE_CHECKING:
-    from research.aegis_research.component_registry import FrozenComponentRegistry
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -59,12 +61,9 @@ class ResolvedRunConfig:
     config: RunConfig
     raw_config_hash: str
     authored_config: dict[str, Any]
+    metrics: ResolvedMetrics
     source_path: str | None = None
     component_registry: FrozenComponentRegistry | None = None
-    # Resolution always installs an effective registry; direct construction
-    # gets the same default rather than admitting None.
-    metric_registry: FrozenMetricRegistry = field(default_factory=make_default_metric_registry)
-    selection: ConfigSelectionEvidence | None = None
 
     def authored_config_document(self) -> dict[str, Any]:
         return self.authored_config
@@ -80,26 +79,8 @@ class ResolvedRunConfig:
             "component_registry_fingerprint": (
                 self.component_registry.fingerprint if self.component_registry else None
             ),
-            "metric_registry_fingerprint": self.metric_registry.fingerprint,
-            "selection": self.selection.manifest() if self.selection else None,
+            "metric_registry_fingerprint": self.metrics.registry.fingerprint,
         }
-
-
-def with_run_config_selection(
-    config: ResolvedRunConfig,
-    selection: ConfigSelectionEvidence,
-    *,
-    source_path: str | None = None,
-) -> ResolvedRunConfig:
-    return ResolvedRunConfig(
-        config=config.config,
-        raw_config_hash=config.raw_config_hash,
-        authored_config=config.authored_config,
-        source_path=config.source_path if source_path is None else source_path,
-        component_registry=config.component_registry,
-        metric_registry=config.metric_registry,
-        selection=selection,
-    )
 
 
 def load_run_config(
@@ -121,7 +102,7 @@ def load_run_config(
 
 
 def resolve_run_config(
-    value: dict[str, Any],
+    value: Mapping[str, Any],
     *,
     raw_text: str | None = None,
     source_path: str | None = None,
@@ -132,69 +113,61 @@ def resolve_run_config(
 
     Non-mapping values raise ``ConfigValidationError``.
     """
-    if not isinstance(value, dict):
+    if not isinstance(value, Mapping):
         raise ConfigValidationError([ConfigValidationIssue("$", "run config must be a mapping")])
 
-    from research.aegis_research.component_registry import discover_component_registry
+    raw = dict(value)
+    config, issues = _validate_run_config(raw)
+    if config is None:
+        raise ConfigValidationError(issues)
 
     registry = component_registry or discover_component_registry()
     frozen_metric_registry = freeze_metric_registry(metric_registry)
     effective_metric_registry = frozen_metric_registry or make_metric_registry_for(
-        _requested_metric_ids(value)
+        _requested_metric_ids(config)
     )
+    issues.extend(
+        cross_check_registries(
+            config,
+            component_registry=registry,
+            metric_registry=effective_metric_registry,
+        )
+    )
+    if issues:
+        raise ConfigValidationError(issues)
 
+    metrics = ResolvedMetrics.resolve(effective_metric_registry, config.ranking.metric)
     return _build_resolved_run_config(
-        value,
+        config,
+        raw,
         raw_text=raw_text,
         source_path=source_path,
         component_registry=registry,
-        metric_registry=effective_metric_registry,
+        metrics=metrics,
     )
 
 
-def _requested_metric_ids(raw: dict[str, Any]) -> tuple[str, ...]:
-    """Metric ids the raw config asks for, before validation has run.
-
-    Custom metrics are opt-in per run: only a requested id can pull its record
-    into the effective registry. The ranking metric plus any extra reported
-    metrics under ``report.metrics`` are requested. Malformed shapes are ignored
-    here — validation reports them properly later.
-    """
-    ids: list[str] = []
-    ranking = raw.get("ranking")
-    if isinstance(ranking, dict) and isinstance(ranking.get("metric"), str):
-        ids.append(ranking["metric"])
-    report = raw.get("report")
-    if isinstance(report, dict) and isinstance(report.get("metrics"), list):
-        ids.extend(m for m in report["metrics"] if isinstance(m, str))
+def _requested_metric_ids(config: RunConfig) -> tuple[str, ...]:
+    """Return the unique Metric IDs requested by a typed Run Config."""
+    ids = [config.ranking.metric, *config.report.metrics]
     return tuple(dict.fromkeys(ids))
 
 
 def _build_resolved_run_config(
+    config: RunConfig,
     raw: dict[str, Any],
     *,
     raw_text: str | None,
     source_path: str | None,
     component_registry: FrozenComponentRegistry,
-    metric_registry: FrozenMetricRegistry,
+    metrics: ResolvedMetrics,
 ) -> ResolvedRunConfig:
-    config, issues = validate_run_config(
-        raw,
-        component_registry=component_registry,
-        metric_registry=metric_registry,
-    )
-    if issues:
-        raise ConfigValidationError(issues)
-
     text_for_hash = raw_text if raw_text is not None else yaml.safe_dump(raw, sort_keys=False)
     return ResolvedRunConfig(
-        config=config,  # type: ignore[arg-type]  # guaranteed non-None when issues is empty
+        config=config,
         raw_config_hash=hashlib.sha256(text_for_hash.encode()).hexdigest(),
         authored_config=to_builtin(raw),
+        metrics=metrics,
         source_path=source_path,
         component_registry=component_registry,
-        metric_registry=metric_registry,
     )
-
-
-

@@ -9,6 +9,8 @@ conversion, the oracle RD's vbt-side conversion must match.
 
 from __future__ import annotations
 
+import warnings
+
 import pandas as pd
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.config import LoggingConfig
@@ -141,7 +143,16 @@ def nautilus_base_value_curve(
         equity=equity, fx_pair=fx_pair, base_currency=base, quantity=quantity
     )
     engine.add_strategy(strategy)
-    engine.run()
+    with warnings.catch_warnings():
+        # NautilusTrader 1.229/1.230 calls pandas.Timestamp.utcnow() from its
+        # compiled BacktestEngine path. Keep this compatibility suppression at
+        # that third-party boundary so every other pandas warning remains visible.
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Timestamp\.utcnow is deprecated and will be removed in a future version\.",
+            category=pd.errors.Pandas4Warning,
+        )
+        engine.run()
     curve = pd.Series(strategy.base_value).sort_index()
     engine.dispose()
     return curve
