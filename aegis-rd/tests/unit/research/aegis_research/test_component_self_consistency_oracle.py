@@ -21,6 +21,7 @@ from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
     discover_component_registry,
 )
+
 # ── Instrument IDs that satisfy tests.momentum_rotator's sleeve constants ──
 _MOMENTUM_ROTATOR_INSTRUMENT_IDS = [
     InstrumentId.from_str(value)
