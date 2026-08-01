@@ -31,7 +31,7 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig

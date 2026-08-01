@@ -31,12 +31,15 @@ The effective `ContinuousFutureAdjustmentType` (`BACKWARD_RATIO` or
    declares roots, accepts only the two backward members as the native Nautilus
    enum, and keeps the mode independent of `exchange` — ratio and spread are
    both valid with or without FX conversion legs.
-5. **Probed at the native-price boundary.** `ExecutionBundle.compute_weights`
-   owns the invariant operation order
+5. **Probed at the native-price boundary.** The data layer owns materialisation
+   and continuous re-basing upstream. `ExecutionBundle.compute_weights` guards,
+   rather than executes, the invariant operation order
 
    `native contracts -> continuous re-base -> native continuous root -> FX conversion -> indicators -> Strategy`
 
-   and the runtime roll-sensitivity check perturbs each declared root
+   while its decision callback executes FX conversion, contract validation,
+   indicators, Strategy, and Exposure Validation in that order. The runtime
+   roll-sensitivity check perturbs each declared root
    *independently* in native units under the declared mode, recomputing through
    the same currency-conversion/Component composition. Under moving FX a spread
    probe is therefore `(price + shift) * FX(t)`, never a constant base-currency
@@ -64,6 +67,9 @@ The effective `ContinuousFutureAdjustmentType` (`BACKWARD_RATIO` or
 - **Post-FX uniform spread probes** (shifting the already converted panel):
   rejected — `convert(price + shift)` is not `convert(price) + shift` under
   time-varying FX; the probe must ride the native side of the conversion.
+- **Move continuous re-basing into the execution kernel**: rejected — it would
+  contradict this decision's data-layer ownership, duplicate the live
+  materialisation algebra, and make the kernel responsible for catalog history.
 - **Rejecting `BACKWARD_SPREAD` when `exchange` is declared**: rejected — mode
   and FX are independent facts, and the coupling would not repair the lost
   representation anyway.

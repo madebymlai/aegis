@@ -12,7 +12,7 @@ from aegis_runtime import (
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
-from aegis_runtime.bundle_loader import BUNDLE_PAYLOAD_SCHEMA_VERSION
+from aegis_runtime.execution.bundle_loader import BUNDLE_PAYLOAD_SCHEMA_VERSION
 
 from research.aegis_research.execution_bundle import BundleArtifact
 from research.aegis_research.execution_bundle_wheel import (

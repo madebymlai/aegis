@@ -33,7 +33,7 @@ from aegis_data.catalog import (
     ServedBars,
     raw_bar_type,
 )
-from aegis_data.rebasing import Rebasing, spread_rebasing
+from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -45,7 +45,7 @@ from aegis_runtime import (
     MissingIndexPolicy,
 )
 
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_trader.backtest import (
     BacktestMarketData,

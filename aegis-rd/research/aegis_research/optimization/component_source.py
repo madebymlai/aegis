@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from aegis_runtime import MarketDataBundle
+from aegis_runtime.domain.component_inputs import ComponentStrategyInputs
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry import (
@@ -41,15 +42,6 @@ ResolvedComponentParams = Mapping[ComponentRef, Mapping[str, Any]]
 
 class ComponentSourceError(ValueError):
     pass
-
-
-@dataclass(frozen=True)
-class ComponentStrategyInputs:
-    data: MarketDataBundle
-    indicators: Mapping[str, np.ndarray]
-    n_candidates: int
-    n_symbols: int
-    metadata: dict[str, Any]
 
 
 @dataclass(frozen=True)

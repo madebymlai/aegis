@@ -4,6 +4,7 @@ import importlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import partial
 from typing import Annotated, Any
 
 import numpy as np
@@ -19,11 +20,13 @@ from pydantic import (
     with_config,
 )
 
-from aegis_runtime.currency import CurrencyConversion
-from aegis_runtime.drift_band import DriftBand
-from aegis_runtime.roll_sensitivity import compute_roll_checked_weights
-from aegis_runtime.exposure_validation import ExposureLimits, validate_exposure
-from aegis_runtime.futures_roots import validate_bare_root
+from aegis_runtime.domain.component_inputs import ComponentStrategyInputs
+from aegis_runtime.domain.currency import CurrencyConversion
+from aegis_runtime.domain.drift_band import DriftBand
+from aegis_runtime.domain.exposure_validation import ExposureLimits, validate_exposure
+from aegis_runtime.domain.futures_roots import validate_bare_root
+from aegis_runtime.domain.market_data import MarketDataBundle
+from aegis_runtime.execution.roll_sensitivity import compute_roll_checked_weights
 
 INSTRUMENT_ID_LEVEL = "instrument_id"
 
@@ -110,22 +113,6 @@ class InvalidMissingIndexPolicy(DataContractError):
 
 class MarketDataMissingIndexError(DataContractError):
     """Market data contains missing values forbidden by the contract policy."""
-
-
-@dataclass(frozen=True)
-class MarketDataBundle:
-    """Eager value object of materialised Array panels.
-
-    Dict membership is the sole guard — an array is loaded iff it is a key.
-    """
-
-    arrays: Mapping[str, pd.DataFrame]
-
-    def array(self, name: str) -> pd.DataFrame:
-        try:
-            return self.arrays[name]
-        except KeyError:
-            raise ValueError(f"market data array {name!r} was not supplied") from None
 
 
 @dataclass(frozen=True)
@@ -280,15 +267,6 @@ class LockedExecutionPlan:
         return self._exposure_limits
 
 
-@dataclass(frozen=True)
-class ComponentStrategyInputs:
-    data: MarketDataBundle
-    indicators: Mapping[str, np.ndarray]
-    n_candidates: int
-    n_symbols: int
-    metadata: dict[str, Any]
-
-
 class ExecutionBundle:
     def __init__(
         self,
@@ -319,38 +297,33 @@ class ExecutionBundle:
         *,
         currency_conversion: CurrencyConversion | None,
     ) -> pd.DataFrame:
-        """Decide weights from NATIVE price arrays.
+        """Compute base-currency weights proven insensitive to native roll probes.
 
-        The bundle owns the ordered transformation
-        ``native contracts -> continuous re-base -> FX conversion -> Components``:
-        callers hand over native arrays plus the resolved conversion (or an
-        explicit ``None`` for an all-base book) and never pre-convert. The
-        keyword is required so an already converted panel can never be silently
-        reinterpreted as native.
+        The data layer materialises and re-bases continuous series upstream. This
+        method accepts that native window, guards the decision against the contract's
+        declared roll mode, and requires the explicit conversion so an already
+        converted panel cannot be silently reinterpreted as native.
         """
-
-        def decide(native: MarketDataBundle) -> pd.DataFrame:
-            component_input = (
-                native
-                if currency_conversion is None
-                else MarketDataBundle(currency_conversion.apply(native.arrays))
-            )
-            return self._decide_weights(component_input)
-
-        # A continuous-future root is re-based at every roll under the contract's
-        # declared mode; an allocation that moves under that re-base would silently
-        # desync live-vs-research. The check owns baseline + per-root native probes
-        # and recomputes each through this same composed conversion+decision path.
         return compute_roll_checked_weights(
             contract=self.contract,
             native_window=native_prices,
-            decide=decide,
+            decide=partial(
+                self._decide_weights,
+                currency_conversion=currency_conversion,
+            ),
         )
 
     def _decide_weights(
         self,
-        prices: MarketDataBundle,
+        native_prices: MarketDataBundle,
+        *,
+        currency_conversion: CurrencyConversion | None,
     ) -> pd.DataFrame:
+        prices = (
+            native_prices
+            if currency_conversion is None
+            else currency_conversion.apply(native_prices)
+        )
         _validate_market_data(prices, self.contract)
         close = prices.array("Close")
         n_bars = len(close)
@@ -363,11 +336,12 @@ class ExecutionBundle:
         index = close.index
         n_candidates = 1
         n_symbols = len(self.contract.instrument_ids)
+        expected_shape = (n_bars, n_candidates * n_symbols)
         data = _slice_data(prices, index, self.contract.required_arrays)
         indicator_outputs = _compute_indicators(
             self._plan.indicators,
             data=data,
-            expected_shape=(len(close), n_candidates * n_symbols),
+            expected_shape=expected_shape,
         )
         strategy_module = _load_component_module(self._plan.strategy.module)
         strategy_inputs = ComponentStrategyInputs(
@@ -387,7 +361,7 @@ class ExecutionBundle:
         )
         arr = _validated_array(
             raw,
-            expected_shape=(len(close), n_candidates * n_symbols),
+            expected_shape=expected_shape,
             label=f"strategy {self._plan.strategy.component_id} allocation",
         )
         weights = pd.DataFrame(

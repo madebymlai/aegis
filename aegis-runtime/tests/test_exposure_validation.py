@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from aegis_runtime.exposure_validation import (
+from aegis_runtime.domain.exposure_validation import (
     DirectionBreach,
     ExposureLimits,
     ExposureValidationError,

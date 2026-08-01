@@ -14,14 +14,13 @@ import numpy as np
 import pandas as pd
 import pytest
 from aegis_runtime import MarketDataBundle
+from aegis_runtime.domain.component_inputs import ComponentStrategyInputs
 from nautilus_trader.model.identifiers import InstrumentId
 
 from research.aegis_research.component_registry import (
     FrozenComponentRegistry,
     discover_component_registry,
 )
-from research.aegis_research.optimization.component_source import ComponentStrategyInputs
-
 # ── Instrument IDs that satisfy tests.momentum_rotator's sleeve constants ──
 _MOMENTUM_ROTATOR_INSTRUMENT_IDS = [
     InstrumentId.from_str(value)

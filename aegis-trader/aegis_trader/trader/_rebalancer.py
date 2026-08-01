@@ -33,7 +33,7 @@ from types import MappingProxyType
 
 import pandas as pd
 from aegis_runtime import DriftBand
-from aegis_runtime.exposure_validation import validate_net_exposure
+from aegis_runtime.domain.exposure_validation import validate_net_exposure
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import Allocation, SleeveWeightBand, allocate

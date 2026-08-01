@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime.bundle import (
+from aegis_runtime.execution.bundle import (
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -11,9 +11,10 @@ from aegis_runtime.bundle import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
-from aegis_runtime.drift_band import DriftBand
-from aegis_runtime.exposure_validation import GrossExposureBreach
+from aegis_runtime.domain import currency as currency_domain
+from aegis_runtime.domain.currency import CurrencyConversion
+from aegis_runtime.domain.drift_band import DriftBand
+from aegis_runtime.domain.exposure_validation import GrossExposureBreach
 
 
 def _index(n: int) -> pd.DatetimeIndex:
@@ -63,10 +64,11 @@ def _bundle(
 def _eur_contract(
     instrument_ids: tuple[InstrumentId, ...] = (_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ")),
     lookback_bars=0,
+    required_arrays: tuple[str, ...] = ("Close",),
 ) -> DataContract:
     return DataContract(
         instrument_ids=instrument_ids,
-        required_arrays=("Close",),
+        required_arrays=required_arrays,
         base_currency="EUR",
         timeframe="1D",
         missing_index=MissingIndexPolicy.DROP,
@@ -116,6 +118,49 @@ def test_compute_weights_applies_the_conversion_before_components() -> None:
     # panel the components saw was converted exactly once, inside the bundle.
     assert weights[aapl].tolist() == pytest.approx([0.3103448275862069, 0.34375, 0.375])
     assert weights[msft].tolist() == pytest.approx([0.6896551724137931, 0.65625, 0.625])
+
+
+def test_compute_weights_refuses_an_unclassified_convertible_array_only_when_live() -> None:
+    idx = _index(3)
+    aapl, msft = _id("AAPL.NASDAQ"), _id("MSFT.NASDAQ")
+    native = MarketDataBundle(
+        {
+            "Close": pd.DataFrame(
+                {aapl: [10.0, 11.0, 12.0], msft: [20.0, 21.0, 22.0]},
+                index=idx,
+            ),
+            "Funding Rate": pd.DataFrame(
+                {aapl: [0.01, 0.02, 0.03], msft: [0.04, 0.05, 0.06]},
+                index=idx,
+            ),
+        }
+    )
+    bundle = _bundle(
+        "price_proportional_strategy",
+        contract=_eur_contract(required_arrays=("Close", "Funding Rate")),
+    )
+    live_conversion = CurrencyConversion(
+        rate_by_instrument={aapl: pd.Series([0.9, 1.0, 1.1], index=idx)},
+        currency_by_instrument_id={aapl: "USD", msft: "EUR"},
+    )
+
+    with pytest.raises(
+        currency_domain.UnclassifiedCurrencyArrayError,
+        match=r"Funding Rate.*quote-currency denomination",
+    ):
+        bundle.compute_weights(native, currency_conversion=live_conversion)
+
+    unchanged = bundle.compute_weights(
+        native,
+        currency_conversion=CurrencyConversion(rate_by_instrument={}),
+    )
+
+    assert unchanged[aapl].tolist() == pytest.approx(
+        [1.0 / 3.0, 0.34375, 0.35294117647058826]
+    )
+    assert unchanged[msft].tolist() == pytest.approx(
+        [2.0 / 3.0, 0.65625, 0.6470588235294118]
+    )
 
 
 def test_compute_weights_equal_weight_fidelity_through_indicator_path() -> None:

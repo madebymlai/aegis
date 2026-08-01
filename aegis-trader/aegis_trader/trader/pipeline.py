@@ -22,11 +22,11 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import (
+from aegis_runtime.domain.currency import (
     CurrencyConversion,
     build_currency_conversion_from_codes,
 )
-from aegis_runtime.exposure_validation import NetExposureBreach
+from aegis_runtime.domain.exposure_validation import NetExposureBreach
 
 from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data.market_data import MarketBar

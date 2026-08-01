@@ -24,7 +24,7 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_data.bar_type import timeframe_to_ns
 from aegis_trader.backtest import (

@@ -5,7 +5,7 @@ import pytest
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime.bundle import (
+from aegis_runtime.execution.bundle import (
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -13,7 +13,7 @@ from aegis_runtime.bundle import (
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
-from aegis_runtime.bundle_loader import (
+from aegis_runtime.execution.bundle_loader import (
     BUNDLE_PAYLOAD_SCHEMA_VERSION,
     BundlePayloadFieldError,
     BundlePayloadSchemaError,
@@ -21,7 +21,7 @@ from aegis_runtime.bundle_loader import (
     load_bundle_payload,
     load_installed_bundle,
 )
-from aegis_runtime.drift_band import DriftBand
+from aegis_runtime.domain.drift_band import DriftBand
 
 
 def _contract() -> DataContract:

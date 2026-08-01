@@ -15,7 +15,7 @@ from aegis_data.custom_data import (
     FixtureRecord,
     ServedCustomData,
 )
-from aegis_data.rebasing import ratio_rebasing, spread_rebasing
+from aegis_runtime.domain.rebasing import ratio_rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -26,7 +26,7 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig

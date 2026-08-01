@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TypeAlias
 
-from aegis_data.rebasing import Rebasing
+from aegis_runtime.domain.rebasing import Rebasing
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.startup import StartupGate

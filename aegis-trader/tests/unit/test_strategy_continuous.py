@@ -10,7 +10,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 
-from aegis_data.rebasing import spread_rebasing
+from aegis_runtime.domain.rebasing import spread_rebasing
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.marking import DeclaredMarkingResolver
 from aegis_trader.domain.roll import (

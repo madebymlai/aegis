@@ -28,7 +28,7 @@ from aegis_data.custom_data import (
 )
 from aegis_data.distributions import Distribution
 from aegis_runtime import MarketDataBundle
-from aegis_runtime.currency import CurrencyConversion, build_currency_conversion_from_codes
+from aegis_runtime.domain.currency import CurrencyConversion, build_currency_conversion_from_codes
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
@@ -210,7 +210,7 @@ def load_run_data(
         frames,
         continuous_currencies,
     )
-    bundle = MarketDataBundle(currency_conversion.apply(tradeable_bundle.arrays))
+    bundle = currency_conversion.apply(tradeable_bundle)
     size_increments = _size_increments(resolution, window, port)
     multipliers = _multipliers(resolution, window, port)
     index = next(iter(bundle.arrays.values())).index

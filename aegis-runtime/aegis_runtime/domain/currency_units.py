@@ -3,7 +3,7 @@
 A minor unit prices in a fixed fraction of a major currency. Nautilus models no
 such link — its ``Currency`` carries only code/type/iso4217/name/precision and
 does not even register ``GBp`` — so this is the single place the fact lives.
-Both the read-side FX conversion (:mod:`aegis_runtime.currency`) and the trader's
+Both the read-side FX conversion (:mod:`aegis_runtime.domain.currency`) and the trader's
 order sizing (``aegis_trader.domain.sizing``) resolve the factor here, so the two
 engines cannot drift. Deliberately Nautilus-free: a currency code is a plain
 string, because Nautilus offers nothing to derive this from.

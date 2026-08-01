@@ -10,7 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
 
-from aegis_runtime.bundle_loader import dump_bundle_payload
+from aegis_runtime.execution.bundle_loader import dump_bundle_payload
 
 from research.aegis_research.execution_bundle import BundleArtifact
 
@@ -19,7 +19,7 @@ ENTRY_POINT_GROUP = "aegis.execution_bundles"
 LOADER_SOURCE = dedent(
     """
     from aegis_runtime import ExecutionBundle, MarketDataBundle
-    from aegis_runtime.bundle_loader import load_installed_bundle
+    from aegis_runtime.execution.bundle_loader import load_installed_bundle
 
     def get_bundle():
         return load_installed_bundle(__package__)

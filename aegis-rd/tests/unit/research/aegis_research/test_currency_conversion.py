@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime import MarketDataBundle
+from aegis_runtime.domain.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 
 _USD_LEG = InstrumentId.from_str("AAPL.XNAS")
@@ -23,7 +24,7 @@ def test_apply_converts_price_arrays_by_aligned_rate_and_leaves_volume() -> None
     # absent from the map and must pass through untouched.
     conversion = CurrencyConversion({_USD_LEG: pd.Series([0.90, 0.92, 0.94], index=index)})
 
-    out = conversion.apply({"Close": close, "Volume": volume})
+    out = conversion.apply(MarketDataBundle({"Close": close, "Volume": volume})).arrays
 
     assert out["Close"][_USD_LEG].tolist() == pytest.approx([90.0, 101.2, 112.8])
     assert out["Close"][_BASE_LEG].tolist() == pytest.approx([10.0, 11.0, 12.0])
@@ -39,7 +40,7 @@ def test_apply_forward_fills_a_sparser_fx_calendar_onto_the_bar_index() -> None:
     rate = pd.Series([0.90, 0.95], index=bars[[0, 2]])
     conversion = CurrencyConversion({_USD_LEG: rate})
 
-    out = conversion.apply({"Close": close})
+    out = conversion.apply(MarketDataBundle({"Close": close})).arrays
 
     assert out["Close"][_USD_LEG].tolist() == pytest.approx([90.0, 90.0, 95.0, 95.0])
 
@@ -61,4 +62,4 @@ def test_apply_fails_loud_when_the_rate_starts_after_the_first_bar() -> None:
     conversion = CurrencyConversion({_USD_LEG: rate})
 
     with pytest.raises(ValueError, match="does not cover every bar"):
-        conversion.apply({"Close": close})
+        conversion.apply(MarketDataBundle({"Close": close}))

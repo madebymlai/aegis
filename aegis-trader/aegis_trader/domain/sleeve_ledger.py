@@ -28,7 +28,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
-from aegis_data.rebasing import Rebasing
+from aegis_runtime.domain.rebasing import Rebasing
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.allocator import portfolio_skew

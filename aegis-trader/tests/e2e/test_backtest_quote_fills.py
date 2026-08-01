@@ -31,7 +31,7 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_trader.backtest import BacktestMarketData, run_book_backtest
 from aegis_trader.bundles.stub import StubBundleRegistry

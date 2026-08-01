@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from aegis_runtime.currency import (
+from aegis_runtime.domain.currency import (
     MissingFxPairError,
     build_currency_conversion,
 )

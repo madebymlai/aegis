@@ -16,7 +16,7 @@ from aegis_data.chain import fetch_contract_chain
 from aegis_data.continuous_future import ContinuousFuture, continuous_future
 from aegis_data.continuous_materialize import materialize_continuous_bars
 from aegis_data.liquidity import liquid_roll_schedule
-from aegis_data.rebasing import IDENTITY, Rebasing
+from aegis_runtime.domain.rebasing import IDENTITY, Rebasing
 from aegis_data.roll import roll_lead_days_for_cadence
 
 _T = TypeVar("_T")

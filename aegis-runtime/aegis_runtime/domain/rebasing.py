@@ -25,6 +25,15 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
+class AdjustmentMode(Protocol):
+    """A declared continuous-future adjustment mode."""
+
+    @property
+    def is_ratio(self) -> bool:
+        """Whether the mode re-bases values multiplicatively."""
+        ...
+
+
 class Rebasing(Protocol):
     """Carry one recorded price from the pre-roll basis into the post-roll basis."""
 
@@ -74,4 +83,18 @@ def ratio_rebasing(factor: float) -> Rebasing:
     return _Ratio(factor)
 
 
-__all__ = ["IDENTITY", "Rebasing", "ratio_rebasing", "spread_rebasing"]
+def rebasing_for_adjustment(mode: AdjustmentMode, value: float) -> Rebasing:
+    """Build the re-basing whose semantics are declared by ``mode``."""
+    if mode.is_ratio:
+        return ratio_rebasing(value)
+    return spread_rebasing(value)
+
+
+__all__ = [
+    "IDENTITY",
+    "AdjustmentMode",
+    "Rebasing",
+    "ratio_rebasing",
+    "rebasing_for_adjustment",
+    "spread_rebasing",
+]

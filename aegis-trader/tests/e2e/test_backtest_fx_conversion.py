@@ -28,7 +28,7 @@ from aegis_runtime import (
     MissingIndexPolicy,
 )
 
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_data.bar_type import external_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode

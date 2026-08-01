@@ -137,9 +137,9 @@ def test_candidate_identity_golden_bytes_pin() -> None:
     )
 
     assert hashlib.sha256(canonical_json_bytes(row["identity"])).hexdigest() == (
-        "c2df27c15545a640fe8577165032c7d4c2fe7e82c955fdcfa391df755d79c9e6"
+        "cc5b9d6f370dfd5ebe82314fb5160d1c7a462bddb9e74ff2e34f75784905d8c7"
     )
-    assert row["candidate_key"] == "cand_c2df27c15545a640fe8577165032c7d4"
+    assert row["candidate_key"] == "cand_cc5b9d6f370dfd5ebe82314fb5160d1c"
 
 
 def test_candidate_rows_publish_only_observation_block_and_complete_period_metrics() -> None:

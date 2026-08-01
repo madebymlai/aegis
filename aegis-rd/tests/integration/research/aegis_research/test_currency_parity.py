@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from aegis_runtime.currency import build_currency_conversion
+from aegis_runtime import MarketDataBundle
+from aegis_runtime.domain.currency import build_currency_conversion
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 
 from tests.support.research.aegis_research.market_data_fixtures import (
@@ -53,7 +54,9 @@ def test_rd_conversion_matches_nautilus_base_value_under_fx_movement() -> None:
         fx_close={pair.id: eur_usd},
         base_currency="EUR",
     )
-    base_close = conversion.apply({"Close": native_close.to_frame(name=equity.id)})["Close"]
+    base_close = conversion.apply(
+        MarketDataBundle({"Close": native_close.to_frame(name=equity.id)})
+    ).array("Close")
     rd_base_value = (_QTY * base_close[equity.id]).reindex(oracle.index)
 
     assert not oracle.empty
@@ -79,7 +82,9 @@ def test_parity_fixture_actually_exercises_fx_movement() -> None:
         fx_close={pair.id: flat},
         base_currency="EUR",
     )
-    flat_base = flat_conversion.apply({"Close": native_close.to_frame(name=equity.id)})["Close"]
+    flat_base = flat_conversion.apply(
+        MarketDataBundle({"Close": native_close.to_frame(name=equity.id)})
+    ).array("Close")
     flat_value = (_QTY * flat_base[equity.id]).reindex(oracle.index)
 
     assert not flat_value.equals(oracle)

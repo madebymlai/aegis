@@ -7,6 +7,13 @@ and applies it to price arrays by aligning each rate onto the bar index and
 multiplying. A share count (``Volume``) is never a price, so it passes through
 unscaled.
 
+Currency conversion and roll re-basing intentionally classify Arrays by different
+facts. Conversion asks whether values are denominated in each instrument's quote
+currency; the roll probe asks whether a roll re-bases them. A future price-derived
+adjacent Array therefore converts here but is not automatically a roll-rebased Array.
+An unknown Array with a live FX leg is refused until its denomination is classified;
+the roll probe instead skips unknown provider-fetched records. See ADR-0011.
+
 The ``native → base`` orientation mirrors Nautilus' ``Cache.get_mark_xrate``
 (native, base): the trader's engine converts a foreign position's value the same
 way, and a currency parity test pins this view to it.
@@ -21,11 +28,14 @@ import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 
-from aegis_runtime.currency_units import resolve_quote_currency
+from aegis_runtime.domain.currency_units import resolve_quote_currency
+from aegis_runtime.domain.market_data import MarketDataBundle
 
-# Currency-denominated arrays the conversion scales; a share count (Volume) is not
-# a price and must pass through unscaled.
-_PRICE_ARRAYS = frozenset({"Open", "High", "Low", "Close"})
+# Arrays known to be denominated in each instrument's quote currency. This rule is
+# deliberately distinct from the roll probe's re-based-price rule: an adjacent
+# quote-currency Array converts here even when a roll must not touch it. See ADR-0011.
+_QUOTE_CURRENCY_ARRAYS = frozenset({"Open", "High", "Low", "Close"})
+_DIMENSIONLESS_ARRAYS = frozenset({"Volume"})
 
 
 class MissingFxPairError(ValueError):
@@ -34,6 +44,10 @@ class MissingFxPairError(ValueError):
 
 class FxRateCoverageError(ValueError):
     """An FX rate series does not cover every bar it must convert."""
+
+
+class UnclassifiedCurrencyArrayError(ValueError):
+    """A live FX leg occurs in an Array whose denomination is not classified."""
 
 
 class MissingInstrumentDefinitionError(ValueError):
@@ -74,9 +88,11 @@ class CurrencyConversion:
     rate_by_instrument: Mapping[InstrumentId, pd.Series]
     currency_by_instrument_id: Mapping[InstrumentId, str] = field(default_factory=dict)
 
-    def apply(self, arrays: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-        """Convert every price array to base currency; pass non-price arrays through."""
-        return {name: self._convert(name, frame) for name, frame in arrays.items()}
+    def apply(self, bundle: MarketDataBundle) -> MarketDataBundle:
+        """Return the canonical Array value with quote-currency values converted."""
+        return MarketDataBundle(
+            {name: self._convert(name, frame) for name, frame in bundle.arrays.items()}
+        )
 
     def rate_for(self, instrument_id: InstrumentId, index: pd.Index) -> pd.Series:
         """Native → base FX rate for one instrument over *index*.
@@ -90,11 +106,16 @@ class CurrencyConversion:
         return self._aligned_rate(instrument_id, index)
 
     def _convert(self, name: str, frame: pd.DataFrame) -> pd.DataFrame:
-        if name not in _PRICE_ARRAYS:
-            return frame
         convertible = [column for column in frame.columns if column in self.rate_by_instrument]
         if not convertible:
             return frame
+        if name in _DIMENSIONLESS_ARRAYS:
+            return frame
+        if name not in _QUOTE_CURRENCY_ARRAYS:
+            raise UnclassifiedCurrencyArrayError(
+                f"Array {name!r} has no quote-currency denomination classification; "
+                "classify it before applying a live FX conversion"
+            )
         rates = pd.DataFrame(1.0, index=frame.index, columns=frame.columns)
         for column in convertible:
             rates[column] = self._aligned_rate(column, frame.index)

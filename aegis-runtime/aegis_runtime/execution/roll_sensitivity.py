@@ -28,17 +28,22 @@ import numpy as np
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_runtime.domain.market_data import MarketDataBundle
+from aegis_runtime.domain.rebasing import rebasing_for_adjustment
+
 if TYPE_CHECKING:
     import pandas as pd
 
-    from aegis_runtime.bundle import DataContract, MarketDataBundle
+    from aegis_runtime.execution.bundle import DataContract
 
-# OHLC are absolute price levels a roll re-bases; Volume is not a price and is left
-# untouched. The perturbation constants are private: the check holds for ANY
-# non-unit factor / nonzero shift, so tests must not encode them.
-_PRICE_ARRAYS = frozenset({"Open", "High", "Low", "Close"})
-_RATIO_FACTOR = 1.37
-_SPREAD_SHIFT = 137.0
+# Arrays whose root columns are known to be re-based by a continuous-future roll.
+# This is deliberately not currency conversion's denomination rule: unknown Custom
+# Data kinds are currently provider-fetched records and are skipped here, while an
+# unknown Array with a live FX leg must be refused. That skip ceases to be safe when
+# a price-derived Custom Array is introduced; it must then be classified explicitly.
+# See ADR-0011.
+_ROLL_REBASED_ARRAYS = frozenset({"Open", "High", "Low", "Close"})
+_PERTURBATION = 1.37
 
 # Explicit comparison tolerances, in final weight space.
 _RTOL = 0.0
@@ -61,6 +66,11 @@ def compute_roll_checked_weights(
     conversion -> Components); the baseline and every probe invoke exactly it,
     so a contract with R roots executes it ``1 + R`` times and an ETF-only
     contract executes it once with no perturbation work.
+
+    The callback inversion is deliberate: this gate owns the baseline/per-root
+    evaluation loop, probe exception wrapping, structural/value comparison, and
+    operator guidance. Moving that control into the bundle would leak all four
+    responsibilities across the boundary and make both modules shallower.
     """
     baseline = decide(native_window)
     roots = contract.continuous_instrument_ids
@@ -91,16 +101,14 @@ def _perturb_root(
     mode: ContinuousFutureAdjustmentType,
 ) -> MarketDataBundle:
     """Apply the mode's uniform transform to one root's native price columns."""
+    rebasing = rebasing_for_adjustment(mode, _PERTURBATION)
     perturbed: dict[str, pd.DataFrame] = {}
     for name, frame in window.arrays.items():
-        if name in _PRICE_ARRAYS and root in frame.columns:
+        if name in _ROLL_REBASED_ARRAYS and root in frame.columns:
             frame = frame.copy()
-            if mode.is_ratio:
-                frame[root] = frame[root] * _RATIO_FACTOR
-            else:
-                frame[root] = frame[root] + _SPREAD_SHIFT
+            frame[root] = frame[root].map(rebasing.apply)
         perturbed[name] = frame
-    return type(window)(perturbed)
+    return MarketDataBundle(perturbed)
 
 
 def _weights_match(baseline: pd.DataFrame, probe: pd.DataFrame) -> bool:

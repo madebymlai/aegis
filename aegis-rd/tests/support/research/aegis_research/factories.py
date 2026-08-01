@@ -17,7 +17,7 @@ from typing import Any
 import pandas as pd
 from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, InstrumentId, MarketDataBundle
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 from vectorbtpro import vbt
 
 from research.aegis_research.component_registry.contracts import (

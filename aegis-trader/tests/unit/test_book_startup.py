@@ -19,7 +19,7 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.data.market_data import MarketBar

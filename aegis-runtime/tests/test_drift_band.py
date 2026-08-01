@@ -1,6 +1,6 @@
 import pytest
 
-from aegis_runtime.drift_band import DriftBand, gate
+from aegis_runtime.domain.drift_band import DriftBand, gate
 
 
 @pytest.mark.parametrize(

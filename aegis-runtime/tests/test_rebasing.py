@@ -7,7 +7,7 @@ tested in ``test_continuous_future``.
 
 from __future__ import annotations
 
-from aegis_data.rebasing import IDENTITY, ratio_rebasing, spread_rebasing
+from aegis_runtime.domain.rebasing import IDENTITY, ratio_rebasing, spread_rebasing
 
 
 def test_spread_rebasing_adds_a_uniform_offset() -> None:

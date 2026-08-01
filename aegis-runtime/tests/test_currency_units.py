@@ -1,13 +1,13 @@
 """The single source of truth for minor-unit currency facts.
 
-Both the read-side FX conversion (aegis_runtime.currency) and the trader's order
+Both the read-side FX conversion (aegis_runtime.domain.currency) and the trader's order
 sizing resolve minor-unit currencies through this one function, so guarding it
 here guards both engines against drifting apart on the pence factor.
 """
 
 from __future__ import annotations
 
-from aegis_runtime.currency_units import resolve_quote_currency
+from aegis_runtime.domain.currency_units import resolve_quote_currency
 
 
 def test_gbp_pence_resolves_to_gbp_with_a_hundred_minor_units() -> None:

@@ -10,7 +10,7 @@ from pydantic import ConfigDict, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from aegis_runtime.bundle import (
+from aegis_runtime.execution.bundle import (
     DataContractError,
     BundleManifest,
     DataContract,
