@@ -7,7 +7,6 @@ and fans its parameters across every Component using the component-param slicing
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -21,9 +20,6 @@ from research.aegis_research.candidates.lock import (
 from research.aegis_research.candidates.models import CandidateSet
 from research.aegis_research.candidates.records import candidate_rows_from_result
 from research.aegis_research.candidates.store import CandidateStore
-from research.aegis_research.optimization.component_source import (
-    COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
-)
 from research.aegis_research.optimization.component_source import (
     _source_identity as build_source_identity,
 )
@@ -184,23 +180,24 @@ def test_rejects_candidate_missing_referenced_component(tmp_path: Path) -> None:
             )
 
 
-def test_rejects_a_candidate_recording_a_superseded_component_source_contract(
+def test_resolves_a_superseded_contract_whose_read_fields_did_not_move(
     tmp_path: Path,
 ) -> None:
-    # A Candidate written before the current component-source contract cannot be
-    # navigated safely: re-run and re-lock rather than reproduce different params.
+    # Resolution gates on the shape it reads, not on the recorded contract version:
+    # a Candidate written under an older component-source contract still reproduces
+    # exactly when the fields Lock resolution consumes are unchanged. Gating on the
+    # version instead would refuse it for a change it does not depend on.
     superseded = {**_source_identity(), "schema_version": "component_optimization_source.v1"}
     with _store_with_candidate(tmp_path, source_identity=superseded) as store:
         candidate_key = store.candidate_key_for_role("run-a", "best")
-        with pytest.raises(
-            LockRunResolutionError, match=re.escape("component_optimization_source.v1")
-        ) as error:
-            resolve_lock_run(
-                make_lock(run_id="run-a", candidate_id=candidate_key),
-                store=store,
-            )
-    assert COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION in str(error.value)
-    assert "re-run" in str(error.value)
+
+        resolved = resolve_lock_run(
+            make_lock(run_id="run-a", candidate_id=candidate_key),
+            store=store,
+        )
+
+    assert resolved.component_params[_STRATEGY_REF] == {"fast_window": 2, "slow_window": 10}
+    assert resolved.component_params[_INDICATOR_REF] == {"window": 20}
 
 
 @pytest.mark.parametrize("field", ["fixed_params", "param_keys"])
