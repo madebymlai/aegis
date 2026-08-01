@@ -364,6 +364,13 @@ def _params_for_runtime(
     *,
     n_candidates: int,
 ) -> dict[str, Sequence[Any]]:
+    """Resolve swept and fixed parameters before research deduplicates a batch.
+
+    Runtime's ``execution.bundle._candidate_param_lists`` produces the same list
+    shape for one locked Candidate without sweep resolution or deduplication. The
+    shared shape is not shared behavior, so the two functions intentionally stay
+    separate.
+    """
     params: dict[str, Sequence[Any]] = {}
     for param_name, param_key in runtime.param_keys.items():
         params[param_name] = param_lists[param_key]

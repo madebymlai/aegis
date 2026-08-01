@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 from pathlib import Path
 
@@ -20,9 +21,18 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.domain.currency import CurrencyConversion
+try:
+    CurrencyConversion = importlib.import_module(
+        "aegis_runtime.domain.currency"
+    ).CurrencyConversion
+except ModuleNotFoundError as error:
+    if error.name not in {"aegis_runtime.domain", "aegis_runtime.domain.currency"}:
+        raise
+    CurrencyConversion = importlib.import_module(
+        "aegis_runtime.currency"
+    ).CurrencyConversion
 
-_COMPONENTS = Path(__file__).parents[1] / "tests" / "_components"
+_COMPONENTS = Path.cwd() / "tests" / "_components"
 _AAPL = InstrumentId.from_str("AAPL.NASDAQ")
 _MSFT = InstrumentId.from_str("MSFT.NASDAQ")
 

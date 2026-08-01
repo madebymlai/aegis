@@ -541,6 +541,12 @@ def _compute_indicators(
 def _candidate_param_lists(
     params: Mapping[str, Any], n_candidates: int
 ) -> dict[str, list[Any]]:
+    """Broadcast one locked Candidate's values for runtime Component calls.
+
+    Research's ``component_source._params_for_runtime`` produces the same list
+    shape while resolving and deduplicating a swept candidate batch. The shared
+    shape is not shared behavior, so the two functions intentionally stay separate.
+    """
     return {name: [value] * n_candidates for name, value in params.items()}
 
 

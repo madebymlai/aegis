@@ -16,8 +16,19 @@ cmp /tmp/aegis-weights-1.csv /tmp/aegis-weights-2.csv
 sha256sum /tmp/aegis-weights-1.csv
 ```
 
-For a before/after check, run the first command in the base-revision checkout,
-run the second in the candidate-revision checkout, then compare them with
-`cmp`. The command is intentionally independent of the absent shipped bundle
-wheels and is cheap enough to run after every ticket in the weight-decision
-docket.
+For a before/after check, use the candidate revision's harness in both checkouts.
+The script resolves either the pre-layering or current currency module from the
+checkout it runs against, so the harness itself stays fixed while production moves:
+
+```bash
+git show <candidate-revision>:aegis-runtime/scripts/write_weight_artifact.py \
+  > /tmp/write_weight_artifact.py
+(cd <base-checkout>/aegis-runtime && \
+  uv run python /tmp/write_weight_artifact.py /tmp/aegis-weights-before.csv)
+(cd <candidate-checkout>/aegis-runtime && \
+  uv run python /tmp/write_weight_artifact.py /tmp/aegis-weights-after.csv)
+cmp /tmp/aegis-weights-before.csv /tmp/aegis-weights-after.csv
+```
+
+The command is intentionally independent of the absent shipped bundle wheels and
+is cheap enough to run after every ticket in the weight-decision docket.

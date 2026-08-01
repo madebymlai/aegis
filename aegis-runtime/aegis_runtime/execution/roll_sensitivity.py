@@ -29,7 +29,7 @@ from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime.domain.market_data import MarketDataBundle
-from aegis_runtime.domain.rebasing import rebasing_for_adjustment
+from aegis_runtime.domain.rebasing import RebasingParameters, rebasing_for_adjustment
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -43,7 +43,10 @@ if TYPE_CHECKING:
 # a price-derived Custom Array is introduced; it must then be classified explicitly.
 # See ADR-0011.
 _ROLL_REBASED_ARRAYS = frozenset({"Open", "High", "Low", "Close"})
-_PERTURBATION = 1.37
+_PROBE_REBASING_PARAMETERS = RebasingParameters(
+    additive_delta=137.0,
+    multiplicative_factor=1.37,
+)
 
 # Explicit comparison tolerances, in final weight space.
 _RTOL = 0.0
@@ -101,7 +104,7 @@ def _perturb_root(
     mode: ContinuousFutureAdjustmentType,
 ) -> MarketDataBundle:
     """Apply the mode's uniform transform to one root's native price columns."""
-    rebasing = rebasing_for_adjustment(mode, _PERTURBATION)
+    rebasing = rebasing_for_adjustment(mode, _PROBE_REBASING_PARAMETERS)
     perturbed: dict[str, pd.DataFrame] = {}
     for name, frame in window.arrays.items():
         if name in _ROLL_REBASED_ARRAYS and root in frame.columns:

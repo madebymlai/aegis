@@ -34,6 +34,14 @@ class AdjustmentMode(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class RebasingParameters:
+    """The distinct quantities required by additive and multiplicative modes."""
+
+    additive_delta: float
+    multiplicative_factor: float
+
+
 class Rebasing(Protocol):
     """Carry one recorded price from the pre-roll basis into the post-roll basis."""
 
@@ -83,17 +91,21 @@ def ratio_rebasing(factor: float) -> Rebasing:
     return _Ratio(factor)
 
 
-def rebasing_for_adjustment(mode: AdjustmentMode, value: float) -> Rebasing:
+def rebasing_for_adjustment(
+    mode: AdjustmentMode,
+    parameters: RebasingParameters,
+) -> Rebasing:
     """Build the re-basing whose semantics are declared by ``mode``."""
     if mode.is_ratio:
-        return ratio_rebasing(value)
-    return spread_rebasing(value)
+        return ratio_rebasing(parameters.multiplicative_factor)
+    return spread_rebasing(parameters.additive_delta)
 
 
 __all__ = [
     "IDENTITY",
     "AdjustmentMode",
     "Rebasing",
+    "RebasingParameters",
     "ratio_rebasing",
     "rebasing_for_adjustment",
     "spread_rebasing",
