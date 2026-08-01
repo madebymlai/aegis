@@ -49,6 +49,9 @@ from research.aegis_research.instrument_resolution import (
     InstrumentResolution,
     TradeableInstrument,
 )
+from research.aegis_research.optimization.component_source import (
+    _ComponentRuntime,
+)
 from research.aegis_research.optimization.continuous_replay import (
     continuous_replay_protocol,
 )
@@ -56,6 +59,7 @@ from research.aegis_research.optimization.observation_blocks import (
     ObservationBlocks,
     observation_block_protocol,
 )
+from research.aegis_research.optimization.param_namespace import ComponentRef
 from research.aegis_research.optimization.selection_identity import (
     CONTINUOUS_SELECTION_IDENTITY_SCHEMA_VERSION,
     METRIC_EXTRACTOR_PROTOCOL_SCHEMA_VERSION,
@@ -339,6 +343,57 @@ def _component_source_identity(component_id: str) -> ComponentSourceIdentity:
     return ComponentSourceIdentity(
         repo_relative_path=f"tests/fixtures/{component_id}.py",
         source_hash="0" * 64,
+    )
+
+
+_DEMO_INDICATOR_REF = ComponentRef("indicators", "demo", "demo")
+
+
+def make_component_runtime(
+    ref: ComponentRef = _DEMO_INDICATOR_REF,
+    *,
+    param_keys: Mapping[str, str] | None = None,
+    param_space: Mapping[str, vbt.Param] | None = None,
+    fixed_params: Mapping[str, Any] | None = None,
+    # An Indicator with no outputs is unrepresentable, so the default declares one.
+    output_names: tuple[str, ...] = ("value",),
+    consumes_outputs: tuple[str, ...] = (),
+    input_names: tuple[str, ...] = ("Close",),
+) -> _ComponentRuntime:
+    """One owned Component runtime, without a registry or on-disk component files.
+
+    Shared so that suites needing the *provenance* a runtime produces build it through
+    the real producer rather than hand-writing the shape.
+    """
+    indicator = ref.family == "indicators"
+    definition = (
+        make_indicator_component_definition(
+            id=ref.component_id,
+            input_names=input_names,
+            output_names=output_names,
+        )
+        if indicator
+        else make_strategy_component_definition(
+            id=ref.component_id,
+            input_names=input_names,
+            consumes_outputs=consumes_outputs,
+        )
+    )
+    source_ref = (
+        make_run_indicator_source_config(id=ref.component_id)
+        if indicator
+        else make_run_source_ref_config(id=ref.component_id)
+    )
+    return _ComponentRuntime(
+        family=ref.family,
+        slot=ref.slot,
+        ref=source_ref,
+        definition=definition,
+        callable=None,
+        fixed_params=dict(fixed_params or {}),
+        param_space=dict(param_space or {}),
+        param_keys=dict(param_keys or {}),
+        locked=False,
     )
 
 

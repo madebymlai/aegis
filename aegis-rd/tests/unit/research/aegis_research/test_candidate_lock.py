@@ -7,10 +7,12 @@ and fans its parameters across every Component using the component-param slicing
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
+from vectorbtpro import vbt
 
 from research.aegis_research.candidates.lock import (
     LockRunResolutionError,
@@ -19,6 +21,12 @@ from research.aegis_research.candidates.lock import (
 from research.aegis_research.candidates.models import CandidateSet
 from research.aegis_research.candidates.records import candidate_rows_from_result
 from research.aegis_research.candidates.store import CandidateStore
+from research.aegis_research.optimization.component_source import (
+    COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
+)
+from research.aegis_research.optimization.component_source import (
+    _source_identity as build_source_identity,
+)
 from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     encode,
@@ -29,6 +37,7 @@ from research.aegis_research.optimization.ranking import (
 )
 from research.aegis_research.run.identity import RunId
 from tests.support.research.aegis_research.factories import (
+    make_component_runtime,
     make_lock,
     make_selection_identity,
 )
@@ -39,6 +48,12 @@ _DATA_IDENTITY = {
     "instrument_ids": ["SYN.XNAS"],
     "timeframe": "1D",
 }
+
+_STRATEGY_REF = ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross")
+_INDICATOR_REF = ComponentRef("indicators", "demo.mom", "demo.mom")
+_FAST_KEY = encode(_STRATEGY_REF, "fast_window")
+_SLOW_KEY = encode(_STRATEGY_REF, "slow_window")
+_WINDOW_KEY = encode(_INDICATOR_REF, "window")
 
 
 def test_resolves_per_component_params_for_locked_candidate(tmp_path: Path) -> None:
@@ -159,9 +174,44 @@ def test_rejects_unknown_candidate_id(tmp_path: Path) -> None:
 
 
 def test_rejects_candidate_missing_referenced_component(tmp_path: Path) -> None:
-    with _store_with_candidate(tmp_path, drop_indicator_runtime=True) as store:
+    without_indicator = _source_identity(drop_indicator_runtime=True)
+    with _store_with_candidate(tmp_path, source_identity=without_indicator) as store:
         candidate_key = store.candidate_key_for_role("run-a", "best")
         with pytest.raises(LockRunResolutionError, match="does not include component"):
+            resolve_lock_run(
+                make_lock(run_id="run-a", candidate_id=candidate_key),
+                store=store,
+            )
+
+
+def test_rejects_a_candidate_recording_a_superseded_component_source_contract(
+    tmp_path: Path,
+) -> None:
+    # A Candidate written before the current component-source contract cannot be
+    # navigated safely: re-run and re-lock rather than reproduce different params.
+    superseded = {**_source_identity(), "schema_version": "component_optimization_source.v1"}
+    with _store_with_candidate(tmp_path, source_identity=superseded) as store:
+        candidate_key = store.candidate_key_for_role("run-a", "best")
+        with pytest.raises(
+            LockRunResolutionError, match=re.escape("component_optimization_source.v1")
+        ) as error:
+            resolve_lock_run(
+                make_lock(run_id="run-a", candidate_id=candidate_key),
+                store=store,
+            )
+    assert COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION in str(error.value)
+    assert "re-run" in str(error.value)
+
+
+@pytest.mark.parametrize("field", ["fixed_params", "param_keys"])
+def test_rejects_a_runtime_that_omits_a_param_mapping(tmp_path: Path, field: str) -> None:
+    # Silently defaulting to {} would drop the Component's fixed params and
+    # reproduce a different strategy than the Candidate names.
+    source = _source_identity()
+    del source["strategy"][field]  # type: ignore[union-attr]
+    with _store_with_candidate(tmp_path, source_identity=source) as store:
+        candidate_key = store.candidate_key_for_role("run-a", "best")
+        with pytest.raises(LockRunResolutionError, match=field):
             resolve_lock_run(
                 make_lock(run_id="run-a", candidate_id=candidate_key),
                 store=store,
@@ -171,12 +221,13 @@ def test_rejects_candidate_missing_referenced_component(tmp_path: Path) -> None:
 def _store_with_candidate(
     tmp_path: Path,
     *,
-    drop_indicator_runtime: bool = False,
     data_identity: dict[str, object] | None = None,
+    source_identity: dict[str, object] | None = None,
 ) -> CandidateStore:
     store = CandidateStore(tmp_path / "candidates.sqlite3")
     identity = _DATA_IDENTITY if data_identity is None else data_identity
     candidates = _candidate_rows(identity)
+    source = _source_identity() if source_identity is None else source_identity
     store.commit_candidates(
         CandidateSet.create(
             run_id=RunId("run-a"),
@@ -184,7 +235,7 @@ def _store_with_candidate(
             provenance={
                 "schema_version": "candidate_store_provenance.v3",
                 "run_id": "run-a",
-                "source": _source_identity(drop_indicator_runtime=drop_indicator_runtime),
+                "source": source,
                 "data": identity,
                 "selection_identity": make_selection_identity(),
             },
@@ -260,39 +311,21 @@ def _candidate_rows(data_identity: dict[str, object]) -> list[dict[str, object]]
 
 
 def _source_identity(*, drop_indicator_runtime: bool = False) -> dict[str, object]:
-    indicators: list[dict[str, object]] = []
-    if not drop_indicator_runtime:
-        indicators.append(
-            {
-                "family": "indicators",
-                "slot": "demo.mom",
-                "id": "demo.mom",
-                "version": "1.0.0",
-                "fixed_params": {},
-                "param_keys": {
-                    "window": encode(ComponentRef("indicators", "demo.mom", "demo.mom"), "window"),
-                },
-            }
-        )
-    return {
-        "schema_version": "component_optimization_source.v2",
-        "source": "component",
-        "strategy": {
-            "family": "strategies",
-            "slot": "strategy:demo.ma_cross",
-            "id": "demo.ma_cross",
-            "version": "1.0.0",
-            "fixed_params": {},
-            "param_keys": {
-                "fast_window": encode(
-                    ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"),
-                    "fast_window",
-                ),
-                "slow_window": encode(
-                    ComponentRef("strategies", "demo.ma_cross", "strategy:demo.ma_cross"),
-                    "slow_window",
-                ),
-            },
-        },
-        "indicators": indicators,
-    }
+    """Build source provenance through the real ``component_source`` producer.
+
+    Hand-writing the runtime shape here would be a third copy of it — producer,
+    consumer, and fixture — so ``component_source`` could rename a field and leave
+    this suite green while every stored Candidate diverged from what ``lock.py``
+    reads. Generating it means that drift fails here first.
+    """
+    strategy = make_component_runtime(
+        _STRATEGY_REF,
+        param_keys={"fast_window": _FAST_KEY, "slow_window": _SLOW_KEY},
+    )
+    indicators = (
+        ()
+        if drop_indicator_runtime
+        else (make_component_runtime(_INDICATOR_REF, param_keys={"window": _WINDOW_KEY}),)
+    )
+    params = {key: vbt.Param([1]) for key in (_FAST_KEY, _SLOW_KEY, _WINDOW_KEY)}
+    return build_source_identity(strategy, indicators, params)

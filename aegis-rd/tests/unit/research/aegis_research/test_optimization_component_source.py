@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -17,7 +16,6 @@ from research.aegis_research.configuration import (
 )
 from research.aegis_research.optimization.component_source import (
     ComponentSourceError,
-    _ComponentRuntime,
     _ComposedSource,
     _deduplicate_runtime_params,
     build_component_optimization_source,
@@ -29,13 +27,12 @@ from research.aegis_research.optimization.param_namespace import (
 )
 from research.aegis_research.optimization.precompute import candidate_keys
 from tests.support.research.aegis_research.factories import (
-    make_indicator_component_definition,
+    make_component_runtime,
     make_portfolio_config,
     make_ranking_config,
     make_run_config,
     make_run_indicator_source_config,
     make_run_source_ref_config,
-    make_strategy_component_definition,
 )
 
 _INDICATOR_REF = ComponentRef("indicators", "demo.trend", "demo.trend")
@@ -754,48 +751,9 @@ def _write_strategy_template(
 # _ComposedSource extraction.
 
 
-def _stub_runtime(
-    *,
-    family: str = "indicators",
-    slot: str = "demo",
-    rid: str = "demo",
-    param_keys: dict[str, str] | None = None,
-    param_space: dict[str, vbt.Param] | None = None,
-    fixed_params: dict[str, object] | None = None,
-    # An Indicator with no outputs is unrepresentable, so the default declares one.
-    output_names: tuple[str, ...] = ("value",),
-    consumes_outputs: tuple[str, ...] = (),
-    input_names: tuple[str, ...] = ("Close",),
-) -> _ComponentRuntime:
-    definition = (
-        make_indicator_component_definition(
-            id=rid,
-            input_names=input_names,
-            output_names=output_names,
-        )
-        if family == "indicators"
-        else make_strategy_component_definition(
-            id=rid,
-            input_names=input_names,
-            consumes_outputs=consumes_outputs,
-        )
-    )
-    return _ComponentRuntime(
-        family=family,
-        slot=slot,
-        ref=SimpleNamespace(params={}),
-        definition=definition,
-        callable=None,
-        fixed_params=dict(fixed_params or {}),
-        param_space=dict(param_space or {}),
-        param_keys=dict(param_keys or {}),
-        locked=False,
-    )
-
-
 def test_deduplicate_runtime_params_collapses_duplicate_runtime_keys() -> None:
     key = encode(ComponentRef("indicators", "demo", "demo"), "window")
-    runtime = _stub_runtime(param_keys={"window": key})
+    runtime = make_component_runtime(param_keys={"window": key})
     param_lists = {key: [10, 10, 20]}
     full_keys = candidate_keys(param_lists)
 
@@ -810,14 +768,13 @@ def test_deduplicate_runtime_params_collapses_duplicate_runtime_keys() -> None:
 
 def test_compose_rejects_duplicate_param_keys() -> None:
     dup = encode(ComponentRef("indicators", "demo", "demo"), "window")
-    indicator = _stub_runtime(
+    indicator = make_component_runtime(
         param_keys={"window": dup},
         param_space={"window": vbt.Param([1])},
         output_names=("trend",),
     )
-    strategy = _stub_runtime(
-        family="strategies",
-        rid="strat",
+    strategy = make_component_runtime(
+        ComponentRef("strategies", "strat", "demo"),
         param_keys={"threshold": dup},
         param_space={"threshold": vbt.Param([2])},
         consumes_outputs=("trend",),
@@ -828,8 +785,10 @@ def test_compose_rejects_duplicate_param_keys() -> None:
 
 
 def test_compose_uses_fixed_candidate_param_when_no_swept_params() -> None:
-    indicator = _stub_runtime(output_names=("trend",))
-    strategy = _stub_runtime(family="strategies", rid="strat", consumes_outputs=("trend",))
+    indicator = make_component_runtime(output_names=("trend",))
+    strategy = make_component_runtime(
+        ComponentRef("strategies", "strat", "demo"), consumes_outputs=("trend",)
+    )
 
     composed = _ComposedSource.compose(_data_bundle(), strategy, (indicator,))
 
