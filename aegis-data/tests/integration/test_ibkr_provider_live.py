@@ -24,7 +24,7 @@ from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogWindowRequest,
     bars_to_ohlcv,
-    parquet_data_catalog,
+    open_catalog,
 )
 from aegis_data.distributions import request_distribution_data
 from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
@@ -64,9 +64,9 @@ def _provider() -> IbkrHistoricalProvider:
 def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
     served = _provider().request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
 
-    assert served.bars
-    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in served.bars)
-    assert served.served_from == _START
+    assert served.records
+    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in served.records)
+    assert served.oldest_verified == _START
 
 
 def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
@@ -79,8 +79,8 @@ def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
 
     served = _provider().request_bars(bar_type, start=_START, end=_END)
 
-    assert served.bars
-    assert all(bar.bar_type == bar_type for bar in served.bars)
+    assert served.records
+    assert all(bar.bar_type == bar_type for bar in served.records)
 
 
 def test_request_instruments_round_trips_native_identity() -> None:
@@ -136,7 +136,7 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     (warm, no IBKR), and the instrument definition is present (AC1/AC3/AC6)."""
     catalog_path = tmp_path / "catalog"
     provider = _provider()
-    catalog = parquet_data_catalog(catalog_path)
+    catalog = open_catalog(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
         provider=provider,
@@ -157,16 +157,14 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
 
     # Provider-less read: must serve entirely from the catalog (no IBKR contact).
     warm = (
-        CatalogBackedDataPort(parquet_data_catalog(catalog_path))
+        CatalogBackedDataPort(open_catalog(catalog_path))
         .load_window(request)
         .ohlcv
     )
     assert warm[_AAPL]["Close"].tolist() == filled[_AAPL]["Close"].tolist()
 
     # AC6: the served instrument's definition was persisted as a Step-1 write.
-    definitions = parquet_data_catalog(catalog_path).instruments(
-        instrument_ids=[_AAPL.value]
-    )
+    definitions = open_catalog(catalog_path).definitions((_AAPL,))
     assert any(instrument.id == _AAPL for instrument in definitions)
 
 
@@ -179,10 +177,10 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
     end = pd.Timestamp("2026-06-01", tz="UTC")
 
     spy_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end).bars
+        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end).records
     )["Close"]
     gld_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end).bars
+        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end).records
     )["Close"]
     spy = request_distribution_data(
         provider,

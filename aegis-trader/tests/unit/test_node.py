@@ -32,6 +32,7 @@ from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.identifiers import ComponentId, InstrumentId, TraderId
 
 from aegis_data.catalog import catalog_root
+from aegis_data.storage import Catalog
 
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.config import IBConnectionSettings
@@ -158,7 +159,9 @@ def test_importing_the_node_module_does_not_import_ibapi():
 # --------------------------------------------------------------------------- #
 
 
-def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves():
+def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves(
+    tmp_path,
+):
     book = BookConfig(
         sleeves=(
             SleeveConfig(
@@ -186,7 +189,11 @@ def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves(
         },
     )
 
-    strategy = build_live_strategy(assembled, arrays=SleeveArrays.bar_only())
+    strategy = build_live_strategy(
+        assembled,
+        arrays=SleeveArrays.bar_only(),
+        catalog=Catalog.open(tmp_path),
+    )
 
     assert strategy.config.fill_time_in_force == TimeInForce.AT_THE_CLOSE
     assert strategy.config.warmup_cache_on_start is True
@@ -252,8 +259,10 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
         _book: object,
         *,
         arrays: object,
+        catalog: object,
     ) -> object:
         attached_arrays.append(arrays)
+        attached_arrays.append(catalog)
         return object()
 
     def build_arrays(*args, **kwargs) -> object:
@@ -296,7 +305,7 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
         _book(),
         connection,
         registry=registry,
-        custom_data_providers=(object(),),
+        custom_data_providers={},
     )
 
     assert events == [
@@ -307,7 +316,8 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
         "build",
         "strategy",
     ]
-    assert attached_arrays == [arrays]
+    assert attached_arrays[0] is arrays
+    assert isinstance(attached_arrays[1], Catalog)
 
 
 # --------------------------------------------------------------------------- #

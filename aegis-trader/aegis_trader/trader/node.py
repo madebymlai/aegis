@@ -27,7 +27,7 @@ import logging
 import os
 import signal
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,8 +49,11 @@ from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.persistence.config import DataCatalogConfig
 from nautilus_trader.portfolio.config import PortfolioConfig
 
-from aegis_data.catalog import catalog_root
+from aegis_data.catalog import catalog_root, open_catalog
+from aegis_data.custom_data import CustomDataAdapterMap
+from aegis_data.custom_kinds import CustomDataRegistry
 from aegis_data.ibkr import attach_live_clients
+from aegis_data.storage import Catalog
 
 from aegis_trader.bundles.book import AssembledBook, assemble_book
 from aegis_trader.bundles.marking import recorded_marking_resolver
@@ -140,7 +143,8 @@ def build_live_node(
     connection: IBConnectionSettings,
     *,
     registry: BundleRegistryPort | None = None,
-    custom_data_providers: Sequence[object] = (),
+    custom_data_providers: CustomDataAdapterMap | None = None,
+    custom_data_registry: CustomDataRegistry | None = None,
 ) -> TradingNode:
     """Assemble a built, runnable live ``TradingNode`` for *book* over *connection*.
 
@@ -150,7 +154,12 @@ def build_live_node(
     is decided entirely by ``connection`` (its port).
     """
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    assembled_book = assemble_book(book, registry)
+    custom_data_providers = custom_data_providers or {}
+    assembled_book = assemble_book(
+        book,
+        registry,
+        custom_data_registry=custom_data_registry,
+    )
 
     # The bundle-recorded markings are the live marking truth (aegis-rd-tggo.3):
     # built once here, they decide both the strategy's subscriptions and whether
@@ -163,14 +172,17 @@ def build_live_node(
         )
     )
     attach_live_clients(node, connection, assembled_book.loadable_instrument_ids)
+    catalog = open_catalog(catalog_root())
     add_live_custom_data(
         node,
         custom_data_providers,
-        catalog_path=catalog_root(),
+        catalog=catalog,
+        registry=custom_data_registry,
     )
     arrays = build_live_sleeve_arrays(
         custom_data_providers,
-        catalog_path=catalog_root(),
+        catalog=catalog,
+        registry=custom_data_registry,
     )
     warm_live_custom_data(
         assembled_book,
@@ -182,6 +194,7 @@ def build_live_node(
         build_live_strategy(
             assembled_book,
             arrays=arrays,
+            catalog=catalog,
         )
     )
     return node
@@ -191,6 +204,7 @@ def build_live_strategy(
     book: AssembledBook,
     *,
     arrays: SleeveArrays,
+    catalog: Catalog,
 ) -> RebalanceStrategy:
     """The live ``RebalanceStrategy`` for *book*: next-close ``AT_THE_CLOSE`` and
     cache warmup on start, with the assembled book registered.
@@ -205,6 +219,7 @@ def build_live_strategy(
             warmup_cache_on_start=True,
         ),
         arrays=arrays,
+        catalog=catalog,
         bar_type_resolver=recorded_marking_resolver(book),
     )
     strategy.register_book(book)

@@ -172,7 +172,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DIR",
         type=Path,
-        help="read the Nautilus ParquetDataCatalog from DIR (default: aegis-data OS catalog)",
+        help="read the Catalog from DIR (default: aegis-data OS catalog)",
     )
 
     trader_p = subparsers.add_parser(

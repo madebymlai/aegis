@@ -1,16 +1,16 @@
 # Aegis Data
 
 Shared market-data context for Aegis RD and Aegis Trader. It owns the durable
-Nautilus-native corpus and the port-backed read/fill behavior used by both
-research and live.
+Catalog and the port-backed read/fill behavior used by both research and live.
 
 ## Language
 
-**Nautilus Catalog**:
-The durable `ParquetDataCatalog` rooted under the `aegis-data` OS data directory
-(`AEGIS_DATA_DIR` override, then `catalog/`). It stores Nautilus-native data under
-Nautilus' own layout, for example `data/bar/{instrument_id}/{start}_{end}.parquet`.
-_Avoid_: Historical Store, bespoke store, ticker cache, provider cache
+**Catalog**:
+The durable home of every record this context owns, rooted under the `aegis-data`
+OS data directory (`AEGIS_DATA_DIR` override, then `catalog/`). Records keep
+`ParquetDataCatalog`'s own layout — no bespoke format, nothing to translate on
+read — for example `data/bar/{instrument_id}/{start}_{end}.parquet`.
+_Avoid_: corpus, Nautilus Catalog, Historical Store, bespoke store, ticker cache, provider cache
 
 **InstrumentId**:
 The native Nautilus instrument identity. It is the identity used in the catalog,
@@ -49,13 +49,17 @@ live both drive this aegis-data object; live validates its synthetic continuous
 _Avoid_: trader-owned continuous feed, live identity resolver, duplicate front picker
 
 **Coverage Gap**:
-A requested catalog interval that `get_missing_intervals_for_request` says is
-not covered after any allowed lazy fill. A coverage gap is a fail-loud condition;
-RD must not silently accept a truncated series.
+A requested Catalog interval that the dedicated coverage dataset says was not
+checked after any allowed lazy fill. The same dataset and gap definition govern
+Raw Bars, Distributions, and Custom Data; payload-file extents never determine
+coverage. A Coverage Gap is a fail-loud condition; RD must not silently accept
+a truncated series.
 _Avoid_: partial success, best effort, sparse read
 
 **Warm Then Sweep**:
-The concurrency rule for research. A single writer populates the catalog first
+The concurrency rule for research. A single writer populates the Catalog first
 (live capture-forward, lazy fill, or backfill), then many reader processes run
-against the warm immutable parquet corpus.
+against it once warm and immutable. A live session capturing forward is the
+single writer for its whole lifetime, so research sweeps must not run against
+that Catalog until the live session stops writing.
 _Avoid_: shared catalog object across threads, concurrent writer swarm

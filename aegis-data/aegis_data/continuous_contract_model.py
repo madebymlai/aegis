@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import TypeVar
 
 import pandas as pd
@@ -11,15 +11,19 @@ from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import timeframe_to_ns
-from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, bars_to_ohlcv
+from aegis_data.catalog import CatalogBackedDataPort, bars_to_ohlcv
 from aegis_data.chain import fetch_contract_chain
 from aegis_data.continuous_future import ContinuousFuture, continuous_future
 from aegis_data.continuous_materialize import materialize_continuous_bars
 from aegis_data.liquidity import liquid_roll_schedule
+from aegis_data.marking import InstrumentMarking
+from aegis_data.raw_bars import RawBars
 from aegis_runtime.domain.rebasing import IDENTITY, Rebasing
 from aegis_data.roll import roll_lead_days_for_cadence
+from aegis_data.storage import CatalogInterval
 
 _T = TypeVar("_T")
+ROLL_VOLUME_LOOKBACK = timedelta(days=90)
 
 
 class ContinuousContractModelError(Exception):
@@ -51,6 +55,7 @@ class ContinuousContractModel:
         adjustment_mode: ContinuousFutureAdjustmentType,
     ) -> None:
         self._port = port
+        self._raw_bars: RawBars = port.raw_bars
         self._root = root
         self._start = start
         self._timeframe = timeframe
@@ -111,13 +116,14 @@ class ContinuousContractModel:
 
     def front_leg_as_of(self, as_of: str | date | pd.Timestamp) -> InstrumentId:
         """Return the front leg named by the liquidity-timed roll schedule at ``as_of``."""
-        start = pd.Timestamp(self._start).date()
         end = pd.Timestamp(as_of).date()
+        start = max(
+            pd.Timestamp(self._start).date(),
+            end - ROLL_VOLUME_LOOKBACK,
+        )
         candidates = self._port.resolve_continuous(self._root).legs
         volume_by_symbol = {
-            leg.symbol: self._port.probe_contract_volume(
-                leg.symbol, start, end, timeframe=self._timeframe
-            )
+            leg.symbol: self._covered_contract_volume(leg.symbol, start, end)
             for leg in candidates
         }
         schedule = liquid_roll_schedule(
@@ -177,13 +183,9 @@ class ContinuousContractModel:
             pd.Timestamp(self._start).date(),
             pd.Timestamp(end).date(),
             list_contracts=lambda *_args: legs,
-            fetch=lambda symbol, start, end: self._port.fetch_contract_ohlcv(
-                symbol, start, end, timeframe=self._timeframe
-            ),
+            fetch=self._ensure_contract_ohlcv,
             bar_cadence=self._bar_cadence,
-            probe_volume=lambda symbol, start, end: self._port.probe_contract_volume(
-                symbol, start, end, timeframe=self._timeframe
-            ),
+            probe_volume=self._ensure_contract_volume,
         )
         future = continuous_future(
             chain,
@@ -192,9 +194,17 @@ class ContinuousContractModel:
             adjustment_mode=self._adjustment_mode,
         )
         leg_ids = tuple(InstrumentId.from_str(symbol) for symbol in chain.symbols)
-        leg_bars = self._port.read_native_bars(
-            CatalogWindowRequest(leg_ids, self._start, end, self._timeframe)
+        interval = self._interval(
+            pd.Timestamp(self._start).date(),
+            pd.Timestamp(end).date(),
         )
+        leg_bars = {
+            instrument_id: self._raw_bars.stored(
+                self._raw_bars.marking(instrument_id, self._timeframe),
+                interval,
+            ).bars
+            for instrument_id in leg_ids
+        }
         leg_instruments = tuple(self._port.instruments(leg_ids).values())
         quote_currency = self._leg_quote_currency(leg_instruments)
         bars = materialize_continuous_bars(
@@ -205,6 +215,52 @@ class ContinuousContractModel:
             end=pd.Timestamp(end, tz="UTC"),
         )
         return future, bars_to_ohlcv(bars), quote_currency
+
+    def _ensure_contract_ohlcv(
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        marking, interval = self._contract_window(symbol, start, end)
+        self._raw_bars.ensure(marking, interval)
+        return self._raw_bars.covered(marking, interval).ohlcv
+
+    def _ensure_contract_volume(
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> pd.Series:
+        return self._ensure_contract_ohlcv(symbol, start, end)["Volume"]
+
+    def _covered_contract_volume(
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> pd.Series:
+        marking, interval = self._contract_window(symbol, start, end)
+        return self._raw_bars.covered(marking, interval).ohlcv["Volume"]
+
+    def _contract_window(
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> tuple[InstrumentMarking, CatalogInterval]:
+        instrument_id = InstrumentId.from_str(symbol)
+        return (
+            self._raw_bars.marking(instrument_id, self._timeframe),
+            self._interval(start, end),
+        )
+
+    @staticmethod
+    def _interval(start: date, end: date) -> CatalogInterval:
+        return CatalogInterval(
+            pd.Timestamp(start, tz="UTC").value,
+            pd.Timestamp(end, tz="UTC").value,
+        )
 
     def _leg_quote_currency(self, leg_instruments: tuple[object, ...]) -> str:
         currencies = sorted(
@@ -226,6 +282,7 @@ class ContinuousContractModel:
 
 
 __all__ = [
+    "ROLL_VOLUME_LOOKBACK",
     "ContinuousContractModel",
     "ContinuousContractModelError",
     "ContinuousContractModelNotMaterializedError",

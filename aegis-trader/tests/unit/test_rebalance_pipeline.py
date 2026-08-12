@@ -12,9 +12,9 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.custom_data import (
     CustomDataProviderPort,
-    FixtureRecord,
-    ServedCustomData,
+    ProviderAnswer,
 )
+from aegis_data.storage import Catalog
 from aegis_runtime.domain.rebasing import ratio_rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
@@ -45,6 +45,7 @@ from aegis_trader.trader.pipeline import (
 )
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import assemble_test_book
+from tests.support.custom_data import FixtureRecord
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
 _ES = InstrumentId.from_str("ES.XCME")  # synthetic continuous-root id (root "ES")
@@ -110,8 +111,8 @@ class _EmptyCustomProvider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
-        return ServedCustomData((), start)
+    ) -> ProviderAnswer[FixtureRecord]:
+        return ProviderAnswer((), start)
 
 
 class _ContinuousWeightBundle(ExecutionBundle):
@@ -583,8 +584,8 @@ def test_custom_arrays_use_the_union_index_for_nan_policy(tmp_path: Path) -> Non
         ),
         bundle=bundle,
         arrays=SleeveArrays.live(
-            catalog_path=tmp_path,
-            providers={FixtureRecord: (_EmptyCustomProvider(),)},
+            catalog=Catalog.open(tmp_path),
+            providers={FixtureRecord: _EmptyCustomProvider()},
         ),
     )
 

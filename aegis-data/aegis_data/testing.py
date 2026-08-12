@@ -3,7 +3,7 @@
 Importable test support (the ``pandas.testing`` pattern) so aegis-data and the
 packages that consume it drive the same fake corpus instead of copying it:
 
-- ``FakeCatalog`` — a ``ParquetDataCatalog`` stand-in: instrument definitions
+- ``FakeCatalog`` — a Catalog-backend stand-in: instrument definitions
   plus native bars by identifier, served beneath the real
   ``CatalogBackedDataPort`` (the port itself is never faked — one
   implementation, so the fixtures inherit production behavior).
@@ -30,6 +30,7 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data.storage import Catalog
 
 ES_START = "2024-01-15"
 ES_END = "2024-05-31"
@@ -126,14 +127,18 @@ def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
     return out
 
 
-class FakeCatalog:
-    """A ParquetDataCatalog stand-in: instrument definitions + native bars by identifier."""
+class _FakeCatalogBackend:
+    """A Catalog-backend stand-in: instrument definitions + native bars by identifier."""
 
     def __init__(
-        self, instruments: list[FuturesContract], bars: dict[str, list[Bar]]
+        self,
+        instruments: list[FuturesContract],
+        bars: dict[str, list[Bar]],
+        coverage_horizon: tuple[int, int] | None,
     ) -> None:
         self._instruments = instruments
         self._bars = bars
+        self._coverage_horizon = coverage_horizon
 
     def instruments(
         self,
@@ -168,13 +173,81 @@ class FakeCatalog:
         ]
 
     def get_missing_intervals_for_request(
-        self, *_args: object, **_kwargs: object
+        self,
+        start: int,
+        end: int,
+        data_cls: type,
+        identifier: str | None = None,
     ) -> list:
-        return []
+        if (
+            self._coverage_horizon is None
+            or data_cls.__name__ != "_CoverageMarker"
+            or identifier is None
+            or not identifier.startswith("Bar-")
+        ):
+            return []
+        covered_start, covered_end = self._coverage_horizon
+        missing: list[tuple[int, int]] = []
+        if start < covered_start:
+            missing.append((start, min(end, covered_start - 1)))
+        if end > covered_end:
+            missing.append((max(start, covered_end + 1), end))
+        return missing
 
     def get_intervals(self, *_args: object, **_kwargs: object) -> list:
         # No marker intervals stored: coverage reports read checked_at as None.
         return []
+
+    def write_data(
+        self,
+        data: list[object],
+        start: int | None = None,
+        end: int | None = None,
+        data_cls: type | None = None,
+        identifier: str | None = None,
+        **_kwargs: object,
+    ) -> None:
+        raise NotImplementedError("FakeCatalog is a read-only fixture")
+
+    def delete_data_range(
+        self,
+        data_cls: type,
+        identifier: str | None = None,
+        start: object = None,
+        end: object = None,
+    ) -> None:
+        raise NotImplementedError("FakeCatalog is a read-only fixture")
+
+    def reset_data_file_names(
+        self,
+        data_cls: type,
+        identifier: str | None = None,
+    ) -> None:
+        raise NotImplementedError("FakeCatalog is a read-only fixture")
+
+    def consolidate_data(
+        self,
+        data_cls: type,
+        identifier: str | None = None,
+        start: object = None,
+        end: object = None,
+        ensure_contiguous_files: bool = True,
+        deduplicate: bool = False,
+    ) -> None:
+        raise NotImplementedError("FakeCatalog is a read-only fixture")
+
+
+class FakeCatalog(Catalog):
+    """Typed in-memory Catalog used by deterministic port tests."""
+
+    def __init__(
+        self,
+        instruments: list[FuturesContract],
+        bars: dict[str, list[Bar]],
+        *,
+        coverage_horizon: tuple[int, int] | None = None,
+    ) -> None:
+        super().__init__(_FakeCatalogBackend(instruments, bars, coverage_horizon))
 
 
 def es_port(
@@ -216,6 +289,7 @@ def es_port(
                 multiplier=multipliers.get("ESM4.XCME", 1.0),
             ),
         ],
+        coverage_end=ES_END,
     )
 
 
@@ -261,12 +335,23 @@ def early_crossover_es_port() -> CatalogBackedDataPort:
 
 
 def _port(
-    frames: dict[InstrumentId, pd.DataFrame], instruments: list[FuturesContract]
+    frames: dict[InstrumentId, pd.DataFrame],
+    instruments: list[FuturesContract],
+    *,
+    coverage_end: str | None = None,
 ) -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
     native = {iid: bars(iid, ohlcv) for iid, ohlcv in frames.items()}
     catalog = FakeCatalog(
         instruments=instruments,
         bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
+        coverage_horizon=(
+            pd.Timestamp(min(frame.index.min() for frame in frames.values()), tz="UTC").value,
+            pd.Timestamp(
+                coverage_end
+                or max(frame.index.max() for frame in frames.values()),
+                tz="UTC",
+            ).value,
+        ),
     )
     return CatalogBackedDataPort(catalog), native
 

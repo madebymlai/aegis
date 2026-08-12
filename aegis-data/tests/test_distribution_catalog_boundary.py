@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.catalog import (
     CatalogBackedDataPort,
@@ -11,6 +10,7 @@ from aegis_data.catalog import (
     CatalogWindowRequest,
     raw_bar_type,
 )
+from aegis_data.storage import Catalog
 from tests.test_catalog import (
     _bar,
     _fx_mid_resolver,
@@ -24,7 +24,7 @@ from tests.test_catalog import (
 def test_missing_distribution_provider_fails_before_writing_other_markers(
     tmp_path: Path,
 ) -> None:
-    catalog = ParquetDataCatalog(tmp_path / "catalog")
+    catalog = Catalog.open(tmp_path / "catalog")
     fx_pair = _id("EUR/USD.IDEALPRO")
     equity = _id("SPY.ARCA")
     _seed_fx_pair(catalog, fx_pair)

@@ -28,7 +28,8 @@ from nautilus_trader.common.config import msgspec_encoding_hook
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.catalog import ServedBars
+from aegis_data.provider import ProviderAnswer
+from aegis_data.storage import Catalog
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
 if TYPE_CHECKING:
@@ -154,7 +155,7 @@ class IbkrHistoricalProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedBars:
+    ) -> ProviderAnswer[Bar]:
         """The vendor bars for *bar_type* over ``[start, end]`` in one native request.
 
         The whole window is asked for as a single IB ``duration`` ending at *end*.
@@ -162,7 +163,7 @@ class IbkrHistoricalProvider:
         does not re-implement that walk; and IB clamps the answer at the instrument's
         earliest available data, so no request ever steps past the listing into empty
         pre-history — the job the old backward walk did with a no-data wall (#75),
-        now done by IB itself in one request.  ``served_from`` reports how far back
+        now done by IB itself in one request. ``oldest_verified`` reports how far back
         the answer reached: the requested *start* when history covers it (so a
         follow-on write abuts the prior file), or the oldest bar returned when IB
         clamped at a later listing (so the pre-history head stays unclaimed for the
@@ -194,7 +195,7 @@ class IbkrHistoricalProvider:
         start: pd.Timestamp,
         end: pd.Timestamp,
         instrument_kwargs: Mapping[str, Any],
-    ) -> ServedBars:
+    ) -> ProviderAnswer[Bar]:
         # The session turns its own timeout into an empty response. Keep that fallback
         # strictly later so Aegis can preserve the provider failure as an exception.
         request_deadline = min(float(self.timeout), self.call_deadline)
@@ -215,10 +216,10 @@ class IbkrHistoricalProvider:
         bars = [bar for bar in (pulled or []) if bar.ts_event >= start.value]
         # Coverage is served from `start` when history reaches it (contiguous with any
         # prior file), else from the oldest bar IB clamped at (#75, the unclaimed head).
-        served_from = (
+        oldest_verified = (
             start if _history_reached(bars, start) else _first_bar_instant(bars, end)
         )
-        return ServedBars(tuple(bars), served_from)
+        return ProviderAnswer.verified(bars, oldest_verified=oldest_verified)
 
     def request_instruments(
         self, instrument_ids: Sequence[InstrumentId]
@@ -726,7 +727,7 @@ def _naive_utc(timestamp: pd.Timestamp) -> datetime:
 
 
 def seed_instrument_definitions(
-    catalog: Any,
+    catalog: Catalog,
     provider: IbkrHistoricalProvider,
     instrument_ids: Sequence[InstrumentId],
 ) -> None:
@@ -744,20 +745,15 @@ def seed_instrument_definitions(
         return
     instruments = provider.request_instruments(missing)
     if instruments:
-        catalog.write_data(
+        catalog.store_definitions(
             [_catalog_safe_instrument(instrument) for instrument in instruments]
         )
 
 
 def _missing_definitions(
-    catalog: Any, instrument_ids: Sequence[InstrumentId]
+    catalog: Catalog, instrument_ids: Sequence[InstrumentId]
 ) -> list[InstrumentId]:
-    present = {
-        instrument.id
-        for instrument in catalog.instruments(
-            instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
-        )
-    }
+    present = {instrument.id for instrument in catalog.definitions(instrument_ids)}
     return [
         instrument_id
         for instrument_id in instrument_ids

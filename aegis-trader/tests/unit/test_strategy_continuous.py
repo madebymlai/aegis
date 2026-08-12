@@ -64,6 +64,7 @@ class _RelayHarness:
 
     def __init__(self) -> None:
         self._bar_type_resolver = DeclaredMarkingResolver()
+        self._bar_capture = None
         self.applied: list[tuple[str, object]] = []
         self._pipeline = _FakePipeline(self.applied)
         self._startup_result: StartupResult | None = None
@@ -250,6 +251,11 @@ class _AlertClock:
         self.alerts.append((name, timestamp_ns, callback))
 
 
+class _AllBookStreams(dict[BarType, str]):
+    def __contains__(self, _key: object) -> bool:
+        return True
+
+
 class _ReNetPipeline:
     def __init__(self) -> None:
         self.requests: list[RebalanceRequest] = []
@@ -290,6 +296,7 @@ class _BoundaryHarness:
         due: tuple[DueSleeve, ...] = (),
     ) -> None:
         self._assembled_book = object()
+        self._bar_capture = None
         self._is_halted = False
         self._is_recovering = False
         self._recovery_ready = ready
@@ -299,6 +306,7 @@ class _BoundaryHarness:
         self._book_activity = ready.book_activity
         self._desk = _BoundaryDesk()
         self._book_market_clock = _FakeBookMarketClock(due)
+        self._timeframe_by_bar_type: dict[BarType, str] = _AllBookStreams()
         self._pending_due_timestamp: int | None = None
         self._pipeline = _ReNetPipeline()
         self._last_sleeve_weights: dict[SleeveName, float] = {}
@@ -377,6 +385,20 @@ def test_strategy_processes_the_first_live_bar_exactly_once_after_recovery() -> 
     assert harness._book_market_clock.advances == [(bar_type, live.ts_event, None)]
     assert harness.clock.alerts == []
     assert harness.halts == []
+
+
+def test_strategy_keeps_a_non_front_roll_probe_out_of_book_observations() -> None:
+    candidate_type = raw_bar_type(InstrumentId.from_str("ESU4.XCME"), "1D")
+    candidate = _bar(candidate_type, 2_000, 202.0)
+    harness = _BoundaryHarness(Ready((), None, (), StartupResult(True)))
+    harness._timeframe_by_bar_type = {}
+
+    harness.on_bar(candidate)
+
+    assert harness._desk.bars == [candidate]
+    assert harness.observed == []
+    assert harness._book_market_clock.advances == []
+    assert harness._stream_watermarks[candidate_type] == candidate.ts_event
 
 
 def test_strategy_halts_a_conflicting_recovery_boundary_bar() -> None:

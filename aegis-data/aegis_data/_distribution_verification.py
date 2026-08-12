@@ -2,21 +2,21 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 import pandas as pd
-from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.instruments import CurrencyPair, FuturesContract
+from nautilus_trader.model.instruments import CurrencyPair, Equity, FuturesContract
 
 from aegis_data._coverage_markers import CoverageMarkerLedger
-from aegis_data._ensure_coverage import CoverageInterval, ServedRecords, ensure_coverage
-from aegis_data.bar_type import raw_bar_type
-from aegis_data.catalog import (
-    CatalogCoverageGapError,
-    DistributionDataProviderPort,
+from aegis_data._ensure_coverage import CoverageInterval, ensure_coverage
+from aegis_data.definitions import (
     catalog_definitions,
     continuous_instrument_legs,
+)
+from aegis_data.raw_bars import (
+    CatalogCoverageGapError,
+    RawBars,
     gap_fill_boundary,
 )
 from aegis_data.distributions import (
@@ -25,9 +25,24 @@ from aegis_data.distributions import (
     replace_distribution_data,
     request_distribution_data,
 )
-from aegis_data.ohlcv import bars_to_ohlcv
+from aegis_data.marking import MarkMode, marking_for_mode
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
+from aegis_data.provider import ProviderAnswer
 
 _NANOS_PER_DAY = 86_400_000_000_000
+
+
+class DistributionDataProviderPort(Protocol):
+    """Fetch the adjusted-last series needed to verify distributions."""
+
+    def request_adjusted_last(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        currency: str = "USD",
+    ) -> pd.Series: ...
 
 
 @dataclass(frozen=True)
@@ -52,43 +67,54 @@ class _Assessment:
 
 
 def ensure_distribution_window(
-    catalog: Any,
+    catalog: Catalog,
     instrument_ids: Sequence[InstrumentId],
     *,
     start: str | int | pd.Timestamp,
     end: str | int | pd.Timestamp,
     provider: DistributionDataProviderPort | None,
     clock_ns: Callable[[], int],
-    mark_bars: Callable[[InstrumentId, str], tuple[BarType, ...]],
-    ensure_bar_coverage: Callable[[BarType, int, int], None],
+    raw_bars: RawBars,
 ) -> None:
     """Ensure Distribution coverage for one catalog window."""
     assessments = _assessments(
         catalog,
         instrument_ids,
         CoverageInterval(_timestamp_ns(start), _timestamp_ns(end)),
-        mark_bars=mark_bars,
+        raw_bars=raw_bars,
     )
     markers = CoverageMarkerLedger(catalog)
     missing_by_assessment = tuple(
         (
             assessment,
             markers.missing(
-                Distribution,
-                assessment.instrument_id,
+                CatalogKey.for_instrument(
+                    Distribution, assessment.instrument_id
+                ),
                 assessment.interval,
             ),
         )
         for assessment in assessments
     )
     failures = [
-        _provider_missing_message(assessment.instrument_id, missing)
+        (assessment, missing)
         for assessment, missing in missing_by_assessment
         if missing and assessment.applicability.applicable and provider is None
     ]
     if failures:
-        raise CatalogCoverageGapError(
-            "distribution coverage is missing for " + "; ".join(sorted(failures))
+        assessment, _ = failures[0]
+        raise _coverage_gap(
+            assessment.instrument_id,
+            tuple(interval for _, missing in failures for interval in missing),
+            message=(
+                "distribution coverage is missing for "
+                + "; ".join(
+                    sorted(
+                        _provider_missing_message(item.instrument_id, missing)
+                        for item, missing in failures
+                    )
+                )
+            ),
         )
     for assessment, _missing in missing_by_assessment:
         _ensure_assessment(
@@ -96,17 +122,17 @@ def ensure_distribution_window(
             assessment,
             provider=provider,
             clock_ns=clock_ns,
-            ensure_bar_coverage=ensure_bar_coverage,
+            raw_bars=raw_bars,
         )
 
 
 def read_distribution_window(
-    catalog: Any,
+    catalog: Catalog,
     instrument_ids: Sequence[InstrumentId],
     *,
     start: str | int | pd.Timestamp,
     end: str | int | pd.Timestamp,
-    mark_bars: Callable[[InstrumentId, str], tuple[BarType, ...]],
+    raw_bars: RawBars,
 ) -> VerifiedDistributions:
     """Read Distribution records and coverage after the ensure command."""
     return _read_assessments(
@@ -115,18 +141,18 @@ def read_distribution_window(
             catalog,
             instrument_ids,
             CoverageInterval(_timestamp_ns(start), _timestamp_ns(end)),
-            mark_bars=mark_bars,
+            raw_bars=raw_bars,
         ),
     )
 
 
 def distribution_coverage_report(
-    catalog: Any,
+    catalog: Catalog,
     instrument_ids: Sequence[InstrumentId],
     *,
     start: str | int | pd.Timestamp | None,
     end: str | int | pd.Timestamp | None,
-    mark_bars: Callable[[InstrumentId, str], tuple[BarType, ...]],
+    raw_bars: RawBars,
 ) -> tuple[dict[str, Any], ...]:
     """Report Distribution coverage without fetching or mutating."""
     if start is None or end is None:
@@ -135,61 +161,22 @@ def distribution_coverage_report(
         catalog,
         instrument_ids,
         CoverageInterval(_timestamp_ns(start), _timestamp_ns(end)),
-        mark_bars=mark_bars,
+        raw_bars=raw_bars,
     )
     return tuple(_coverage_row(catalog, assessment) for assessment in assessments)
 
 
-def force_reverify_distribution_window(
-    catalog: Any,
-    instrument_ids: Sequence[InstrumentId],
-    *,
-    start: str | int | pd.Timestamp,
-    end: str | int | pd.Timestamp,
-    provider: DistributionDataProviderPort | None,
-    clock_ns: Callable[[], int],
-    mark_bars: Callable[[InstrumentId, str], tuple[BarType, ...]],
-    ensure_bar_coverage: Callable[[BarType, int, int], None],
-) -> None:
-    """Replace and freshly verify one bounded Distribution window."""
-    if provider is None:
-        raise CatalogCoverageGapError(
-            "distribution force-reverify requires an adjusted-last provider"
-        )
-    requested = CoverageInterval(_timestamp_ns(start), _timestamp_ns(end))
-    markers = CoverageMarkerLedger(catalog)
-    for instrument_id in _dedupe(instrument_ids):
-        markers.delete(Distribution, instrument_id, requested)
-        assessment = _assessment(
-            catalog,
-            instrument_id,
-            requested,
-            mark_bars=mark_bars,
-            clamp=False,
-        )
-        _ensure_assessment(
-            catalog,
-            assessment,
-            provider=provider,
-            clock_ns=clock_ns,
-            ensure_bar_coverage=ensure_bar_coverage,
-        )
-
-
 def _ensure_assessment(
-    catalog: Any,
+    catalog: Catalog,
     assessment: _Assessment,
     *,
     provider: DistributionDataProviderPort | None,
     clock_ns: Callable[[], int],
-    ensure_bar_coverage: Callable[[BarType, int, int], None],
+    raw_bars: RawBars,
 ) -> None:
     markers = CoverageMarkerLedger(catalog)
-    if not markers.missing(
-        Distribution,
-        assessment.instrument_id,
-        assessment.interval,
-    ):
+    subject = CatalogKey.for_instrument(Distribution, assessment.instrument_id)
+    if not markers.missing(subject, assessment.interval):
         return
     checked_at_ns = clock_ns()
 
@@ -206,70 +193,64 @@ def _ensure_assessment(
                 end=interval.end_ns,
             )
         markers.mark(
-            Distribution,
-            assessment.instrument_id,
+            subject,
             interval,
             checked_at_ns=checked_at_ns,
             applicable=assessment.applicability.applicable,
         )
 
-    fetchers: tuple[
-        Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[Distribution]], ...
-    ] = (_empty_fetcher,)
+    coverage_provider: Callable[
+        [pd.Timestamp, pd.Timestamp], ProviderAnswer[Distribution]
+    ] = _empty_fetcher
     if assessment.applicability.applicable:
         if provider is None:
-            raise CatalogCoverageGapError(
-                "distribution coverage is missing for "
-                + _provider_missing_message(
-                    assessment.instrument_id,
-                    markers.missing(
-                        Distribution,
-                        assessment.instrument_id,
-                        assessment.interval,
-                    ),
-                )
-            )
-        fetchers = (
-            _distribution_fetcher(
-                catalog,
-                provider,
+            missing = markers.missing(subject, assessment.interval)
+            raise _coverage_gap(
                 assessment.instrument_id,
-                assessment.applicability.definition,
-                ensure_bar_coverage=ensure_bar_coverage,
-            ),
+                missing,
+                message=(
+                    "distribution coverage is missing for "
+                    + _provider_missing_message(
+                        assessment.instrument_id,
+                        missing,
+                    )
+                ),
+            )
+        coverage_provider = _distribution_fetcher(
+            catalog,
+            provider,
+            assessment.instrument_id,
+            assessment.applicability.definition,
+            raw_bars=raw_bars,
         )
 
     ensure_coverage(
         subject=f"distributions for {assessment.instrument_id.value}",
-        fetchers=fetchers,
-        missing_intervals=lambda: markers.missing(
-            Distribution,
-            assessment.instrument_id,
-            assessment.interval,
-        ),
+        provider=coverage_provider,
+        missing_intervals=lambda: markers.missing(subject, assessment.interval),
         commit=commit,
-        finalize=lambda: markers.consolidate(
-            Distribution,
+        finalize=lambda: markers.consolidate(subject, assessment.interval),
+        coverage_error=lambda missing: _coverage_gap(
             assessment.instrument_id,
-            assessment.interval,
-        ),
-        coverage_error=lambda missing: CatalogCoverageGapError(
-            "distribution coverage is missing for "
-            + _provider_missing_message(assessment.instrument_id, missing)
+            missing,
+            message=(
+                "distribution coverage is missing for "
+                + _provider_missing_message(assessment.instrument_id, missing)
+            ),
         ),
         provider_boundary=gap_fill_boundary,
     )
 
 
 def _distribution_fetcher(
-    catalog: Any,
+    catalog: Catalog,
     provider: DistributionDataProviderPort,
     instrument_id: InstrumentId,
     definition: Any,
     *,
-    ensure_bar_coverage: Callable[[BarType, int, int], None],
-) -> Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[Distribution]]:
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ServedRecords[Distribution]:
+    raw_bars: RawBars,
+) -> Callable[[pd.Timestamp, pd.Timestamp], ProviderAnswer[Distribution]]:
+    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ProviderAnswer[Distribution]:
         interval = CoverageInterval(start.value, end.value)
         records = _verify_interval(
             catalog,
@@ -277,9 +258,9 @@ def _distribution_fetcher(
             instrument_id,
             definition,
             interval,
-            ensure_bar_coverage=ensure_bar_coverage,
+            raw_bars=raw_bars,
         )
-        return ServedRecords(records, start)
+        return ProviderAnswer.verified(records, oldest_verified=start)
 
     return fetch
 
@@ -287,37 +268,44 @@ def _distribution_fetcher(
 def _empty_fetcher(
     start: pd.Timestamp,
     _end: pd.Timestamp,
-) -> ServedRecords[Distribution]:
-    return ServedRecords((), start)
+) -> ProviderAnswer[Distribution]:
+    return ProviderAnswer.verified((), oldest_verified=start)
 
 
 def _verify_interval(
-    catalog: Any,
+    catalog: Catalog,
     provider: DistributionDataProviderPort,
     instrument_id: InstrumentId,
     definition: Any,
     interval: CoverageInterval,
     *,
-    ensure_bar_coverage: Callable[[BarType, int, int], None],
+    raw_bars: RawBars,
 ) -> tuple[Distribution, ...]:
     decode_start_ns = pd.Timestamp(interval.start_ns, tz="UTC").normalize().value
-    trade_type = raw_bar_type(instrument_id, "1D")
+    trade_marking = marking_for_mode(instrument_id, "1D", MarkMode.LAST)
+    bar_interval = CatalogInterval(decode_start_ns, interval.end_ns)
     try:
-        ensure_bar_coverage(trade_type, decode_start_ns, interval.end_ns)
+        raw_bars.ensure(trade_marking, bar_interval)
     except CatalogCoverageGapError as exc:
-        raise CatalogCoverageGapError(
-            f"distribution verification needs {instrument_id.value}'s raw "
-            f"daily closes; seed {trade_type} or gap-fill it with a "
-            f"provider-backed load ({exc})"
+        raise _coverage_gap(
+            instrument_id,
+            (interval,),
+            message=(
+                f"distribution verification needs {instrument_id.value}'s raw "
+                f"daily closes; seed {trade_marking.mark_bars[0]} or gap-fill it "
+                f"with a provider-backed load ({exc})"
+            ),
         ) from exc
-    trades = bars_to_ohlcv(
-        _bars_for(catalog, trade_type, decode_start_ns, interval.end_ns)
-    )["Close"]
+    trades = raw_bars.covered(trade_marking, bar_interval).ohlcv["Close"]
     if len(trades) < 2:
-        raise CatalogCoverageGapError(
-            "distribution coverage cannot verify "
-            f"{instrument_id.value}: fewer than two TRADES closes in "
-            f"{_range_text(interval.start_ns, interval.end_ns)}"
+        raise _coverage_gap(
+            instrument_id,
+            (interval,),
+            message=(
+                "distribution coverage cannot verify "
+                f"{instrument_id.value}: fewer than two TRADES closes in "
+                f"{_range_text(interval.start_ns, interval.end_ns)}"
+            ),
         )
     return request_distribution_data(
         provider,
@@ -325,42 +313,42 @@ def _verify_interval(
         trades=trades,
         start=pd.Timestamp(decode_start_ns, tz="UTC"),
         end=pd.Timestamp(interval.end_ns, tz="UTC"),
-        currency=_definition_currency(definition, instrument_id),
+        currency=_definition_currency(definition, instrument_id, interval),
     )
 
 
 def _assessments(
-    catalog: Any,
+    catalog: Catalog,
     instrument_ids: Sequence[InstrumentId],
     interval: CoverageInterval,
     *,
-    mark_bars: Callable[[InstrumentId, str], tuple[BarType, ...]],
+    raw_bars: RawBars,
 ) -> tuple[_Assessment, ...]:
     return tuple(
         _assessment(
             catalog,
             instrument_id,
             interval,
-            mark_bars=mark_bars,
+            raw_bars=raw_bars,
         )
         for instrument_id in _dedupe(instrument_ids)
     )
 
 
 def _assessment(
-    catalog: Any,
+    catalog: Catalog,
     instrument_id: InstrumentId,
     interval: CoverageInterval,
     *,
-    mark_bars: Callable[[InstrumentId, str], tuple[BarType, ...]],
+    raw_bars: RawBars,
     clamp: bool = True,
 ) -> _Assessment:
-    applicability = _applicability(catalog, instrument_id)
+    applicability = _applicability(catalog, instrument_id, interval)
     coverage_end = interval.end_ns
     if clamp and applicability.applicable:
         coverage_end = _coverage_end(
             catalog,
-            mark_bars,
+            raw_bars,
             instrument_id,
             interval,
         )
@@ -371,38 +359,55 @@ def _assessment(
     )
 
 
-def _applicability(catalog: Any, instrument_id: InstrumentId) -> _Applicability:
+def _applicability(
+    catalog: Catalog,
+    instrument_id: InstrumentId,
+    interval: CoverageInterval,
+) -> _Applicability:
     definition = catalog_definitions(catalog, [instrument_id]).get(instrument_id)
     if definition is not None:
         if isinstance(definition, (FuturesContract, CurrencyPair)):
             return _Applicability(False)
-        return _Applicability(True, definition)
+        if isinstance(definition, Equity):
+            return _Applicability(True, definition)
+        raise _coverage_gap(
+            instrument_id,
+            (interval,),
+            message=(
+                "distribution coverage does not classify instrument type "
+                f"{type(definition).__name__} for {instrument_id.value}"
+            ),
+        )
     if continuous_instrument_legs(catalog, instrument_id):
         return _Applicability(False)
-    raise CatalogCoverageGapError(
-        "distribution coverage cannot resolve catalog definitions for "
-        f"{instrument_id.value}"
+    raise _coverage_gap(
+        instrument_id,
+        (interval,),
+        message=(
+            "distribution coverage cannot resolve catalog definitions for "
+            f"{instrument_id.value}"
+        ),
     )
 
 
 def _coverage_end(
-    catalog: Any,
-    mark_bars: Callable[[InstrumentId, str], tuple[BarType, ...]],
+    catalog: Catalog,
+    raw_bars: RawBars,
     instrument_id: InstrumentId,
     interval: CoverageInterval,
 ) -> int:
-    bars = [
-        bar
-        for bar_type in mark_bars(instrument_id, "1D")
-        for bar in _bars_for(catalog, bar_type, interval.start_ns, interval.end_ns)
-    ]
+    marking = raw_bars.marking(instrument_id, "1D")
+    bars = raw_bars.stored(
+        marking,
+        CatalogInterval(interval.start_ns, interval.end_ns),
+    ).bars
     if not bars:
         return interval.end_ns
     return min(interval.end_ns, max(bar.ts_event for bar in bars) + _NANOS_PER_DAY)
 
 
 def _read_assessments(
-    catalog: Any,
+    catalog: Catalog,
     assessments: Sequence[_Assessment],
 ) -> VerifiedDistributions:
     records: list[Distribution] = []
@@ -427,14 +432,13 @@ def _read_assessments(
 
 
 def _coverage_row(
-    catalog: Any,
+    catalog: Catalog,
     assessment: _Assessment,
     *,
     event_count: int | None = None,
 ) -> dict[str, Any]:
     checked = CoverageMarkerLedger(catalog).checked_at_values(
-        Distribution,
-        assessment.instrument_id,
+        CatalogKey.for_instrument(Distribution, assessment.instrument_id),
         assessment.interval,
     )
     if event_count is None and assessment.applicability.applicable:
@@ -458,24 +462,21 @@ def _coverage_row(
     }
 
 
-def _bars_for(catalog: Any, bar_type: BarType, start_ns: int, end_ns: int) -> list[Bar]:
-    return list(
-        catalog.query(
-            Bar,
-            identifiers=[str(bar_type)],
-            start=start_ns,
-            end=end_ns,
-        )
-    )
-
-
-def _definition_currency(definition: Any, instrument_id: InstrumentId) -> str:
+def _definition_currency(
+    definition: Any,
+    instrument_id: InstrumentId,
+    interval: CoverageInterval,
+) -> str:
     currency = getattr(definition, "currency", None)
     if currency is None:
         currency = getattr(definition, "quote_currency", None)
     if currency is None:
-        raise CatalogCoverageGapError(
-            f"distribution coverage needs a currency on {instrument_id.value}"
+        raise _coverage_gap(
+            instrument_id,
+            (interval,),
+            message=(
+                f"distribution coverage needs a currency on {instrument_id.value}"
+            ),
         )
     return str(currency).upper()
 
@@ -486,6 +487,19 @@ def _provider_missing_message(
 ) -> str:
     ranges = [_range_text(interval.start_ns, interval.end_ns) for interval in missing]
     return f"{instrument_id.value} missing={ranges}"
+
+
+def _coverage_gap(
+    instrument_id: InstrumentId,
+    missing: Sequence[CoverageInterval],
+    *,
+    message: str,
+) -> CatalogCoverageGapError:
+    return CatalogCoverageGapError(
+        CatalogKey.for_instrument(Distribution, instrument_id),
+        missing,
+        message=message,
+    )
 
 
 def _range_text(start_ns: int, end_ns: int) -> str:
@@ -516,8 +530,8 @@ def _dedupe(instrument_ids: Sequence[InstrumentId]) -> tuple[InstrumentId, ...]:
 
 __all__ = [
     "VerifiedDistributions",
+    "DistributionDataProviderPort",
     "distribution_coverage_report",
     "ensure_distribution_window",
-    "force_reverify_distribution_window",
     "read_distribution_window",
 ]

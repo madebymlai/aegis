@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -20,8 +21,13 @@ from aegis_trader.domain.roll import (
 )
 from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.domain.startup import StartupGate
+from aegis_trader.trader.bar_capture import BarCapture
 from aegis_trader.trader.roll_desk import RollDesk
 
+from aegis_data.bar_type import raw_bar_type
+from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data.raw_bars import RawBars
+from aegis_data.storage import Catalog, CatalogInterval
 from aegis_data.testing import es_port, es_port_two_rolls
 
 _HISTORY_START = datetime(2024, 1, 15, tzinfo=timezone.utc)
@@ -71,7 +77,7 @@ def _bar_on(
     )
 
 
-def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
+def test_start_warms_and_subscribes_every_leg_the_roll_probe_reads() -> None:
     port, _native = es_port()
     desk = _desk(port)
 
@@ -85,6 +91,8 @@ def test_start_returns_front_leg_warmup_and_subscribe_intents() -> None:
     assert intents == (
         RequestBars(_ESH4, "1D", _HISTORY_START, _dt("2024-02-15")),
         SubscribeBars(_ESH4, "1D"),
+        RequestBars(_ESM4, "1D", _HISTORY_START, _dt("2024-02-15")),
+        SubscribeBars(_ESM4, "1D"),
     )
     assert desk.front_leg(_ES) == _ESH4
     assert desk.series(_ES) is not None
@@ -197,7 +205,47 @@ def test_on_bar_without_a_roll_appends_offset_zero_and_emits_no_intents() -> Non
     assert len(series_after) == len(series_before) + 1
 
 
-def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> None:
+def test_captured_candidate_silence_keeps_the_next_session_roll_probe_covered(
+    tmp_path: Path,
+) -> None:
+    source, native = es_port_two_rolls()
+    catalog = Catalog.open(tmp_path / "catalog")
+    leg_ids = (_ESH4, _ESM4, _ESU4)
+    catalog.store_definitions(source.catalog.definitions(leg_ids))
+    raw_bars = RawBars(catalog)
+    startup_ns = pd.Timestamp("2024-05-10", tz="UTC").value
+    history_ns = pd.Timestamp(_HISTORY_START).value
+    for instrument_id in leg_ids:
+        bar_type = raw_bar_type(instrument_id, "1D")
+        raw_bars.record_verified(
+            bar_type,
+            CatalogInterval(history_ns, startup_ns),
+            tuple(bar for bar in native[instrument_id] if bar.ts_event <= startup_ns),
+        )
+
+    desk = _desk(CatalogBackedDataPort(catalog))
+    subscriptions = desk.start(
+        history_starts={"ES": _HISTORY_START},
+        end=_dt("2024-05-10"),
+        warmup=False,
+        declarations=_declarations(),
+    )
+    capture = BarCapture(raw_bars)
+    for intent in subscriptions:
+        assert isinstance(intent, SubscribeBars)
+        capture.subscribe(
+            raw_bar_type(intent.instrument_id, intent.timeframe),
+            at_ns=startup_ns,
+        )
+    next_front_bar = _bar_on(native, _ESM4, date(2024, 5, 13))
+
+    capture.observe(next_front_bar)
+    capture.verify_through(next_front_bar.ts_event)
+
+    assert desk.on_bar(next_front_bar) == ()
+
+
+def test_on_bar_with_a_roll_drops_expired_probe_leg_and_emits_roll_event() -> None:
     port, native = es_port_two_rolls()
     desk = _desk(port)
     desk.start(
@@ -210,16 +258,13 @@ def test_on_bar_with_a_roll_returns_unsubscribe_ensure_new_and_roll_event() -> N
 
     intents = desk.on_bar(bar)
 
-    assert intents[:2] == (
-        UnsubscribeBars(_ESM4, "1D"),
-        RequestInstrument(_ESU4),
-    )
-    assert isinstance(intents[2], RollEvent)
-    assert intents[2].continuous_id == _ES
+    assert intents[0] == UnsubscribeBars(_ESH4, "1D")
+    assert isinstance(intents[1], RollEvent)
+    assert intents[1].continuous_id == _ES
     assert desk.front_leg(_ES) == _ESU4
 
 
-def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument() -> (
+def test_on_bar_with_already_subscribed_roll_front_emits_no_duplicate_subscription() -> (
     None
 ):
     port, native = es_port_two_rolls()
@@ -234,26 +279,25 @@ def test_on_bar_with_cached_roll_front_subscribes_without_requesting_instrument(
 
     intents = desk.on_bar(bar)
 
-    assert intents[1] == SubscribeBars(_ESU4, "1D")
+    assert intents[0] == UnsubscribeBars(_ESH4, "1D")
+    assert isinstance(intents[1], RollEvent)
 
 
 def test_on_instrument_completes_a_deferred_front_leg_subscription() -> None:
-    port, native = es_port_two_rolls()
+    port, _native = es_port_two_rolls()
     desk = _desk(port)
-    desk.start(
-        history_starts={"ES": _HISTORY_START},
-        end=_dt("2024-06-06"),
-        warmup=False,
+    desk.start_recovery(
         declarations=_declarations(),
+        history_starts={"ES": _HISTORY_START},
     )
-    desk.on_bar(_bar_on(native, _ESM4, date(2024, 6, 14)))
+    desk.live_intents()
 
-    intents = desk.on_instrument(_ESU4)
+    intents = desk.on_instrument(_ESM4)
 
-    assert intents == (SubscribeBars(_ESU4, "1D"),)
+    assert intents == (SubscribeBars(_ESM4, "1D"),)
 
 
-def test_recovery_replays_both_volume_rolls_and_releases_only_the_current_front() -> (
+def test_recovery_replays_rolls_and_releases_every_current_probe_leg() -> (
     None
 ):
     port, native = es_port_two_rolls()
@@ -289,4 +333,7 @@ def test_recovery_replays_both_volume_rolls_and_releases_only_the_current_front(
     assert len(events) == 2
     assert [event.continuous_id for event in events] == [_ES, _ES]
     assert desk.front_leg(_ES) == _ESU4
-    assert desk.live_intents() == (SubscribeBars(_ESU4, "1D"),)
+    assert desk.live_intents() == (
+        RequestInstrument(_ESM4),
+        SubscribeBars(_ESU4, "1D"),
+    )

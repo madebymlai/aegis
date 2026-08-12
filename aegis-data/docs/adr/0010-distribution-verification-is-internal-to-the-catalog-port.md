@@ -40,8 +40,11 @@ package.
   window calls `distributions(...)` — per ADR-0008 the read *is* the
   verification — and may assert its result (the RD zero-distribution fixture
   asserts the read returns no events, so a synthetic corpus that grows
-  distributions fails loud at arrangement time). `force_reverify_distribution_coverage`
-  remains the explicit operator command. No ensure-only command is added.
+  distributions fails loud at arrangement time). No ensure-only or
+  force-reverify command is kept: re-verification is expressed by clearing
+  coverage and performing the verified read again. The former
+  `force_reverify_distribution_coverage` command had no production callers and
+  duplicated the verified-read seam.
 
 - **The coverage module is internal.** `_distribution_coverage.py` keeps the
   file decomposition but stops being public API; `DistributionCoverageService`
@@ -77,6 +80,8 @@ package.
 
 - The coverage implementation (marker ledger, applicability polarity, frontier
   clamping) can change without touching anything outside `aegis_data`.
+- The unused force-reverify operator command is removed; clearing coverage and
+  calling the verified read is the one re-verification workflow.
 - Deterministic `checked_at` is available to any caller through the port, so
   there is no remaining reason to construct the service directly.
 - The marker's parquet layout and serialization key off the class name, not the
