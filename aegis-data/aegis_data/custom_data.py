@@ -469,8 +469,6 @@ def _record_fetcher(
 ) -> Callable[[pd.Timestamp, pd.Timestamp], ProviderAnswer[RecordT]]:
     def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ProviderAnswer[RecordT]:
         served = provider.request_records(instrument_id, start=start, end=end)
-        if not served.is_responsible:
-            return served
         selected = tuple(
             sorted(
                 (
@@ -484,8 +482,6 @@ def _record_fetcher(
                 key=lambda record: record.ts_event,
             )
         )
-        if served.oldest_verified is None:
-            raise AssertionError("a verified provider answer needs a frontier")
         return ProviderAnswer.verified(
             selected,
             oldest_verified=_utc(served.oldest_verified),

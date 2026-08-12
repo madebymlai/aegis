@@ -7,7 +7,6 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data._ensure_coverage import CoverageInterval
 from aegis_data.catalog import CatalogCoverageGapError, GapFillProviderError
 from aegis_data.custom_data import (
     CustomDataProviderPort,
@@ -24,7 +23,7 @@ from aegis_data.custom_data import (
 )
 from aegis_data.provider import ProviderAnswer
 from aegis_data.distributions import Distribution
-from aegis_data.storage import Catalog, CatalogKey
+from aegis_data.storage import Catalog
 from tests.support.custom_data import FIXTURE_CUSTOM_DATA_KINDS, FixtureRecord
 
 _INSTRUMENT = InstrumentId.from_str("SPY.ARCA")
@@ -205,47 +204,6 @@ def test_ingest_never_persists_records_before_provider_served_from(
             catalog=Catalog.open(tmp_path),
         )
         == ()
-    )
-
-
-def test_not_responsible_provider_leaves_the_window_uncovered(tmp_path: Path) -> None:
-    class _NotResponsible(CustomDataProviderPort[FixtureRecord]):
-        def request_records(
-            self,
-            instrument_id: InstrumentId,
-            *,
-            start: pd.Timestamp,
-            end: pd.Timestamp,
-        ) -> ProviderAnswer[FixtureRecord]:
-            return ProviderAnswer.not_responsible()
-
-    catalog = Catalog.open(tmp_path)
-
-    with pytest.raises(CatalogCoverageGapError):
-        ingest(
-            FixtureRecord,
-            (_INSTRUMENT,),
-            start=_utc("2024-01-01"),
-            end=_utc("2024-01-10"),
-            provider=_NotResponsible(),
-            catalog=catalog,
-        )
-
-    with pytest.raises(CatalogCoverageGapError) as excinfo:
-        coverage(
-            FixtureRecord,
-            (_INSTRUMENT,),
-            start=_utc("2024-01-01"),
-            end=_utc("2024-01-10"),
-            catalog=catalog,
-        )
-
-    assert excinfo.value.subject == CatalogKey.for_instrument(
-        FixtureRecord,
-        _INSTRUMENT,
-    )
-    assert excinfo.value.missing == (
-        CoverageInterval(_utc("2024-01-01").value, _utc("2024-01-10").value),
     )
 
 

@@ -21,6 +21,7 @@ from aegis_trader.domain.roll import (
     RequestBars,
     RequestInstrument,
     RollEvent,
+    RollIntent,
     RollIntentBatch,
     SubscribeBars,
     UnsubscribeBars,
@@ -150,7 +151,9 @@ class RollDesk:
         front_before = model.front_leg
         model.on_bar(bar)
         front_after = model.front_leg
-        intents = list(self._refresh_subscriptions(continuous_id, bar.ts_event))
+        intents: list[RollIntent] = list(
+            self._refresh_subscriptions(continuous_id, bar.ts_event)
+        )
         if front_after != front_before:
             del self._leg_to_continuous_id[front_before]
             self._leg_to_continuous_id[front_after] = continuous_id

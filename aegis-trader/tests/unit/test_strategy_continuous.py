@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_runtime.domain.rebasing import spread_rebasing
 from aegis_data.bar_type import raw_bar_type
+from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.marking import DeclaredMarkingResolver
+from aegis_data.raw_bars import RawBars
+from aegis_data.storage import Catalog, CatalogInterval
+from aegis_data.testing import es_port_two_rolls
+from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.domain.roll import (
     Halt,
     RequestBars,
@@ -24,6 +32,7 @@ from aegis_trader.domain.roll import (
 from aegis_trader.domain.startup import StartupGate, StartupResult
 from aegis_trader.domain.types import OrderIntent, OrderSide, OrderSource, SleeveName
 from aegis_trader.trader.book_startup import SubscribeQuoteTicks
+from aegis_trader.trader.bar_capture import BarCapture
 from aegis_trader.trader.pipeline import (
     CompletedRebalancePeriod,
     DueSleeve,
@@ -33,6 +42,7 @@ from aegis_trader.trader.pipeline import (
     RebalanceSummary,
 )
 from aegis_trader.trader.strategy import RebalanceStrategy
+from aegis_trader.trader.roll_desk import RollDesk
 from aegis_trader.trader.startup_fast_forward import (
     HistoryRequest,
     HistoryRequestKey,
@@ -41,6 +51,11 @@ from aegis_trader.trader.startup_fast_forward import (
     RecoveryProgress,
     RECOVERY_TOPIC,
 )
+
+_ES = InstrumentId.from_str("ES.XCME")
+_ESH4 = InstrumentId.from_str("ESH4.XCME")
+_ESM4 = InstrumentId.from_str("ESM4.XCME")
+_ESU4 = InstrumentId.from_str("ESU4.XCME")
 
 
 class _FakePipeline:
@@ -399,6 +414,97 @@ def test_strategy_keeps_a_non_front_roll_probe_out_of_book_observations() -> Non
     assert harness.observed == []
     assert harness._book_market_clock.advances == []
     assert harness._stream_watermarks[candidate_type] == candidate.ts_event
+
+
+def test_strategy_bar_handler_crosses_a_session_boundary_with_silent_candidates(
+    tmp_path: Path,
+) -> None:
+    history_start = datetime(2024, 1, 15, tzinfo=timezone.utc)
+    startup = datetime(2024, 5, 10, tzinfo=timezone.utc)
+    startup_ns = pd.Timestamp(startup).value
+    source, native = es_port_two_rolls()
+    catalog = Catalog.open(tmp_path / "catalog")
+    raw_bars = _seed_roll_catalog(
+        catalog,
+        source,
+        native,
+        history_start_ns=pd.Timestamp(history_start).value,
+        startup_ns=startup_ns,
+    )
+    desk = RollDesk(
+        catalog_port=CatalogBackedDataPort(catalog),
+        instrument_present=lambda _instrument_id: True,
+    )
+    subscriptions = desk.start(
+        history_starts={"ES": history_start},
+        end=startup,
+        warmup=False,
+        declarations={
+            "ES": ContinuousRootDeclaration(
+                continuous_id=_ES,
+                adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
+                timeframe="1D",
+            )
+        },
+    )
+    capture = BarCapture(raw_bars)
+    _subscribe_capture(capture, subscriptions, at_ns=startup_ns)
+    next_front_bar = _native_bar_on(native, _ESM4, date(2024, 5, 13))
+    harness = _BoundaryHarness(Ready((), None, (), StartupResult(True)))
+    harness._desk = desk
+    harness._bar_capture = capture
+
+    harness.on_bar(next_front_bar)
+
+    assert harness.observed == [next_front_bar]
+
+
+def _seed_roll_catalog(
+    catalog: Catalog,
+    source: CatalogBackedDataPort,
+    native: dict[InstrumentId, list[Bar]],
+    *,
+    history_start_ns: int,
+    startup_ns: int,
+) -> RawBars:
+    leg_ids = (_ESH4, _ESM4, _ESU4)
+    catalog.store_definitions(source.catalog.definitions(leg_ids))
+    raw_bars = RawBars(catalog)
+    for instrument_id in leg_ids:
+        bar_type = raw_bar_type(instrument_id, "1D")
+        raw_bars.record_verified(
+            bar_type,
+            CatalogInterval(history_start_ns, startup_ns),
+            tuple(bar for bar in native[instrument_id] if bar.ts_event <= startup_ns),
+        )
+    return raw_bars
+
+
+def _subscribe_capture(
+    capture: BarCapture,
+    subscriptions: tuple[object, ...],
+    *,
+    at_ns: int,
+) -> None:
+    for intent in subscriptions:
+        if not isinstance(intent, SubscribeBars):
+            raise AssertionError(f"expected subscription, got {intent!r}")
+        capture.subscribe(
+            raw_bar_type(intent.instrument_id, intent.timeframe),
+            at_ns=at_ns,
+        )
+
+
+def _native_bar_on(
+    native: dict[InstrumentId, list[Bar]],
+    instrument_id: InstrumentId,
+    day: date,
+) -> Bar:
+    return next(
+        bar
+        for bar in native[instrument_id]
+        if pd.Timestamp(bar.ts_event, tz="UTC").date() == day
+    )
 
 
 def test_strategy_halts_a_conflicting_recovery_boundary_bar() -> None:

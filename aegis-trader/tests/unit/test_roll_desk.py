@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -21,13 +20,8 @@ from aegis_trader.domain.roll import (
 )
 from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.domain.startup import StartupGate
-from aegis_trader.trader.bar_capture import BarCapture
 from aegis_trader.trader.roll_desk import RollDesk
 
-from aegis_data.bar_type import raw_bar_type
-from aegis_data.catalog import CatalogBackedDataPort
-from aegis_data.raw_bars import RawBars
-from aegis_data.storage import Catalog, CatalogInterval
 from aegis_data.testing import es_port, es_port_two_rolls
 
 _HISTORY_START = datetime(2024, 1, 15, tzinfo=timezone.utc)
@@ -203,46 +197,6 @@ def test_on_bar_without_a_roll_appends_offset_zero_and_emits_no_intents() -> Non
     assert series_after is not None
     assert intents == ()
     assert len(series_after) == len(series_before) + 1
-
-
-def test_captured_candidate_silence_keeps_the_next_session_roll_probe_covered(
-    tmp_path: Path,
-) -> None:
-    source, native = es_port_two_rolls()
-    catalog = Catalog.open(tmp_path / "catalog")
-    leg_ids = (_ESH4, _ESM4, _ESU4)
-    catalog.store_definitions(source.catalog.definitions(leg_ids))
-    raw_bars = RawBars(catalog)
-    startup_ns = pd.Timestamp("2024-05-10", tz="UTC").value
-    history_ns = pd.Timestamp(_HISTORY_START).value
-    for instrument_id in leg_ids:
-        bar_type = raw_bar_type(instrument_id, "1D")
-        raw_bars.record_verified(
-            bar_type,
-            CatalogInterval(history_ns, startup_ns),
-            tuple(bar for bar in native[instrument_id] if bar.ts_event <= startup_ns),
-        )
-
-    desk = _desk(CatalogBackedDataPort(catalog))
-    subscriptions = desk.start(
-        history_starts={"ES": _HISTORY_START},
-        end=_dt("2024-05-10"),
-        warmup=False,
-        declarations=_declarations(),
-    )
-    capture = BarCapture(raw_bars)
-    for intent in subscriptions:
-        assert isinstance(intent, SubscribeBars)
-        capture.subscribe(
-            raw_bar_type(intent.instrument_id, intent.timeframe),
-            at_ns=startup_ns,
-        )
-    next_front_bar = _bar_on(native, _ESM4, date(2024, 5, 13))
-
-    capture.observe(next_front_bar)
-    capture.verify_through(next_front_bar.ts_event)
-
-    assert desk.on_bar(next_front_bar) == ()
 
 
 def test_on_bar_with_a_roll_drops_expired_probe_leg_and_emits_roll_event() -> None:

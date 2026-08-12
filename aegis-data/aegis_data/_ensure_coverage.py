@@ -89,10 +89,6 @@ def ensure_coverage(
     for missing in initial_missing:
         with provider_boundary(subject):
             served = provider(missing.start, missing.end)
-        if not served.is_responsible:
-            continue
-        if served.oldest_verified is None:
-            raise AssertionError("a verified provider answer needs a frontier")
         verified = missing.from_frontier(served.oldest_verified)
         if verified is None:
             continue

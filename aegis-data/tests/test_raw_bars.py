@@ -30,9 +30,7 @@ class _Provider:
         return ProviderAnswer.verified(self.records, oldest_verified=start)
 
 
-def test_stored_and_covered_are_distinct_side_effect_free_reads(
-    tmp_path: Path,
-) -> None:
+def test_stored_reads_payload_without_filling(tmp_path: Path) -> None:
     catalog = Catalog.open(tmp_path)
     instrument_id = InstrumentId.from_str("AAPL.XNAS")
     bar_type = raw_bar_type(instrument_id, "1D")
@@ -50,6 +48,22 @@ def test_stored_and_covered_are_distinct_side_effect_free_reads(
 
     assert stored.ohlcv["Close"].tolist() == [10.0]
     assert provider.requests == []
+
+
+def test_covered_read_fails_on_missing_coverage_without_filling(tmp_path: Path) -> None:
+    catalog = Catalog.open(tmp_path)
+    instrument_id = InstrumentId.from_str("AAPL.XNAS")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    interval = _interval()
+    catalog.replace(
+        CatalogKey.for_bar(bar_type),
+        interval,
+        (_bar(bar_type, "2024-01-01", 10.0),),
+    )
+    provider = _Provider((_bar(bar_type, "2024-01-01", 20.0),))
+    raw_bars = RawBars(catalog, provider=provider)
+    marking = raw_bars.marking(instrument_id, "1D")
+
     with pytest.raises(CatalogCoverageGapError, match="missing") as excinfo:
         raw_bars.covered(marking, interval)
 
