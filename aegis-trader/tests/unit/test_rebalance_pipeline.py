@@ -959,7 +959,9 @@ def test_sleeve_compute_receives_native_prices_and_the_resolved_conversion() -> 
     # The resolved conversion is the one typed transformation: applying it yields
     # the EUR view research validated on (USD 100 at EUR/USD 1.25 -> EUR 80).
     assert bundle.seen_conversion is not None
-    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    converted = bundle.seen_conversion.apply(
+        MarketDataBundle({"Close": bundle.seen_close})
+    ).array("Close")
     assert converted[_INSTRUMENT_ID].tolist() == pytest.approx([80.0, 80.0])
     assert [order.instrument_id for order in result.orders] == [_INSTRUMENT_ID]
 
@@ -1049,7 +1051,9 @@ def test_continuous_root_conversion_matches_the_research_view_under_moving_fx() 
     assert bundle.seen_close is not None
     assert bundle.seen_close[_ES].tolist() == pytest.approx([5000.0, 5010.0])
     assert bundle.seen_conversion is not None
-    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    converted = bundle.seen_conversion.apply(
+        MarketDataBundle({"Close": bundle.seen_close})
+    ).array("Close")
     # The exact base-currency panel research's catalog adapter derives for the same
     # native prices and FX series (see test_catalog_adapter_converts_a_non_base_
     # continuous_root_through_exchange_fx in aegis-rd).
