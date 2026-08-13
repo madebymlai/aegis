@@ -12,7 +12,7 @@ folders* for the same instrument that never meet.
 
 Nautilus defines `EXTERNAL` as "aggregated by a venue or data provider" and
 `INTERNAL` as "the DataEngine subscribes to ticks and aggregates locally." Our
-corpus is vendor-provided daily OHLCV (IBKR historical; the future Databento
+Catalog is vendor-provided daily OHLCV (IBKR historical; the future Databento
 futures seed) — finished bars the vendor aggregated, with no tick feed to build a
 multi-year daily series from. They are `EXTERNAL` by definition. Live also
 *structurally requires* `EXTERNAL`: that is how the node receives IBKR's completed

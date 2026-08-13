@@ -1,7 +1,7 @@
 """The single home for turning a ``DataContract`` timeframe into the Nautilus
-``BarType`` of the shared corpus, and into a rebalance-period width.
+``BarType`` of the shared Catalog, and into a rebalance-period width.
 
-Daily Raw Bars are ``EXTERNAL`` (ADR-0007): the corpus is vendor-aggregated
+Daily Raw Bars are ``EXTERNAL`` (ADR-0007): the Catalog is vendor-aggregated
 OHLCV (IBKR historical) — finished bars with
 no tick feed to build a multi-year daily series from — and live can only receive
 IBKR's completed daily bar via an ``EXTERNAL`` subscription.  The price type is
@@ -73,7 +73,7 @@ def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
     """The ``LAST-EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*.
 
     Known IBKR exchange venues are canonicalized to their MIC venue before the
-    corpus key is built, matching the IBKR provider's MIC-pinned definitions and
+    Catalog key is built, matching the IBKR provider's MIC-pinned definitions and
     fetched bars.  LAST only — the undeclared default (ADR-0007 amendment); any
     other price type is a declared marking and keys via
     :func:`external_bar_type` (e.g. a cash-FX conversion leg's ``MID``).
@@ -84,16 +84,16 @@ def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
 def external_bar_type(
     instrument_id: InstrumentId, timeframe: str, price_type: str
 ) -> BarType:
-    """The corpus ``EXTERNAL`` ``BarType`` at an explicit price type.
+    """The Catalog ``EXTERNAL`` ``BarType`` at an explicit price type.
 
     The pure bar-type builder the marking resolver feeds (ADR-0007 amendment):
     the price type is decided by the resolved mark mode — LAST/MID bar-marked,
     BID+ASK for a quote-marked instrument — never re-derived by a consumer.
     """
     step, unit = _parse(timeframe)
-    corpus_id = mic_canonical_instrument_id(instrument_id)
+    catalog_id = mic_canonical_instrument_id(instrument_id)
     return BarType.from_str(
-        f"{corpus_id.value}-{step}-{unit}-{price_type}-EXTERNAL"
+        f"{catalog_id.value}-{step}-{unit}-{price_type}-EXTERNAL"
     )
 
 

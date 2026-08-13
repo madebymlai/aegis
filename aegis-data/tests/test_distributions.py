@@ -7,7 +7,6 @@ import pandas as pd
 import pytest
 from nautilus_trader.adapters.interactive_brokers.common import IBContract
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.distributions import (
     Distribution,
@@ -18,6 +17,7 @@ from aegis_data.distributions import (
 )
 from aegis_data.ibkr import IbkrHistoricalProvider, IbkrRequestError
 from aegis_data.ibkr.historical import _HistoricSession
+from aegis_data.storage import Catalog
 
 _SPY = InstrumentId.from_str("SPY.ARCA")
 
@@ -88,7 +88,7 @@ def test_recovery_collapses_duplicate_daily_trade_rows() -> None:
 
 
 def test_distribution_catalog_write_is_append_only_new(tmp_path) -> None:
-    catalog = ParquetDataCatalog(tmp_path / "catalog")
+    catalog = Catalog.open(tmp_path / "catalog")
     first = Distribution.from_ex_date(_SPY, "2024-01-02", amount=0.25, currency="USD")
     second = Distribution.from_ex_date(_SPY, "2024-03-02", amount=0.30, currency="USD")
     third = Distribution.from_ex_date(_SPY, "2024-06-02", amount=0.35, currency="USD")

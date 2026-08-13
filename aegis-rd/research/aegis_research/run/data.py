@@ -14,19 +14,15 @@ from aegis_data.catalog import (
     CatalogWindow,
     CatalogWindowRequest,
     GapFillProviderError,
-    resolve_catalog_path,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
-from aegis_data.custom_data import (
-    CustomDataCoverageError,
-    CustomDataProviderMap,
-    ensure_arrays,
-)
+from aegis_data.custom_data import CustomDataProviderMap, ensure_arrays
 from aegis_data.custom_data import (
     arrays as custom_arrays,
 )
 from aegis_data.distributions import Distribution
+from aegis_data.storage import Catalog
 from aegis_runtime import MarketDataBundle
 from aegis_runtime.domain.currency import CurrencyConversion, build_currency_conversion_from_codes
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
@@ -195,11 +191,11 @@ def load_run_data(
             required_arrays,
             resolution,
             frames,
+            catalog=port.catalog,
             custom_data_providers=custom_data_providers,
         )
     except (
         CatalogCoverageGapError,
-        CustomDataCoverageError,
         GapFillProviderError,
     ) as error:
         _raise_unavailable(error, config, requested_ids, start=start, end=end)
@@ -350,6 +346,7 @@ def _tradeable_bundle(
     resolution: InstrumentResolution,
     frames: dict[InstrumentId, pd.DataFrame],
     *,
+    catalog: Catalog,
     custom_data_providers: CustomDataProviderMap | None,
 ) -> MarketDataBundle:
     instrument_ids = resolution.instrument_ids
@@ -366,20 +363,19 @@ def _tradeable_bundle(
     )
     if custom_names:
         custom_index = pd.DatetimeIndex(index)
-        catalog_path = resolve_catalog_path(config.path)
         ensure_arrays(
             dict.fromkeys(instrument_ids, custom_names),
             start=pd.Timestamp(custom_index[0]),
             end=pd.Timestamp(custom_index[-1]),
             providers=custom_data_providers or {},
-            catalog_path=catalog_path,
+            catalog=catalog,
         )
         panels.update(
             custom_arrays(
                 custom_names,
                 instrument_ids,
                 index=custom_index,
-                catalog_path=catalog_path,
+                catalog=catalog,
             )
         )
     panels = {array: panels[array] for array in config.effective_arrays}

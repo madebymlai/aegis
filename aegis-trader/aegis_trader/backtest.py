@@ -2,7 +2,7 @@
 
 The runner is intentionally forward-only: Execution Bundles declare native
 Nautilus ``InstrumentId`` values, raw bars come from the Nautilus
-``ParquetDataCatalog`` through the Aegis Data catalog port, and the same
+Catalog through the Aegis Data port, and the same
 ``RebalanceStrategy`` used by paper/live is run inside Nautilus'
 ``BacktestEngine``.
 """
@@ -17,11 +17,12 @@ from typing import Any, Protocol
 import pandas as pd
 from aegis_data.array_names import OHLCV_ARRAY_NAMES
 from aegis_data.custom_data import (
-    VOCABULARY as CUSTOM_ARRAY_VOCABULARY,
     CustomDataProviderMap,
     ensure_arrays,
     records_for_arrays,
 )
+from aegis_data import custom_kinds
+from aegis_data.custom_kinds import CustomDataRegistry
 from aegis_data.distributions import Distribution, distribution_records
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -39,9 +40,9 @@ from aegis_data.catalog import (
     CatalogBackedDataPort,
     NautilusDataProviderPort,
     CatalogWindowRequest,
-    catalog_root,
-    parquet_data_catalog,
+    open_catalog,
 )
+from aegis_data.storage import Catalog
 
 from aegis_trader.bundles.book import AssembledBook, assemble_book
 from aegis_trader.bundles.marking import recorded_marking_resolver
@@ -175,7 +176,7 @@ class CatalogBacktestDataSource:
     def _data_port(self) -> CatalogBackedDataPort:
         if self.port is not None:
             return self.port
-        catalog = parquet_data_catalog(self.catalog_path)
+        catalog = open_catalog(self.catalog_path)
         return CatalogBackedDataPort(
             catalog,
             provider=self.provider,
@@ -193,6 +194,7 @@ def run_book_backtest(
     data_source: BacktestDataSource | None = None,
     provider: NautilusDataProviderPort | None = None,
     custom_data_providers: CustomDataProviderMap | None = None,
+    custom_data_registry: CustomDataRegistry | None = None,
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
     bar_type_resolver: RawBarTypeResolver | None = None,
@@ -207,7 +209,11 @@ def run_book_backtest(
     """
     book = load_book_config(book_path)
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    assembled_book = assemble_book(book, registry)
+    assembled_book = assemble_book(
+        book,
+        registry,
+        custom_data_registry=custom_data_registry,
+    )
     # The one raw bar-type resolution seam (aegis-rd-tggo.1), shared by the data
     # source, the wrangler, the equity recorder, and the strategy so they name
     # identical bars.  The sim/fill projection below is DERIVED from the resolved
@@ -217,10 +223,13 @@ def run_book_backtest(
         if bar_type_resolver is not None
         else _book_resolver(assembled_book)
     )
+    custom_catalog = open_catalog(catalog_path)
     source = data_source or CatalogBacktestDataSource(
-        catalog_path=catalog_path,
-        provider=provider,
-        resolver=resolver,
+        port=CatalogBackedDataPort(
+            custom_catalog,
+            provider=provider,
+            resolver=resolver,
+        )
     )
     loaded = tuple(
         (
@@ -231,20 +240,24 @@ def run_book_backtest(
     )
     market_data = _merged_market_data(loaded)
     _validate_market_data(assembled_book, market_data)
-    custom_catalog_path = catalog_path if catalog_path is not None else catalog_root()
-    custom_array_requirements = _custom_array_requirements(assembled_book)
+    custom_array_requirements = _custom_array_requirements(
+        assembled_book,
+        custom_data_registry,
+    )
     ensure_arrays(
         custom_array_requirements,
         start=pd.Timestamp(start),
         end=pd.Timestamp(end),
         providers=custom_data_providers or {},
-        catalog_path=custom_catalog_path,
+        catalog=custom_catalog,
+        registry=custom_data_registry,
     )
     array_records = records_for_arrays(
         custom_array_requirements,
         start=pd.Timestamp(start),
         end=pd.Timestamp(end),
-        catalog_path=custom_catalog_path,
+        catalog=custom_catalog,
+        registry=custom_data_registry,
     )
 
     engine = BacktestEngine(
@@ -294,7 +307,8 @@ def run_book_backtest(
         engine,
         book=assembled_book,
         resolver=resolver,
-        custom_catalog_path=custom_catalog_path,
+        custom_catalog=custom_catalog,
+        custom_data_registry=custom_data_registry,
     )
 
     # ``end`` keeps the engine advancing the clock past the final data event,
@@ -371,13 +385,15 @@ def _book_resolver(book: AssembledBook) -> RawBarTypeResolver:
 
 def _custom_array_requirements(
     book: AssembledBook,
+    registry: CustomDataRegistry | None,
 ) -> dict[InstrumentId, tuple[str, ...]]:
+    kinds = registry if registry is not None else custom_kinds.declared_custom_data_kinds()
     names_by_instrument_id: dict[InstrumentId, dict[str, None]] = {}
     for bundle in book.sleeves.values():
         custom_names = tuple(
             name
             for name in bundle.contract.required_arrays
-            if name in CUSTOM_ARRAY_VOCABULARY
+            if name in kinds.vocabulary
         )
         for instrument_id in bundle.contract.instrument_ids:
             names_by_instrument_id.setdefault(instrument_id, {}).update(
@@ -693,7 +709,8 @@ def _add_strategy(
     *,
     book: AssembledBook,
     resolver: RawBarTypeResolver,
-    custom_catalog_path: Path,
+    custom_catalog: Catalog,
+    custom_data_registry: CustomDataRegistry | None,
 ) -> None:
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
@@ -701,7 +718,11 @@ def _add_strategy(
             fill_time_in_force=None,
             warmup_cache_on_start=False,
         ),
-        arrays=SleeveArrays.prepared(catalog_path=custom_catalog_path),
+        arrays=SleeveArrays.prepared(
+            catalog=custom_catalog,
+            registry=custom_data_registry,
+        ),
+        catalog=custom_catalog,
         bar_type_resolver=resolver,
     )
     strategy.register_book(book)

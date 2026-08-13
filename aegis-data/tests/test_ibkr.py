@@ -26,7 +26,6 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import Symbol
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
@@ -34,14 +33,15 @@ from aegis_data.catalog import (
     CatalogWindowRequest,
     GapFillProviderError,
     NautilusDataProviderPort,
-    ServedBars,
 )
+from aegis_data.provider import ProviderAnswer
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
     seed_instrument_definitions,
 )
 from aegis_data.ibkr.historical import _HistoricSession
+from aegis_data.storage import Catalog
 
 
 class _FakeHistoricClient:
@@ -143,10 +143,10 @@ def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
         end=pd.Timestamp("2024-03-01", tz="UTC"),
     )
 
-    assert list(out.bars) == served
+    assert list(out.records) == served
     # The oldest bar is one closure past the requested start, so history covers it:
     # coverage is served from the requested start (contiguous with any prior file).
-    assert out.served_from == pd.Timestamp("2024-01-01", tz="UTC")
+    assert out.oldest_verified == pd.Timestamp("2024-01-01", tz="UTC")
     assert len(fake.bar_calls) == 1
     call = fake.bar_calls[0]
     assert call["bar_specifications"] == ["1-DAY-LAST"]
@@ -179,8 +179,8 @@ def test_request_bars_asks_one_native_duration_for_a_wide_window() -> None:
     assert fake.bar_calls[0]["duration"] == "2 Y"
     assert fake.bar_calls[0]["end_date_time"] == datetime(2018, 1, 1)
     assert "start_date_time" not in fake.bar_calls[0]
-    assert list(out.bars) == served
-    assert out.served_from == pd.Timestamp("2016-06-01", tz="UTC")
+    assert list(out.records) == served
+    assert out.oldest_verified == pd.Timestamp("2016-06-01", tz="UTC")
     # One session serves the request — connect/close wrap it once.
     assert fake.events == ["connect", "aclose"]
 
@@ -203,8 +203,8 @@ def test_request_bars_claims_nothing_when_no_bars_are_returned() -> None:
         end=pd.Timestamp("2024-03-01", tz="UTC"),
     )
 
-    assert list(out.bars) == []
-    assert out.served_from == pd.Timestamp("2024-03-01", tz="UTC")
+    assert list(out.records) == []
+    assert out.oldest_verified == pd.Timestamp("2024-03-01", tz="UTC")
 
 
 def test_request_bars_preempts_session_empty_fallback() -> None:
@@ -259,7 +259,7 @@ def test_request_bars_preserves_genuine_empty_vendor_history() -> None:
         end=pd.Timestamp("2024-02-01", tz="UTC"),
     )
 
-    assert result == ServedBars((), pd.Timestamp("2024-02-01", tz="UTC"))
+    assert result == ProviderAnswer((), pd.Timestamp("2024-02-01", tz="UTC"))
 
 
 def test_historical_failure_scope_resets_before_unrelated_requests() -> None:
@@ -346,7 +346,7 @@ def test_catalog_port_preserves_vendor_connection_failure(tmp_path: Path) -> Non
     )
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
-    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path), provider=provider)
+    port = CatalogBackedDataPort(Catalog.open(catalog_path), provider=provider)
     request = CatalogWindowRequest(
         instrument_ids=(InstrumentId.from_str("AAPL.NASDAQ"),),
         start="2024-01-01",
@@ -374,7 +374,7 @@ def test_catalog_port_translates_request_deadline_to_provider_failure(
     )
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
-    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path), provider=provider)
+    port = CatalogBackedDataPort(Catalog.open(catalog_path), provider=provider)
     request = CatalogWindowRequest(
         instrument_ids=(InstrumentId.from_str("AAPL.NASDAQ"),),
         start="2024-01-01",
@@ -408,11 +408,11 @@ def test_request_bars_serves_from_the_listing_when_history_clamps_short() -> Non
 
     # One request; IB returned only from the listing.
     assert len(fake.bar_calls) == 1
-    assert list(out.bars) == served
+    assert list(out.records) == served
     # The gap from 2013 to the first bar is far wider than a market closure, so it
     # reads as IB clamping at the listing: coverage begins at that first bar, not the
     # requested 2013 start, leaving the pre-listing head for the coverage gate.
-    assert out.served_from == listing_date
+    assert out.oldest_verified == listing_date
 
 
 def test_request_bars_can_pass_expired_future_contracts() -> None:
@@ -430,7 +430,7 @@ def test_request_bars_can_pass_expired_future_contracts() -> None:
         end=pd.Timestamp("2026-06-23", tz="UTC"),
     )
 
-    assert list(out.bars) == served
+    assert list(out.records) == served
     call = fake.bar_calls[0]
     assert "instrument_ids" not in call
     contract = call["contracts"][0]
@@ -651,13 +651,15 @@ class _FakeCatalog:
         self._present = present or []
         self.writes: list[list[Any]] = []
 
-    def instruments(self, *, instrument_ids: list[str]) -> list[_Instr]:
-        wanted = set(instrument_ids)
+    def definitions(
+        self, instrument_ids: tuple[InstrumentId, ...]
+    ) -> tuple[_Instr, ...]:
+        wanted = {instrument_id.value for instrument_id in instrument_ids}
         return [
             instrument for instrument in self._present if instrument.id.value in wanted
         ]
 
-    def write_data(self, data: list[Any]) -> None:
+    def store_definitions(self, data: list[Any]) -> None:
         self.writes.append(data)
 
 
@@ -755,7 +757,7 @@ def test_seed_strips_ibkr_ineligibility_reasons_before_catalog_write(
 ) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     gld = InstrumentId.from_str("GLD.ARCX")
     fetched = [
         Equity(
@@ -778,6 +780,6 @@ def test_seed_strips_ibkr_ineligibility_reasons_before_catalog_write(
 
     seed_instrument_definitions(catalog, provider, (gld,))
 
-    loaded = catalog.instruments(instrument_ids=[gld.value])
+    loaded = catalog.definitions((gld,))
     assert [instrument.id for instrument in loaded] == [gld]
     assert loaded[0].info == {"serializable": "kept"}

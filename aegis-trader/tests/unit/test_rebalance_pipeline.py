@@ -12,9 +12,9 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.custom_data import (
     CustomDataProviderPort,
-    FixtureRecord,
-    ServedCustomData,
+    ProviderAnswer,
 )
+from aegis_data.storage import Catalog
 from aegis_runtime.domain.rebasing import ratio_rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
@@ -45,6 +45,7 @@ from aegis_trader.trader.pipeline import (
 )
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
 from tests.support.factories import assemble_test_book
+from tests.support.custom_data import FixtureRecord
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
 _ES = InstrumentId.from_str("ES.XCME")  # synthetic continuous-root id (root "ES")
@@ -110,8 +111,8 @@ class _EmptyCustomProvider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
-        return ServedCustomData((), start)
+    ) -> ProviderAnswer[FixtureRecord]:
+        return ProviderAnswer((), start)
 
 
 class _ContinuousWeightBundle(ExecutionBundle):
@@ -583,8 +584,8 @@ def test_custom_arrays_use_the_union_index_for_nan_policy(tmp_path: Path) -> Non
         ),
         bundle=bundle,
         arrays=SleeveArrays.live(
-            catalog_path=tmp_path,
-            providers={FixtureRecord: (_EmptyCustomProvider(),)},
+            catalog=Catalog.open(tmp_path),
+            providers={FixtureRecord: _EmptyCustomProvider()},
         ),
     )
 
@@ -958,7 +959,9 @@ def test_sleeve_compute_receives_native_prices_and_the_resolved_conversion() -> 
     # The resolved conversion is the one typed transformation: applying it yields
     # the EUR view research validated on (USD 100 at EUR/USD 1.25 -> EUR 80).
     assert bundle.seen_conversion is not None
-    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    converted = bundle.seen_conversion.apply(
+        MarketDataBundle({"Close": bundle.seen_close})
+    ).array("Close")
     assert converted[_INSTRUMENT_ID].tolist() == pytest.approx([80.0, 80.0])
     assert [order.instrument_id for order in result.orders] == [_INSTRUMENT_ID]
 
@@ -1048,7 +1051,9 @@ def test_continuous_root_conversion_matches_the_research_view_under_moving_fx() 
     assert bundle.seen_close is not None
     assert bundle.seen_close[_ES].tolist() == pytest.approx([5000.0, 5010.0])
     assert bundle.seen_conversion is not None
-    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    converted = bundle.seen_conversion.apply(
+        MarketDataBundle({"Close": bundle.seen_close})
+    ).array("Close")
     # The exact base-currency panel research's catalog adapter derives for the same
     # native prices and FX series (see test_catalog_adapter_converts_a_non_base_
     # continuous_root_through_exchange_fx in aegis-rd).

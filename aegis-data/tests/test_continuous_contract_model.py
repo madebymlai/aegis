@@ -25,6 +25,7 @@ from aegis_data.continuous_contract_model import (
 )
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE, continuous_future
 from aegis_data.liquidity import liquid_cycle_causal
+from aegis_data.storage import CatalogInterval
 from tests.support.continuous_oracle import backward_series
 from aegis_data.testing import (
     ES_END,
@@ -73,13 +74,44 @@ def _expected_ohlcv_row(
 def _causal_front(port: CatalogBackedDataPort, root: str, as_of: date) -> InstrumentId:
     candidates = port.resolve_continuous(root).legs
     volume_by_symbol = {
-        leg.symbol: port.probe_contract_volume(
-            leg.symbol, pd.Timestamp(ES_START).date(), as_of
-        )
+        leg.symbol: _contract_ohlcv(
+            port,
+            leg.symbol,
+            pd.Timestamp(ES_START).date(),
+            as_of,
+            ensure=False,
+        )["Volume"]
         for leg in candidates
     }
     cycle = liquid_cycle_causal(candidates, volume_by_symbol, as_of, roll_lead_days=5)
     return InstrumentId.from_str(cycle[-1].symbol)
+
+
+def _contract_ohlcv(
+    port: CatalogBackedDataPort,
+    symbol: str,
+    start: date,
+    end: date,
+    *,
+    ensure: bool = True,
+) -> pd.DataFrame:
+    marking = port.raw_bars.marking(InstrumentId.from_str(symbol), "1D")
+    interval = CatalogInterval(
+        pd.Timestamp(start, tz="UTC").value,
+        pd.Timestamp(end, tz="UTC").value,
+    )
+    if ensure:
+        port.raw_bars.ensure(marking, interval)
+    return port.raw_bars.covered(marking, interval).ohlcv
+
+
+def _contract_volume(
+    port: CatalogBackedDataPort,
+    symbol: str,
+    start: date,
+    end: date,
+) -> pd.Series:
+    return _contract_ohlcv(port, symbol, start, end)["Volume"]
 
 
 def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None:
@@ -90,9 +122,13 @@ def test_continuous_contract_model_matches_the_oracle_keyed_by_root_id() -> None
         date(2024, 1, 15),
         date(2024, 5, 31),
         list_contracts=lambda *_args: port.resolve_continuous("ES").legs,
-        fetch=port.fetch_contract_ohlcv,
+        fetch=lambda symbol, start, end: _contract_ohlcv(
+            port, symbol, start, end
+        ),
         bar_cadence=timedelta(days=1),
-        probe_volume=port.probe_contract_volume,
+        probe_volume=lambda symbol, start, end: _contract_volume(
+            port, symbol, start, end
+        ),
     )
     future = continuous_future(chain, InstrumentId.from_str("ES.XCME"))
     oracle = backward_series(native, future.transitions, mode=DEFAULT_ADJUSTMENT_MODE)

@@ -4,18 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 import pandas as pd
 from aegis_data.array_names import is_bar_derived_array
 from aegis_data.custom_data import (
-    CustomDataProviderPort,
+    CustomDataProviderMap,
     arrays as project_custom_arrays,
     ensure_arrays,
 )
+from aegis_data.storage import Catalog
+from aegis_data.custom_kinds import CustomDataRegistry
 from aegis_runtime import DataContract
-from nautilus_trader.core.data import Data
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.data.market_data import MarketBar
@@ -105,8 +104,9 @@ class SleeveArrayGrid:
 
 @dataclass(frozen=True)
 class _CatalogArrays:
-    path: Path
-    providers: Mapping[type[Data], Sequence[CustomDataProviderPort[Any]]]
+    catalog: Catalog
+    providers: CustomDataProviderMap
+    registry: CustomDataRegistry | None
 
 
 class SleeveArrays:
@@ -125,19 +125,25 @@ class SleeveArrays:
         return cls(catalog=None)
 
     @classmethod
-    def prepared(cls, *, catalog_path: Path) -> SleeveArrays:
+    def prepared(
+        cls,
+        *,
+        catalog: Catalog,
+        registry: CustomDataRegistry | None = None,
+    ) -> SleeveArrays:
         """Build an assembler which accepts only already-covered catalog data."""
-        return cls(catalog=_CatalogArrays(catalog_path, {}))
+        return cls(catalog=_CatalogArrays(catalog, {}, registry))
 
     @classmethod
     def live(
         cls,
         *,
-        catalog_path: Path,
-        providers: Mapping[type[Data], Sequence[CustomDataProviderPort[Any]]],
+        catalog: Catalog,
+        providers: CustomDataProviderMap,
+        registry: CustomDataRegistry | None = None,
     ) -> SleeveArrays:
         """Build an assembler which heals catalog gaps through live providers."""
-        return cls(catalog=_CatalogArrays(catalog_path, dict(providers)))
+        return cls(catalog=_CatalogArrays(catalog, dict(providers), registry))
 
     def ensure(self, need: ArrayNeed) -> None:
         """Fill or verify catalog coverage for every non-bar array kind."""
@@ -150,7 +156,8 @@ class SleeveArrays:
             start=need.start,
             end=need.end,
             providers=catalog.providers,
-            catalog_path=catalog.path,
+            catalog=catalog.catalog,
+            registry=catalog.registry,
         )
 
     def project(self, grid: SleeveArrayGrid) -> dict[str, pd.DataFrame]:
@@ -168,7 +175,8 @@ class SleeveArrays:
                     custom_names,
                     grid.need.instrument_ids,
                     index=grid.index,
-                    catalog_path=catalog.path,
+                    catalog=catalog.catalog,
+                    registry=catalog.registry,
                 )
             )
         ordered = {name: panels[name] for name in grid.need.names}

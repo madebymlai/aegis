@@ -6,7 +6,7 @@ import pandas as pd
 
 from aegis_data._ensure_coverage import (
     CoverageInterval,
-    ServedRecords,
+    ProviderAnswer,
     ensure_coverage,
 )
 
@@ -29,11 +29,9 @@ def test_ensure_coverage_leaves_persistence_to_the_caller() -> None:
 
     ensure_coverage(
         subject="fixture",
-        fetchers=(
-            lambda _start, _end: ServedRecords(
-                ("record",),
-                pd.Timestamp(10, tz="UTC"),
-            ),
+        provider=lambda _start, _end: ProviderAnswer(
+            ("record",),
+            pd.Timestamp(10, tz="UTC"),
         ),
         missing_intervals=lambda: list(missing),
         commit=commit,

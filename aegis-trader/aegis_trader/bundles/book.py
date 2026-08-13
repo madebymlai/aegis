@@ -11,11 +11,8 @@ from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.array_names import OHLCV_ARRAY_NAMES
-from aegis_data.custom_data import (
-    AVAILABILITY_BY_VALUE,
-    KNOWN_CUSTOM_ARRAY_NAMES,
-    VOCABULARY,
-)
+from aegis_data import custom_kinds
+from aegis_data.custom_kinds import CustomDataRegistry
 from aegis_runtime import DriftBand, ExecutionBundle
 
 from aegis_trader.bundles.bands import BundleBands, InstrumentBandError
@@ -71,13 +68,19 @@ class UndeliverableArrayError(ValueError):
     Without this check the Book assembles, and the Sleeve then fails every
     rebalance as a swallowed per-period compute error (aegis-rd-nar9)."""
 
-    def __init__(self, *, sleeve: SleeveName, arrays: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        *,
+        sleeve: SleeveName,
+        arrays: tuple[str, ...],
+        vocabulary: frozenset[str],
+    ) -> None:
         self.sleeve = sleeve
         self.arrays = arrays
         super().__init__(
             f"sleeve {sleeve.value!r} requires array(s) {list(arrays)} that no "
             f"data path can materialize; deliverable arrays are "
-            f"{sorted((*OHLCV_ARRAY_NAMES, *VOCABULARY))}"
+            f"{sorted((*OHLCV_ARRAY_NAMES, *vocabulary))}"
         )
 
 
@@ -129,10 +132,15 @@ class AssembledBook:
     analytics_horizon: AnalyticsHorizon
 
 
-def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> AssembledBook:
+def assemble_book(
+    book_config: BookConfig,
+    registry: BundleRegistryPort,
+    *,
+    custom_data_registry: CustomDataRegistry | None = None,
+) -> AssembledBook:
     """Resolve every Sleeve and prove all structural Commingled Book invariants."""
     sleeves = _load_sleeves(book_config, registry)
-    _validate_required_arrays(sleeves)
+    _validate_required_arrays(sleeves, custom_data_registry)
     continuous_declarations = _continuous_declarations(sleeves)
     analytics_horizon = derive_horizon(
         tuple(bundle.contract.timeframe for bundle in sleeves.values())
@@ -162,19 +170,31 @@ def assemble_book(book_config: BookConfig, registry: BundleRegistryPort) -> Asse
 
 def _validate_required_arrays(
     sleeves: _Mapping[SleeveName, ExecutionBundle],
+    registry: CustomDataRegistry | None,
 ) -> None:
+    kinds = (
+        registry
+        if registry is not None
+        else custom_kinds.declared_custom_data_kinds()
+    )
     for sleeve_name, bundle in sleeves.items():
         required = set(bundle.contract.required_arrays)
-        known = set(OHLCV_ARRAY_NAMES) | KNOWN_CUSTOM_ARRAY_NAMES
+        known = set(OHLCV_ARRAY_NAMES) | kinds.known_array_names
         undeliverable = tuple(
             sorted(required - known)
         )
         if undeliverable:
-            raise UndeliverableArrayError(sleeve=sleeve_name, arrays=undeliverable)
-        unprovisioned = tuple(sorted(required & (KNOWN_CUSTOM_ARRAY_NAMES - VOCABULARY)))
+            raise UndeliverableArrayError(
+                sleeve=sleeve_name,
+                arrays=undeliverable,
+                vocabulary=kinds.vocabulary,
+            )
+        unprovisioned = tuple(
+            sorted(required & (kinds.known_array_names - kinds.vocabulary))
+        )
         if unprovisioned:
             raise UnprovisionedArrayError(sleeve=sleeve_name, arrays=unprovisioned)
-        for value_array, availability_array in AVAILABILITY_BY_VALUE.items():
+        for value_array, availability_array in kinds.availability_by_value.items():
             if value_array in required and availability_array not in required:
                 raise MissingAvailabilityArrayError(
                     sleeve=sleeve_name,

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from aegis_data.catalog import CatalogBackedDataPort
-from aegis_data.custom_data import FixtureRecord, ServedCustomData
+from aegis_data.custom_data import ProviderAnswer
 from aegis_data.testing import FakeCatalog, future
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -19,6 +19,7 @@ from research.aegis_research.portfolio_simulation._simulation import (
 from research.aegis_research.run import data as run_data_module
 from research.aegis_research.run import pipeline as run_pipeline_module
 from research.aegis_research.run.pipeline import run_strategy_sweep
+from tests.support.custom_data import FixtureRecord
 from tests.support.research.aegis_research.market_data_fixtures import seed_catalog_ohlcv
 
 _START = "2024-01-01"
@@ -54,7 +55,7 @@ def test_custom_array_reaches_components_replay_and_candidate_provenance(
         resolved,
         component_registry=registry,
         run_id="custom-array-e2e",
-        custom_data_providers={FixtureRecord: (_FixtureProvider(),)},
+        custom_data_providers={FixtureRecord: _FixtureProvider()},
     )
 
     with CandidateStore(result.candidate_store_path) as store:
@@ -193,8 +194,8 @@ class _FixtureProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
-        return ServedCustomData(
+    ) -> ProviderAnswer[FixtureRecord]:
+        return ProviderAnswer(
             records=(
                 FixtureRecord(
                     end.value,
@@ -204,5 +205,5 @@ class _FixtureProvider:
                     provider="fixture",
                 ),
             ),
-            served_from=start,
+            oldest_verified=start,
         )

@@ -7,12 +7,9 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data.custom_data import (
-    CustomDataCoverageError,
-    CustomDataProviderPort,
-    FixtureRecord,
-    ServedCustomData,
-)
+from aegis_data.catalog import CatalogCoverageGapError
+from aegis_data.custom_data import CustomDataProviderPort, ProviderAnswer
+from aegis_data.storage import Catalog
 from aegis_runtime import DataContract, MissingIndexPolicy
 
 from aegis_trader.data.market_data import MarketBar
@@ -22,6 +19,7 @@ from aegis_trader.trader.sleeve_arrays import (
     SleeveArrayGrid,
     SleeveArrays,
 )
+from tests.support.custom_data import FixtureRecord
 
 _FIRST = InstrumentId.from_str("AAA.XLON")
 _SECOND = InstrumentId.from_str("BBB.XBRU")
@@ -39,7 +37,7 @@ class _Provider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
+    ) -> ProviderAnswer[FixtureRecord]:
         self.requests.append((start, end))
         records = tuple(
             record
@@ -47,7 +45,7 @@ class _Provider(CustomDataProviderPort[FixtureRecord]):
             if record.instrument_id == instrument_id
             and start.value <= record.ts_event <= end.value
         )
-        return ServedCustomData(records, start)
+        return ProviderAnswer(records, start)
 
 
 def test_sleeve_arrays_projects_every_required_bar_array_on_the_union_grid(
@@ -58,7 +56,7 @@ def test_sleeve_arrays_projects_every_required_bar_array_on_the_union_grid(
         required_arrays=("Open", "Close"),
     )
     grid = SleeveArrayGrid.from_bars(contract, _misaligned_bars())
-    arrays = SleeveArrays.prepared(catalog_path=tmp_path)
+    arrays = SleeveArrays.prepared(catalog=Catalog.open(tmp_path))
     expected_index = pd.DatetimeIndex([0, 86_400_000_000_000, 172_800_000_000_000])
     expected_open = pd.DataFrame(
         {
@@ -100,8 +98,8 @@ def test_sleeve_arrays_heals_catalog_coverage_with_live_provider(
     )
     provider = _Provider((record,))
     arrays = SleeveArrays.live(
-        catalog_path=tmp_path,
-        providers={FixtureRecord: (provider,)},
+        catalog=Catalog.open(tmp_path),
+        providers={FixtureRecord: provider},
     )
     grid = SleeveArrayGrid.from_bars(contract, bars)
 
@@ -135,8 +133,8 @@ def test_sleeve_arrays_projects_custom_panels_after_ensure(tmp_path: Path) -> No
         provider="fixture",
     )
     arrays = SleeveArrays.live(
-        catalog_path=tmp_path,
-        providers={FixtureRecord: (_Provider((record,)),)},
+        catalog=Catalog.open(tmp_path),
+        providers={FixtureRecord: _Provider((record,))},
     )
     grid = SleeveArrayGrid.from_bars(contract, bars)
 
@@ -170,9 +168,9 @@ def test_sleeve_arrays_projection_fails_when_catalog_coverage_was_not_prepared(
         contract,
         {_FIRST: (_bar(0, 10.0), _bar(_DAY_NS, 11.0))},
     )
-    arrays = SleeveArrays.prepared(catalog_path=tmp_path)
+    arrays = SleeveArrays.prepared(catalog=Catalog.open(tmp_path))
 
-    with pytest.raises(CustomDataCoverageError):
+    with pytest.raises(CatalogCoverageGapError):
         arrays.project(grid)
 
 

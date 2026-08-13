@@ -3,9 +3,11 @@
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 import pandas as pd
+
+from aegis_data.provider import ProviderAnswer
 
 
 @dataclass(frozen=True)
@@ -27,8 +29,10 @@ class CoverageInterval:
     def end(self) -> pd.Timestamp:
         return pd.Timestamp(self.end_ns, tz="UTC")
 
-    def from_frontier(self, served_from: pd.Timestamp) -> "CoverageInterval | None":
-        start_ns = max(self.start_ns, served_from.value)
+    def from_frontier(
+        self, oldest_verified: pd.Timestamp
+    ) -> "CoverageInterval | None":
+        start_ns = max(self.start_ns, oldest_verified.value)
         if start_ns > self.end_ns:
             return None
         return CoverageInterval(start_ns, self.end_ns)
@@ -44,21 +48,13 @@ CoverageFinalizer = Callable[[], None]
 RecordSelector = Callable[[Sequence[RecordT], CoverageInterval], Sequence[RecordT]]
 
 
-@dataclass(frozen=True)
-class ServedRecords(Generic[RecordT]):
-    """One provider's records and oldest source-verified instant."""
-
-    records: tuple[RecordT, ...]
-    served_from: pd.Timestamp
-
-
-RecordFetcher = Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[RecordT]]
+RecordFetcher = Callable[[pd.Timestamp, pd.Timestamp], ProviderAnswer[RecordT]]
 
 
 def ensure_coverage(
     *,
     subject: str,
-    fetchers: Sequence[RecordFetcher[Any]],
+    provider: RecordFetcher[Any] | None,
     missing_intervals: MissingIntervals,
     commit: CoverageCommit[Any],
     finalize: CoverageFinalizer,
@@ -69,9 +65,9 @@ def ensure_coverage(
 ) -> None:
     """Fill and re-verify one requested catalog window.
 
-    Fetchers are tried in order and each fills only what earlier ones left
-    missing (fill-order). The caller commits every provider-verified interval,
-    including empty results, so each record domain owns its persistence model.
+    One provider answers every initially missing interval. The caller commits
+    every provider-verified interval, including empty results, so each record
+    domain owns its persistence model.
     An *environmental* failure raised inside
     ``provider_boundary`` (gateway drop, timeout) aborts the whole request —
     deliberately: providers here are complementary (each owns a window), not
@@ -87,30 +83,29 @@ def ensure_coverage(
     initial_missing = missing_intervals()
     if not initial_missing:
         return
-    if not fetchers:
+    if provider is None:
         raise coverage_error(initial_missing)
 
-    for fetch in fetchers:
-        for missing in missing_intervals():
-            with provider_boundary(subject):
-                served = fetch(missing.start, missing.end)
-            verified = missing.from_frontier(served.served_from)
-            if verified is None:
-                continue
-            records = tuple(
-                served.records
-                if select_records is None
-                else select_records(served.records, verified)
-            )
-            commit(verified, records)
+    for missing in initial_missing:
+        with provider_boundary(subject):
+            served = provider(missing.start, missing.end)
+        verified = missing.from_frontier(served.oldest_verified)
+        if verified is None:
+            continue
+        records = tuple(
+            served.records
+            if select_records is None
+            else select_records(served.records, verified)
+        )
+        commit(verified, records)
 
-    finalize()
     remaining = missing_intervals()
     if remaining:
         raise coverage_error(remaining)
+    finalize()
     if on_coverage_filled is not None:
         with provider_boundary(subject):
             on_coverage_filled()
 
 
-__all__ = ["CoverageInterval", "ServedRecords", "ensure_coverage"]
+__all__ = ["CoverageInterval", "ensure_coverage"]

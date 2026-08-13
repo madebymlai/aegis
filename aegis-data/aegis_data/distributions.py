@@ -7,6 +7,8 @@ from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
+
 
 _DEFAULT_MIN_CASH_AMOUNT = 0.005
 _NANOS_PER_DAY = 86_400_000_000_000
@@ -121,7 +123,7 @@ def request_distribution_data(
 
 
 def query_distribution_data(
-    catalog: Any,
+    catalog: Catalog,
     instrument_ids: Sequence[InstrumentId],
     *,
     start: str | int | pd.Timestamp | None = None,
@@ -130,18 +132,17 @@ def query_distribution_data(
     """Read stored distributions for the requested instruments and window."""
     events: list[Distribution] = []
     for instrument_id in instrument_ids:
-        queried = catalog.query(
-            Distribution,
-            identifiers=[instrument_id.value],
-            start=start,
-            end=end,
+        queried = _force_window_items(
+            catalog.read_all(CatalogKey.for_instrument(Distribution, instrument_id)),
+            force_start=start,
+            force_end=end,
         )
-        events.extend(_as_distribution(item) for item in queried)
+        events.extend(queried)
     return tuple(sorted(events, key=lambda item: (item.instrument_id.value, item.ts_event)))
 
 
 def write_distribution_data(
-    catalog: Any,
+    catalog: Catalog,
     distributions: Sequence[Distribution],
 ) -> int:
     """Write only distributions beyond each instrument's stored ex-date frontier.
@@ -157,19 +158,22 @@ def write_distribution_data(
         selected = [item for item in items if item.ts_event > frontier]
         if not selected:
             continue
-        catalog.write_data(
-            selected,
-            data_cls=Distribution,
-            identifier=instrument_value,
-            start=min(item.ts_event for item in selected),
-            end=max(item.ts_event for item in selected) + _NANOS_PER_DAY,
+        catalog.replace(
+            CatalogKey.for_instrument(
+                Distribution, InstrumentId.from_str(instrument_value)
+            ),
+            CatalogInterval(
+                min(item.ts_event for item in selected),
+                max(item.ts_event for item in selected) + _NANOS_PER_DAY,
+            ),
+            tuple(selected),
         )
         written += len(selected)
     return written
 
 
 def replace_distribution_data(
-    catalog: Any,
+    catalog: Catalog,
     instrument_id: InstrumentId,
     distributions: Sequence[Distribution],
     *,
@@ -179,37 +183,26 @@ def replace_distribution_data(
     """Replace one instrument's bounded distribution window, even when empty."""
     start_ns = _optional_ns(start)
     end_ns = _optional_ns(end)
+    if start_ns is None or end_ns is None:
+        raise ValueError("distribution replacement requires both window bounds")
     selected = _force_window_items(distributions, force_start=start, force_end=end)
-    catalog.delete_data_range(
-        Distribution,
-        identifier=instrument_id.value,
-        start=start_ns,
-        end=end_ns,
-    )
-    if not selected:
-        return 0
-    catalog.write_data(
-        selected,
-        data_cls=Distribution,
-        identifier=instrument_id.value,
-        start=start_ns,
-        end=end_ns,
+    catalog.replace(
+        CatalogKey.for_instrument(Distribution, instrument_id),
+        CatalogInterval(start_ns, end_ns),
+        tuple(selected),
     )
     return len(selected)
 
 
-def _stored_frontier(catalog: Any, instrument_value: str) -> int:
-    stored = [
-        _as_distribution(item)
-        for item in catalog.query(Distribution, identifiers=[instrument_value])
-    ]
+def _stored_frontier(catalog: Catalog, instrument_value: str) -> int:
+    stored = catalog.read_all(
+        CatalogKey.for_instrument(
+            Distribution, InstrumentId.from_str(instrument_value)
+        )
+    )
     if not stored:
         return -1
     return max(item.ts_event for item in stored)
-
-
-def _as_distribution(item: Any) -> Distribution:
-    return item.data if hasattr(item, "data") else item
 
 
 def _force_window_items(

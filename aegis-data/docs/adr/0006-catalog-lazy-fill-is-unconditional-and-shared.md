@@ -57,7 +57,7 @@ InstrumentIds); no bespoke resolver (root ADR-0005).
 - The writer-swarm concern that motivated gating is handled **structurally**, not
   by a knob. IBKR permits a single session, so fills are inherently serialized; the
   `Warm Then Sweep` rule (one serial run/warming pass populates first, then
-  concurrent readers run over the immutable corpus) means the wide sweep never
+  concurrent readers run over the immutable Catalog) means the wide sweep never
   misses, so it never writes. No write-coordination or locking infra (YAGNI).
 
 ## Considered and rejected

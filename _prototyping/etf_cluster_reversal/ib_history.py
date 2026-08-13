@@ -93,7 +93,7 @@ def load_ucits_universe(
 ) -> UniverseLoad:
     """Qualify and load each candidate independently through one IBKR session."""
 
-    from aegis_data.catalog import CatalogBackedDataPort, parquet_data_catalog
+    from aegis_data.catalog import CatalogBackedDataPort, open_catalog
     from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
 
     report = progress or (lambda _message: None)
@@ -109,7 +109,7 @@ def load_ucits_universe(
         market_data_type="DELAYED_FROZEN",
         call_deadline=90,
     )
-    catalog = parquet_data_catalog(catalog_path)
+    catalog = open_catalog(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
         provider=provider,

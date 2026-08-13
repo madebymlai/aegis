@@ -6,15 +6,16 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from aegis_data._coverage_markers import CoverageInterval, CoverageMarkerLedger
 from aegis_data.bar_type import external_bar_type
 from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, raw_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode, RawBarTypeResolver
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_data.testing import FakeCatalog
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 DEFAULT_INSTRUMENT_ID_VALUES = ("SYN.XNAS", "SYN2.XNAS")
 ETF_INSTRUMENT_ID_VALUES = (
@@ -93,13 +94,15 @@ def deterministic_ohlcv_panels(
 
 
 class UnservableCatalog(FakeCatalog):
-    """A catalog that reports every requested window as missing, so the real
-    port's coverage gate judges it unservable (no provider wired: pure gap)."""
+    """A catalog nothing has ever been checked against, so the real port's
+    coverage gate judges every window unservable (no provider wired: pure gap).
 
-    def get_missing_intervals_for_request(
-        self, start: int, end: int, *_args: object, **_kwargs: object
-    ) -> list[tuple[int, int]]:
-        return [(start, end)]
+    Said the way coverage is actually read — as the claims on record. Its one
+    claim covers a single nanosecond at the epoch, which no requested window
+    reaches, so every request is wholly unaccounted for."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**{**kwargs, "coverage_horizon": (0, 0)})
 
 
 def unservable_port() -> CatalogBackedDataPort:
@@ -126,7 +129,7 @@ def seed_catalog_frames(
     no provider.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = pd.Timestamp(end, tz="UTC")
     close_panel = pd.DataFrame(
@@ -134,9 +137,9 @@ def seed_catalog_frames(
     )
     for value, frame in frames.items():
         current_id = instrument_id(value)
-        catalog.write_data([equity_definition(current_id, currency)])
+        catalog.store_definitions([equity_definition(current_id, currency)])
         bar_type = raw_bar_type(current_id, "1D")
-        catalog.write_data(
+        records = tuple(
             [
                 _bar(
                     bar_type,
@@ -148,9 +151,15 @@ def seed_catalog_frames(
                     volume=row["Volume"],
                 )
                 for timestamp, row in frame.iterrows()
-            ],
-            start=start_ts.value,
-            end=end_ts.value,
+            ]
+        )
+        interval = CatalogInterval(start_ts.value, end_ts.value)
+        catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
+        CoverageMarkerLedger(catalog).mark(
+            CatalogKey.for_bar(bar_type),
+            CoverageInterval(start_ts.value, end_ts.value),
+            checked_at_ns=start_ts.value,
+            applicable=True,
         )
         _verify_zero_distribution_coverage(
             catalog,
@@ -209,13 +218,13 @@ def seed_catalog_quote(
     series needed to verify distributions against ADJUSTED_LAST.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     current_id = instrument_id(value)
     resolver = DeclaredMarkingResolver(declared={current_id: MarkMode.QUOTE})
     bid_type, ask_type = resolver.resolve(current_id, "1D").mark_bars
     trade_type = raw_bar_type(current_id, "1D")
     trade_frame = (bid_frame + ask_frame) / 2.0
-    catalog.write_data([equity_definition(current_id, currency)])
+    catalog.store_definitions([equity_definition(current_id, currency)])
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = pd.Timestamp(end, tz="UTC")
     for bar_type, frame in (
@@ -223,7 +232,7 @@ def seed_catalog_quote(
         (ask_type, ask_frame),
         (trade_type, trade_frame),
     ):
-        catalog.write_data(
+        records = tuple(
             [
                 _bar(
                     bar_type,
@@ -235,9 +244,15 @@ def seed_catalog_quote(
                     volume=row["Volume"],
                 )
                 for timestamp, row in frame.iterrows()
-            ],
-            start=start_ts.value,
-            end=end_ts.value,
+            ]
+        )
+        interval = CatalogInterval(start_ts.value, end_ts.value)
+        catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
+        CoverageMarkerLedger(catalog).mark(
+            CatalogKey.for_bar(bar_type),
+            CoverageInterval(start_ts.value, end_ts.value),
+            checked_at_ns=start_ts.value,
+            applicable=True,
         )
     _verify_zero_distribution_coverage(
         catalog,
@@ -250,7 +265,7 @@ def seed_catalog_quote(
 
 
 def _verify_zero_distribution_coverage(
-    catalog: ParquetDataCatalog,
+    catalog: Catalog,
     instrument_id: InstrumentId,
     *,
     panels: dict[str, pd.DataFrame],
@@ -305,9 +320,9 @@ def seed_catalog_fx(
     differ from the native book — a flat rate would cancel out of return metrics.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     pair_id = instrument_id(pair_value)
-    catalog.write_data([currency_pair_definition(pair_id)])
+    catalog.store_definitions([currency_pair_definition(pair_id)])
     index = pd.date_range(start, periods=periods, freq="D")
     rates = base_rate * np.exp(np.arange(periods) * drift)
     # MID stated where the leg is seeded — the same declaration production
@@ -315,7 +330,7 @@ def seed_catalog_fx(
     bar_type = external_bar_type(pair_id, "1D", "MID")
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = start_ts + pd.Timedelta(days=periods)
-    catalog.write_data(
+    records = tuple(
         [
             _bar(
                 bar_type,
@@ -327,9 +342,15 @@ def seed_catalog_fx(
                 volume=1_000_000.0,
             )
             for timestamp, rate in zip(index, rates, strict=True)
-        ],
-        start=start_ts.value,
-        end=end_ts.value,
+        ]
+    )
+    interval = CatalogInterval(start_ts.value, end_ts.value)
+    catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
+    CoverageMarkerLedger(catalog).mark(
+        CatalogKey.for_bar(bar_type),
+        CoverageInterval(start_ts.value, end_ts.value),
+        checked_at_ns=start_ts.value,
+        applicable=True,
     )
 
 

@@ -28,11 +28,12 @@ Lock into an **Execution Bundle** wheel for execution. See
 [`aegis-rd/CONTEXT.md`](./aegis-rd/CONTEXT.md).
 
 ### [`aegis-data/`](./aegis-data): Market data
-The shared historical corpus: Nautilus-native bars keyed by **InstrumentId** in
-one `ParquetDataCatalog`. It serves both research sourcing and live warmup
-through the same `DataProvider` port, lazily filling missing windows through an
-adapter (IBKR is one adapter behind the port, not the architecture), and derives
-back-adjusted continuous-future series across roll seams. See
+The shared **Catalog**: bars keyed by **InstrumentId** in one
+`ParquetDataCatalog`, kept in its own layout so nothing translates on read. It
+serves both research sourcing and live warmup through the same `DataProvider`
+port, lazily filling missing windows through an adapter (IBKR is one adapter
+behind the port, not the architecture), and derives back-adjusted
+continuous-future series across roll seams. See
 [`aegis-data/CONTEXT.md`](./aegis-data/CONTEXT.md).
 
 ### [`aegis-runtime/`](./aegis-runtime): Shared kernel
@@ -74,7 +75,7 @@ one traded live enforce identical exposure limits.
 aegis/
 ├── CONTEXT-MAP.md     # the contexts and their relationships
 ├── aegis-rd/          # research operating system
-├── aegis-data/        # shared market-data corpus + provider port
+├── aegis-data/        # shared market-data Catalog + provider port
 ├── aegis-runtime/     # shared execution kernel
 └── aegis-trader/      # live + backtest execution
 ```

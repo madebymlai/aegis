@@ -33,6 +33,9 @@ from aegis_trader.backtest import (
     run_book_backtest,
 )
 from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data._coverage_markers import CoverageMarkerLedger
+from aegis_data._ensure_coverage import CoverageInterval
+from aegis_data.storage import Catalog, CatalogKey
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.bundles.stub import StubBundleRegistry
 
@@ -147,6 +150,8 @@ def _seed_hourly(catalog_path, instrument_id: InstrumentId, timestamps) -> None:
         start=int(pd.Timestamp("2020-01-01", tz="UTC").value),
         end=int(pd.Timestamp("2020-01-05", tz="UTC").value),
     )
+    _mark_bar_coverage(catalog_path, raw_bar_type(instrument_id, "1H"))
+    _mark_bar_coverage(catalog_path, raw_bar_type(instrument_id, "1D"))
 
 
 def _seed_daily(catalog_path, instrument_id: InstrumentId, days: int) -> None:
@@ -160,6 +165,26 @@ def _seed_daily(catalog_path, instrument_id: InstrumentId, days: int) -> None:
         bars,
         start=int(pd.Timestamp("2020-01-01", tz="UTC").value),
         end=int(pd.Timestamp("2020-01-05", tz="UTC").value),
+    )
+    _mark_bar_coverage(catalog_path, raw_bar_type(instrument_id, "1D"))
+
+
+def _mark_bar_coverage(
+    catalog_path,
+    bar_type,
+    *,
+    start_ns: int | None = None,
+    end_ns: int | None = None,
+) -> None:
+    if start_ns is None:
+        start_ns = int(pd.Timestamp("2020-01-01", tz="UTC").value)
+    if end_ns is None:
+        end_ns = int(pd.Timestamp("2020-01-05", tz="UTC").value)
+    CoverageMarkerLedger(Catalog.open(catalog_path)).mark(
+        CatalogKey.for_bar(bar_type),
+        CoverageInterval(start_ns, end_ns),
+        checked_at_ns=start_ns,
+        applicable=True,
     )
 
 
@@ -668,6 +693,18 @@ def _seed_weekly(catalog_path, instrument_id: InstrumentId, fridays) -> None:
         for ts in pd.date_range("2020-01-01", "2020-02-04", freq="B")
     ]
     catalog.write_data(daily_bars, start=start, end=end)
+    _mark_bar_coverage(
+        catalog_path,
+        raw_bar_type(instrument_id, "1W"),
+        start_ns=start,
+        end_ns=end,
+    )
+    _mark_bar_coverage(
+        catalog_path,
+        raw_bar_type(instrument_id, "1D"),
+        start_ns=start,
+        end_ns=end,
+    )
 
 
 def _weekly_distribution_source(
@@ -680,7 +717,7 @@ def _weekly_distribution_source(
     values.loc[pd.Timestamp(ex_date, tz="UTC")] = 100.0 / (1.0 - amount / 100.0)
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
-            ParquetDataCatalog(catalog_path),
+            Catalog.open(catalog_path),
             distribution_provider=_AdjustedLastProvider({_WEEKLY_ID: values}),
         )
     )

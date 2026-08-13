@@ -14,9 +14,10 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.catalog import CatalogBackedDataPort, raw_bar_type
+from aegis_data.raw_bars import RawBars
+from aegis_data.storage import Catalog, CatalogInterval
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -130,7 +131,7 @@ def test_usd_quoted_sleeve_trades_in_eur_base_book(tmp_path) -> None:
 
 
 def _seed_usd_catalog(catalog_path, closes: list[float]) -> None:
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     instrument = Equity(
         instrument_id=_USD_INSTRUMENT_ID,
         raw_symbol=Symbol(_USD_INSTRUMENT_ID.symbol.value),
@@ -141,36 +142,42 @@ def _seed_usd_catalog(catalog_path, closes: list[float]) -> None:
         ts_event=0,
         ts_init=0,
     )
-    catalog.write_data([instrument])
-    catalog.write_data(
-        [
+    catalog.store_definitions([instrument])
+    start_ns = pd.Timestamp("2020-01-01", tz="UTC").value
+    end_ns = start_ns + len(closes) * 86_400_000_000_000
+    bar_type = raw_bar_type(_USD_INSTRUMENT_ID, "1D")
+    RawBars(catalog).record_verified(
+        bar_type,
+        CatalogInterval(start_ns, end_ns),
+        tuple(
             _bar(raw_bar_type(_USD_INSTRUMENT_ID, "1D"), day, close)
             for day, close in zip(
                 pd.date_range("2020-01-01", periods=len(closes), freq="D"),
                 closes,
                 strict=True,
             )
-        ],
-        start=pd.Timestamp("2020-01-01", tz="UTC").value,
-        end=pd.Timestamp("2020-01-01", tz="UTC").value + len(closes) * 86_400_000_000_000,
+        ),
     )
 
 
 def _seed_fx_catalog(catalog_path, rates: list[float]) -> None:
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     pair = build_currency_pair("EUR", "USD", "IDEALPRO")
-    catalog.write_data([pair])
-    catalog.write_data(
-        [
-            _bar(external_bar_type(_EURUSD_ID, "1D", "MID"), day, rate, precision=5)
+    catalog.store_definitions([pair])
+    start_ns = pd.Timestamp("2020-01-01", tz="UTC").value
+    end_ns = start_ns + len(rates) * 86_400_000_000_000
+    bar_type = external_bar_type(_EURUSD_ID, "1D", "MID")
+    RawBars(catalog).record_verified(
+        bar_type,
+        CatalogInterval(start_ns, end_ns),
+        tuple(
+            _bar(bar_type, day, rate, precision=5)
             for day, rate in zip(
                 pd.date_range("2020-01-01", periods=len(rates), freq="D"),
                 rates,
                 strict=True,
             )
-        ],
-        start=pd.Timestamp("2020-01-01", tz="UTC").value,
-        end=pd.Timestamp("2020-01-01", tz="UTC").value + len(rates) * 86_400_000_000_000,
+        ),
     )
 
 
@@ -207,7 +214,7 @@ def _zero_distribution_source(catalog_path) -> CatalogBacktestDataSource:
     }
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
-            ParquetDataCatalog(catalog_path),
+            Catalog.open(catalog_path),
             distribution_provider=_AdjustedLastProvider(adjusted_last),
             # The port reads what the bundle records: the FX conversion leg is
             # bar-marked MID by declaration, never by symbol shape.

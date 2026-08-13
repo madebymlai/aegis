@@ -27,12 +27,12 @@ from nautilus_trader.model import CustomData, DataType
 from nautilus_trader.model.identifiers import ClientId, InstrumentId
 
 from aegis_data.custom_data import (
-    FixtureRecord,
     InvalidLiveCustomDataCapabilityError,
     LiveCustomDataCapability,
     LiveDataClientName,
-    ServedCustomData,
+    ProviderAnswer,
 )
+from aegis_data.storage import Catalog
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.trader.live_custom_data import (
     LiveDataClientConflictError,
@@ -44,6 +44,7 @@ from aegis_trader.trader.sleeve_arrays import ArrayNeed, SleeveArrayGrid
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.types import SleeveName
 from tests.support.factories import assemble_test_book, make_bundle
+from tests.support.custom_data import FixtureRecord
 
 
 class _FixtureClient(LiveDataClient):
@@ -99,7 +100,6 @@ class _StreamingProvider:
             client_name=LiveDataClientName("FIXTURE"),
             config=self._config,
             factory=_FixtureFactory,
-            record_types=(FixtureRecord,),
         )
 
     def request_records(
@@ -108,7 +108,7 @@ class _StreamingProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
+    ) -> ProviderAnswer[FixtureRecord]:
         self.requests.append((start, end))
         records = tuple(
             record
@@ -116,11 +116,7 @@ class _StreamingProvider:
             if record.instrument_id == instrument_id
             and start.value <= record.ts_event <= end.value
         )
-        return ServedCustomData(records, start)
-
-
-class _FetchOnlyProvider:
-    pass
+        return ProviderAnswer(records, start)
 
 
 class _InvalidStreamingProvider:
@@ -152,7 +148,7 @@ class _Node:
 
 @contextmanager
 def _native_capture(
-    catalog_path: Path,
+    catalog: Catalog,
     provider: _StreamingProvider | None = None,
 ) -> Iterator[Callable[[Data], None]]:
     loop = asyncio.new_event_loop()
@@ -162,8 +158,8 @@ def _native_capture(
     )
     add_live_custom_data(
         cast(TradingNode, node),
-        (provider or _StreamingProvider(LiveDataClientConfig()),),
-        catalog_path=catalog_path,
+        {FixtureRecord: provider or _StreamingProvider(LiveDataClientConfig())},
+        catalog=catalog,
     )
     node.build()
     actor = node.trader.actors()[0]
@@ -201,8 +197,8 @@ def test_live_custom_data_merges_client_config_and_registers_its_factory(
 
     add_live_custom_data(
         cast(TradingNode, node),
-        (_FetchOnlyProvider(), _StreamingProvider(fixture_config)),
-        catalog_path=tmp_path,
+        {FixtureRecord: _StreamingProvider(fixture_config)},
+        catalog=Catalog.open(tmp_path),
     )
 
     assert node._config.data_clients == {
@@ -221,8 +217,8 @@ def test_live_custom_data_rejects_a_client_id_already_owned_by_the_node(
     with pytest.raises(LiveDataClientConflictError, match="FIXTURE"):
         add_live_custom_data(
             cast(TradingNode, node),
-            (_StreamingProvider(LiveDataClientConfig()),),
-            catalog_path=tmp_path,
+            {FixtureRecord: _StreamingProvider(LiveDataClientConfig())},
+            catalog=Catalog.open(tmp_path),
         )
 
     assert node._config.data_clients == {"FIXTURE": broker_config}
@@ -237,8 +233,8 @@ def test_live_custom_data_rejects_an_invalid_provider_capability(
     with pytest.raises(InvalidLiveCustomDataCapabilityError):
         add_live_custom_data(
             cast(TradingNode, node),
-            (_InvalidStreamingProvider(),),
-            catalog_path=tmp_path,
+            {FixtureRecord: _InvalidStreamingProvider()},
+            catalog=Catalog.open(tmp_path),
         )
 
     assert node.data_factories == {}
@@ -263,12 +259,13 @@ def test_native_capture_gap_is_healed_by_live_array_coverage(tmp_path: Path) -> 
         provider="fixture-live",
     )
     provider = _StreamingProvider(LiveDataClientConfig())
-    with _native_capture(tmp_path, provider) as deliver:
+    catalog = Catalog.open(tmp_path)
+    with _native_capture(catalog, provider) as deliver:
         deliver(first)
         deliver(last)
     arrays = build_live_sleeve_arrays(
-        (provider,),
-        catalog_path=tmp_path,
+        {FixtureRecord: provider},
+        catalog=catalog,
     )
     index = pd.date_range(first_timestamp, last_timestamp, tz="UTC")
 
@@ -298,10 +295,11 @@ def test_live_array_coverage_makes_no_request_for_a_covered_window(
         start=index[0],
         end=index[-1],
     )
-    build_live_sleeve_arrays((seed,), catalog_path=tmp_path).ensure(need)
+    catalog = Catalog.open(tmp_path)
+    build_live_sleeve_arrays({FixtureRecord: seed}, catalog=catalog).ensure(need)
     unused = _StreamingProvider(LiveDataClientConfig())
 
-    build_live_sleeve_arrays((unused,), catalog_path=tmp_path).ensure(need)
+    build_live_sleeve_arrays({FixtureRecord: unused}, catalog=catalog).ensure(need)
 
     assert unused.requests == []
 
@@ -349,8 +347,8 @@ def test_live_startup_warms_the_declared_custom_array_window(
     now = datetime(2024, 1, 3, tzinfo=timezone.utc)
 
     arrays = build_live_sleeve_arrays(
-        (provider,),
-        catalog_path=tmp_path,
+        {FixtureRecord: provider},
+        catalog=Catalog.open(tmp_path),
     )
     warm_live_custom_data(
         book,
@@ -381,7 +379,10 @@ def test_live_custom_array_projection_reads_the_warmed_catalog(
         ),
     )
     index = pd.date_range("2024-01-01", "2024-01-03", tz="UTC")
-    arrays = build_live_sleeve_arrays((provider,), catalog_path=tmp_path)
+    arrays = build_live_sleeve_arrays(
+        {FixtureRecord: provider},
+        catalog=Catalog.open(tmp_path),
+    )
     grid = _custom_array_grid(instrument_id, index)
 
     arrays.ensure(grid.need)

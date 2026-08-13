@@ -1,13 +1,15 @@
 """Catalog-backed proof that a sparse record interval was checked."""
 
 from dataclasses import dataclass
-from typing import Any
-
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data._ensure_coverage import CoverageInterval
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
+
+
+_COVERAGE_DATASET_ID = InstrumentId.from_str("COVERAGE.AEGIS")
 
 
 @customdataclass
@@ -26,28 +28,33 @@ class _CoverageMarker(Data):
 class CoverageMarkerLedger:
     """Own the persisted checked-interval representation for sparse records."""
 
-    catalog: Any
+    catalog: Catalog
 
     def missing(
         self,
-        record_type: type[Data],
-        instrument_id: InstrumentId,
+        subject: CatalogKey[Data],
         interval: CoverageInterval,
     ) -> list[CoverageInterval]:
-        return [
-            CoverageInterval(start_ns, end_ns)
-            for start_ns, end_ns in self.catalog.get_missing_intervals_for_request(
-                interval.start_ns,
-                interval.end_ns,
-                _CoverageMarker,
-                identifier=self.identifier(record_type, instrument_id),
-            )
-        ]
+        """The parts of *interval* no claim answers for.
+
+        Answered from the claims themselves, which carry the interval they
+        checked. How those claims are laid out in files is a storage concern
+        and decides nothing: merging two files cannot invent a checked day,
+        and splitting one cannot lose it.
+        """
+        remaining = [interval]
+        for marker in self.catalog.read_all(self._key(subject)):
+            claim = CoverageInterval(marker.start_ns, marker.end_ns)
+            remaining = [
+                residual
+                for pending in remaining
+                for residual in _subtract(pending, claim)
+            ]
+        return sorted(remaining, key=lambda gap: gap.start_ns)
 
     def mark(
         self,
-        record_type: type[Data],
-        instrument_id: InstrumentId,
+        subject: CatalogKey[Data],
         interval: CoverageInterval,
         *,
         checked_at_ns: int,
@@ -62,8 +69,8 @@ class CoverageMarkerLedger:
             _CoverageMarker(
                 point,
                 point,
-                instrument_id=self._marker_instrument_id(record_type, instrument_id),
-                record_type=record_type.__name__,
+                instrument_id=_COVERAGE_DATASET_ID,
+                record_type=subject.record_type.__name__,
                 start_ns=interval.start_ns,
                 end_ns=interval.end_ns,
                 checked_at_ns=checked_at_ns,
@@ -71,85 +78,100 @@ class CoverageMarkerLedger:
             )
             for point in points
         ]
-        self.catalog.write_data(
-            markers,
-            data_cls=_CoverageMarker,
-            identifier=self.identifier(record_type, instrument_id),
-            start=interval.start_ns,
-            end=interval.end_ns,
+        self.catalog.replace(
+            self._key(subject),
+            CatalogInterval(interval.start_ns, interval.end_ns),
+            tuple(markers),
         )
 
     def checked_at_values(
         self,
-        record_type: type[Data],
-        instrument_id: InstrumentId,
+        subject: CatalogKey[Data],
         interval: CoverageInterval,
     ) -> list[int]:
-        markers = self.catalog.query(
-            _CoverageMarker,
-            identifiers=[self.identifier(record_type, instrument_id)],
-            start=interval.start_ns,
-            end=interval.end_ns,
-        )
+        markers = self.catalog.read_all(self._key(subject))
         return [
             marker.checked_at_ns
-            for item in markers
-            for marker in [self._as_marker(item)]
+            for marker in markers
             if marker.end_ns >= interval.start_ns
             and marker.start_ns <= interval.end_ns
         ]
 
+    def covered_through(self, subject: CatalogKey[Data]) -> int | None:
+        """Return the latest verified endpoint for *subject*, if one exists."""
+        markers = self.catalog.read_all(self._key(subject))
+        return max((marker.end_ns for marker in markers), default=None)
+
     def consolidate(
         self,
-        record_type: type[Data],
-        instrument_id: InstrumentId,
+        subject: CatalogKey[Data],
         interval: CoverageInterval,
     ) -> None:
-        self.catalog.consolidate_data(
-            _CoverageMarker,
-            identifier=self.identifier(record_type, instrument_id),
-            start=interval.start_ns,
-            end=interval.end_ns,
-            deduplicate=True,
+        self.catalog.compact(
+            self._key(subject),
+            CatalogInterval(interval.start_ns, interval.end_ns),
         )
+
+    def repair_interval_descriptions(self, subject: CatalogKey[Data]) -> None:
+        self.catalog.repair_interval_descriptions(self._key(subject))
 
     def delete(
         self,
-        record_type: type[Data],
-        instrument_id: InstrumentId,
+        subject: CatalogKey[Data],
         interval: CoverageInterval,
     ) -> None:
-        self.catalog.delete_data_range(
-            _CoverageMarker,
-            identifier=self.identifier(record_type, instrument_id),
-            start=interval.start_ns,
-            end=interval.end_ns,
-        )
-
-    @staticmethod
-    def identifier(record_type: type[Data], instrument_id: InstrumentId) -> str:
-        return CoverageMarkerLedger._marker_instrument_id(
-            record_type, instrument_id
-        ).value
-
-    @staticmethod
-    def _marker_instrument_id(
-        record_type: type[Data], instrument_id: InstrumentId
-    ) -> InstrumentId:
-        return InstrumentId.from_str(
-            f"{record_type.__name__}-{instrument_id.symbol.value}."
-            f"{instrument_id.venue.value}"
-        )
-
-    @staticmethod
-    def _as_marker(item: object) -> _CoverageMarker:
-        value = item.data if hasattr(item, "data") else item
-        if not isinstance(value, _CoverageMarker):
-            raise TypeError(
-                "catalog returned "
-                f"{type(value).__name__}, expected {_CoverageMarker.__name__}"
+        key = self._key(subject)
+        claims = {
+            (
+                marker.start_ns,
+                marker.end_ns,
+                marker.checked_at_ns,
+                marker.applicable,
             )
-        return value
+            for marker in self.catalog.read_all(key)
+            if marker.end_ns >= interval.start_ns
+            and marker.start_ns <= interval.end_ns
+        }
+        for start_ns, end_ns, checked_at_ns, applicable in claims:
+            self.catalog.drop(key, CatalogInterval(start_ns, end_ns))
+            for residual in _subtract(
+                CoverageInterval(start_ns, end_ns), interval
+            ):
+                self.mark(
+                    subject,
+                    residual,
+                    checked_at_ns=checked_at_ns,
+                    applicable=applicable,
+                )
+
+    @staticmethod
+    def _key(subject: CatalogKey[Data]) -> CatalogKey[_CoverageMarker]:
+        return CatalogKey.for_coverage(
+            _CoverageMarker,
+            subject,
+        )
+
+
+def _subtract(
+    claimed: CoverageInterval,
+    removed: CoverageInterval,
+) -> tuple[CoverageInterval, ...]:
+    residuals: list[CoverageInterval] = []
+    if claimed.start_ns < removed.start_ns:
+        residuals.append(
+            CoverageInterval(
+                claimed.start_ns,
+                min(claimed.end_ns, removed.start_ns - 1),
+            )
+        )
+    if claimed.end_ns > removed.end_ns:
+        residuals.append(
+            CoverageInterval(
+                max(claimed.start_ns, removed.end_ns + 1),
+                claimed.end_ns,
+            )
+        )
+    return tuple(residuals)
 
 
 __all__ = ["CoverageMarkerLedger"]

@@ -14,13 +14,14 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogWindowRequest,
-    parquet_data_catalog,
+    open_catalog,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
 from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
 from aegis_data.roll import front_contract as calendar_front
 from aegis_data.roll import roll_lead_days_for_cadence
+from aegis_data.storage import CatalogInterval
 
 _GATEWAY_PORT = os.environ.get("AEGIS_IBKR_GATEWAY_PORT")
 _ESM6 = InstrumentId.from_str("ESM6.XCME")
@@ -53,7 +54,7 @@ def _warm_catalog(
         include_expired_futures=True,
     )
     path = tmp_path / "catalog"
-    catalog = parquet_data_catalog(path)
+    catalog = open_catalog(path)
     fill_port = CatalogBackedDataPort(
         catalog,
         provider=provider,
@@ -64,15 +65,18 @@ def _warm_catalog(
     fill_port.load_window(
         CatalogWindowRequest(instrument_ids=tuple(legs), start=start, end=end)
     )
-    return CatalogBackedDataPort(parquet_data_catalog(path))
+    return CatalogBackedDataPort(open_catalog(path))
 
 
 def _front_leg_bars(
     warm: CatalogBackedDataPort, leg: InstrumentId, start: str, end: str
 ) -> list[Bar]:
-    return warm.read_native_bars(
-        CatalogWindowRequest(instrument_ids=(leg,), start=start, end=end, timeframe="1D")
-    )[leg]
+    marking = warm.raw_bars.marking(leg, "1D")
+    interval = CatalogInterval(
+        pd.Timestamp(start, tz="UTC").value,
+        pd.Timestamp(end, tz="UTC").value,
+    )
+    return list(warm.raw_bars.stored(marking, interval).bars)
 
 
 def _bar_bucket_close(bar: Bar) -> pd.Timestamp:
