@@ -176,30 +176,27 @@ class Catalog:
         )
         return tuple(CatalogInterval(start_ns, end_ns) for start_ns, end_ns in missing)
 
-    def compact(
-        self,
-        key: CatalogKey[RecordT],
-        interval: CatalogInterval,
-        *,
-        ensure_contiguous_files: bool = True,
-    ) -> None:
-        try:
-            self._store.consolidate_data(
-                key.record_type,
-                identifier=_identifier(key),
-                start=interval.start_ns,
-                end=interval.end_ns,
-                ensure_contiguous_files=ensure_contiguous_files,
-                deduplicate=True,
-            )
-        except AssertionError:
-            _LOG.warning(
-                "skipped Catalog compaction across a non-contiguous interval",
-                extra={
-                    "start_ns": interval.start_ns,
-                    "end_ns": interval.end_ns,
-                },
-            )
+    def compact(self, key: CatalogKey[RecordT], interval: CatalogInterval) -> None:
+        """Merge this dataset's files across *interval*.
+
+        Purely a storage operation: nothing reads coverage out of a filename,
+        so merging across a gap cannot make an unchecked interval look checked.
+        Files are free to be laid out however reads them fastest.
+
+        ``ensure_contiguous_files`` is the vendor asking whether to assert the
+        files are adjacent before merging — its only effect. A Catalog with a
+        real hole in its history is an ordinary Catalog here, so there is
+        nothing to assert; leaving it on would raise on a normal state, and
+        only when the process happens not to be running under ``-O``.
+        """
+        self._store.consolidate_data(
+            key.record_type,
+            identifier=_identifier(key),
+            start=interval.start_ns,
+            end=interval.end_ns,
+            ensure_contiguous_files=False,
+            deduplicate=True,
+        )
 
     def repair_interval_descriptions(self, key: CatalogKey[RecordT]) -> None:
         """Rebuild filename intervals from stored record extents."""

@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -106,7 +108,15 @@ def test_replace_window_with_no_records_clears_stale_payload(tmp_path: Path) -> 
     assert catalog.read(key, interval) == ()
 
 
-def test_bounded_compaction_leaves_a_historical_hole_visible(tmp_path: Path) -> None:
+def test_compaction_merges_across_a_hole_without_losing_a_record(
+    tmp_path: Path,
+) -> None:
+    """File layout is free precisely because it carries no coverage meaning.
+
+    Merging these two files widens what the surviving filename spans across a
+    January gap. Nothing asks a filename what was checked — the coverage
+    claims do that — so the only thing compaction must protect is the records.
+    """
     catalog = Catalog.open(tmp_path / "catalog")
     key = CatalogKey.for_instrument(Distribution, _SPY)
     jan_1 = pd.Timestamp("2024-01-01", tz="UTC").value
@@ -120,11 +130,74 @@ def test_bounded_compaction_leaves_a_historical_hole_visible(tmp_path: Path) -> 
         _SPY, "2024-01-04", amount=0.40, currency="USD"
     )
     full = CatalogInterval(jan_1, jan_5)
-    gap = (CatalogInterval(jan_2 + 1, jan_4 - 1),)
 
     catalog.replace(key, CatalogInterval(jan_1, jan_2), (first,))
     catalog.replace(key, CatalogInterval(jan_4, jan_5), (second,))
     catalog.compact(key, full)
 
-    assert catalog.missing(key, full) == gap
     assert catalog.read(key, full) == (first, second)
+
+
+_HOLE_PROBE = """
+import sys
+
+import pandas as pd
+from nautilus_trader.model.identifiers import InstrumentId
+
+from aegis_data._coverage_markers import CoverageMarkerLedger
+from aegis_data._ensure_coverage import CoverageInterval
+from aegis_data.distributions import Distribution
+from aegis_data.storage import Catalog, CatalogKey
+
+assert_enabled = False
+try:
+    assert False
+except AssertionError:
+    assert_enabled = True
+
+
+def day(value):
+    return pd.Timestamp(value, tz="UTC").value
+
+
+subject = CatalogKey.for_instrument(Distribution, InstrumentId.from_str("SPY.ARCA"))
+ledger = CoverageMarkerLedger(Catalog.open(sys.argv[1]))
+for checked in (("2024-01-01", "2024-01-31"), ("2024-03-01", "2024-03-31")):
+    ledger.mark(
+        subject,
+        CoverageInterval(day(checked[0]), day(checked[1])),
+        checked_at_ns=day("2024-04-01"),
+        applicable=True,
+    )
+
+ledger.consolidate(subject, CoverageInterval(day("2024-01-01"), day("2024-03-31")))
+february = CoverageInterval(day("2024-02-05"), day("2024-02-06"))
+print(f"{assert_enabled}:{bool(ledger.missing(subject, february))}")
+"""
+
+
+def test_compaction_never_invents_coverage_even_with_assertions_disabled(
+    tmp_path: Path,
+) -> None:
+    """Merging files must not merge claims.
+
+    The vendor guards contiguous consolidation with ``assert``, which
+    ``python -O`` strips. Coverage is read from the claims themselves rather
+    than from file extents, so an unchecked February stays unchecked however
+    the files are laid out — and with whatever flags the process runs under.
+    """
+    probe = tmp_path / "probe.py"
+    probe.write_text(_HOLE_PROBE)
+
+    verdicts = {
+        flags: subprocess.run(
+            [sys.executable, *flags, str(probe), str(tmp_path / f"catalog{len(flags)}")],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for flags in ((), ("-O",))
+    }
+
+    assert verdicts[()] == "True:True"
+    assert verdicts[("-O",)] == "False:True"

@@ -94,15 +94,15 @@ def deterministic_ohlcv_panels(
 
 
 class UnservableCatalog(FakeCatalog):
-    """A catalog that reports every requested window as missing, so the real
-    port's coverage gate judges it unservable (no provider wired: pure gap)."""
+    """A catalog nothing has ever been checked against, so the real port's
+    coverage gate judges every window unservable (no provider wired: pure gap).
 
-    def missing(
-        self,
-        key: CatalogKey[Any],
-        interval: CatalogInterval,
-    ) -> tuple[CatalogInterval, ...]:
-        return (interval,)
+    Said the way coverage is actually read — as the claims on record. Its one
+    claim covers a single nanosecond at the epoch, which no requested window
+    reaches, so every request is wholly unaccounted for."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**{**kwargs, "coverage_horizon": (0, 0)})
 
 
 def unservable_port() -> CatalogBackedDataPort:

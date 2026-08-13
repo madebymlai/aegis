@@ -35,13 +35,22 @@ class CoverageMarkerLedger:
         subject: CatalogKey[Data],
         interval: CoverageInterval,
     ) -> list[CoverageInterval]:
-        return [
-            CoverageInterval(item.start_ns, item.end_ns)
-            for item in self.catalog.missing(
-                self._key(subject),
-                CatalogInterval(interval.start_ns, interval.end_ns),
-            )
-        ]
+        """The parts of *interval* no claim answers for.
+
+        Answered from the claims themselves, which carry the interval they
+        checked. How those claims are laid out in files is a storage concern
+        and decides nothing: merging two files cannot invent a checked day,
+        and splitting one cannot lose it.
+        """
+        remaining = [interval]
+        for marker in self.catalog.read_all(self._key(subject)):
+            claim = CoverageInterval(marker.start_ns, marker.end_ns)
+            remaining = [
+                residual
+                for pending in remaining
+                for residual in _subtract(pending, claim)
+            ]
+        return sorted(remaining, key=lambda gap: gap.start_ns)
 
     def mark(
         self,
@@ -97,13 +106,10 @@ class CoverageMarkerLedger:
         self,
         subject: CatalogKey[Data],
         interval: CoverageInterval,
-        *,
-        ensure_contiguous_files: bool = True,
     ) -> None:
         self.catalog.compact(
             self._key(subject),
             CatalogInterval(interval.start_ns, interval.end_ns),
-            ensure_contiguous_files=ensure_contiguous_files,
         )
 
     def repair_interval_descriptions(self, subject: CatalogKey[Data]) -> None:

@@ -1,7 +1,7 @@
 """Shared test fixtures for the catalog port and continuous-futures scenarios.
 
 Importable test support (the ``pandas.testing`` pattern) so aegis-data and the
-packages that consume it drive the same fake corpus instead of copying it:
+packages that consume it drive the same fake Catalog instead of copying it:
 
 - ``FakeCatalog`` — a Catalog-backend stand-in: instrument definitions
   plus native bars by identifier, served beneath the real
@@ -127,6 +127,9 @@ def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
     return out
 
 
+_UNBOUNDED_NS = 2**63 - 1
+
+
 class _FakeCatalogBackend:
     """A Catalog-backend stand-in: instrument definitions + native bars by identifier."""
 
@@ -162,6 +165,8 @@ class _FakeCatalogBackend:
         end: object = None,
         **_kwargs: object,
     ) -> list:
+        if data_cls.__name__ == "_CoverageMarker":
+            return self._claims(data_cls, identifiers or [])
         if data_cls is not Bar:
             return []  # no non-bar data stored; distributions read as honestly empty
         lo, hi = pd.Timestamp(start).value, pd.Timestamp(end).value
@@ -172,6 +177,38 @@ class _FakeCatalogBackend:
             if lo <= bar.ts_event <= hi
         ]
 
+    def _claims(self, marker_cls: type, identifiers: list[str]) -> list:
+        """The fixture's coverage horizon, expressed as the claims that prove it.
+
+        Coverage is read from claim records, so a fixture modelling a warmed
+        window says so the same way the real Catalog does. The horizon narrows
+        Bar coverage only — that is the seam these scenarios exercise. Every
+        other subject, and every subject at all when no horizon is declared,
+        claims the whole timeline: a fixture that is not exercising coverage
+        must never provoke a gap.
+        """
+        claims = []
+        for identifier in identifiers:
+            start_ns, end_ns = self._claimed(identifier)
+            claims.append(
+                marker_cls(
+                    start_ns,
+                    start_ns,
+                    instrument_id=InstrumentId.from_str("COVERAGE.AEGIS"),
+                    record_type="Bar",
+                    start_ns=start_ns,
+                    end_ns=end_ns,
+                    checked_at_ns=start_ns,
+                    applicable=True,
+                )
+            )
+        return claims
+
+    def _claimed(self, identifier: str) -> tuple[int, int]:
+        if self._coverage_horizon is None or not identifier.startswith("Bar-"):
+            return (0, _UNBOUNDED_NS)
+        return self._coverage_horizon
+
     def get_missing_intervals_for_request(
         self,
         start: int,
@@ -179,20 +216,7 @@ class _FakeCatalogBackend:
         data_cls: type,
         identifier: str | None = None,
     ) -> list:
-        if (
-            self._coverage_horizon is None
-            or data_cls.__name__ != "_CoverageMarker"
-            or identifier is None
-            or not identifier.startswith("Bar-")
-        ):
-            return []
-        covered_start, covered_end = self._coverage_horizon
-        missing: list[tuple[int, int]] = []
-        if start < covered_start:
-            missing.append((start, min(end, covered_start - 1)))
-        if end > covered_end:
-            missing.append((max(start, covered_end + 1), end))
-        return missing
+        return []
 
     def get_intervals(self, *_args: object, **_kwargs: object) -> list:
         # No marker intervals stored: coverage reports read checked_at as None.
