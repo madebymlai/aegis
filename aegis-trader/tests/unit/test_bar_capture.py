@@ -44,15 +44,47 @@ def test_silent_subscribed_weekend_is_verified_empty_and_needs_no_fill(
 
     capture.subscribe(bar_type, at_ns=friday)
     capture.observe(_bar(bar_type, "2024-01-05", 10.0))
-    capture.verify_through(monday - 1)
+    capture.verify_clock(monday)
     capture.observe(_bar(bar_type, "2024-01-08", 11.0))
-    capture.verify_through(monday)
+    capture.verify_clock(monday + _ONE_DAY_NS)
     marking = raw_bars.marking(instrument_id, "1D")
     raw_bars.ensure(marking, CatalogInterval(friday, monday))
     window = raw_bars.covered(marking, CatalogInterval(friday, monday))
 
     assert [bar.close.as_double() for bar in window.bars] == [10.0, 11.0]
     assert provider.requests == []
+
+
+def test_one_streams_arrival_never_declares_another_stream_silent(
+    tmp_path: Path,
+) -> None:
+    """A verdict may only come from the clock, never from a peer's arrival.
+
+    Daily Bars are stamped at their UTC close, so two instruments that traded
+    the same session carry the identical ``ts_event``. Whichever is delivered
+    first must not make the other one's day a checked, empty fact.
+    """
+    catalog = Catalog.open(tmp_path)
+    raw_bars = RawBars(catalog)
+    capture = BarCapture(raw_bars)
+    speaker = raw_bar_type(InstrumentId.from_str("AAPL.XNAS"), "1D")
+    peer = raw_bar_type(InstrumentId.from_str("MSFT.XNAS"), "1D")
+    thursday = pd.Timestamp("2024-01-04", tz="UTC").value
+    close = pd.Timestamp("2024-01-05", tz="UTC").value
+    capture.subscribe(speaker, at_ns=thursday)
+    capture.subscribe(peer, at_ns=thursday)
+
+    capture.observe(_bar(speaker, "2024-01-05", 10.0))
+
+    assert raw_bars.covered_through(peer) is None
+    capture.observe(_bar(peer, "2024-01-05", 20.0))
+    capture.verify_clock(close + _ONE_DAY_NS)
+    marking = raw_bars.marking(InstrumentId.from_str("MSFT.XNAS"), "1D")
+    window = raw_bars.covered(marking, CatalogInterval(thursday, close))
+    assert [bar.close.as_double() for bar in window.bars] == [20.0]
+
+
+_ONE_DAY_NS = 86_400_000_000_000
 
 
 def _bar(bar_type: BarType, day: str, close: float) -> Bar:

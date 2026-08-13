@@ -104,7 +104,6 @@ from aegis_trader.trader.startup_fast_forward import (
 
 _BAR_CAPTURE_TIMER = "aegis-bar-capture"
 _BAR_CAPTURE_INTERVAL = timedelta(hours=1)
-_UTC_DAY_NS = 86_400_000_000_000
 
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
@@ -113,6 +112,14 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     book: BookConfig
     bundle_label: str = "synthetic"
     warmup_cache_on_start: bool = False
+    capture_bars: bool = False
+    """Whether arriving Bars are persisted to the Catalog as they are observed.
+
+    A durable write is its own decision, not a corollary of warming the cache:
+    a run that captures is adding to the shared store every later run and sweep
+    reads.  Backtest replays a Catalog it must not write back into; live keeps
+    it warm for the next session."""
+
     fill_time_in_force: TimeInForce | None = None
     """Time-in-force for submitted orders (ADR-0001, next-close execution).
 
@@ -156,9 +163,7 @@ class RebalanceStrategy(Strategy):
             resolver=bar_type_resolver,
         )
         self._bar_capture = (
-            BarCapture(self._catalog_port.raw_bars)
-            if config.warmup_cache_on_start
-            else None
+            BarCapture(self._catalog_port.raw_bars) if config.capture_bars else None
         )
         self._arrays = arrays
         self._assembled_book: AssembledBook | None = None
@@ -410,13 +415,12 @@ class RebalanceStrategy(Strategy):
             return
 
         if self._bar_capture is not None:
+            # Buffer only. Coverage answers "was this checked", which no session
+            # can claim about an instant its peers can still fill: one stream's
+            # arrival is not proof the others were silent. The clock timer owns
+            # every verdict, and the roll probe asks the Catalog how far it has
+            # been checked rather than requiring a claim to exist for today.
             self._bar_capture.observe(bar)
-            # The roll probe reads through the event's UTC date. Verify that
-            # boundary before it queries; the timer batches later intraday
-            # records instead of forcing one durable write per arriving Bar.
-            self._bar_capture.verify_through(
-                bar.ts_event - (bar.ts_event % _UTC_DAY_NS)
-            )
 
         # Drives today's offset-0 append and any in-process roll before the cadence reads the
         # series, so the rebalance window already sees the live continuous bar.

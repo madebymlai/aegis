@@ -118,6 +118,11 @@ class RawBars:
             CatalogKey.for_bar(bar_type)
         )
 
+    @property
+    def can_fill(self) -> bool:
+        """Whether a missing window can be obtained rather than only read."""
+        return self.provider is not None
+
     def record_verified(
         self,
         bar_type: BarType,
@@ -128,8 +133,8 @@ class RawBars:
 
         This is the same storage command used by provider fills and subscribed
         capture. Empty ``records`` are still a verified-empty interval. Captured
-        intraday fragments are consolidated into one daily file instead of
-        accumulating one durable file per arriving Bar.
+        fragments are consolidated into one daily file instead of accumulating
+        one durable file per arriving Bar.
         """
         verified = CoverageInterval(interval.start_ns, interval.end_ns)
         selected = tuple(records)
@@ -145,11 +150,7 @@ class RawBars:
             applicable=True,
         )
         day = _utc_day_interval(interval.end_ns)
-        self.catalog.compact(
-            subject,
-            day,
-            ensure_contiguous_files=False,
-        )
+        self.catalog.compact(subject, day)
         markers.consolidate(
             subject,
             CoverageInterval(day.start_ns, day.end_ns),

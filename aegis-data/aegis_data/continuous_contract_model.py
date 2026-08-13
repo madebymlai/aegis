@@ -106,17 +106,22 @@ class ContinuousContractModel:
         return self._last_rebasing
 
     def materialize(self, *, end: str) -> None:
-        """(Re)materialize the adjusted frame over ``[start, end]`` off-cache."""
-        future, frame, quote_currency = self._materialize_frame(end)
+        """(Re)materialize the adjusted frame over ``[start, end]`` off-cache.
+
+        Bounded by ``_readable_end``: the frame reaches as far as the Catalog
+        has been checked, never past it.
+        """
+        readable = self._readable_end(pd.Timestamp(end).date())
+        future, frame, quote_currency = self._materialize_frame(readable.isoformat())
         self._future = future
         self._continuous_id = future.instrument_id
         self._frame = frame
         self._quote_currency = quote_currency
-        self._front_leg = self.front_leg_as_of(end)
+        self._front_leg = self.front_leg_as_of(readable)
 
     def front_leg_as_of(self, as_of: str | date | pd.Timestamp) -> InstrumentId:
         """Return the front leg named by the liquidity-timed roll schedule at ``as_of``."""
-        end = pd.Timestamp(as_of).date()
+        end = self._readable_end(pd.Timestamp(as_of).date())
         start = max(
             pd.Timestamp(self._start).date(),
             end - ROLL_VOLUME_LOOKBACK,
@@ -242,6 +247,34 @@ class ContinuousContractModel:
     ) -> pd.Series:
         marking, interval = self._contract_window(symbol, start, end)
         return self._raw_bars.covered(marking, interval).ohlcv["Volume"]
+
+    def _readable_end(self, requested: date) -> date:
+        """The last date this model can answer for.
+
+        A model that can fill answers for whatever it was asked — it goes and
+        gets the window. A model that can only read answers for what the
+        Catalog reports as checked, because that is all it has. Liquidity is a
+        comparison *across* legs, so the frontier is the earliest of them: a
+        leg that has not been checked as far as its rivals cannot be ranked
+        against them yet.
+
+        This is what keeps a live session from needing a coverage verdict about
+        the instant it is living through. It asks the Catalog how far it has
+        been checked instead of asserting an answer.
+        """
+        if self._raw_bars.can_fill:
+            return requested
+        frontiers = [
+            self._raw_bars.covered_through(bar_type)
+            for leg in self._port.resolve_continuous(self._root).legs
+            for bar_type in self._raw_bars.marking(
+                InstrumentId.from_str(leg.symbol), self._timeframe
+            ).mark_bars
+        ]
+        if not frontiers or None in frontiers:
+            return requested
+        earliest = min(frontier for frontier in frontiers if frontier is not None)
+        return min(requested, pd.Timestamp(earliest, tz="UTC").date())
 
     def _contract_window(
         self,

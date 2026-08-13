@@ -459,6 +459,33 @@ def test_strategy_bar_handler_crosses_a_session_boundary_with_silent_candidates(
     assert harness.observed == [next_front_bar]
 
 
+def test_strategy_bar_handler_admits_every_stream_that_closed_on_one_session(
+    tmp_path: Path,
+) -> None:
+    """The Book marks many instruments; their daily closes share one instant.
+
+    Nautilus stamps a DAY-aggregated Bar at its UTC close, so a commingled Book
+    delivers several Bars carrying the identical ``ts_event``, one after the
+    other. None of them is evidence about the others.
+    """
+    catalog = Catalog.open(tmp_path / "catalog")
+    raw_bars = RawBars(catalog)
+    capture = BarCapture(raw_bars)
+    first = raw_bar_type(InstrumentId.from_str("VUSA.XLON"), "1D")
+    second = raw_bar_type(InstrumentId.from_str("AAPL.XNAS"), "1D")
+    subscribed_at = pd.Timestamp("2024-01-04", tz="UTC").value
+    close = pd.Timestamp("2024-01-05", tz="UTC").value
+    for bar_type in (first, second):
+        capture.subscribe(bar_type, at_ns=subscribed_at)
+    harness = _BoundaryHarness(Ready((), None, (), StartupResult(True)))
+    harness._bar_capture = capture
+
+    harness.on_bar(_bar(first, close, 100.0))
+    harness.on_bar(_bar(second, close, 200.0))
+
+    assert [bar.close.as_double() for bar in harness.observed] == [100.0, 200.0]
+
+
 def _seed_roll_catalog(
     catalog: Catalog,
     source: CatalogBackedDataPort,

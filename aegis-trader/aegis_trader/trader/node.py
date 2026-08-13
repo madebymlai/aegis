@@ -217,6 +217,7 @@ def build_live_strategy(
             book=book.config,
             fill_time_in_force=LIVE_FILL_TIME_IN_FORCE,
             warmup_cache_on_start=True,
+            capture_bars=True,
         ),
         arrays=arrays,
         catalog=catalog,

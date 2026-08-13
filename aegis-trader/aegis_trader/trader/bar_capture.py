@@ -52,13 +52,13 @@ class BarCapture:
                 )
             pending.append(bar)
 
-    def verify_through(self, timestamp_ns: int) -> None:
-        """Record every subscribed stream, including verified-empty silence."""
-        for bar_type in tuple(self._frontier_by_type):
-            self._verify_type(bar_type, timestamp_ns)
-
     def verify_clock(self, timestamp_ns: int) -> None:
-        """Flush batches only through each cadence's completed clock frontier."""
+        """Flush batches only through each cadence's completed clock frontier.
+
+        The sole way a verdict is issued. Every frontier moves on the session
+        clock with a full cadence of slack, so no stream is ever declared
+        silent at an instant it could still deliver.
+        """
         for bar_type in tuple(self._frontier_by_type):
             self._verify_type(
                 bar_type,
