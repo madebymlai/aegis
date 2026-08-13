@@ -1,38 +1,24 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 import pandas as pd
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data._coverage_markers import CoverageMarkerLedger
-from aegis_data._ensure_coverage import CoverageInterval, ensure_coverage
+from aegis_data._ensure_coverage import (
+    CatalogCoverageGapError,
+    CoverageInterval,
+    GapFillProviderError,
+    ensure_coverage,
+    gap_fill_boundary,
+)
 from aegis_data.marking import DeclaredMarkingResolver, InstrumentMarking, RawBarTypeResolver
 from aegis_data.provider import ProviderAnswer
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
-
-
-class CatalogCoverageGapError(ValueError):
-    """The Catalog cannot serve a requested covered window."""
-
-    def __init__(
-        self,
-        subject: CatalogKey[Any],
-        missing: Sequence[CoverageInterval],
-        *,
-        message: str,
-    ) -> None:
-        self.subject = subject
-        self.missing = tuple(missing)
-        super().__init__(message)
-
-
-class GapFillProviderError(RuntimeError):
-    """A provider failed environmentally while filling a Catalog gap."""
 
 
 class NautilusDataProviderPort(Protocol):
@@ -177,15 +163,14 @@ class RawBars:
         subject = CatalogKey.for_bar(bar_type)
         markers = CoverageMarkerLedger(self.catalog)
         provider = _bar_fetcher(self.provider, bar_type) if self.provider else None
-        on_coverage_filled = None
-        if self.definition_seeder is not None:
-            definition_seeder = self.definition_seeder
-
-            def seed_definition() -> None:
-                definition_seeder(bar_type.instrument_id)
-
-            on_coverage_filled = seed_definition
         requested = CoverageInterval(interval.start_ns, interval.end_ns)
+
+        def consolidate_and_seed() -> None:
+            self.catalog.compact(subject, interval)
+            if self.definition_seeder is not None:
+                with gap_fill_boundary(str(bar_type)):
+                    self.definition_seeder(bar_type.instrument_id)
+
         ensure_coverage(
             subject=str(bar_type),
             provider=provider,
@@ -196,31 +181,13 @@ class RawBars:
                 records,
             ),
             coverage_error=lambda missing: _coverage_gap(bar_type, missing),
-            provider_boundary=gap_fill_boundary,
-            finalize=lambda: self.catalog.compact(subject, interval),
-            on_coverage_filled=on_coverage_filled,
+            on_filled=consolidate_and_seed,
         )
-
-_CAUSE_SUMMARY_LIMIT = 200
 
 
 def _utc_day_interval(timestamp_ns: int) -> CatalogInterval:
     day = pd.Timestamp(timestamp_ns, tz="UTC").normalize()
     return CatalogInterval(day.value, (day + pd.Timedelta(days=1)).value - 1)
-
-
-@contextmanager
-def gap_fill_boundary(subject: str) -> Iterator[None]:
-    """Translate provider faults without changing coverage verdicts."""
-    try:
-        yield
-    except CatalogCoverageGapError:
-        raise
-    except Exception as exc:
-        raise GapFillProviderError(
-            f"the gap-fill provider could not serve {subject}: "
-            f"{type(exc).__name__}: {_cause_summary(exc)}"
-        ) from exc
 
 
 def _bar_fetcher(
@@ -250,18 +217,10 @@ def _coverage_gap(
     )
 
 
-def _cause_summary(exc: Exception) -> str:
-    first_line = str(exc).splitlines()[0] if str(exc) else ""
-    if len(first_line) <= _CAUSE_SUMMARY_LIMIT:
-        return first_line
-    return first_line[:_CAUSE_SUMMARY_LIMIT] + "…"
-
-
 __all__ = [
     "CatalogCoverageGapError",
     "GapFillProviderError",
     "NautilusDataProviderPort",
     "RawBarWindow",
     "RawBars",
-    "gap_fill_boundary",
 ]

@@ -63,6 +63,83 @@ class _Provider(CustomDataProviderPort[FixtureRecord]):
         return ProviderAnswer(selected, self.oldest_verified or start)
 
 
+@dataclass
+class _ForeignRecordProvider(CustomDataProviderPort[FixtureRecord]):
+    """A provider that answers with a record belonging to another instrument."""
+
+    foreign: FixtureRecord
+
+    def request_records(
+        self,
+        _instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> ProviderAnswer[FixtureRecord]:
+        del end
+        return ProviderAnswer((self.foreign,), start)
+
+
+def test_ingest_reports_a_foreign_provider_record_as_a_provider_fault(
+    tmp_path: Path,
+) -> None:
+    """The fetch validates the answer, so the rejection is a provider fault.
+
+    Reported as a fault rather than as a Coverage Gap because the window was
+    never answered for — the provider misbehaved.
+    """
+    provider = _ForeignRecordProvider(_foreign_record())
+
+    with pytest.raises(GapFillProviderError, match="another instrument"):
+        ingest(
+            FixtureRecord,
+            (_INSTRUMENT,),
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-03"),
+            provider=provider,
+            catalog=Catalog.open(tmp_path),
+        )
+
+
+def test_a_foreign_provider_record_never_reaches_storage(tmp_path: Path) -> None:
+    """Neither door into the Catalog admits a record for another instrument.
+
+    Pinned because the storage command underneath the fill path is shared with
+    live capture.
+    """
+    provider = _ForeignRecordProvider(_foreign_record())
+    with pytest.raises(GapFillProviderError):
+        ingest(
+            FixtureRecord,
+            (_INSTRUMENT,),
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-03"),
+            provider=provider,
+            catalog=Catalog.open(tmp_path),
+        )
+
+    stored = records(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        catalog=Catalog.open(tmp_path),
+    )
+
+    assert stored == ()
+
+
+def _foreign_record() -> FixtureRecord:
+    timestamp = _utc("2024-01-02").value
+    return FixtureRecord(
+        timestamp,
+        timestamp,
+        instrument_id=InstrumentId.from_str("QQQ.NASDAQ"),
+        value=7.0,
+        provider="fixture",
+    )
+
+
 def test_ingest_is_idempotent_and_records_round_trip_typed(tmp_path: Path) -> None:
     provider = _Provider((_record("2024-01-02", 7.0),))
 

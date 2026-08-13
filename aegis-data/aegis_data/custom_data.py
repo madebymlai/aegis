@@ -18,12 +18,12 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data._coverage_markers import CoverageMarkerLedger
 from aegis_data._ensure_coverage import (
+    CatalogCoverageGapError,
     CoverageInterval,
     ensure_coverage,
 )
 from aegis_data import custom_kinds
 from aegis_data.custom_kinds import CustomDataKind, CustomDataRegistry
-from aegis_data.raw_bars import CatalogCoverageGapError, gap_fill_boundary
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_data.provider import ProviderAnswer
 
@@ -189,16 +189,12 @@ def _ensure_instrument_coverage(
         verified: CoverageInterval,
         verified_records: tuple[RecordT, ...],
     ) -> None:
-        catalog.replace(
-            subject,
-            CatalogInterval(verified.start_ns, verified.end_ns),
-            verified_records,
-        )
-        markers.mark(
+        _record_verified(
+            catalog,
             subject,
             verified,
-            checked_at_ns=clock_ns(),
-            applicable=True,
+            _records_within_event_window(verified_records, verified),
+            clock_ns=clock_ns,
         )
 
     ensure_coverage(
@@ -214,10 +210,8 @@ def _ensure_instrument_coverage(
             instrument_id,
             missing,
         ),
-        provider_boundary=gap_fill_boundary,
         commit=commit,
-        finalize=lambda: markers.consolidate(subject, requested),
-        select_records=_records_within_event_window,
+        on_filled=lambda: markers.consolidate(subject, requested),
     )
 
 
@@ -237,17 +231,40 @@ def capture(
         record_type=record_type,
         instrument_id=instrument_id,
     )
-    markers = CoverageMarkerLedger(catalog)
-    subject = CatalogKey.for_instrument(record_type, instrument_id)
+    _record_verified(
+        catalog,
+        CatalogKey.for_instrument(record_type, instrument_id),
+        CoverageInterval(record.ts_event, record.ts_event),
+        (record,),
+        clock_ns=clock_ns,
+    )
+
+
+def _record_verified(
+    catalog: Catalog,
+    subject: CatalogKey[RecordT],
+    verified: CoverageInterval,
+    verified_records: Sequence[RecordT],
+    *,
+    clock_ns: Callable[[], int],
+) -> None:
+    """Record Custom Data and the verified interval it was checked over.
+
+    The one storage command behind both doors into the Catalog: an observed
+    record captured live covers a single instant, a provider fill covers the
+    window it verified, and empty records are still a verified-empty interval.
+    Callers validate what they hand over — capture checks the record it
+    observed, the fill path checks what the provider answered — so by here the
+    records belong to *subject*.
+    """
     catalog.replace(
         subject,
-        CatalogInterval(record.ts_event, record.ts_event),
-        (record,),
+        CatalogInterval(verified.start_ns, verified.end_ns),
+        tuple(verified_records),
     )
-    point = CoverageInterval(record.ts_event, record.ts_event)
-    markers.mark(
+    CoverageMarkerLedger(catalog).mark(
         subject,
-        point,
+        verified,
         checked_at_ns=clock_ns(),
         applicable=True,
     )

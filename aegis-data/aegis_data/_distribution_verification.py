@@ -9,16 +9,16 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import CurrencyPair, Equity, FuturesContract
 
 from aegis_data._coverage_markers import CoverageMarkerLedger
-from aegis_data._ensure_coverage import CoverageInterval, ensure_coverage
+from aegis_data._ensure_coverage import (
+    CatalogCoverageGapError,
+    CoverageInterval,
+    ensure_coverage,
+)
 from aegis_data.definitions import (
     catalog_definitions,
     continuous_instrument_legs,
 )
-from aegis_data.raw_bars import (
-    CatalogCoverageGapError,
-    RawBars,
-    gap_fill_boundary,
-)
+from aegis_data.raw_bars import RawBars
 from aegis_data.distributions import (
     Distribution,
     query_distribution_data,
@@ -176,60 +176,51 @@ def _ensure_assessment(
 ) -> None:
     markers = CoverageMarkerLedger(catalog)
     subject = CatalogKey.for_instrument(Distribution, assessment.instrument_id)
-    if not markers.missing(subject, assessment.interval):
+
+    if not assessment.applicability.applicable:
+        _mark_not_applicable(
+            markers,
+            subject,
+            assessment.interval,
+            clock_ns=clock_ns,
+        )
         return
+
     checked_at_ns = clock_ns()
 
     def commit(
         interval: CoverageInterval,
         records: tuple[Distribution, ...],
     ) -> None:
-        if assessment.applicability.applicable:
-            replace_distribution_data(
-                catalog,
-                assessment.instrument_id,
-                records,
-                start=interval.start_ns,
-                end=interval.end_ns,
-            )
+        replace_distribution_data(
+            catalog,
+            assessment.instrument_id,
+            records,
+            start=interval.start_ns,
+            end=interval.end_ns,
+        )
         markers.mark(
             subject,
             interval,
             checked_at_ns=checked_at_ns,
-            applicable=assessment.applicability.applicable,
-        )
-
-    coverage_provider: Callable[
-        [pd.Timestamp, pd.Timestamp], ProviderAnswer[Distribution]
-    ] = _empty_fetcher
-    if assessment.applicability.applicable:
-        if provider is None:
-            missing = markers.missing(subject, assessment.interval)
-            raise _coverage_gap(
-                assessment.instrument_id,
-                missing,
-                message=(
-                    "distribution coverage is missing for "
-                    + _provider_missing_message(
-                        assessment.instrument_id,
-                        missing,
-                    )
-                ),
-            )
-        coverage_provider = _distribution_fetcher(
-            catalog,
-            provider,
-            assessment.instrument_id,
-            assessment.applicability.definition,
-            raw_bars=raw_bars,
+            applicable=True,
         )
 
     ensure_coverage(
         subject=f"distributions for {assessment.instrument_id.value}",
-        provider=coverage_provider,
+        provider=(
+            _distribution_fetcher(
+                catalog,
+                provider,
+                assessment.instrument_id,
+                assessment.applicability.definition,
+                raw_bars=raw_bars,
+            )
+            if provider is not None
+            else None
+        ),
         missing_intervals=lambda: markers.missing(subject, assessment.interval),
         commit=commit,
-        finalize=lambda: markers.consolidate(subject, assessment.interval),
         coverage_error=lambda missing: _coverage_gap(
             assessment.instrument_id,
             missing,
@@ -238,8 +229,37 @@ def _ensure_assessment(
                 + _provider_missing_message(assessment.instrument_id, missing)
             ),
         ),
-        provider_boundary=gap_fill_boundary,
+        on_filled=lambda: markers.consolidate(subject, assessment.interval),
     )
+
+
+def _mark_not_applicable(
+    markers: CoverageMarkerLedger,
+    subject: CatalogKey[Distribution],
+    window: CoverageInterval,
+    *,
+    clock_ns: Callable[[], int],
+) -> None:
+    """Record that a window was checked for an instrument that pays none.
+
+    Nothing streams or fetches distributions here, so there is no window to
+    fill — only the fact that it was checked, which needs neither a provider
+    nor a fill loop. Exactly the missing intervals are marked: a claim over
+    part of the same window predates this answer and must survive it. A window
+    already covered is left untouched, so reading it twice stays a pure read.
+    """
+    missing = markers.missing(subject, window)
+    if not missing:
+        return
+    checked_at_ns = clock_ns()
+    for interval in missing:
+        markers.mark(
+            subject,
+            interval,
+            checked_at_ns=checked_at_ns,
+            applicable=False,
+        )
+    markers.consolidate(subject, window)
 
 
 def _distribution_fetcher(
@@ -263,13 +283,6 @@ def _distribution_fetcher(
         return ProviderAnswer.verified(records, oldest_verified=start)
 
     return fetch
-
-
-def _empty_fetcher(
-    start: pd.Timestamp,
-    _end: pd.Timestamp,
-) -> ProviderAnswer[Distribution]:
-    return ProviderAnswer.verified((), oldest_verified=start)
 
 
 def _verify_interval(
