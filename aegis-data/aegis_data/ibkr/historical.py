@@ -520,20 +520,34 @@ class _HistoricSession:
         timeout: int,
         default_value: Any | None = None,
         suppress_timeout_warning: bool = False,
+        raise_on_error: bool = False,
     ) -> Any:
+        """Tell a failed historical request apart from a genuinely empty one.
+
+        ``raise_on_error`` is the vendor's own answer to this, added in 1.231.0,
+        and it is forwarded untouched. It does not replace this override: the
+        vendor wires it into contract requests only, and the bar path is reached
+        through ``request_bars``, which offers no way to pass it down. When the
+        vendor adopts it for bars, this whole session collaborator can go.
+        """
         preserve_failure = (
             _PRESERVE_HISTORICAL_FAILURE.get()
             and isinstance(default_value, list)
             and not default_value
         )
         if not preserve_failure:
-            if default_value is None and not suppress_timeout_warning:
+            if (
+                default_value is None
+                and not suppress_timeout_warning
+                and not raise_on_error
+            ):
                 return await self._await_vendor_request(request, timeout)
             return await self._await_vendor_request(
                 request,
                 timeout,
                 default_value=default_value,
                 suppress_timeout_warning=suppress_timeout_warning,
+                raise_on_error=raise_on_error,
             )
 
         result = await self._await_vendor_request(
@@ -541,6 +555,7 @@ class _HistoricSession:
             timeout,
             default_value=_HISTORICAL_REQUEST_FAILED,
             suppress_timeout_warning=suppress_timeout_warning,
+            raise_on_error=raise_on_error,
         )
         if result is not _HISTORICAL_REQUEST_FAILED:
             return result

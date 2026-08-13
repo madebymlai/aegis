@@ -86,8 +86,9 @@ class _FailureSwallowingNativeClient:
         timeout: int,
         default_value: Any | None = None,
         suppress_timeout_warning: bool = False,
+        raise_on_error: bool = False,
     ) -> Any:
-        del timeout, suppress_timeout_warning
+        del timeout, suppress_timeout_warning, raise_on_error
         try:
             return await request.future
         except ConnectionError:
@@ -306,6 +307,7 @@ expected_names = (
     "timeout",
     "default_value",
     "suppress_timeout_warning",
+    "raise_on_error",
 )
 assert tuple(vendor) == expected_names
 assert vendor["self"].kind is Parameter.POSITIONAL_OR_KEYWORD
@@ -318,6 +320,8 @@ assert vendor["request"].default is Parameter.empty
 assert vendor["timeout"].default is Parameter.empty
 assert vendor["default_value"].default is None
 assert vendor["suppress_timeout_warning"].default is False
+assert vendor["raise_on_error"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert vendor["raise_on_error"].default is False
 assert tuple(adapter) == expected_names
 assert adapter["self"].kind is Parameter.POSITIONAL_OR_KEYWORD
 assert adapter["request"].kind is Parameter.POSITIONAL_OR_KEYWORD
@@ -329,6 +333,8 @@ assert adapter["request"].default is Parameter.empty
 assert adapter["timeout"].default is Parameter.empty
 assert adapter["default_value"].default is None
 assert adapter["suppress_timeout_warning"].default is False
+assert adapter["raise_on_error"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert adapter["raise_on_error"].default is False
 """
 
     subprocess.run(
