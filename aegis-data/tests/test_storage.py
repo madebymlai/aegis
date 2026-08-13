@@ -14,6 +14,65 @@ from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 _SPY = InstrumentId.from_str("SPY.ARCA")
 
 
+def test_replacing_a_window_keeps_the_checked_empty_window_beside_it(
+    tmp_path: Path,
+) -> None:
+    """Writing must not erase a window Nautilus recorded as checked and empty.
+
+    Nautilus records "asked, and there was nothing" by extending an adjacent
+    file's name over the empty range — that name is what its own data engine
+    reads to decide whether to fetch. ``delete_data_range`` maintains those
+    names itself; rebuilding them from file contents, which nothing here needs,
+    erases the record and makes the engine re-request the window on every
+    startup.
+    """
+    catalog = Catalog.open(tmp_path / "catalog")
+    bar_type = BarType.from_str("SPY.ARCA-1-DAY-LAST-EXTERNAL")
+    key = CatalogKey.for_bar(bar_type)
+    friday, saturday, monday = _day("2024-01-05"), _day("2024-01-06"), _day("2024-01-08")
+    sunday_end = _day("2024-01-07").end_ns
+
+    catalog.replace(key, friday, (_bar(bar_type, friday.start_ns),))
+    catalog.replace(key, monday, (_bar(bar_type, monday.start_ns),))
+    # As the data engine does when a request comes back empty.
+    catalog._store.write_data(
+        [],
+        saturday.start_ns,
+        sunday_end,
+        data_cls=Bar,
+        identifier=str(bar_type),
+    )
+    # Rewriting Monday clears the window first — the path that used to erase it.
+    catalog.replace(key, monday, (_bar(bar_type, monday.start_ns),))
+
+    weekend_as_the_engine_sees_it = catalog._store.get_missing_intervals_for_request(
+        saturday.start_ns,
+        sunday_end,
+        Bar,
+        str(bar_type),
+    )
+
+    assert weekend_as_the_engine_sees_it == []
+
+
+def _day(date: str) -> CatalogInterval:
+    start = pd.Timestamp(date, tz="UTC")
+    return CatalogInterval(start.value, (start + pd.Timedelta(days=1)).value - 1)
+
+
+def _bar(bar_type: BarType, at: int) -> Bar:
+    return Bar(
+        bar_type,
+        Price.from_str("470.00"),
+        Price.from_str("471.00"),
+        Price.from_str("469.00"),
+        Price.from_str("470.50"),
+        Quantity.from_str("100"),
+        at,
+        at,
+    )
+
+
 def test_replace_window_overwrites_stale_rows_and_is_idempotent(
     tmp_path: Path,
 ) -> None:

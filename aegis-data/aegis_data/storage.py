@@ -158,10 +158,6 @@ class Catalog:
             start=interval.start_ns,
             end=interval.end_ns,
         )
-        self._store.reset_data_file_names(
-            key.record_type,
-            identifier=_identifier(key),
-        )
 
     def _unstored(
         self,
