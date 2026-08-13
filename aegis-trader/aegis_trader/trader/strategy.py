@@ -115,10 +115,13 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     capture_bars: bool = False
     """Whether arriving Bars are persisted to the Catalog as they are observed.
 
-    A durable write is its own decision, not a corollary of warming the cache:
-    a run that captures is adding to the shared store every later run and sweep
-    reads.  Backtest replays a Catalog it must not write back into; live keeps
-    it warm for the next session."""
+    A durable write is its own decision, not a corollary of warming the cache.
+    Live captures because the Catalog is where it reads history back from: a
+    Bar it observed and a Bar a provider filled are the same record in the same
+    dataset, with nothing marking which arrived how.  A session that runs on
+    for months is reading its own earlier days back out of the Catalog, and it
+    can only do that if it put them there.  Backtest replays a Catalog it must
+    not write back into."""
 
     fill_time_in_force: TimeInForce | None = None
     """Time-in-force for submitted orders (ADR-0001, next-close execution).
