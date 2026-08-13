@@ -34,7 +34,7 @@ existing draft conflated several concerns:
   definition is the unavoidable prerequisite to fetching any bar, so the invariant
   **bars for an InstrumentId ⇒ its definition is in the catalog** holds for free —
   and RD's fill must persist definitions even though RD's vbt read never uses them,
-  because the *same corpus* serves the trader backtest, which does.
+  because the *same Catalog* serves the trader backtest, which does.
 
 - **One merge primitive.** The lazy fill and the `aerd backfill` ingester (r8b.3)
   share one write/merge rule: additive `consolidate_data(deduplicate=True)` that
@@ -42,7 +42,7 @@ existing draft conflated several concerns:
   `--force --start --end`. Routine and operator writes cannot drift into two merge
   semantics.
 
-- **Distribution reads are verified catalog-port reads.** The corpus is
+- **Distribution reads are verified catalog-port reads.** The Catalog is
   self-describing for distributions as well as bars: for any distribution-capable
   `InstrumentId`, `CatalogBackedDataPort.distributions(...)` must prove the bounded
   request window has been checked against an adjusted-last source before it returns

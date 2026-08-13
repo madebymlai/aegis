@@ -1,4 +1,4 @@
-"""The Bar→OHLCV frame projection — the single home for the corpus column shape.
+"""The Bar→OHLCV frame projection — the single home for the Catalog column shape.
 
 Shared by the catalog port's window read, the continuous-future composer,
 and the marking value object's frame projection; it sits below all of them so
@@ -14,7 +14,7 @@ import pandas as pd
 
 
 def bars_to_ohlcv(bars: Sequence[Any]) -> pd.DataFrame:
-    """Project native ``Bar``\\ s into the corpus OHLCV frame (UTC-naive index,
+    """Project native ``Bar``\\ s into the Catalog OHLCV frame (UTC-naive index,
     float columns)."""
     rows: dict[str, list[float]] = {
         "Open": [],

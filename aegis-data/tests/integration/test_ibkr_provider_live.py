@@ -34,7 +34,7 @@ pytest.importorskip("ibapi")
 _GATEWAY_PORT = os.environ.get("AEGIS_IBKR_GATEWAY_PORT")
 # The MIC-pinned venue IB resolves NASDAQ to under convert_exchange_to_mic_venue
 # (r8b.9): request_bars keys returned bars by the deterministic MIC venue, so the
-# corpus id — request, fill, and warm read alike — is AAPL.XNAS, not AAPL.NASDAQ.
+# Catalog id — request, fill, and warm read alike — is AAPL.XNAS, not AAPL.NASDAQ.
 _AAPL = InstrumentId.from_str("AAPL.XNAS")
 _EUR_USD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 _SPY = InstrumentId.from_str("SPY.ARCA")
@@ -72,7 +72,7 @@ def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
 def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
     """Cash FX has no TRADES print on IDEALPRO — a LAST request fails with IB error
     162 — so its raw bars are MID (``…-MID-EXTERNAL``, ADR-0007).  This pins that IB
-    actually serves the MIDPOINT daily series the corpus keys FX under; the bar type
+    actually serves the MIDPOINT daily series the Catalog keys FX under; the bar type
     is derived through ``raw_bar_type`` exactly as the lazy fill builds it."""
     bar_type = raw_bar_type(_EUR_USD, "1D")
     assert bar_type.spec.price_type == PriceType.MID

@@ -1,4 +1,4 @@
-"""The shared home that turns a contract timeframe into the corpus' Nautilus
+"""The shared home that turns a contract timeframe into the Catalog's Nautilus
 ``BarType`` (LAST + EXTERNAL, ADR-0007) and a rebalance-period width.  An
 unexpressable timeframe fails closed."""
 

@@ -39,7 +39,7 @@ package.
 - **The verified read is the ensure.** Arrangement that needs a verified
   window calls `distributions(...)` — per ADR-0008 the read *is* the
   verification — and may assert its result (the RD zero-distribution fixture
-  asserts the read returns no events, so a synthetic corpus that grows
+  asserts the read returns no events, so a synthetic Catalog that grows
   distributions fails loud at arrangement time). No ensure-only or
   force-reverify command is kept: re-verification is expressed by clearing
   coverage and performing the verified read again. The former
@@ -86,4 +86,4 @@ package.
   there is no remaining reason to construct the service directly.
 - The marker's parquet layout and serialization key off the class name, not the
   module path, so the rename is invisible to markers already stored in real
-  corpuses; the warm-read tests exercise this.
+  Catalogs; the warm-read tests exercise this.
