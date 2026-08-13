@@ -8,7 +8,6 @@ import pandas as pd
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data._coverage_markers import CoverageMarkerLedger
 from aegis_data._ensure_coverage import (
     CatalogCoverageGapError,
     CoverageInterval,
@@ -64,7 +63,6 @@ class RawBars:
     catalog: Catalog
     provider: NautilusDataProviderPort | None = None
     definition_seeder: Callable[[InstrumentId], None] | None = None
-    clock_ns: Callable[[], int] = lambda: pd.Timestamp.now(tz="UTC").value
     resolver: RawBarTypeResolver = DeclaredMarkingResolver()
 
     def marking(self, instrument_id: InstrumentId, timeframe: str) -> InstrumentMarking:
@@ -82,10 +80,8 @@ class RawBars:
         interval: CatalogInterval,
     ) -> RawBarWindow:
         """Read a covered window, failing loud on any gap without filling."""
-        markers = CoverageMarkerLedger(self.catalog)
-        requested = CoverageInterval(interval.start_ns, interval.end_ns)
         for bar_type in marking.mark_bars:
-            missing = markers.missing(CatalogKey.for_bar(bar_type), requested)
+            missing = self.catalog.missing(CatalogKey.for_bar(bar_type), interval)
             if missing:
                 raise _coverage_gap(bar_type, missing)
         return self._read(marking, interval)
@@ -100,9 +96,7 @@ class RawBars:
 
     def covered_through(self, bar_type: BarType) -> int | None:
         """Return the latest verified endpoint for one Bar dataset."""
-        return CoverageMarkerLedger(self.catalog).covered_through(
-            CatalogKey.for_bar(bar_type)
-        )
+        return self.catalog.covered_through(CatalogKey.for_bar(bar_type))
 
     @property
     def can_fill(self) -> bool:
@@ -118,29 +112,17 @@ class RawBars:
         """Record Bars and the ordinary verified interval they came from.
 
         This is the same storage command used by provider fills and subscribed
-        capture. Empty ``records`` are still a verified-empty interval. Captured
-        fragments are consolidated into one daily file instead of accumulating
-        one durable file per arriving Bar.
+        capture. Empty ``records`` are still a verified-empty interval — the
+        write records the window it answered for either way. Captured fragments
+        are consolidated into one daily file instead of accumulating one
+        durable file per arriving Bar.
         """
-        verified = CoverageInterval(interval.start_ns, interval.end_ns)
         selected = tuple(records)
         if any(record.bar_type != bar_type for record in selected):
             raise ValueError("verified Bars must all belong to the requested BarType")
         subject = CatalogKey.for_bar(bar_type)
-        markers = CoverageMarkerLedger(self.catalog)
         self.catalog.replace(subject, interval, selected)
-        markers.mark(
-            subject,
-            verified,
-            checked_at_ns=self.clock_ns(),
-            applicable=True,
-        )
-        day = _utc_day_interval(interval.end_ns)
-        self.catalog.compact(subject, day)
-        markers.consolidate(
-            subject,
-            CoverageInterval(day.start_ns, day.end_ns),
-        )
+        self.catalog.compact(subject, _utc_day_interval(interval.end_ns))
 
     def _read(
         self,
@@ -161,9 +143,7 @@ class RawBars:
         interval: CatalogInterval,
     ) -> None:
         subject = CatalogKey.for_bar(bar_type)
-        markers = CoverageMarkerLedger(self.catalog)
         provider = _bar_fetcher(self.provider, bar_type) if self.provider else None
-        requested = CoverageInterval(interval.start_ns, interval.end_ns)
 
         def consolidate_and_seed() -> None:
             self.catalog.compact(subject, interval)
@@ -174,10 +154,10 @@ class RawBars:
         ensure_coverage(
             subject=str(bar_type),
             provider=provider,
-            missing_intervals=lambda: markers.missing(subject, requested),
+            missing_intervals=lambda: list(self.catalog.missing(subject, interval)),
             commit=lambda verified, records: self.record_verified(
                 bar_type,
-                CatalogInterval(verified.start_ns, verified.end_ns),
+                verified,
                 records,
             ),
             coverage_error=lambda missing: _coverage_gap(bar_type, missing),

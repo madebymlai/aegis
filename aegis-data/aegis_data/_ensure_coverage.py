@@ -2,41 +2,19 @@
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Any, TypeVar
 
 import pandas as pd
 
 from aegis_data.provider import ProviderAnswer
-from aegis_data.storage import CatalogKey
+from aegis_data.storage import CatalogInterval, CatalogKey
 
 
-@dataclass(frozen=True)
-class CoverageInterval:
-    """One inclusive nanosecond interval whose catalog coverage is missing."""
-
-    start_ns: int
-    end_ns: int
-
-    def __post_init__(self) -> None:
-        if self.start_ns > self.end_ns:
-            raise ValueError("coverage interval start must not be after end")
-
-    @property
-    def start(self) -> pd.Timestamp:
-        return pd.Timestamp(self.start_ns, tz="UTC")
-
-    @property
-    def end(self) -> pd.Timestamp:
-        return pd.Timestamp(self.end_ns, tz="UTC")
-
-    def from_frontier(
-        self, oldest_verified: pd.Timestamp
-    ) -> "CoverageInterval | None":
-        start_ns = max(self.start_ns, oldest_verified.value)
-        if start_ns > self.end_ns:
-            return None
-        return CoverageInterval(start_ns, self.end_ns)
+# A window whose coverage is in question and a window addressing catalog
+# records are the same thing: the Catalog answers both from one set of file
+# extents. The alias keeps the coverage-side reading at call sites that are
+# talking about coverage rather than storage.
+CoverageInterval = CatalogInterval
 
 
 class CatalogCoverageGapError(ValueError):

@@ -178,34 +178,34 @@ class _FakeCatalogBackend:
         ]
 
     def _claims(self, marker_cls: type, identifiers: list[str]) -> list:
-        """The fixture's coverage horizon, expressed as the claims that prove it.
+        """Whole-timeline claims for the record types that still keep them.
 
-        Coverage is read from claim records, so a fixture modelling a warmed
-        window says so the same way the real Catalog does. The horizon narrows
-        Bar coverage only — that is the seam these scenarios exercise. Every
-        other subject, and every subject at all when no horizon is declared,
-        claims the whole timeline: a fixture that is not exercising coverage
-        must never provoke a gap.
+        Bars answer coverage from their file extents now, so nothing here
+        narrows a claim: a fixture not exercising sparse-record coverage must
+        never provoke a gap.
         """
-        claims = []
-        for identifier in identifiers:
-            start_ns, end_ns = self._claimed(identifier)
-            claims.append(
-                marker_cls(
-                    start_ns,
-                    start_ns,
-                    instrument_id=InstrumentId.from_str("COVERAGE.AEGIS"),
-                    record_type="Bar",
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                    checked_at_ns=start_ns,
-                    applicable=True,
-                )
+        return [
+            marker_cls(
+                0,
+                0,
+                instrument_id=InstrumentId.from_str("COVERAGE.AEGIS"),
+                record_type="Distribution",
+                start_ns=0,
+                end_ns=_UNBOUNDED_NS,
+                checked_at_ns=0,
+                applicable=True,
             )
-        return claims
+            for _ in identifiers
+        ]
 
-    def _claimed(self, identifier: str) -> tuple[int, int]:
-        if self._coverage_horizon is None or not identifier.startswith("Bar-"):
+    def _covered(self, data_cls: type) -> tuple[int, int]:
+        """The window this fixture's Bar files have been checked over.
+
+        The horizon narrows Bar coverage only — that is the seam these
+        scenarios exercise. Every other record type, and every type at all when
+        no horizon is declared, is covered end to end.
+        """
+        if self._coverage_horizon is None or data_cls is not Bar:
             return (0, _UNBOUNDED_NS)
         return self._coverage_horizon
 
@@ -216,8 +216,19 @@ class _FakeCatalogBackend:
         data_cls: type,
         identifier: str | None = None,
     ) -> list:
-        # Nothing is stored as files: every write clears before writing.
-        return []
+        """The fixture's coverage horizon, said the way the Catalog reads it.
+
+        Coverage is the extents naming a dataset's files, so a fixture
+        modelling a warmed window says so by reporting nothing missing inside
+        it, and a fixture modelling an unwarmed one reports the whole request.
+        """
+        covered_start, covered_end = self._covered(data_cls)
+        gaps = []
+        if start < covered_start:
+            gaps.append((start, min(end, covered_start - 1)))
+        if end > covered_end:
+            gaps.append((max(start, covered_end + 1), end))
+        return gaps
 
     def get_intervals(self, *_args: object, **_kwargs: object) -> list:
         # No marker intervals stored: coverage reports read checked_at as None.

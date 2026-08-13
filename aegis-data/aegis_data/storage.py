@@ -6,6 +6,8 @@ from pathlib import Path
 from collections.abc import Sequence
 from typing import Generic, Protocol, TypeVar, cast
 
+import pandas as pd
+
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
@@ -15,6 +17,7 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 RecordT = TypeVar("RecordT", bound=Data)
 _LOG = logging.getLogger(__name__)
+_MAX_TIMESTAMP_NS = pd.Timestamp.max.value
 
 
 class _CatalogBackend(Protocol):
@@ -79,8 +82,28 @@ class _CatalogBackend(Protocol):
 
 @dataclass(frozen=True)
 class CatalogInterval:
+    """One inclusive nanosecond window addressing part of a catalog dataset."""
+
     start_ns: int
     end_ns: int
+
+    def __post_init__(self) -> None:
+        if self.start_ns > self.end_ns:
+            raise ValueError("catalog interval start must not be after end")
+
+    @property
+    def start(self) -> pd.Timestamp:
+        return pd.Timestamp(self.start_ns, tz="UTC")
+
+    @property
+    def end(self) -> pd.Timestamp:
+        return pd.Timestamp(self.end_ns, tz="UTC")
+
+    def from_frontier(self, oldest_verified: pd.Timestamp) -> "CatalogInterval | None":
+        start_ns = max(self.start_ns, oldest_verified.value)
+        if start_ns > self.end_ns:
+            return None
+        return CatalogInterval(start_ns, self.end_ns)
 
 
 @dataclass(frozen=True)
@@ -135,10 +158,8 @@ class Catalog:
         records: tuple[RecordT, ...],
     ) -> None:
         identifier = _identifier(key)
-        if self._unstored(key, interval) != (interval,):
+        if self.missing(key, interval) != (interval,):
             self.drop(key, interval)
-        if not records:
-            return
         self._store.write_data(
             _records_for_write(key, records),
             data_cls=key.record_type,
@@ -159,19 +180,22 @@ class Catalog:
             end=interval.end_ns,
         )
 
-    def _unstored(
+    def missing(
         self,
         key: CatalogKey[RecordT],
         interval: CatalogInterval,
     ) -> tuple[CatalogInterval, ...]:
-        """The parts of *interval* this dataset holds no file for.
+        """The parts of *interval* this dataset has no answer for.
 
-        A question about files, not about coverage. Coverage is answered from
-        the claims, which say what was *checked*; this says what is *stored*,
-        and the two differ by design — a verified-empty interval is claimed
-        and holds no file. Used only to decide whether existing files must be
-        cleared before a write, since the vendor rejects a write that would
-        overlap one.
+        One question, not two. Every write records the window it answered for
+        — including a window that turned out to hold nothing — so the extents
+        that name this dataset's files say what was *checked*, not merely what
+        was *stored*. That is the same set the Nautilus data engine reads when
+        deciding whether to fetch, which is why there is no second opinion to
+        keep in step with.
+
+        Answering from names rather than contents is what lets an empty
+        verified window exist at all: it has no records to be inferred from.
         """
         unstored = self._store.get_missing_intervals_for_request(
             interval.start_ns,
@@ -181,25 +205,43 @@ class Catalog:
         )
         return tuple(CatalogInterval(start_ns, end_ns) for start_ns, end_ns in unstored)
 
+    def covered_through(self, key: CatalogKey[RecordT]) -> int | None:
+        """The latest point this dataset has an answer for, if it has one.
+
+        Read from the same extents as :meth:`missing`, over the whole
+        representable range, so a caller asking how far a dataset reaches and a
+        caller asking what is absent inside a window cannot disagree.
+        """
+        missing = self.missing(key, CatalogInterval(0, _MAX_TIMESTAMP_NS))
+        if not missing:
+            return _MAX_TIMESTAMP_NS
+        unanswered_tail = missing[-1]
+        if unanswered_tail.start_ns == 0:
+            return None
+        return unanswered_tail.start_ns - 1
+
     def compact(self, key: CatalogKey[RecordT], interval: CatalogInterval) -> None:
-        """Merge this dataset's files across *interval*.
+        """Merge this dataset's files across an *interval* already answered for.
 
-        Purely a storage operation: nothing reads coverage out of a filename,
-        so merging across a gap cannot make an unchecked interval look checked.
-        Files are free to be laid out however reads them fastest.
+        The merged file is named for the span of the files it replaces, so
+        compacting a run of adjacent windows preserves the coverage answer
+        exactly. Compacting across a hole would not: the survivor's name would
+        stretch over a window nobody checked. Every caller here compacts a
+        range it has just seen answered end to end, so no hole is in reach.
 
-        ``ensure_contiguous_files`` is the vendor asking whether to assert the
-        files are adjacent before merging — its only effect. A Catalog with a
-        real hole in its history is an ordinary Catalog here, so there is
-        nothing to assert; leaving it on would raise on a normal state, and
-        only when the process happens not to be running under ``-O``.
+        ``ensure_contiguous_files`` asks the vendor to check that before
+        merging, which is why it is on. It is an ``assert``, so ``python -O``
+        strips it — a guard against a writer regressing, not a guarantee.
+        Do not reach for ``consolidate_data_by_period`` instead: it renames
+        files to period boundaries or to record extents, and both rewrite the
+        coverage answer rather than preserving it.
         """
         self._store.consolidate_data(
             key.record_type,
             identifier=_identifier(key),
             start=interval.start_ns,
             end=interval.end_ns,
-            ensure_contiguous_files=False,
+            ensure_contiguous_files=True,
             deduplicate=True,
         )
 

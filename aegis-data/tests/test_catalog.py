@@ -14,8 +14,6 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import external_bar_type, mic_canonical_instrument_id
-from aegis_data._coverage_markers import CoverageMarkerLedger
-from aegis_data._ensure_coverage import CoverageInterval
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogCoverageGapError,
@@ -75,14 +73,7 @@ def _write_span(
     for bar in bars:
         by_bar_type.setdefault(bar.bar_type, []).append(bar)
     for bar_type, selected in by_bar_type.items():
-        subject = CatalogKey.for_bar(bar_type)
-        catalog.replace(subject, interval, tuple(selected))
-        CoverageMarkerLedger(catalog).mark(
-            subject,
-            CoverageInterval(interval.start_ns, interval.end_ns),
-            checked_at_ns=pd.Timestamp("2026-01-01", tz="UTC").value,
-            applicable=True,
-        )
+        catalog.replace(CatalogKey.for_bar(bar_type), interval, tuple(selected))
 
 
 class _ProviderPort:
@@ -217,6 +208,12 @@ def test_resolve_catalog_path_expands_an_explicit_path(
 
 
 def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:
+    """Bars leave one dataset on disk, laid out the way Nautilus lays it out.
+
+    The window a write answered for is recorded in the file's own name, so
+    there is no second dataset alongside it saying what was checked — and
+    nothing for the vendor's data engine to disagree with.
+    """
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -233,19 +230,19 @@ def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:
         path.relative_to(catalog_path).parts[:3] for path in catalog_path.rglob("*.parquet")
     )
 
-    assert layout == [
-        ("data", "bar", "AAPL.XNAS-1-DAY-LAST-EXTERNAL"),
-        (
-            "data",
-            "custom_coverage_marker",
-            "Bar-AAPL.XNAS-1-DAY-LAST-EXTERNAL",
-        ),
-    ]
+    assert layout == [("data", "bar", "AAPL.XNAS-1-DAY-LAST-EXTERNAL")]
 
 
-def test_first_read_of_payload_without_coverage_reverifies_and_replaces(
+def test_a_stored_window_is_served_without_consulting_an_available_provider(
     tmp_path: Path,
 ) -> None:
+    """What the Catalog holds is the answer, even when a provider offers another.
+
+    A window the Catalog answers for is not re-fetched to see whether someone
+    else would say something different. This is what stops a live session from
+    spending pacing budget re-requesting history it already stored, and it is
+    why a write records the window it answered for.
+    """
     catalog = Catalog.open(tmp_path / "catalog")
     instrument_id = _id("AAPL.NASDAQ")
     bar_type = raw_bar_type(instrument_id, "1D")
@@ -269,9 +266,9 @@ def test_first_read_of_payload_without_coverage_reverifies_and_replaces(
     first = port._load_raw_bars(request)
     second = port._load_raw_bars(request)
 
-    assert first[instrument_id]["Close"].tolist() == [10.0]
-    assert second[instrument_id]["Close"].tolist() == [10.0]
-    assert provider.requests == [bar_type]
+    assert first[instrument_id]["Close"].tolist() == [9.0]
+    assert second[instrument_id]["Close"].tolist() == [9.0]
+    assert provider.requests == []
 
 
 def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:

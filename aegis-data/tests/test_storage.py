@@ -55,6 +55,67 @@ def test_replacing_a_window_keeps_the_checked_empty_window_beside_it(
     assert weekend_as_the_engine_sees_it == []
 
 
+def test_replacing_a_window_with_no_records_still_records_it_as_checked(
+    tmp_path: Path,
+) -> None:
+    """An empty answer is an answer: the window was asked, and held nothing.
+
+    Nautilus records that by extending the neighbouring file's name over the
+    range, which is what its own data engine reads to decide whether to fetch.
+    Returning early on empty records leaves no trace, so the window is asked
+    again on every startup.
+    """
+    catalog = Catalog.open(tmp_path / "catalog")
+    bar_type = BarType.from_str("SPY.ARCA-1-DAY-LAST-EXTERNAL")
+    key = CatalogKey.for_bar(bar_type)
+    friday, saturday = _day("2024-01-05"), _day("2024-01-06")
+
+    catalog.replace(key, friday, (_bar(bar_type, friday.start_ns),))
+    catalog.replace(key, saturday, ())
+
+    weekend_as_the_engine_sees_it = catalog._store.get_missing_intervals_for_request(
+        saturday.start_ns,
+        saturday.end_ns,
+        Bar,
+        str(bar_type),
+    )
+
+    assert weekend_as_the_engine_sees_it == []
+
+
+def test_dropping_an_interior_range_leaves_both_sides_covered(
+    tmp_path: Path,
+) -> None:
+    """Removing the middle of a checked window must not unclaim its edges.
+
+    The vendor splits a partially overlapping file rather than discarding it,
+    so the surviving names still describe the days either side. Only the
+    dropped range goes back to being unanswered.
+    """
+    catalog = Catalog.open(tmp_path / "catalog")
+    key = CatalogKey.for_instrument(Distribution, _SPY)
+    full = CatalogInterval(
+        pd.Timestamp("2024-01-01", tz="UTC").value,
+        pd.Timestamp("2024-01-05", tz="UTC").value,
+    )
+    middle = CatalogInterval(
+        pd.Timestamp("2024-01-03", tz="UTC").value,
+        pd.Timestamp("2024-01-03", tz="UTC").value,
+    )
+
+    catalog.replace(
+        key,
+        full,
+        (
+            Distribution.from_ex_date(_SPY, "2024-01-01", amount=0.10, currency="USD"),
+            Distribution.from_ex_date(_SPY, "2024-01-05", amount=0.50, currency="USD"),
+        ),
+    )
+    catalog.drop(key, middle)
+
+    assert catalog.missing(key, full) == (middle,)
+
+
 def _day(date: str) -> CatalogInterval:
     start = pd.Timestamp(date, tz="UTC")
     return CatalogInterval(start.value, (start + pd.Timedelta(days=1)).value - 1)
@@ -181,46 +242,44 @@ def test_replace_window_with_no_records_clears_stale_payload(tmp_path: Path) -> 
     assert catalog.read(key, interval) == ()
 
 
-def test_compaction_merges_across_a_hole_without_losing_a_record(
+
+
+def test_compaction_preserves_the_coverage_of_the_windows_it_merges(
     tmp_path: Path,
 ) -> None:
-    """File layout is free precisely because it carries no coverage meaning.
+    """Merging a run of answered windows must not change what is answered.
 
-    Merging these two files widens what the surviving filename spans across a
-    January gap. Nothing asks a filename what was checked — the coverage
-    claims do that — so the only thing compaction must protect is the records.
+    The survivor is named for the span of the files it replaces, so a run of
+    adjacent windows — including one that was checked and held nothing —
+    compacts to exactly the same coverage it started with.
     """
     catalog = Catalog.open(tmp_path / "catalog")
-    key = CatalogKey.for_instrument(Distribution, _SPY)
-    jan_1 = pd.Timestamp("2024-01-01", tz="UTC").value
-    jan_2 = pd.Timestamp("2024-01-02", tz="UTC").value
-    jan_4 = pd.Timestamp("2024-01-04", tz="UTC").value
-    jan_5 = pd.Timestamp("2024-01-05", tz="UTC").value
-    first = Distribution.from_ex_date(
-        _SPY, "2024-01-01", amount=0.10, currency="USD"
-    )
-    second = Distribution.from_ex_date(
-        _SPY, "2024-01-04", amount=0.40, currency="USD"
-    )
-    full = CatalogInterval(jan_1, jan_5)
+    bar_type = BarType.from_str("SPY.ARCA-1-DAY-LAST-EXTERNAL")
+    key = CatalogKey.for_bar(bar_type)
+    friday, saturday, monday = _day("2024-01-05"), _day("2024-01-06"), _day("2024-01-08")
+    sunday = _day("2024-01-07")
+    weekend = CatalogInterval(saturday.start_ns, sunday.end_ns)
+    span = CatalogInterval(friday.start_ns, monday.end_ns)
 
-    catalog.replace(key, CatalogInterval(jan_1, jan_2), (first,))
-    catalog.replace(key, CatalogInterval(jan_4, jan_5), (second,))
-    catalog.compact(key, full)
+    catalog.replace(key, friday, (_bar(bar_type, friday.start_ns),))
+    catalog.replace(key, weekend, ())
+    catalog.replace(key, monday, (_bar(bar_type, monday.start_ns),))
+    before = catalog.missing(key, span)
+    catalog.compact(key, span)
 
-    assert catalog.read(key, full) == (first, second)
+    assert before == ()
+    assert catalog.missing(key, span) == ()
+    assert len(catalog.read(key, span)) == 2
 
 
-_HOLE_PROBE = """
+_CONTIGUITY_PROBE = """
 import sys
 
 import pandas as pd
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.objects import Price, Quantity
 
-from aegis_data._coverage_markers import CoverageMarkerLedger
-from aegis_data._ensure_coverage import CoverageInterval
-from aegis_data.distributions import Distribution
-from aegis_data.storage import Catalog, CatalogKey
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 
 assert_enabled = False
 try:
@@ -228,39 +287,47 @@ try:
 except AssertionError:
     assert_enabled = True
 
+BAR_TYPE = BarType.from_str("SPY.ARCA-1-DAY-LAST-EXTERNAL")
+
 
 def day(value):
-    return pd.Timestamp(value, tz="UTC").value
+    start = pd.Timestamp(value, tz="UTC")
+    return CatalogInterval(start.value, (start + pd.Timedelta(days=1)).value - 1)
 
 
-subject = CatalogKey.for_instrument(Distribution, InstrumentId.from_str("SPY.ARCA"))
-ledger = CoverageMarkerLedger(Catalog.open(sys.argv[1]))
-for checked in (("2024-01-01", "2024-01-31"), ("2024-03-01", "2024-03-31")):
-    ledger.mark(
-        subject,
-        CoverageInterval(day(checked[0]), day(checked[1])),
-        checked_at_ns=day("2024-04-01"),
-        applicable=True,
-    )
+def bar(at):
+    price = Price.from_str("470.00")
+    return Bar(BAR_TYPE, price, price, price, price, Quantity.from_str("1"), at, at)
 
-ledger.consolidate(subject, CoverageInterval(day("2024-01-01"), day("2024-03-31")))
-february = CoverageInterval(day("2024-02-05"), day("2024-02-06"))
-print(f"{assert_enabled}:{bool(ledger.missing(subject, february))}")
+
+catalog = Catalog.open(sys.argv[1])
+key = CatalogKey.for_bar(BAR_TYPE)
+friday, monday = day("2024-01-05"), day("2024-01-08")
+weekend = CatalogInterval(day("2024-01-06").start_ns, day("2024-01-07").end_ns)
+span = CatalogInterval(friday.start_ns, monday.end_ns)
+
+# Written the way every writer here writes: each window abuts the last.
+catalog.replace(key, friday, (bar(friday.start_ns),))
+catalog.replace(key, weekend, ())
+catalog.replace(key, monday, (bar(monday.start_ns),))
+catalog.compact(key, span)
+
+print(f"{assert_enabled}:{catalog.missing(key, span) == ()}")
 """
 
 
-def test_compaction_never_invents_coverage_even_with_assertions_disabled(
+def test_compaction_holds_its_coverage_even_with_assertions_disabled(
     tmp_path: Path,
 ) -> None:
-    """Merging files must not merge claims.
+    """The writers, not the vendor's guard, are what make compaction safe.
 
-    The vendor guards contiguous consolidation with ``assert``, which
-    ``python -O`` strips. Coverage is read from the claims themselves rather
-    than from file extents, so an unchecked February stays unchecked however
-    the files are laid out — and with whatever flags the process runs under.
+    ``ensure_contiguous_files`` is an ``assert``, so ``python -O`` strips it.
+    That is tolerable only because every window written here abuts the last,
+    leaving compaction no hole to stretch a filename over. Run both ways: the
+    coverage answer must not depend on which one the process happens to use.
     """
     probe = tmp_path / "probe.py"
-    probe.write_text(_HOLE_PROBE)
+    probe.write_text(_CONTIGUITY_PROBE)
 
     verdicts = {
         flags: subprocess.run(

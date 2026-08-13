@@ -129,7 +129,6 @@ class CatalogBackedDataPort:
                 self.catalog,
                 provider=self.provider,
                 definition_seeder=self.definition_seeder,
-                clock_ns=self.clock_ns,
                 resolver=self.resolver,
             ),
         )

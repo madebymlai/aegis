@@ -50,16 +50,46 @@ def test_stored_reads_payload_without_filling(tmp_path: Path) -> None:
     assert provider.requests == []
 
 
-def test_covered_read_fails_on_missing_coverage_without_filling(tmp_path: Path) -> None:
+def test_a_window_the_data_engine_stored_reads_as_covered(tmp_path: Path) -> None:
+    """Bars the Nautilus data engine wrote must count as covered.
+
+    ``request_bars(update_catalog=True)`` — live in the roll, fast-forward and
+    strategy paths — has the engine write its response straight into the
+    catalog, naming the file for the window it requested. It writes no coverage
+    claim of ours. A coverage model that consults only claims therefore calls
+    that window a gap and re-fetches bars already sitting in the catalog.
+    """
     catalog = Catalog.open(tmp_path)
     instrument_id = InstrumentId.from_str("AAPL.XNAS")
     bar_type = raw_bar_type(instrument_id, "1D")
     interval = _interval()
-    catalog.replace(
-        CatalogKey.for_bar(bar_type),
-        interval,
-        (_bar(bar_type, "2024-01-01", 10.0),),
+    # Exactly what the engine does with a response it decided to persist.
+    catalog._store.write_data(
+        [_bar(bar_type, "2024-01-01", 10.0)],
+        interval.start_ns,
+        interval.end_ns,
+        data_cls=Bar,
+        identifier=str(bar_type),
     )
+    raw_bars = RawBars(catalog, provider=None)
+    marking = raw_bars.marking(instrument_id, "1D")
+
+    covered = raw_bars.covered(marking, interval)
+
+    assert covered.ohlcv["Close"].tolist() == [10.0]
+
+
+def test_covered_read_fails_on_missing_coverage_without_filling(tmp_path: Path) -> None:
+    """A window nothing has answered for is a gap, and reading never fills it.
+
+    The window is left unwritten rather than written-without-a-claim: a write
+    now records the window it answered for, so "stored but unchecked" is not a
+    state the Catalog can be in.
+    """
+    catalog = Catalog.open(tmp_path)
+    instrument_id = InstrumentId.from_str("AAPL.XNAS")
+    bar_type = raw_bar_type(instrument_id, "1D")
+    interval = _interval()
     provider = _Provider((_bar(bar_type, "2024-01-01", 20.0),))
     raw_bars = RawBars(catalog, provider=provider)
     marking = raw_bars.marking(instrument_id, "1D")
