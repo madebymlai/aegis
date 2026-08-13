@@ -178,11 +178,14 @@ def _ensure_assessment(
     subject = CatalogKey.for_instrument(Distribution, assessment.instrument_id)
 
     if not assessment.applicability.applicable:
-        _mark_not_applicable(
-            markers,
+        # Nothing streams or fetches distributions for this instrument, so
+        # there is no window to fill — only the fact that it was checked,
+        # which needs neither a provider nor a fill loop.
+        markers.claim_missing(
             subject,
             assessment.interval,
-            clock_ns=clock_ns,
+            checked_at_ns=clock_ns(),
+            applicable=False,
         )
         return
 
@@ -231,35 +234,6 @@ def _ensure_assessment(
         ),
         on_filled=lambda: markers.consolidate(subject, assessment.interval),
     )
-
-
-def _mark_not_applicable(
-    markers: CoverageMarkerLedger,
-    subject: CatalogKey[Distribution],
-    window: CoverageInterval,
-    *,
-    clock_ns: Callable[[], int],
-) -> None:
-    """Record that a window was checked for an instrument that pays none.
-
-    Nothing streams or fetches distributions here, so there is no window to
-    fill — only the fact that it was checked, which needs neither a provider
-    nor a fill loop. Exactly the missing intervals are marked: a claim over
-    part of the same window predates this answer and must survive it. A window
-    already covered is left untouched, so reading it twice stays a pure read.
-    """
-    missing = markers.missing(subject, window)
-    if not missing:
-        return
-    checked_at_ns = clock_ns()
-    for interval in missing:
-        markers.mark(
-            subject,
-            interval,
-            checked_at_ns=checked_at_ns,
-            applicable=False,
-        )
-    markers.consolidate(subject, window)
 
 
 def _distribution_fetcher(

@@ -84,6 +84,37 @@ class CoverageMarkerLedger:
             tuple(markers),
         )
 
+    def claim_missing(
+        self,
+        subject: CatalogKey[Data],
+        window: CoverageInterval,
+        *,
+        checked_at_ns: int,
+        applicable: bool,
+    ) -> None:
+        """Claim whatever part of *window* no claim answers for yet.
+
+        Exactly the missing intervals are marked, never the whole window: a
+        claim over part of it predates this answer and must survive it. A
+        window already answered for is left untouched, so reading it twice
+        stays a pure read.
+
+        This is the shape every caller wants that is recording an answer it
+        did not have to fetch — there was nothing to go and get, only the fact
+        that the question was asked.
+        """
+        missing = self.missing(subject, window)
+        if not missing:
+            return
+        for interval in missing:
+            self.mark(
+                subject,
+                interval,
+                checked_at_ns=checked_at_ns,
+                applicable=applicable,
+            )
+        self.consolidate(subject, window)
+
     def checked_at_values(
         self,
         subject: CatalogKey[Data],
