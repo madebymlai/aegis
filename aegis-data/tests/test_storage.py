@@ -38,15 +38,19 @@ def test_replace_window_overwrites_stale_rows_and_is_idempotent(
     assert stored == (corrected,)
 
 
-def test_drop_window_repairs_the_surviving_interval_descriptions(
+def test_a_dropped_window_can_be_written_again(
     tmp_path: Path,
 ) -> None:
+    """Dropping the middle of a stored window leaves that window writable.
+
+    The surviving files describe what they actually hold, so a later write into
+    the hole does not collide with a stale description of a record that is no
+    longer there.
+    """
     catalog = Catalog.open(tmp_path / "catalog")
     key = CatalogKey.for_instrument(Distribution, _SPY)
     jan_1 = pd.Timestamp("2024-01-01", tz="UTC").value
-    jan_2 = pd.Timestamp("2024-01-02", tz="UTC").value
     jan_3 = pd.Timestamp("2024-01-03", tz="UTC").value
-    jan_4 = pd.Timestamp("2024-01-04", tz="UTC").value
     jan_5 = pd.Timestamp("2024-01-05", tz="UTC").value
     stored = (
         Distribution.from_ex_date(_SPY, "2024-01-01", amount=0.10, currency="USD"),
@@ -61,8 +65,18 @@ def test_drop_window_repairs_the_surviving_interval_descriptions(
     catalog.drop(key, CatalogInterval(jan_3, jan_3))
 
     assert catalog.read(key, full) == (stored[0], stored[1], stored[3], stored[4])
-    assert catalog.missing(key, full) == (
-        CatalogInterval(jan_2 + 1, jan_4 - 1),
+
+    replacement = Distribution.from_ex_date(
+        _SPY, "2024-01-03", amount=0.35, currency="USD"
+    )
+    catalog.replace(key, CatalogInterval(jan_3, jan_3), (replacement,))
+
+    assert catalog.read(key, full) == (
+        stored[0],
+        stored[1],
+        replacement,
+        stored[3],
+        stored[4],
     )
 
 

@@ -135,7 +135,7 @@ class Catalog:
         records: tuple[RecordT, ...],
     ) -> None:
         identifier = _identifier(key)
-        if self.missing(key, interval) != (interval,):
+        if self._unstored(key, interval) != (interval,):
             self.drop(key, interval)
         if not records:
             return
@@ -163,18 +163,27 @@ class Catalog:
             identifier=_identifier(key),
         )
 
-    def missing(
+    def _unstored(
         self,
         key: CatalogKey[RecordT],
         interval: CatalogInterval,
     ) -> tuple[CatalogInterval, ...]:
-        missing = self._store.get_missing_intervals_for_request(
+        """The parts of *interval* this dataset holds no file for.
+
+        A question about files, not about coverage. Coverage is answered from
+        the claims, which say what was *checked*; this says what is *stored*,
+        and the two differ by design — a verified-empty interval is claimed
+        and holds no file. Used only to decide whether existing files must be
+        cleared before a write, since the vendor rejects a write that would
+        overlap one.
+        """
+        unstored = self._store.get_missing_intervals_for_request(
             interval.start_ns,
             interval.end_ns,
             key.record_type,
             identifier=_identifier(key),
         )
-        return tuple(CatalogInterval(start_ns, end_ns) for start_ns, end_ns in missing)
+        return tuple(CatalogInterval(start_ns, end_ns) for start_ns, end_ns in unstored)
 
     def compact(self, key: CatalogKey[RecordT], interval: CatalogInterval) -> None:
         """Merge this dataset's files across *interval*.

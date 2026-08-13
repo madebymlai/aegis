@@ -216,6 +216,7 @@ class _FakeCatalogBackend:
         data_cls: type,
         identifier: str | None = None,
     ) -> list:
+        # Nothing is stored as files: every write clears before writing.
         return []
 
     def get_intervals(self, *_args: object, **_kwargs: object) -> list:
