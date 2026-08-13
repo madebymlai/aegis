@@ -105,15 +105,10 @@ class _AdjustedLastCompletionError(RuntimeError):
     """A registered Nautilus adjusted-history request did not complete."""
 
 
-class _HistoricalRequestCompletionError(RuntimeError):
-    """A registered IBKR historical-bars request did not complete."""
-
-
 _PRESERVE_HISTORICAL_FAILURE: ContextVar[bool] = ContextVar(
     "preserve_historical_failure",
     default=False,
 )
-_HISTORICAL_REQUEST_FAILED = object()
 
 
 @dataclass(frozen=True)
@@ -524,49 +519,31 @@ class _HistoricSession:
     ) -> Any:
         """Tell a failed historical request apart from a genuinely empty one.
 
-        ``raise_on_error`` is the vendor's own answer to this, added in 1.231.0,
-        and it is forwarded untouched. It does not replace this override: the
-        vendor wires it into contract requests only, and the bar path is reached
-        through ``request_bars``, which offers no way to pass it down. When the
-        vendor adopts it for bars, this whole session collaborator can go.
+        A bar request asks for an empty list as its default, so a fetch that
+        timed out and a window that is genuinely empty come back identical —
+        and recording the first as verified-empty would durably claim history
+        that was never checked.
+
+        ``raise_on_error`` is the vendor's own answer, added in 1.231.0: it
+        re-raises the timeout or connection error instead of returning the
+        default. Those are the only two paths that return it, so forcing the
+        flag inside a historical scope is exactly the distinction needed. This
+        override exists solely to inject it, because ``request_bars`` offers no
+        way to pass it down; when the vendor wires it into the bar path itself,
+        the whole session collaborator can go.
         """
         preserve_failure = (
             _PRESERVE_HISTORICAL_FAILURE.get()
             and isinstance(default_value, list)
             and not default_value
         )
-        if not preserve_failure:
-            if (
-                default_value is None
-                and not suppress_timeout_warning
-                and not raise_on_error
-            ):
-                return await self._await_vendor_request(request, timeout)
-            return await self._await_vendor_request(
-                request,
-                timeout,
-                default_value=default_value,
-                suppress_timeout_warning=suppress_timeout_warning,
-                raise_on_error=raise_on_error,
-            )
-
-        result = await self._await_vendor_request(
+        return await self._await_vendor_request(
             request,
             timeout,
-            default_value=_HISTORICAL_REQUEST_FAILED,
+            default_value=default_value,
             suppress_timeout_warning=suppress_timeout_warning,
-            raise_on_error=raise_on_error,
+            raise_on_error=raise_on_error or preserve_failure,
         )
-        if result is not _HISTORICAL_REQUEST_FAILED:
-            return result
-
-        error = _HistoricalRequestCompletionError(
-            f"IBKR historical request {request.req_id} did not complete"
-        )
-        cause = _completed_request_failure(request)
-        if cause is not None:
-            raise error from cause
-        raise error
 
     async def request_instruments(self, **kwargs: Any) -> Sequence[Instrument]:
         return await self._client.request_instruments(**kwargs)
@@ -602,13 +579,6 @@ class _HistoricSession:
         # The historic client has no public teardown; stopping the inner client
         # drains its background tasks cleanly (so closing the loop is quiet).
         await self._native_client._stop_async()
-
-
-def _completed_request_failure(request: Any) -> BaseException | None:
-    future = request.future
-    if future.cancelled():
-        return None
-    return future.exception()
 
 
 async def _request_native_adjusted_last(

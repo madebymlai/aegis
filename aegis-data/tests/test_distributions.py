@@ -152,7 +152,15 @@ class _FakeNautilusClient:
     def _next_req_id(self) -> int:
         return 1
 
-    async def _await_request(self, request: Any, timeout: int) -> list[Any]:
+    async def _await_request(
+        self,
+        request: Any,
+        timeout: int,
+        default_value: Any | None = None,
+        suppress_timeout_warning: bool = False,
+        raise_on_error: bool = False,
+    ) -> list[Any]:
+        del default_value, suppress_timeout_warning, raise_on_error
         if self.adjusted_error is not None:
             raise self.adjusted_error
         closes = self.adjusted_closes

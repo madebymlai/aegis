@@ -88,10 +88,14 @@ class _FailureSwallowingNativeClient:
         suppress_timeout_warning: bool = False,
         raise_on_error: bool = False,
     ) -> Any:
-        del timeout, suppress_timeout_warning, raise_on_error
+        del timeout, suppress_timeout_warning
         try:
             return await request.future
         except ConnectionError:
+            # Mirrors the vendor: the fault is swallowed into the caller's
+            # default unless the caller asked to have it re-raised.
+            if raise_on_error:
+                raise
             return default_value
 
     async def _stop_async(self) -> None:
@@ -242,9 +246,9 @@ def test_request_bars_preserves_vendor_connection_failure() -> None:
             end=pd.Timestamp("2024-02-01", tz="UTC"),
         )
 
-    completion_error = excinfo.value.__cause__
-    assert isinstance(completion_error, RuntimeError)
-    assert isinstance(completion_error.__cause__, ConnectionError)
+    # The vendor's fault is chained directly: a dropped connection must never
+    # arrive as the empty list that means "checked, and there was nothing".
+    assert isinstance(excinfo.value.__cause__, ConnectionError)
 
 
 def test_request_bars_preserves_genuine_empty_vendor_history() -> None:
@@ -267,11 +271,11 @@ def test_historical_failure_scope_resets_before_unrelated_requests() -> None:
     vendor = _ConnectionFailingVendorClient()
     session = _HistoricSession(vendor)
 
-    async def exercise_session() -> tuple[RuntimeError | None, list[Any]]:
-        failure: RuntimeError | None = None
+    async def exercise_session() -> tuple[Exception | None, list[Any]]:
+        failure: Exception | None = None
         try:
             await session.request_bars()
-        except RuntimeError as exc:
+        except ConnectionError as exc:
             failure = exc
 
         future = asyncio.get_running_loop().create_future()
@@ -285,7 +289,9 @@ def test_historical_failure_scope_resets_before_unrelated_requests() -> None:
 
     failure, unrelated_result = asyncio.run(exercise_session())
 
-    assert isinstance(failure, RuntimeError)
+    # The vendor's own fault surfaces, rather than a wrapper of ours; the
+    # unrelated request still swallows, proving the scope did not leak.
+    assert isinstance(failure, ConnectionError)
     assert unrelated_result == []
 
 
@@ -364,9 +370,7 @@ def test_catalog_port_preserves_vendor_connection_failure(tmp_path: Path) -> Non
 
     provider_error = excinfo.value.__cause__
     assert isinstance(provider_error, IbkrRequestError)
-    completion_error = provider_error.__cause__
-    assert isinstance(completion_error, RuntimeError)
-    assert isinstance(completion_error.__cause__, ConnectionError)
+    assert isinstance(provider_error.__cause__, ConnectionError)
 
 
 def test_catalog_port_translates_request_deadline_to_provider_failure(
