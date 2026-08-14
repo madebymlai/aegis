@@ -21,7 +21,7 @@ from aegis_data._distribution_verification import (
     ensure_distribution_window,
     read_distribution_window,
 )
-from aegis_data.custom_data import CustomDataWarmer, CustomDataWarmerPort
+from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.distributions import Distribution, distribution_records
 from aegis_data.instrument import native_multiplier, native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
@@ -101,7 +101,7 @@ class ResolvedContinuousRoot:
 class CatalogBackedDataPort:
     catalog: Catalog
     provider: BarWarmerPort | None = None
-    custom_data_warmer: CustomDataWarmerPort | None = None
+    custom_data_warmer: CustomDataWarmer | None = None
     # Optional Step-1 definition write, fired only when warming reaches a client.
     # Definitions remain a separate, idempotent lifecycle from Bar write-back.
     definition_seeder: Callable[[InstrumentId], None] | None = None

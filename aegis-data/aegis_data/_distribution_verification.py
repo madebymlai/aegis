@@ -12,7 +12,7 @@ from aegis_data.definitions import (
     catalog_definitions,
     continuous_instrument_legs,
 )
-from aegis_data.custom_data import CustomDataWarmerPort
+from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.raw_bars import RawBars
 from aegis_data.distributions import (
     AdjustedClose,
@@ -67,7 +67,7 @@ def ensure_distribution_window(
     *,
     start: str | int | pd.Timestamp,
     end: str | int | pd.Timestamp,
-    custom_data_warmer: CustomDataWarmerPort | None,
+    custom_data_warmer: CustomDataWarmer | None,
     raw_bars: RawBars,
 ) -> None:
     """Ensure Distribution coverage for one catalog window."""
@@ -130,7 +130,7 @@ def _ensure_assessment(
     catalog: Catalog,
     assessment: _Assessment,
     *,
-    custom_data_warmer: CustomDataWarmerPort | None,
+    custom_data_warmer: CustomDataWarmer | None,
     raw_bars: RawBars,
 ) -> None:
     if not assessment.applicability.applicable or custom_data_warmer is None:
@@ -152,7 +152,7 @@ def _ensure_assessment(
 
 def _verify_interval(
     catalog: Catalog,
-    custom_data_warmer: CustomDataWarmerPort,
+    custom_data_warmer: CustomDataWarmer,
     instrument_id: InstrumentId,
     definition: Any,
     interval: CatalogInterval,
@@ -194,7 +194,7 @@ def _verify_interval(
 
 def _stored_adjusted_last(
     catalog: Catalog,
-    custom_data_warmer: CustomDataWarmerPort,
+    custom_data_warmer: CustomDataWarmer,
     instrument_id: InstrumentId,
     interval: CatalogInterval,
     *,

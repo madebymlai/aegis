@@ -66,20 +66,6 @@ class CustomDataRequestMetadata(Protocol):
     def to_params(self) -> dict[str, Any]: ...
 
 
-class CustomDataWarmerPort(Protocol):
-    """Warm provider-backed records without exposing request-engine plumbing."""
-
-    def warm(
-        self,
-        record_type: type[Data],
-        instrument_ids: Sequence[InstrumentId],
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-        metadata: CustomDataRequestMetadata | None = None,
-    ) -> None: ...
-
-
 class InvalidLiveCustomDataCapabilityError(TypeError):
     """Raised when a provider describes an invalid live-data capability."""
 
@@ -640,7 +626,6 @@ __all__ = [
     "CustomDataAdapterMap",
     "CustomDataClientFactory",
     "CustomDataRequestMetadata",
-    "CustomDataWarmerPort",
     "CustomDataProviderMap",
     "CustomDataProviderPort",
     "InvalidLiveCustomDataCapabilityError",
