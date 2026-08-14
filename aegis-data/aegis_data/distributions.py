@@ -227,28 +227,6 @@ def write_distribution_data(
     return written
 
 
-def replace_distribution_data(
-    catalog: Catalog,
-    instrument_id: InstrumentId,
-    distributions: Sequence[Distribution],
-    *,
-    start: str | int | pd.Timestamp,
-    end: str | int | pd.Timestamp,
-) -> int:
-    """Replace one instrument's bounded distribution window, even when empty."""
-    start_ns = _optional_ns(start)
-    end_ns = _optional_ns(end)
-    if start_ns is None or end_ns is None:
-        raise ValueError("distribution replacement requires both window bounds")
-    selected = _force_window_items(distributions, force_start=start, force_end=end)
-    catalog.replace(
-        CatalogKey.for_instrument(Distribution, instrument_id),
-        CatalogInterval(start_ns, end_ns),
-        tuple(selected),
-    )
-    return len(selected)
-
-
 def _stored_frontier(catalog: Catalog, instrument_value: str) -> int:
     stored = catalog.read_all(
         CatalogKey.for_instrument(Distribution, InstrumentId.from_str(instrument_value))

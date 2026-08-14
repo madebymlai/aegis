@@ -52,8 +52,8 @@ def test_stored_reads_payload_without_filling(tmp_path: Path) -> None:
     assert provider.requests == []
 
 
-def test_a_window_the_data_engine_stored_reads_as_covered(tmp_path: Path) -> None:
-    """Bars the Nautilus data engine wrote must count as covered.
+def test_a_window_the_data_engine_stored_reads_back(tmp_path: Path) -> None:
+    """Bars the Nautilus data engine wrote must read back as ours.
 
     ``request_bars(update_catalog=True)`` — live in the roll, fast-forward and
     strategy paths — has the engine write its response straight into the
@@ -76,12 +76,12 @@ def test_a_window_the_data_engine_stored_reads_as_covered(tmp_path: Path) -> Non
     raw_bars = RawBars(catalog, provider=None)
     marking = raw_bars.marking(instrument_id, "1D")
 
-    covered = raw_bars.covered(marking, interval)
+    window = raw_bars.stored(marking, interval)
 
-    assert covered.ohlcv["Close"].tolist() == [10.0]
+    assert window.ohlcv["Close"].tolist() == [10.0]
 
 
-def test_covered_read_returns_empty_on_missing_coverage_without_filling(
+def test_a_read_returns_empty_for_an_unfilled_window_and_asks_no_provider(
     tmp_path: Path,
 ) -> None:
     catalog = Catalog.open(tmp_path)
@@ -92,13 +92,15 @@ def test_covered_read_returns_empty_on_missing_coverage_without_filling(
     raw_bars = RawBars(catalog, provider=provider)
     marking = raw_bars.marking(instrument_id, "1D")
 
-    window = raw_bars.covered(marking, interval)
+    window = raw_bars.stored(marking, interval)
 
     assert window.bars == ()
     assert provider.requests == []
 
 
-def test_ensure_is_a_command_and_covered_is_the_following_query(tmp_path: Path) -> None:
+def test_ensure_is_a_command_and_the_read_is_the_following_query(
+    tmp_path: Path,
+) -> None:
     catalog = Catalog.open(tmp_path)
     instrument_id = InstrumentId.from_str("AAPL.XNAS")
     bar_type = raw_bar_type(instrument_id, "1D")
@@ -107,11 +109,11 @@ def test_ensure_is_a_command_and_covered_is_the_following_query(tmp_path: Path) 
     marking = raw_bars.marking(instrument_id, "1D")
 
     result = raw_bars.ensure(marking, _interval())
-    covered = raw_bars.covered(marking, _interval())
+    window = raw_bars.stored(marking, _interval())
 
     assert result is None
-    assert covered.bars == provider.records
-    assert covered.ohlcv["Close"].tolist() == [20.0]
+    assert window.bars == provider.records
+    assert window.ohlcv["Close"].tolist() == [20.0]
     assert provider.requests == [bar_type]
 
 
@@ -143,9 +145,9 @@ def test_record_verified_keeps_explicit_empty_time_covered(
         (_bar(bar_type, "2024-01-08", 11.0),),
     )
     raw_bars.ensure(marking, CatalogInterval(friday, monday))
-    covered = raw_bars.covered(marking, CatalogInterval(friday, monday))
+    window = raw_bars.stored(marking, CatalogInterval(friday, monday))
 
-    assert [bar.close.as_double() for bar in covered.bars] == [10.0, 11.0]
+    assert [bar.close.as_double() for bar in window.bars] == [10.0, 11.0]
     assert provider.requests == []
 
 

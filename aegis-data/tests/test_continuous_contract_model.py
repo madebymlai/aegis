@@ -102,7 +102,7 @@ def _contract_ohlcv(
     )
     if ensure:
         port.raw_bars.ensure(marking, interval)
-    return port.raw_bars.covered(marking, interval).ohlcv
+    return port.raw_bars.stored(marking, interval).ohlcv
 
 
 def _contract_volume(

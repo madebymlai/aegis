@@ -84,7 +84,7 @@ def test_silent_subscribed_weekend_is_verified_empty_and_needs_no_fill(
     capture.verify_clock(monday + _ONE_DAY_NS)
     marking = raw_bars.marking(instrument_id, "1D")
     raw_bars.ensure(marking, CatalogInterval(friday, monday))
-    window = raw_bars.covered(marking, CatalogInterval(friday, monday))
+    window = raw_bars.stored(marking, CatalogInterval(friday, monday))
 
     assert [bar.close.as_double() for bar in window.bars] == [10.0, 11.0]
     assert provider.requests == []
@@ -115,7 +115,7 @@ def test_one_streams_arrival_never_declares_another_stream_silent(
     capture.observe(_bar(peer, "2024-01-05", 20.0))
     capture.verify_clock(close + _ONE_DAY_NS)
     marking = raw_bars.marking(InstrumentId.from_str("MSFT.XNAS"), "1D")
-    window = raw_bars.covered(marking, CatalogInterval(thursday, close))
+    window = raw_bars.stored(marking, CatalogInterval(thursday, close))
     assert [bar.close.as_double() for bar in window.bars] == [20.0]
 
 

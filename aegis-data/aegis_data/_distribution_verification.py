@@ -1,6 +1,6 @@
 """Distribution verification owned by the catalog data port."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -19,7 +19,6 @@ from aegis_data.distributions import (
     adjusted_close_records,
     adjusted_close_series,
     query_distribution_data,
-    replace_distribution_data,
     recover_distributions_from_adjusted_last,
 )
 from aegis_data.marking import MarkMode, marking_for_mode
@@ -147,62 +146,22 @@ def _ensure_assessment(
     provider: DistributionDataProviderPort | None,
     raw_bars: RawBars,
 ) -> None:
+    if not assessment.applicability.applicable or provider is None:
+        return
     subject = CatalogKey.for_instrument(Distribution, assessment.instrument_id)
 
-    if not assessment.applicability.applicable:
-        return
-
-    def commit(
-        interval: CatalogInterval,
-        records: tuple[Distribution, ...],
-    ) -> None:
-        replace_distribution_data(
-            catalog,
-            assessment.instrument_id,
-            records,
-            start=interval.start_ns,
-            end=interval.end_ns,
-        )
-
-    if provider is None:
-        return
-    fetch = _distribution_fetcher(
-        catalog,
-        provider,
-        assessment.instrument_id,
-        assessment.applicability.definition,
-        raw_bars=raw_bars,
-    )
-    missing_intervals = catalog.missing(subject, assessment.interval)
-    for missing in missing_intervals:
+    def fetch(gap: CatalogInterval) -> Sequence[Distribution]:
         with gap_fill_boundary(f"distributions for {assessment.instrument_id.value}"):
-            records = fetch(missing.start, missing.end)
-        commit(missing, tuple(records))
-    if missing_intervals and not catalog.missing(subject, assessment.interval):
-        catalog.compact(subject, assessment.interval)
+            return _verify_interval(
+                catalog,
+                provider,
+                assessment.instrument_id,
+                assessment.applicability.definition,
+                gap,
+                raw_bars=raw_bars,
+            )
 
-
-def _distribution_fetcher(
-    catalog: Catalog,
-    provider: DistributionDataProviderPort,
-    instrument_id: InstrumentId,
-    definition: Any,
-    *,
-    raw_bars: RawBars,
-) -> Callable[[pd.Timestamp, pd.Timestamp], Sequence[Distribution]]:
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> Sequence[Distribution]:
-        interval = CatalogInterval(start.value, end.value)
-        records = _verify_interval(
-            catalog,
-            provider,
-            instrument_id,
-            definition,
-            interval,
-            raw_bars=raw_bars,
-        )
-        return records
-
-    return fetch
+    catalog.fill(subject, assessment.interval, fetch)
 
 
 def _verify_interval(
@@ -214,11 +173,18 @@ def _verify_interval(
     *,
     raw_bars: RawBars,
 ) -> tuple[Distribution, ...]:
+    """Recover the distributions *interval* verifies, and only those.
+
+    The decode needs two closes to compare, so it reads back to the start of the
+    requested day. Records recovered from that widened read but falling outside
+    *interval* belong to a window this call did not answer for, and are dropped
+    here rather than by whoever stores the result.
+    """
     decode_start_ns = pd.Timestamp(interval.start_ns, tz="UTC").normalize().value
     trade_marking = marking_for_mode(instrument_id, "1D", MarkMode.LAST)
     bar_interval = CatalogInterval(decode_start_ns, interval.end_ns)
     raw_bars.ensure(trade_marking, bar_interval)
-    trades = raw_bars.covered(trade_marking, bar_interval).ohlcv["Close"]
+    trades = raw_bars.stored(trade_marking, bar_interval).ohlcv["Close"]
     if len(trades) < 2:
         return ()
     adjusted_last = _stored_adjusted_last(
@@ -229,12 +195,14 @@ def _verify_interval(
         currency=_definition_currency(definition, instrument_id, interval),
     )
     return tuple(
-        recover_distributions_from_adjusted_last(
+        record
+        for record in recover_distributions_from_adjusted_last(
             instrument_id=instrument_id,
             trades=trades,
             adjusted_last=adjusted_last,
             currency=_definition_currency(definition, instrument_id, interval),
         )
+        if interval.start_ns <= record.ts_event <= interval.end_ns
     )
 
 
@@ -249,23 +217,18 @@ def _stored_adjusted_last(
     """Read adjusted closes from the Catalog, fetching only missing windows."""
     subject = CatalogKey.for_instrument(AdjustedClose, instrument_id)
 
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> Sequence[AdjustedClose]:
+    def fetch(gap: CatalogInterval) -> Sequence[AdjustedClose]:
         return adjusted_close_records(
             instrument_id,
             provider.request_adjusted_last(
                 instrument_id=instrument_id,
-                start=start,
-                end=end,
+                start=gap.start,
+                end=gap.end,
                 currency=currency,
             ),
         )
 
-    missing_intervals = catalog.missing(subject, interval)
-    for missing in missing_intervals:
-        records = fetch(missing.start, missing.end)
-        catalog.replace(subject, missing, tuple(records))
-    if missing_intervals and not catalog.missing(subject, interval):
-        catalog.compact(subject, interval)
+    catalog.fill(subject, interval, fetch)
     return adjusted_close_series(catalog.read(subject, interval))
 
 

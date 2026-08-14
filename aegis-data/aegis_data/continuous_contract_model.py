@@ -128,7 +128,7 @@ class ContinuousContractModel:
         )
         candidates = self._port.resolve_continuous(self._root).legs
         volume_by_symbol = {
-            leg.symbol: self._covered_contract_volume(leg.symbol, start, end)
+            leg.symbol: self._stored_contract_volume(leg.symbol, start, end)
             for leg in candidates
         }
         schedule = liquid_roll_schedule(
@@ -229,7 +229,7 @@ class ContinuousContractModel:
     ) -> pd.DataFrame:
         marking, interval = self._contract_window(symbol, start, end)
         self._raw_bars.ensure(marking, interval)
-        return self._raw_bars.covered(marking, interval).ohlcv
+        return self._raw_bars.stored(marking, interval).ohlcv
 
     def _ensure_contract_volume(
         self,
@@ -239,14 +239,14 @@ class ContinuousContractModel:
     ) -> pd.Series:
         return self._ensure_contract_ohlcv(symbol, start, end)["Volume"]
 
-    def _covered_contract_volume(
+    def _stored_contract_volume(
         self,
         symbol: str,
         start: date,
         end: date,
     ) -> pd.Series:
         marking, interval = self._contract_window(symbol, start, end)
-        return self._raw_bars.covered(marking, interval).ohlcv["Volume"]
+        return self._raw_bars.stored(marking, interval).ohlcv["Volume"]
 
     def _readable_end(self, requested: date) -> date:
         """The last date this model can answer for.

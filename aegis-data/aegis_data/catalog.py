@@ -188,7 +188,7 @@ class CatalogBackedDataPort:
         for instrument_id in request.instrument_ids:
             marking = self.raw_bars.marking(instrument_id, request.timeframe)
             self.raw_bars.ensure(marking, interval)
-            frames[instrument_id] = self.raw_bars.covered(marking, interval).ohlcv
+            frames[instrument_id] = self.raw_bars.stored(marking, interval).ohlcv
         return frames
 
     def load_quote_frames(
@@ -197,8 +197,8 @@ class CatalogBackedDataPort:
         """The ``(bid, ask)`` OHLCV frames for the quote-marked legs in *request*.
 
         The research fill projection's feed: a quote-marked instrument's two
-        sided series, coverage-gated like the window read's bar pass; bar-marked legs
-        are simply absent.  Live never reads this — the fill projection is
+        sided series, warmed then read like the window read's bar pass; bar-marked
+        legs are simply absent.  Live never reads this — the fill projection is
         derived research-side and never serialized (aegis-rd-tggo.5).
         """
         frames: dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = {}
@@ -206,7 +206,7 @@ class CatalogBackedDataPort:
         for instrument_id in request.instrument_ids:
             marking = self.raw_bars.marking(instrument_id, request.timeframe)
             self.raw_bars.ensure(marking, interval)
-            sided = self.raw_bars.covered(marking, interval).quote_ohlcv
+            sided = self.raw_bars.stored(marking, interval).quote_ohlcv
             if sided is not None:
                 frames[instrument_id] = sided
         return frames
@@ -371,12 +371,6 @@ def _request_interval(request: CatalogWindowRequest) -> CatalogInterval:
         pd.Timestamp(request.start, tz="UTC").value,
         pd.Timestamp(request.end, tz="UTC").value,
     )
-
-
-def _bar_cls() -> type:
-    from nautilus_trader.model.data import Bar
-
-    return Bar
 
 
 __all__ = [

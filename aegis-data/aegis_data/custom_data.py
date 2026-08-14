@@ -161,30 +161,17 @@ def _ensure_instrument_coverage(
     end: pd.Timestamp,
     provider: CustomDataProviderPort[RecordT] | None,
 ) -> None:
-    requested = CatalogInterval(start.value, end.value)
-    subject = CatalogKey.for_instrument(record_type, instrument_id)
-
-    def commit(
-        verified: CatalogInterval,
-        verified_records: tuple[RecordT, ...],
-    ) -> None:
-        _record_verified(
-            catalog,
-            subject,
-            verified,
-            _records_within_event_window(verified_records, verified),
-        )
-
     if provider is None:
         return
-    fetch = _record_fetcher(provider, instrument_id, record_type)
-    missing_intervals = catalog.missing(subject, requested)
-    for missing in missing_intervals:
+    subject = CatalogKey.for_instrument(record_type, instrument_id)
+    served = _record_fetcher(provider, instrument_id, record_type)
+
+    def fetch(gap: CatalogInterval) -> Sequence[RecordT]:
         with gap_fill_boundary(f"custom data for {instrument_id.value}"):
-            records = fetch(missing.start, missing.end)
-        commit(missing, tuple(records))
-    if missing_intervals and not catalog.missing(subject, requested):
-        catalog.compact(subject, requested)
+            records = served(gap)
+        return _records_within_event_window(records, gap)
+
+    catalog.fill(subject, CatalogInterval(start.value, end.value), fetch)
 
 
 def capture(
@@ -193,7 +180,12 @@ def capture(
     catalog: Catalog,
     registry: CustomDataRegistry | None = None,
 ) -> None:
-    """Persist one observed record and its point coverage."""
+    """Persist one observed record over the single instant it covers.
+
+    An observation answers for its own timestamp and nothing either side of it,
+    so the window written is the instant itself. Validation happens here, before
+    the write, so the Catalog is only ever handed records that belong to it.
+    """
     record_type = type(record)
     _kind_for(record_type, registry)
     instrument_id = cast(InstrumentId, record.instrument_id)
@@ -202,33 +194,10 @@ def capture(
         record_type=record_type,
         instrument_id=instrument_id,
     )
-    _record_verified(
-        catalog,
+    catalog.replace(
         CatalogKey.for_instrument(record_type, instrument_id),
         CatalogInterval(record.ts_event, record.ts_event),
         (record,),
-    )
-
-
-def _record_verified(
-    catalog: Catalog,
-    subject: CatalogKey[RecordT],
-    verified: CatalogInterval,
-    verified_records: Sequence[RecordT],
-) -> None:
-    """Record Custom Data and the verified interval it was checked over.
-
-    The one storage command behind both doors into the Catalog: an observed
-    record captured live covers a single instant, a provider fill covers the
-    window it verified, and empty records are still a verified-empty interval.
-    Callers validate what they hand over — capture checks the record it
-    observed, the fill path checks what the provider answered — so by here the
-    records belong to *subject*.
-    """
-    catalog.replace(
-        subject,
-        CatalogInterval(verified.start_ns, verified.end_ns),
-        tuple(verified_records),
     )
 
 
@@ -387,9 +356,9 @@ def _record_fetcher(
     provider: CustomDataProviderPort[RecordT],
     instrument_id: InstrumentId,
     record_type: type[RecordT],
-) -> Callable[[pd.Timestamp, pd.Timestamp], Sequence[RecordT]]:
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> Sequence[RecordT]:
-        served = provider.request_records(instrument_id, start=start, end=end)
+) -> Callable[[CatalogInterval], Sequence[RecordT]]:
+    def fetch(gap: CatalogInterval) -> Sequence[RecordT]:
+        served = provider.request_records(instrument_id, start=gap.start, end=gap.end)
         return tuple(
             sorted(
                 (

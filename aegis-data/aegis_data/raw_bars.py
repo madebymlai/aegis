@@ -67,20 +67,17 @@ class RawBars:
         for bar_type in marking.mark_bars:
             self._ensure_bar_type(bar_type, interval)
 
-    def covered(
-        self,
-        marking: InstrumentMarking,
-        interval: CatalogInterval,
-    ) -> RawBarWindow:
-        """Read the records stored in a window; absence is an empty answer."""
-        return self._read(marking, interval)
-
     def stored(
         self,
         marking: InstrumentMarking,
         interval: CatalogInterval,
     ) -> RawBarWindow:
-        """Read whatever is stored in a window, without a coverage gate."""
+        """Read what a window holds; absence is an empty answer, never an error.
+
+        The only read there is. It once had a coverage-gated twin that raised on
+        an unfilled window, but a window nothing can serve now returns empty
+        (#96), which left the two indistinguishable.
+        """
         return self._read(marking, interval)
 
     def covered_through(self, bar_type: BarType) -> int | None:

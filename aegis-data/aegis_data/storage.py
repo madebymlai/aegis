@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Generic, Protocol, TypeVar, cast
 
 import pandas as pd
@@ -239,6 +239,29 @@ class Catalog:
             ensure_contiguous_files=True,
             deduplicate=True,
         )
+
+    def fill(
+        self,
+        key: CatalogKey[RecordT],
+        interval: CatalogInterval,
+        fetch: Callable[[CatalogInterval], Sequence[RecordT]],
+    ) -> None:
+        """Obtain and store only the parts of *interval* this dataset lacks.
+
+        The one fill algorithm, and the same one the Nautilus data engine runs
+        for Bars: ask what is missing, request exactly that, record the window
+        each request answered for, then merge into one file once the interval is
+        whole. A caller supplies only how to obtain records for a gap; which
+        gaps exist, what a write records, and when a merge is safe stay here.
+
+        *fetch* is handed one gap at a time and returns the records belonging to
+        it. A gap it cannot serve is an empty answer, still recorded as checked.
+        """
+        gaps = self.missing(key, interval)
+        for gap in gaps:
+            self.replace(key, gap, tuple(fetch(gap)))
+        if gaps and not self.missing(key, interval):
+            self.compact(key, interval)
 
     def read(
         self,
