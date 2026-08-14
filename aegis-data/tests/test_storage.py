@@ -121,6 +121,33 @@ def test_filling_asks_only_for_the_windows_the_dataset_lacks(tmp_path: Path) -> 
     assert len(catalog.read(key, span)) == 2
 
 
+def test_filling_around_a_stored_window_leaves_no_hole_to_merge_over(
+    tmp_path: Path,
+) -> None:
+    """Answering every gap is what makes the merge that follows safe.
+
+    A fill compacts without first asking whether the window came out whole. It
+    may do so because answering each reported gap tiles the interval — even
+    when the provider serves nothing, since an empty answer extends the
+    neighbouring file's name over the range rather than leaving it unwritten.
+    Were a hole to survive, the merge would either abort or, under ``python
+    -O``, name the merged file across unchecked time.
+    """
+    catalog = Catalog.open(tmp_path / "catalog")
+    bar_type = BarType.from_str("SPY.ARCA-1-DAY-LAST-EXTERNAL")
+    key = CatalogKey.for_bar(bar_type)
+    friday, monday = _day("2024-01-05"), _day("2024-01-08")
+    span = CatalogInterval(friday.start_ns, _day("2024-01-10").end_ns)
+    asked: list[CatalogInterval] = []
+
+    catalog.replace(key, monday, (_bar(bar_type, monday.start_ns),))
+    catalog.fill(key, span, _recording((), asked))
+
+    assert len(asked) == 2  # the head before Monday, and the tail after it
+    assert catalog.missing(key, span) == ()
+    assert len(catalog.read(key, span)) == 1
+
+
 def test_filling_records_a_gap_the_provider_could_not_serve(tmp_path: Path) -> None:
     """An empty answer is an answer, so the gap is never asked about twice."""
     catalog = Catalog.open(tmp_path / "catalog")

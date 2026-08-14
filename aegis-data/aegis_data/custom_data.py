@@ -228,13 +228,8 @@ def correct(
             end=end,
         )
     )
-    catalog.replace(
-        subject,
-        CatalogInterval(start.value, end.value),
-        selected,
-    )
-    if not catalog.missing(subject, interval):
-        catalog.compact(subject, interval)
+    catalog.replace(subject, interval, selected)
+    catalog.compact(subject, interval)
 
 
 def arrays(

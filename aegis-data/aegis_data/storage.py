@@ -256,12 +256,16 @@ class Catalog:
 
         *fetch* is handed one gap at a time and returns the records belonging to
         it. A gap it cannot serve is an empty answer, still recorded as checked.
+
+        Answering every gap tiles the interval, so the merge that follows has no
+        hole to stretch a filename over and needs no permission to run.
         """
         gaps = self.missing(key, interval)
+        if not gaps:
+            return
         for gap in gaps:
             self.replace(key, gap, tuple(fetch(gap)))
-        if gaps and not self.missing(key, interval):
-            self.compact(key, interval)
+        self.compact(key, interval)
 
     def read(
         self,
