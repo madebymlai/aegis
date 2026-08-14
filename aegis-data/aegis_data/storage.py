@@ -185,17 +185,20 @@ class Catalog:
         key: CatalogKey[RecordT],
         interval: CatalogInterval,
     ) -> tuple[CatalogInterval, ...]:
-        """The parts of *interval* this dataset has no answer for.
+        """The parts of *interval* this dataset holds no file for.
 
-        One question, not two. Every write records the window it answered for
-        — including a window that turned out to hold nothing — so the extents
-        that name this dataset's files say what was *checked*, not merely what
-        was *stored*. That is the same set the Nautilus data engine reads when
-        deciding whether to fetch, which is why there is no second opinion to
-        keep in step with.
+        The extents naming a dataset's files, read as coverage. A write records
+        the window it answered for, so for a dataset that carries records these
+        extents say what was *checked*, not merely what was *stored* — and they
+        are what the Nautilus data engine reads when deciding whether to fetch,
+        so there is no second opinion to keep in step with.
 
-        Answering from names rather than contents is what lets an empty
-        verified window exist at all: it has no records to be inferred from.
+        The exception decides which record kinds may rely on this. An empty
+        window is recorded by extending a neighbouring file's name over it, so
+        a window that is empty *and* has no neighbour records nothing at all
+        and reads as missing here for ever after. Raw Bars are dense enough
+        that a neighbour exists; sparse kinds are not, which is why
+        Distributions and Custom Data keep coverage claims instead.
         """
         unstored = self._store.get_missing_intervals_for_request(
             interval.start_ns,
@@ -211,6 +214,9 @@ class Catalog:
         Read from the same extents as :meth:`missing`, over the whole
         representable range, so a caller asking how far a dataset reaches and a
         caller asking what is absent inside a window cannot disagree.
+
+        The vendor documents these intervals as "disjoint and sorted by start
+        time", so the last one is the unanswered tail beyond everything held.
         """
         missing = self.missing(key, CatalogInterval(0, _MAX_TIMESTAMP_NS))
         if not missing:
@@ -221,32 +227,60 @@ class Catalog:
         return unanswered_tail.start_ns - 1
 
     def compact(self, key: CatalogKey[RecordT], interval: CatalogInterval) -> None:
-        """Merge this dataset's files across an *interval* already answered for.
+        """Merge this dataset's files back from the end of *interval*.
 
         The merged file is named for the span of the files it replaces, so
-        compacting a run of adjacent windows preserves the coverage answer
-        exactly. Compacting across a hole would not: the survivor's name would
-        stretch over a window nobody checked. Every caller here compacts a
-        range it has just seen answered end to end, so no hole is in reach.
+        merging a run of adjacent windows preserves the coverage answer
+        exactly. Merging across a hole would not: the survivor's name would
+        stretch over a window nobody checked, and a genuine Coverage Gap would
+        read as covered. Callers ask about ranges they have written into, not
+        ranges they have proven whole — a day still being captured has an
+        unchecked morning — so the range is narrowed here to the run ending at
+        ``interval.end_ns`` that holds no hole. Nothing outside that run is
+        touched, and a caller cannot ask for an unsafe merge.
 
-        ``ensure_contiguous_files`` asks the vendor to check that before
-        merging, which is why it is on. It is an ``assert``, so ``python -O``
-        strips it — a guard against a writer regressing, not a guarantee.
-        Do not reach for ``consolidate_data_by_period`` instead: it renames
-        files to period boundaries or to record extents, and both rewrite the
-        coverage answer rather than preserving it.
+        ``ensure_contiguous_files`` asks the vendor to assert the same thing
+        before merging: a guard against a writer regressing, not a guarantee,
+        since ``python -O`` strips it. Do not reach for
+        ``consolidate_data_by_period`` instead — it renames files to period
+        boundaries or to record extents, and both rewrite the coverage answer
+        rather than preserving it.
         """
+        answered = self._answered_run_ending(key, interval)
+        if answered is None:
+            return
         self._store.consolidate_data(
             key.record_type,
             identifier=_identifier(key),
-            start=interval.start_ns,
-            end=interval.end_ns,
+            start=answered.start_ns,
+            end=answered.end_ns,
             ensure_contiguous_files=True,
             deduplicate=True,
         )
 
+    def _answered_run_ending(
+        self,
+        key: CatalogKey[RecordT],
+        interval: CatalogInterval,
+    ) -> CatalogInterval | None:
+        """The gap-free tail of *interval*, or None if its end is unanswered."""
+        start_ns = interval.start_ns
+        for gap in self.missing(key, interval):
+            if gap.end_ns >= interval.end_ns:
+                return None
+            start_ns = max(start_ns, gap.end_ns + 1)
+        return CatalogInterval(start_ns, interval.end_ns)
+
     def repair_interval_descriptions(self, key: CatalogKey[RecordT]) -> None:
-        """Rebuild filename intervals from stored record extents."""
+        """Rebuild filename intervals from stored record extents.
+
+        Only safe on a dataset whose coverage is carried by its records rather
+        than by its filenames — the coverage-claim dataset, and nothing else.
+        Rebuilding from contents cannot see a window that was checked and held
+        nothing, so on any dataset answering :meth:`missing` from its extents
+        this silently erases coverage. That is the same reason ``compact`` uses
+        ``consolidate_data`` rather than ``consolidate_data_by_period``.
+        """
         self._store.reset_data_file_names(
             key.record_type,
             identifier=_identifier(key),

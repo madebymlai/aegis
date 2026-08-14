@@ -49,11 +49,19 @@ live both drive this aegis-data object; live validates its synthetic continuous
 _Avoid_: trader-owned continuous feed, live identity resolver, duplicate front picker
 
 **Coverage Gap**:
-A requested Catalog interval that the dedicated coverage dataset says was not
-checked after any allowed lazy fill. The same dataset and gap definition govern
-Raw Bars, Distributions, and Custom Data; payload-file extents never determine
-coverage. A Coverage Gap is a fail-loud condition; RD must not silently accept
-a truncated series.
+A requested Catalog interval nothing has answered for after any allowed lazy
+fill. A Coverage Gap is a fail-loud condition; RD must not silently accept a
+truncated series.
+
+What holds the answer differs by record kind, and the reason is the vendor's,
+not ours. Raw Bars answer from their own payload-file extents: every write
+records the window it answered for, so the extents say what was *checked*, and
+they are the same extents the Nautilus data engine reads when deciding whether
+to fetch — one answer, no second opinion to keep in step. Distributions and
+Custom Data answer from the dedicated coverage dataset, because Nautilus can
+only record an empty window by extending an adjacent file's name: on a sparse
+dataset with no neighbour there is nothing to extend, and "asked, and there was
+nothing" is their ordinary answer rather than an edge case.
 _Avoid_: partial success, best effort, sparse read
 
 **Warm Then Sweep**:

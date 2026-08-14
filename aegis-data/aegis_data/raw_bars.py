@@ -122,7 +122,11 @@ class RawBars:
             raise ValueError("verified Bars must all belong to the requested BarType")
         subject = CatalogKey.for_bar(bar_type)
         self.catalog.replace(subject, interval, selected)
-        self.catalog.compact(subject, _utc_day_interval(interval.end_ns))
+        day_so_far = CatalogInterval(
+            _utc_day_interval(interval.end_ns).start_ns,
+            interval.end_ns,
+        )
+        self.catalog.compact(subject, day_so_far)
 
     def _read(
         self,

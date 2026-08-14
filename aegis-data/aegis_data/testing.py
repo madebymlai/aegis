@@ -178,24 +178,26 @@ class _FakeCatalogBackend:
         ]
 
     def _claims(self, marker_cls: type, identifiers: list[str]) -> list:
-        """Whole-timeline claims for the record types that still keep them.
+        """Whole-timeline claims for the record kinds that still keep them.
 
         Bars answer coverage from their file extents now, so nothing here
         narrows a claim: a fixture not exercising sparse-record coverage must
-        never provoke a gap.
+        never provoke a gap. One claim per identifier, each naming the dataset
+        it belongs to rather than a fixed kind, so Custom Data subjects are not
+        described as Distributions.
         """
         return [
             marker_cls(
                 0,
                 0,
                 instrument_id=InstrumentId.from_str("COVERAGE.AEGIS"),
-                record_type="Distribution",
+                record_type=identifier.split("-", 1)[0],
                 start_ns=0,
                 end_ns=_UNBOUNDED_NS,
                 checked_at_ns=0,
                 applicable=True,
             )
-            for _ in identifiers
+            for identifier in identifiers
         ]
 
     def _covered(self, data_cls: type) -> tuple[int, int]:

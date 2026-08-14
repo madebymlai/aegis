@@ -32,27 +32,15 @@ def test_replacing_a_window_keeps_the_checked_empty_window_beside_it(
     friday, saturday, monday = _day("2024-01-05"), _day("2024-01-06"), _day("2024-01-08")
     sunday_end = _day("2024-01-07").end_ns
 
+    weekend = CatalogInterval(saturday.start_ns, sunday_end)
+
     catalog.replace(key, friday, (_bar(bar_type, friday.start_ns),))
     catalog.replace(key, monday, (_bar(bar_type, monday.start_ns),))
-    # As the data engine does when a request comes back empty.
-    catalog._store.write_data(
-        [],
-        saturday.start_ns,
-        sunday_end,
-        data_cls=Bar,
-        identifier=str(bar_type),
-    )
+    catalog.replace(key, weekend, ())
     # Rewriting Monday clears the window first — the path that used to erase it.
     catalog.replace(key, monday, (_bar(bar_type, monday.start_ns),))
 
-    weekend_as_the_engine_sees_it = catalog._store.get_missing_intervals_for_request(
-        saturday.start_ns,
-        sunday_end,
-        Bar,
-        str(bar_type),
-    )
-
-    assert weekend_as_the_engine_sees_it == []
+    assert catalog.missing(key, weekend) == ()
 
 
 def test_replacing_a_window_with_no_records_still_records_it_as_checked(
@@ -73,14 +61,7 @@ def test_replacing_a_window_with_no_records_still_records_it_as_checked(
     catalog.replace(key, friday, (_bar(bar_type, friday.start_ns),))
     catalog.replace(key, saturday, ())
 
-    weekend_as_the_engine_sees_it = catalog._store.get_missing_intervals_for_request(
-        saturday.start_ns,
-        saturday.end_ns,
-        Bar,
-        str(bar_type),
-    )
-
-    assert weekend_as_the_engine_sees_it == []
+    assert catalog.missing(key, saturday) == ()
 
 
 def test_dropping_an_interior_range_leaves_both_sides_covered(

@@ -174,3 +174,71 @@ def _bar(bar_type: BarType, day: str, close: float) -> Bar:
         timestamp,
         timestamp,
     )
+
+
+def test_recording_a_second_window_never_swallows_the_hole_before_it(
+    tmp_path: Path,
+) -> None:
+    """Consolidating after a write must not stretch over an unchecked window.
+
+    ``record_verified`` tidies the day it just wrote into, and a day is not a
+    range anyone has proven whole — a provider whose history starts late leaves
+    an earlier hour unchecked behind the window it did verify. Merging across
+    that hour would name one file for both and turn a genuine Coverage Gap into
+    a silent empty read, so the hole must survive the tidy-up.
+    """
+    catalog = Catalog.open(tmp_path)
+    bar_type = BarType.from_str("SPY.ARCA-1-MINUTE-LAST-EXTERNAL")
+    key = CatalogKey.for_bar(bar_type)
+    raw_bars = RawBars(catalog)
+    day = pd.Timestamp("2024-01-08", tz="UTC")
+    hour = lambda index: (day + pd.Timedelta(hours=index)).value  # noqa: E731
+    unchecked = CatalogInterval(hour(10), hour(11) - 1)
+
+    raw_bars.record_verified(
+        bar_type,
+        CatalogInterval(hour(9), hour(10) - 1),
+        (_bar_at(bar_type, hour(9)),),
+    )
+    raw_bars.record_verified(
+        bar_type,
+        CatalogInterval(hour(11), hour(12) - 1),
+        (_bar_at(bar_type, hour(11)),),
+    )
+
+    assert catalog.missing(key, unchecked) == (unchecked,)
+
+
+def _bar_at(bar_type: BarType, at: int) -> Bar:
+    price = Price.from_str("470.00")
+    return Bar(bar_type, price, price, price, price, Quantity.from_int(1), at, at)
+
+
+def test_capture_ticks_consolidate_instead_of_accumulating_a_file_each(
+    tmp_path: Path,
+) -> None:
+    """Tidying must keep working while the rest of the day is still unchecked.
+
+    Compaction exists so a captured stream does not leave one durable file per
+    arriving Bar. It is narrowed to the run that has been answered, and during
+    a session the day's remaining hours legitimately have not been — so the
+    range asked about has to end at what was just written, not at midnight, or
+    the narrowing declines every merge and the fragments accumulate.
+    """
+    catalog = Catalog.open(tmp_path)
+    bar_type = BarType.from_str("SPY.ARCA-1-MINUTE-LAST-EXTERNAL")
+    raw_bars = RawBars(catalog)
+    opening = pd.Timestamp("2024-01-08 09:00", tz="UTC").value
+    minute = pd.Timedelta(minutes=1).value
+
+    frontier = opening - 1
+    for tick in range(1, 13):
+        end = opening + tick * minute - 1
+        raw_bars.record_verified(
+            bar_type,
+            CatalogInterval(frontier + 1, end),
+            (_bar_at(bar_type, frontier + 1),),
+        )
+        frontier = end
+
+    assert len(list(tmp_path.rglob("*.parquet"))) == 1
