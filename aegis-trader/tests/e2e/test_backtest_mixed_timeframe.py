@@ -39,7 +39,7 @@ from aegis_trader.bundles.stub import StubBundleRegistry
 
 from tests.e2e.test_backtest_catalog_runner import (
     _AdjustedLastProvider,
-    _adjusted_close_client_factory,
+    _adjusted_close_warmer,
     _bar,
     _book_nav,
     _closed_orders,
@@ -676,11 +676,13 @@ def _weekly_distribution_source(
     dates = pd.date_range("2020-01-01", "2020-02-04", freq="B", tz="UTC")
     values = pd.Series([100.0] * len(dates), index=dates)
     values.loc[pd.Timestamp(ex_date, tz="UTC")] = 100.0 / (1.0 - amount / 100.0)
+    catalog = Catalog.open(catalog_path)
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
-            Catalog.open(catalog_path),
-            custom_data_client_factory=_adjusted_close_client_factory(
-                _AdjustedLastProvider({_WEEKLY_ID: values})
+            catalog,
+            custom_data_warmer=_adjusted_close_warmer(
+                catalog,
+                _AdjustedLastProvider({_WEEKLY_ID: values}),
             ),
         )
     )

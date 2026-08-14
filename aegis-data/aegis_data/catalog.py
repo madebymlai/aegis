@@ -21,7 +21,7 @@ from aegis_data._distribution_verification import (
     ensure_distribution_window,
     read_distribution_window,
 )
-from aegis_data.custom_data import CustomDataClientFactory
+from aegis_data.custom_data import CustomDataWarmer, CustomDataWarmerPort
 from aegis_data.distributions import Distribution, distribution_records
 from aegis_data.instrument import native_multiplier, native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
@@ -101,7 +101,7 @@ class ResolvedContinuousRoot:
 class CatalogBackedDataPort:
     catalog: Catalog
     provider: BarWarmerPort | None = None
-    custom_data_client_factory: CustomDataClientFactory | None = None
+    custom_data_warmer: CustomDataWarmerPort | None = None
     # Optional Step-1 definition write, fired only when warming reaches a client.
     # Definitions remain a separate, idempotent lifecycle from Bar write-back.
     definition_seeder: Callable[[InstrumentId], None] | None = None
@@ -137,7 +137,7 @@ class CatalogBackedDataPort:
             request.instrument_ids,
             start=request.start,
             end=request.end,
-            custom_data_client_factory=self.custom_data_client_factory,
+            custom_data_warmer=self.custom_data_warmer,
             raw_bars=self.raw_bars,
         )
         verified = read_distribution_window(
@@ -359,7 +359,10 @@ def catalog_data_port(
     return CatalogBackedDataPort(
         catalog,
         provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
-        custom_data_client_factory=historic_custom_data_client_factory(provider),
+        custom_data_warmer=CustomDataWarmer(
+            catalog,
+            historic_custom_data_client_factory(provider),
+        ),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),

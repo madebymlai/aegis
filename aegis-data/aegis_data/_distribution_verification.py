@@ -12,10 +12,11 @@ from aegis_data.definitions import (
     catalog_definitions,
     continuous_instrument_legs,
 )
-from aegis_data.custom_data import CustomDataClientFactory, CustomDataWarmer
+from aegis_data.custom_data import CustomDataWarmerPort
 from aegis_data.raw_bars import RawBars
 from aegis_data.distributions import (
     AdjustedClose,
+    AdjustedCloseRequestMetadata,
     Distribution,
     adjusted_close_series,
     query_distribution_data,
@@ -66,7 +67,7 @@ def ensure_distribution_window(
     *,
     start: str | int | pd.Timestamp,
     end: str | int | pd.Timestamp,
-    custom_data_client_factory: CustomDataClientFactory | None,
+    custom_data_warmer: CustomDataWarmerPort | None,
     raw_bars: RawBars,
 ) -> None:
     """Ensure Distribution coverage for one catalog window."""
@@ -80,7 +81,7 @@ def ensure_distribution_window(
         _ensure_assessment(
             catalog,
             assessment,
-            custom_data_client_factory=custom_data_client_factory,
+            custom_data_warmer=custom_data_warmer,
             raw_bars=raw_bars,
         )
 
@@ -129,17 +130,17 @@ def _ensure_assessment(
     catalog: Catalog,
     assessment: _Assessment,
     *,
-    custom_data_client_factory: CustomDataClientFactory | None,
+    custom_data_warmer: CustomDataWarmerPort | None,
     raw_bars: RawBars,
 ) -> None:
-    if not assessment.applicability.applicable or custom_data_client_factory is None:
+    if not assessment.applicability.applicable or custom_data_warmer is None:
         return
     subject = CatalogKey.for_instrument(Distribution, assessment.instrument_id)
 
     def fetch(gap: CatalogInterval) -> Sequence[Distribution]:
         return _verify_interval(
             catalog,
-            custom_data_client_factory,
+            custom_data_warmer,
             assessment.instrument_id,
             assessment.applicability.definition,
             gap,
@@ -151,7 +152,7 @@ def _ensure_assessment(
 
 def _verify_interval(
     catalog: Catalog,
-    custom_data_client_factory: CustomDataClientFactory,
+    custom_data_warmer: CustomDataWarmerPort,
     instrument_id: InstrumentId,
     definition: Any,
     interval: CatalogInterval,
@@ -174,7 +175,7 @@ def _verify_interval(
         return ()
     adjusted_last = _stored_adjusted_last(
         catalog,
-        custom_data_client_factory,
+        custom_data_warmer,
         instrument_id,
         CatalogInterval(decode_start_ns, interval.end_ns),
         currency=_definition_currency(definition, instrument_id, interval),
@@ -193,7 +194,7 @@ def _verify_interval(
 
 def _stored_adjusted_last(
     catalog: Catalog,
-    custom_data_client_factory: CustomDataClientFactory,
+    custom_data_warmer: CustomDataWarmerPort,
     instrument_id: InstrumentId,
     interval: CatalogInterval,
     *,
@@ -201,12 +202,12 @@ def _stored_adjusted_last(
 ) -> pd.Series:
     """Warm adjusted closes through Nautilus, then read them from the Catalog."""
     subject = CatalogKey.for_instrument(AdjustedClose, instrument_id)
-    CustomDataWarmer(catalog, custom_data_client_factory).warm(
+    custom_data_warmer.warm(
         AdjustedClose,
         (instrument_id,),
         start=interval.start,
         end=interval.end,
-        params={"currency": currency},
+        metadata=AdjustedCloseRequestMetadata(currency),
     )
     return adjusted_close_series(catalog.read(subject, interval))
 

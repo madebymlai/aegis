@@ -32,9 +32,18 @@ from nautilus_trader.data.client import MarketDataClient
 from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data._catalog_request import (
+    CatalogClientBinding,
+    CatalogClientFailure,
+    CatalogClientFailureRecorder,
+)
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.custom_data import CustomDataClientFactory
-from aegis_data.distributions import AdjustedClose, adjusted_close_records
+from aegis_data.distributions import (
+    AdjustedClose,
+    AdjustedCloseRequestMetadata,
+    adjusted_close_records,
+)
 from aegis_data.storage import Catalog
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
@@ -109,6 +118,10 @@ class _AdjustedLastRegistrationError(RuntimeError):
 
 class _AdjustedLastCompletionError(RuntimeError):
     """A registered Nautilus adjusted-history request did not complete."""
+
+
+class UnsupportedHistoricCustomDataError(ValueError):
+    """The historic IBKR client cannot serve the requested Custom Data type."""
 
 
 _PRESERVE_HISTORICAL_FAILURE: ContextVar[bool] = ContextVar(
@@ -356,11 +369,10 @@ class HistoricDataClient(MarketDataClient):
         cache: Any,
         clock: Any,
         provider: IbkrHistoricalProvider,
-        custom_data_failures: list[Exception] | None = None,
     ) -> None:
         super().__init__(client_id, msgbus, cache, clock, None, None)
         self._provider = provider
-        self._custom_data_failures = custom_data_failures
+        self._custom_data_failure = CatalogClientFailureRecorder()
 
     def _connect(self) -> None:
         pass
@@ -385,7 +397,7 @@ class HistoricDataClient(MarketDataClient):
 
     def request(self, request: Any) -> None:
         if request.data_type.type is not AdjustedClose:
-            error = ValueError(
+            error = UnsupportedHistoricCustomDataError(
                 "IBKR historical client does not support Custom Data type "
                 f"{request.data_type.type.__name__}"
             )
@@ -396,7 +408,9 @@ class HistoricDataClient(MarketDataClient):
                 instrument_id=request.instrument_id,
                 start=pd.Timestamp(request.start),
                 end=pd.Timestamp(request.end),
-                currency=str(request.params.get("currency", "USD")),
+                currency=AdjustedCloseRequestMetadata.from_params(
+                    request.params
+                ).currency,
             )
             records = adjusted_close_records(request.instrument_id, closes)
         except Exception as error:  # noqa: BLE001 - surfaced by the warming command
@@ -412,9 +426,8 @@ class HistoricDataClient(MarketDataClient):
         error: Exception | None = None,
     ) -> None:
         if error is not None:
-            if self._custom_data_failures is None:
-                raise error
-            self._custom_data_failures.append(error)
+            self._custom_data_failure.record(error)
+            return
         self._handle_data_response_py(
             request.data_type,
             list(records),
@@ -423,6 +436,9 @@ class HistoricDataClient(MarketDataClient):
             request.end,
             request.params,
         )
+
+    def request_failure(self) -> CatalogClientFailure | None:
+        return self._custom_data_failure.failure
 
 
 def historic_data_client_factory(
@@ -451,16 +467,15 @@ def historic_custom_data_client_factory(
         msgbus: Any,
         cache: Any,
         clock: Any,
-        failures: list[Exception],
-    ) -> MarketDataClient:
-        return HistoricDataClient(
+    ) -> CatalogClientBinding:
+        client = HistoricDataClient(
             ClientId("AEGIS-IBKR-HIST"),
             msgbus,
             cache,
             clock,
             provider,
-            failures,
         )
+        return CatalogClientBinding(client, client.request_failure)
 
     return build
 

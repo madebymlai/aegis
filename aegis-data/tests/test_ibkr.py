@@ -17,7 +17,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -33,15 +33,40 @@ from aegis_data.catalog import (
     CatalogWindowRequest,
     GapFillProviderError,
 )
+from aegis_data.custom_data import CustomDataWarmer
+from aegis_data.distributions import Distribution
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
+    historic_custom_data_client_factory,
     historic_data_client_factory,
     seed_instrument_definitions,
 )
-from aegis_data.ibkr.historical import _HistoricSession
+from aegis_data.ibkr.historical import (
+    UnsupportedHistoricCustomDataError,
+    _HistoricSession,
+)
 from aegis_data.storage import Catalog
 from aegis_data.research_bars import CatalogBarWarmer
+
+
+def test_historic_client_rejects_unsupported_custom_data_before_vendor_fetch(
+    tmp_path: Path,
+) -> None:
+    warmer = CustomDataWarmer(
+        Catalog.open(tmp_path),
+        historic_custom_data_client_factory(cast(Any, object())),
+    )
+
+    with pytest.raises(GapFillProviderError) as excinfo:
+        warmer.warm(
+            Distribution,
+            (InstrumentId.from_str("SPY.ARCA"),),
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-01-03", tz="UTC"),
+        )
+
+    assert isinstance(excinfo.value.__cause__, UnsupportedHistoricCustomDataError)
 
 
 class _FakeHistoricClient:

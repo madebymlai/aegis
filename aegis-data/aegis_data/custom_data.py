@@ -13,17 +13,21 @@ import pandas as pd
 from nautilus_trader.cache.cache import Cache
 from nautilus_trader.common.component import MessageBus, TestClock
 from nautilus_trader.config import LiveDataClientConfig
-from nautilus_trader.config import DataEngineConfig
 from nautilus_trader.core.data import Data
 from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.data.client import DataClient
-from nautilus_trader.data.engine import DataEngine
 from nautilus_trader.data.messages import RequestData
 from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.model.data import DataType
-from nautilus_trader.model.identifiers import ClientId, InstrumentId, TraderId
+from nautilus_trader.model.identifiers import ClientId, InstrumentId
 
 from aegis_data import custom_kinds
+from aegis_data._catalog_request import (
+    CatalogClientBinding,
+    CatalogClientFailure,
+    CatalogClientFailureRecorder,
+    run_catalog_request,
+)
 from aegis_data.custom_kinds import CustomDataKind, CustomDataRegistry
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_data.provider_errors import gap_fill_boundary
@@ -49,12 +53,31 @@ type CustomArrayRequirements = Mapping[InstrumentId, Sequence[str]]
 type CustomDataProviderMap = Mapping[type[Data], CustomDataProviderPort[Any]]
 type CustomDataAdapterMap = Mapping[type[Data], object]
 type CustomDataClientFactory = Callable[
-    [MessageBus, Cache, TestClock, list[Exception]],
-    DataClient,
+    [MessageBus, Cache, TestClock],
+    CatalogClientBinding,
 ]
 
 _CUSTOM_DATA_CLIENT_ID = ClientId("AEGIS-CUSTOM-HIST")
-_CUSTOM_DATA_TRADER_ID = TraderId("AEGIS-CUSTOM-001")
+
+
+class CustomDataRequestMetadata(Protocol):
+    """Typed record-specific metadata carried by a historical request."""
+
+    def to_params(self) -> dict[str, Any]: ...
+
+
+class CustomDataWarmerPort(Protocol):
+    """Warm provider-backed records without exposing request-engine plumbing."""
+
+    def warm(
+        self,
+        record_type: type[Data],
+        instrument_ids: Sequence[InstrumentId],
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        metadata: CustomDataRequestMetadata | None = None,
+    ) -> None: ...
 
 
 class InvalidLiveCustomDataCapabilityError(TypeError):
@@ -116,6 +139,14 @@ class CustomDataRequestCompletionError(RuntimeError):
     """Nautilus did not complete a synchronous Custom Data request."""
 
 
+class InvalidCustomDataWarmIntervalError(ValueError):
+    """A Custom Data warm interval has inverted boundaries."""
+
+
+class CustomDataRecordOutsideWindowError(ValueError):
+    """A provider returned a record outside the requested event-time window."""
+
+
 class _ProviderBackedCustomDataClient(DataClient):
     """Translate Nautilus Custom Data requests through configured provider ports."""
 
@@ -125,11 +156,10 @@ class _ProviderBackedCustomDataClient(DataClient):
         cache: Cache,
         clock: TestClock,
         providers: CustomDataProviderMap,
-        failures: list[Exception],
     ) -> None:
         super().__init__(_CUSTOM_DATA_CLIENT_ID, msgbus, cache, clock, None)
         self._providers = providers
-        self._failures = failures
+        self._failure = CatalogClientFailureRecorder()
 
     def _connect(self) -> None:
         pass
@@ -141,8 +171,8 @@ class _ProviderBackedCustomDataClient(DataClient):
         record_type = cast(type[Data], request.data_type.type)
         instrument_id = cast(InstrumentId, request.instrument_id)
         interval = CatalogInterval(request.start.value, request.end.value)
-        provider = self._providers[record_type]
         try:
+            provider = self._providers[record_type]
             records = _provider_records(
                 provider,
                 record_type=record_type,
@@ -150,8 +180,8 @@ class _ProviderBackedCustomDataClient(DataClient):
                 interval=interval,
             )
         except Exception as error:
-            self._failures.append(error)
-            records = ()
+            self._failure.record(error)
+            return
         self._handle_data_response_py(
             request.data_type,
             list(records),
@@ -160,6 +190,9 @@ class _ProviderBackedCustomDataClient(DataClient):
             request.end,
             request.params,
         )
+
+    def request_failure(self) -> CatalogClientFailure | None:
+        return self._failure.failure
 
 
 @dataclass(frozen=True)
@@ -176,19 +209,21 @@ class CustomDataWarmer:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-        params: dict[str, Any] | None = None,
+        metadata: CustomDataRequestMetadata | None = None,
     ) -> None:
         start = _utc(start)
         end = _utc(end)
         if start > end:
-            raise ValueError("custom data warm start must not be after end")
+            raise InvalidCustomDataWarmIntervalError(
+                "custom data warm start must not be after end"
+            )
         interval = CatalogInterval(start.value, end.value)
         for instrument_id in instrument_ids:
             self._warm_instrument(
                 record_type,
                 instrument_id,
                 interval,
-                params=params,
+                metadata=metadata,
             )
 
     def _warm_instrument(
@@ -197,42 +232,33 @@ class CustomDataWarmer:
         instrument_id: InstrumentId,
         interval: CatalogInterval,
         *,
-        params: dict[str, Any] | None,
+        metadata: CustomDataRequestMetadata | None,
     ) -> None:
-        clock = TestClock()
-        clock.set_time(interval.end_ns + 1)
-        msgbus = MessageBus(trader_id=_CUSTOM_DATA_TRADER_ID, clock=clock)
-        cache = Cache()
-        engine = DataEngine(msgbus, cache, clock, DataEngineConfig())
-        self.catalog.register_with(engine)
-        failures: list[Exception] = []
-        if self.client_factory is not None:
-            engine.register_default_client(
-                self.client_factory(msgbus, cache, clock, failures)
-            )
-        engine.start()
-        completed: list[object] = []
-        request = RequestData(
-            data_type=DataType(record_type),
-            instrument_id=instrument_id,
-            start=interval.start,
-            end=interval.end,
-            limit=0,
-            client_id=None,
-            venue=instrument_id.venue,
-            callback=completed.append,
-            request_id=UUID4(),
-            ts_init=clock.timestamp_ns(),
-            params={**(params or {}), "update_catalog": True},
+        outcome = run_catalog_request(
+            self.catalog,
+            end_ns=interval.end_ns,
+            client_factory=self.client_factory,
+            request_factory=lambda clock, callback: RequestData(
+                data_type=DataType(record_type),
+                instrument_id=instrument_id,
+                start=interval.start,
+                end=interval.end,
+                limit=0,
+                client_id=None,
+                venue=instrument_id.venue,
+                callback=callback,
+                request_id=UUID4(),
+                ts_init=clock.timestamp_ns(),
+                params={
+                    **({} if metadata is None else metadata.to_params()),
+                    "update_catalog": True,
+                },
+            ),
         )
-        try:
-            msgbus.request(endpoint="DataEngine.request", request=request)
-        finally:
-            engine.stop()
-        if failures:
+        if outcome.failure is not None:
             with gap_fill_boundary(f"custom data for {instrument_id.value}"):
-                raise failures[0]
-        if not completed:
+                raise outcome.failure.cause
+        if not outcome.responses:
             raise CustomDataRequestCompletionError(
                 f"Nautilus did not complete Custom Data request for "
                 f"{record_type.__name__} and {instrument_id.value}"
@@ -280,15 +306,14 @@ def provider_backed_custom_data_client_factory(
         msgbus: MessageBus,
         cache: Cache,
         clock: TestClock,
-        failures: list[Exception],
-    ) -> DataClient:
-        return _ProviderBackedCustomDataClient(
+    ) -> CatalogClientBinding:
+        client = _ProviderBackedCustomDataClient(
             msgbus,
             cache,
             clock,
             providers,
-            failures,
         )
+        return CatalogClientBinding(client, client.request_failure)
 
     return build
 
@@ -324,7 +349,7 @@ def _provider_records(
         if not interval.start_ns <= record.ts_event <= interval.end_ns
     )
     if outside:
-        raise ValueError(
+        raise CustomDataRecordOutsideWindowError(
             "provider returned a custom-data record outside the requested window"
         )
     return records
@@ -614,6 +639,8 @@ __all__ = [
     "CustomArrayRequirements",
     "CustomDataAdapterMap",
     "CustomDataClientFactory",
+    "CustomDataRequestMetadata",
+    "CustomDataWarmerPort",
     "CustomDataProviderMap",
     "CustomDataProviderPort",
     "InvalidLiveCustomDataCapabilityError",
@@ -623,7 +650,9 @@ __all__ = [
     "UnknownCustomArrayError",
     "UnknownCustomDataRecordError",
     "CustomDataRequestCompletionError",
+    "CustomDataRecordOutsideWindowError",
     "CustomDataWarmer",
+    "InvalidCustomDataWarmIntervalError",
     "arrays",
     "capture",
     "correct",

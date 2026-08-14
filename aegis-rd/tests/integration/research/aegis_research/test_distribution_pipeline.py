@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.ibkr import historic_custom_data_client_factory
 from aegis_data.raw_bars import RawBars
 from aegis_data.storage import Catalog, CatalogInterval
@@ -103,8 +104,9 @@ def _pipeline_total_return(
     catalog = Catalog.open(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=historic_custom_data_client_factory(
-            _AdjustedLastProvider(adjusted_last)
+        custom_data_warmer=CustomDataWarmer(
+            catalog,
+            historic_custom_data_client_factory(_AdjustedLastProvider(adjusted_last)),
         ),
     )
     monkeypatch.setattr(

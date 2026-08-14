@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -28,8 +28,8 @@ from aegis_data.catalog import (
     resolve_catalog_path,
 )
 from aegis_data.custom_data import (
-    CustomDataClientFactory,
     CustomDataProviderPort,
+    CustomDataWarmer,
     provider_backed_custom_data_client_factory,
 )
 from aegis_data.distributions import (
@@ -150,10 +150,24 @@ class _AdjustedLastProvider(CustomDataProviderPort[AdjustedClose]):
         return values.loc[(values.index >= start) & (values.index <= end)]
 
 
-def _adjusted_close_client_factory(
+def _adjusted_close_warmer(
+    catalog: Catalog,
     provider: CustomDataProviderPort[AdjustedClose],
-) -> CustomDataClientFactory:
-    return provider_backed_custom_data_client_factory({AdjustedClose: provider})
+) -> CustomDataWarmer:
+    return CustomDataWarmer(
+        catalog,
+        provider_backed_custom_data_client_factory({AdjustedClose: provider}),
+    )
+
+
+def _historic_adjusted_close_warmer(
+    catalog: Catalog,
+    provider: Any,
+) -> CustomDataWarmer:
+    return CustomDataWarmer(
+        catalog,
+        historic_custom_data_client_factory(provider),
+    )
 
 
 def _seed_fx_pair(catalog: Catalog, fx_pair: InstrumentId) -> None:
@@ -858,8 +872,9 @@ def test_catalog_port_translates_a_distribution_fetch_failure_into_a_port_error(
 
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=_adjusted_close_client_factory(
-            _BrokenAdjustedLast()
+        custom_data_warmer=_adjusted_close_warmer(
+            catalog,
+            _BrokenAdjustedLast(),
         ),
     )
 
@@ -940,9 +955,7 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
     )
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=historic_custom_data_client_factory(
-            cast(Any, provider)
-        ),
+        custom_data_warmer=_historic_adjusted_close_warmer(catalog, provider),
     )
     warm_provider = _AdjustedLastProvider(provider.adjusted_last)
 
@@ -953,11 +966,13 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
             end="2024-01-04",
         )
     ).distributions
+    warm_catalog = Catalog.open(catalog_path)
     warm = (
         CatalogBackedDataPort(
-            Catalog.open(catalog_path),
-            custom_data_client_factory=historic_custom_data_client_factory(
-                cast(Any, warm_provider)
+            warm_catalog,
+            custom_data_warmer=_historic_adjusted_close_warmer(
+                warm_catalog,
+                warm_provider,
             ),
         )
         .load_window(
@@ -1023,9 +1038,7 @@ def test_catalog_port_reports_verified_distribution_coverage(
     )
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=historic_custom_data_client_factory(
-            cast(Any, provider)
-        ),
+        custom_data_warmer=_historic_adjusted_close_warmer(catalog, provider),
     )
     port.load_window(
         CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-04")
@@ -1078,7 +1091,7 @@ def test_catalog_port_verifies_accumulating_distribution_window_as_empty(
     )
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=_adjusted_close_client_factory(provider),
+        custom_data_warmer=_adjusted_close_warmer(catalog, provider),
     )
 
     first = port.load_window(
@@ -1169,7 +1182,7 @@ def test_quote_marking_does_not_turn_bid_ask_moves_into_distributions(
     port = CatalogBackedDataPort(
         catalog,
         provider=provider,
-        custom_data_client_factory=_adjusted_close_client_factory(provider),
+        custom_data_warmer=_adjusted_close_warmer(catalog, provider),
         resolver=resolver,
     )
 
@@ -1484,7 +1497,7 @@ def test_catalog_port_reverifies_seeded_distribution_store_without_duplicates(
     events = (
         CatalogBackedDataPort(
             catalog,
-            custom_data_client_factory=_adjusted_close_client_factory(provider),
+            custom_data_warmer=_adjusted_close_warmer(catalog, provider),
         )
         .load_window(
             CatalogWindowRequest(
@@ -1542,7 +1555,7 @@ def test_catalog_port_backward_extension_persists_early_distribution_events(
     )
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=_adjusted_close_client_factory(provider),
+        custom_data_warmer=_adjusted_close_warmer(catalog, provider),
     )
 
     later = port.load_window(
@@ -1602,7 +1615,7 @@ def test_catalog_port_forward_request_clamps_to_stored_bar_frontier(
     )
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=_adjusted_close_client_factory(provider),
+        custom_data_warmer=_adjusted_close_warmer(catalog, provider),
     )
 
     covered = port.load_window(
@@ -1656,7 +1669,7 @@ def test_catalog_port_returns_no_distributions_with_too_few_trade_closes(
     distributions = (
         CatalogBackedDataPort(
             catalog,
-            custom_data_client_factory=_adjusted_close_client_factory(provider),
+            custom_data_warmer=_adjusted_close_warmer(catalog, provider),
         )
         .load_window(
             CatalogWindowRequest(
@@ -1703,9 +1716,7 @@ def test_catalog_port_fetches_only_missing_distribution_gap_between_verified_ran
     )
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=historic_custom_data_client_factory(
-            cast(Any, provider)
-        ),
+        custom_data_warmer=_historic_adjusted_close_warmer(catalog, provider),
     )
     port.load_window(
         CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-03")
@@ -1775,7 +1786,7 @@ def test_catalog_port_load_window_returns_one_coherent_value(
     )
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=_adjusted_close_client_factory(provider),
+        custom_data_warmer=_adjusted_close_warmer(catalog, provider),
         resolver=_fx_mid_resolver(fx_pair),
     )
 
@@ -1832,7 +1843,7 @@ def test_catalog_port_load_window_completeness_passes_via_fill_seeded_definition
     port = CatalogBackedDataPort(
         catalog,
         provider=provider,
-        custom_data_client_factory=_adjusted_close_client_factory(adjusted_last),
+        custom_data_warmer=_adjusted_close_warmer(catalog, adjusted_last),
         definition_seeder=lambda seeded_id: _write_definition(catalog, seeded_id),
     )
 
@@ -2015,8 +2026,9 @@ def test_verification_daily_absence_on_intraday_window_returns_no_distributions(
     )
     port = CatalogBackedDataPort(
         catalog,
-        custom_data_client_factory=_adjusted_close_client_factory(
-            _AdjustedLastProvider({instrument_id: adjusted})
+        custom_data_warmer=_adjusted_close_warmer(
+            catalog,
+            _AdjustedLastProvider({instrument_id: adjusted}),
         ),
     )
 

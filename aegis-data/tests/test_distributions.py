@@ -9,7 +9,6 @@ from nautilus_trader.adapters.interactive_brokers.common import IBContract
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.distributions import (
-    AdjustedClose,
     Distribution,
     adjusted_close_records,
     query_distribution_data,
@@ -37,11 +36,11 @@ def test_adjusted_close_records_keep_one_normalized_record_per_trading_day() -> 
 
     records = adjusted_close_records(_SPY, closes)
 
-    assert all(isinstance(record, AdjustedClose) for record in records)
-    assert [(record.ts_event, record.close) for record in records] == [
-        (pd.Timestamp("2024-01-02", tz="UTC").value, 101.0),
-        (pd.Timestamp("2024-01-03", tz="UTC").value, 102.0),
-    ]
+    assert len(records) == 2
+    assert records[0].ts_event == 1_704_153_600_000_000_000
+    assert records[0].close == 101.0
+    assert records[1].ts_event == 1_704_240_000_000_000_000
+    assert records[1].close == 102.0
 
 
 def test_recovery_ignores_sub_half_cent_rounding_noise() -> None:

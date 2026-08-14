@@ -24,6 +24,7 @@ from aegis_data.catalog import (
     MissingCatalogDefinitionsError,
     raw_bar_type,
 )
+from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.ibkr import historic_custom_data_client_factory
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
@@ -232,8 +233,11 @@ class _AdjustedLastProvider:
         return self.adjusted_last[kwargs["instrument_id"]]
 
 
-def _adjusted_close_client_factory(provider: Any):
-    return historic_custom_data_client_factory(provider)
+def _adjusted_close_warmer(catalog: Catalog, provider: Any) -> CustomDataWarmer:
+    return CustomDataWarmer(
+        catalog,
+        historic_custom_data_client_factory(provider),
+    )
 
 
 class _TwoVenueBundle(ExecutionBundle):
@@ -812,16 +816,18 @@ def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -
 def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> None:
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
+    catalog = Catalog.open(catalog_path)
     data_port = CatalogBackedDataPort(
-        Catalog.open(catalog_path),
-        custom_data_client_factory=_adjusted_close_client_factory(
+        catalog,
+        custom_data_warmer=_adjusted_close_warmer(
+            catalog,
             _AdjustedLastProvider(
                 {
                     _INSTRUMENT_ID: _adjusted_last_for_distribution(
                         "2020-01-03", amount=0.75
                     )
                 }
-            )
+            ),
         ),
     )
 
@@ -842,16 +848,18 @@ def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0, 100.0])
+    catalog = Catalog.open(catalog_path)
     data_port = CatalogBackedDataPort(
-        Catalog.open(catalog_path),
-        custom_data_client_factory=_adjusted_close_client_factory(
+        catalog,
+        custom_data_warmer=_adjusted_close_warmer(
+            catalog,
             _AdjustedLastProvider(
                 {
                     _INSTRUMENT_ID: _adjusted_last_for_distribution(
                         "2020-01-04", amount=1.0
                     )
                 }
-            )
+            ),
         ),
     )
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
@@ -978,11 +986,13 @@ def _verified_zero_distribution_source(
         )
         for instrument_id in instrument_ids
     }
+    catalog = Catalog.open(catalog_path)
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
-            Catalog.open(catalog_path),
-            custom_data_client_factory=_adjusted_close_client_factory(
-                _AdjustedLastProvider(adjusted_last)
+            catalog,
+            custom_data_warmer=_adjusted_close_warmer(
+                catalog,
+                _AdjustedLastProvider(adjusted_last),
             ),
         )
     )

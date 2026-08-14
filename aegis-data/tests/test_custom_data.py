@@ -9,7 +9,9 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.catalog import GapFillProviderError
 from aegis_data.custom_data import (
+    CustomDataRecordOutsideWindowError,
     CustomDataProviderPort,
+    InvalidCustomDataWarmIntervalError,
     UnknownCustomArrayError,
     UnknownCustomDataRecordError,
     arrays,
@@ -143,12 +145,28 @@ def test_ensure_arrays_rejects_a_record_outside_the_requested_window(
 ) -> None:
     provider = _OutOfWindowProvider(_record("2024-01-04", 7.0))
 
-    with pytest.raises(GapFillProviderError, match="outside the requested window"):
+    with pytest.raises(
+        GapFillProviderError,
+        match="outside the requested window",
+    ) as excinfo:
         ensure_arrays(
             {_INSTRUMENT: ("FixtureValue",)},
             start=_utc("2024-01-01"),
             end=_utc("2024-01-03"),
             providers={FixtureRecord: provider},
+            catalog=Catalog.open(tmp_path),
+        )
+
+    assert isinstance(excinfo.value.__cause__, CustomDataRecordOutsideWindowError)
+
+
+def test_ensure_arrays_rejects_an_inverted_warm_interval(tmp_path: Path) -> None:
+    with pytest.raises(InvalidCustomDataWarmIntervalError):
+        ensure_arrays(
+            {_INSTRUMENT: ("FixtureValue",)},
+            start=_utc("2024-01-03"),
+            end=_utc("2024-01-01"),
+            providers={FixtureRecord: _Provider(())},
             catalog=Catalog.open(tmp_path),
         )
 
@@ -248,6 +266,45 @@ def test_ensure_arrays_translates_provider_failures_at_the_data_provider_port(
             providers={FixtureRecord: _BrokenProvider()},
             catalog=Catalog.open(tmp_path),
         )
+
+
+def test_provider_failure_leaves_an_adjacent_gap_retryable(tmp_path: Path) -> None:
+    class _BrokenProvider(CustomDataProviderPort[FixtureRecord]):
+        def request_records(
+            self,
+            instrument_id: InstrumentId,
+            *,
+            start: pd.Timestamp,
+            end: pd.Timestamp,
+        ) -> tuple[FixtureRecord, ...]:
+            raise RuntimeError("vendor socket vanished")
+
+    catalog = Catalog.open(tmp_path)
+    capture(_record("2024-01-01", 1.0), catalog=catalog)
+    with pytest.raises(GapFillProviderError):
+        ensure_arrays(
+            {_INSTRUMENT: ("FixtureValue",)},
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-03"),
+            providers={FixtureRecord: _BrokenProvider()},
+            catalog=catalog,
+        )
+    retry = _Provider((_record("2024-01-02", 2.0),))
+
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-03"),
+        providers={FixtureRecord: retry},
+        catalog=catalog,
+    )
+
+    assert retry.requests == [
+        (
+            pd.Timestamp("2024-01-01 00:00:00.000000001", tz="UTC"),
+            pd.Timestamp("2024-01-03", tz="UTC"),
+        )
+    ]
 
 
 def test_ensure_arrays_records_the_requested_window_when_history_starts_late(

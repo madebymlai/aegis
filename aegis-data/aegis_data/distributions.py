@@ -1,5 +1,7 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from itertools import groupby
+from typing import Any
 import pandas as pd
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
@@ -10,6 +12,7 @@ from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 
 _DEFAULT_MIN_CASH_AMOUNT = 0.005
 _NANOS_PER_DAY = 86_400_000_000_000
+_ADJUSTED_CLOSE_CURRENCY_PARAM = "currency"
 
 
 @customdataclass
@@ -69,6 +72,32 @@ class AdjustedClose(Data):
             instrument_id=instrument_id,
             close=float(close),
         )
+
+
+class InvalidAdjustedCloseCurrencyError(ValueError):
+    """Adjusted-close request metadata contains no usable currency."""
+
+
+@dataclass(frozen=True)
+class AdjustedCloseRequestMetadata:
+    """Currency qualification carried by an AdjustedClose request."""
+
+    currency: str
+
+    def __post_init__(self) -> None:
+        normalized = self.currency.strip().upper()
+        if not normalized:
+            raise InvalidAdjustedCloseCurrencyError(
+                "adjusted-close request currency must not be empty"
+            )
+        object.__setattr__(self, "currency", normalized)
+
+    def to_params(self) -> dict[str, Any]:
+        return {_ADJUSTED_CLOSE_CURRENCY_PARAM: self.currency}
+
+    @classmethod
+    def from_params(cls, params: Mapping[str, Any]) -> "AdjustedCloseRequestMetadata":
+        return cls(str(params.get(_ADJUSTED_CLOSE_CURRENCY_PARAM, "USD")))
 
 
 def distribution_records(records: Sequence[Data]) -> tuple[Distribution, ...]:
@@ -259,7 +288,9 @@ def _optional_ns(value: str | int | pd.Timestamp | None) -> int | None:
 
 __all__ = [
     "AdjustedClose",
+    "AdjustedCloseRequestMetadata",
     "Distribution",
+    "InvalidAdjustedCloseCurrencyError",
     "adjusted_close_records",
     "adjusted_close_series",
     "distribution_records",

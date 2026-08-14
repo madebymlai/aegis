@@ -94,6 +94,7 @@ def load_ucits_universe(
     """Qualify and load each candidate independently through one IBKR session."""
 
     from aegis_data.catalog import CatalogBackedDataPort, open_catalog
+    from aegis_data.custom_data import CustomDataWarmer
     from aegis_data.ibkr import (
         IbkrHistoricalProvider,
         historic_custom_data_client_factory,
@@ -119,7 +120,10 @@ def load_ucits_universe(
     port = CatalogBackedDataPort(
         catalog,
         provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
-        custom_data_client_factory=historic_custom_data_client_factory(provider),
+        custom_data_warmer=CustomDataWarmer(
+            catalog,
+            historic_custom_data_client_factory(provider),
+        ),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
