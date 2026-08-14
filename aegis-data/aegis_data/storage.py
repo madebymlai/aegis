@@ -232,19 +232,31 @@ class Catalog:
         The merged file is named for the span of the files it replaces, so
         merging a run of adjacent windows preserves the coverage answer
         exactly. Merging across a hole would not: the survivor's name would
-        stretch over a window nobody checked, and a genuine Coverage Gap would
-        read as covered. Callers ask about ranges they have written into, not
-        ranges they have proven whole — a day still being captured has an
-        unchecked morning — so the range is narrowed here to the run ending at
-        ``interval.end_ns`` that holds no hole. Nothing outside that run is
-        touched, and a caller cannot ask for an unsafe merge.
+        stretch over a window nobody checked, and it would read as covered ever
+        after.
 
-        ``ensure_contiguous_files`` asks the vendor to check the same thing,
-        but it is a second opinion rather than the protection. Against 1.231.0
-        it asserts adjacency *before* merging, and ``python -O`` strips the
-        assert; against the Rust backend it merges across a hole regardless and
-        only reports non-disjointness afterwards. Neither would stop an unsafe
-        merge on its own, which is why the narrowing above does not rely on it.
+        Such holes are ordinary rather than faulty. A fill covers the early
+        morning, capture starts an hour later, and the hour between was simply
+        never asked about; a provider whose history begins late leaves the same
+        shape. So the range is narrowed here to the run ending at
+        ``interval.end_ns`` that holds no hole, and the rest is left alone —
+        merging around unchecked data rather than refusing to run, because
+        unchecked data is a normal state for this catalog to be in.
+
+        ``ensure_contiguous_files`` is on, but do not read it as the guard: the
+        narrowing above hands the vendor a contiguous run every time, so it
+        never has a gap to object to and cannot fire. It is left on to state
+        the intent, and to catch the day someone removes the narrowing — which
+        is the only way it would ever be reached. It would also be a weak guard
+        if reached: against 1.231.0 it is an ``assert``, which ``python -O``
+        strips, and against the Rust backend it merges across a hole anyway and
+        only reports non-disjointness afterwards.
+
+        Nothing in the vendor enforces the adjacency this depends on. Its
+        write-time check is disjointness, which rejects overlapping ranges and
+        permits gaps by design — a catalog with holes is an ordinary catalog to
+        Nautilus. Gaps cost only us, because a window recorded as empty is a
+        neighbour's filename stretched over it, and a gap leaves no neighbour.
 
         Do not reach for ``consolidate_data_by_period`` instead — it renames
         files to period boundaries or to record extents, and both rewrite the
