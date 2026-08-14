@@ -17,7 +17,7 @@ from aegis_data.provider_errors import GapFillProviderError, gap_fill_boundary
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 
 
-class NautilusDataProviderPort(Protocol):
+class BarWarmerPort(Protocol):
     """Warm Bars while the Nautilus engine owns persistence and coverage."""
 
     def warm_bars(
@@ -54,7 +54,7 @@ class RawBars:
     """Own Raw Bar coverage commands and side-effect-free Catalog reads."""
 
     catalog: Catalog
-    provider: NautilusDataProviderPort | None = None
+    provider: BarWarmerPort | None = None
     definition_seeder: Callable[[InstrumentId], None] | None = None
     resolver: RawBarTypeResolver = DeclaredMarkingResolver()
 
@@ -148,7 +148,7 @@ def _utc_day_interval(timestamp_ns: int) -> CatalogInterval:
 
 __all__ = [
     "GapFillProviderError",
-    "NautilusDataProviderPort",
+    "BarWarmerPort",
     "RawBarWindow",
     "RawBars",
 ]

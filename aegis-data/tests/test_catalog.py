@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -27,12 +27,18 @@ from aegis_data.catalog import (
     raw_bar_type,
     resolve_catalog_path,
 )
+from aegis_data.custom_data import (
+    CustomDataClientFactory,
+    CustomDataProviderPort,
+    provider_backed_custom_data_client_factory,
+)
 from aegis_data.distributions import (
     AdjustedClose,
     Distribution,
+    adjusted_close_records,
     write_distribution_data,
 )
-from aegis_data.ibkr import IbkrRequestError
+from aegis_data.ibkr import IbkrRequestError, historic_custom_data_client_factory
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.roll import DatedContract
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
@@ -103,10 +109,26 @@ class _ProviderPort:
         return True
 
 
-class _AdjustedLastProvider:
+class _AdjustedLastProvider(CustomDataProviderPort[AdjustedClose]):
     def __init__(self, adjusted_last: dict[InstrumentId, pd.Series]) -> None:
         self.adjusted_last = adjusted_last
         self.requests: list[dict[str, Any]] = []
+
+    def request_records(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> tuple[AdjustedClose, ...]:
+        return adjusted_close_records(
+            instrument_id,
+            self.request_adjusted_last(
+                instrument_id,
+                start=start,
+                end=end,
+            ),
+        )
 
     def request_adjusted_last(
         self,
@@ -124,7 +146,14 @@ class _AdjustedLastProvider:
                 "currency": currency,
             }
         )
-        return self.adjusted_last[instrument_id]
+        values = self.adjusted_last[instrument_id]
+        return values.loc[(values.index >= start) & (values.index <= end)]
+
+
+def _adjusted_close_client_factory(
+    provider: CustomDataProviderPort[AdjustedClose],
+) -> CustomDataClientFactory:
+    return provider_backed_custom_data_client_factory({AdjustedClose: provider})
 
 
 def _seed_fx_pair(catalog: Catalog, fx_pair: InstrumentId) -> None:
@@ -816,19 +845,23 @@ def test_catalog_port_translates_a_distribution_fetch_failure_into_a_port_error(
     )
     _write_definition(catalog, instrument_id)
 
-    class _BrokenAdjustedLast:
-        def request_adjusted_last(
+    class _BrokenAdjustedLast(CustomDataProviderPort[AdjustedClose]):
+        def request_records(
             self,
             instrument_id: InstrumentId,
             *,
             start: pd.Timestamp,
             end: pd.Timestamp,
-            currency: str = "USD",
-        ) -> pd.Series:
-            del instrument_id, start, end, currency
+        ) -> tuple[AdjustedClose, ...]:
+            del instrument_id, start, end
             raise IbkrRequestError("IBKR could not fetch ADJUSTED_LAST closes: ib down")
 
-    port = CatalogBackedDataPort(catalog, distribution_provider=_BrokenAdjustedLast())
+    port = CatalogBackedDataPort(
+        catalog,
+        custom_data_client_factory=_adjusted_close_client_factory(
+            _BrokenAdjustedLast()
+        ),
+    )
 
     with pytest.raises(GapFillProviderError, match="SPY.ARCA") as excinfo:
         port.load_window(
@@ -905,7 +938,12 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
             )
         }
     )
-    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port = CatalogBackedDataPort(
+        catalog,
+        custom_data_client_factory=historic_custom_data_client_factory(
+            cast(Any, provider)
+        ),
+    )
     warm_provider = _AdjustedLastProvider(provider.adjusted_last)
 
     first = port.load_window(
@@ -918,7 +956,9 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
     warm = (
         CatalogBackedDataPort(
             Catalog.open(catalog_path),
-            distribution_provider=warm_provider,
+            custom_data_client_factory=historic_custom_data_client_factory(
+                cast(Any, warm_provider)
+            ),
         )
         .load_window(
             CatalogWindowRequest(
@@ -981,7 +1021,12 @@ def test_catalog_port_reports_verified_distribution_coverage(
             )
         }
     )
-    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port = CatalogBackedDataPort(
+        catalog,
+        custom_data_client_factory=historic_custom_data_client_factory(
+            cast(Any, provider)
+        ),
+    )
     port.load_window(
         CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-04")
     ).distributions
@@ -1031,7 +1076,10 @@ def test_catalog_port_verifies_accumulating_distribution_window_as_empty(
             )
         }
     )
-    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port = CatalogBackedDataPort(
+        catalog,
+        custom_data_client_factory=_adjusted_close_client_factory(provider),
+    )
 
     first = port.load_window(
         CatalogWindowRequest(
@@ -1121,7 +1169,7 @@ def test_quote_marking_does_not_turn_bid_ask_moves_into_distributions(
     port = CatalogBackedDataPort(
         catalog,
         provider=provider,
-        distribution_provider=provider,
+        custom_data_client_factory=_adjusted_close_client_factory(provider),
         resolver=resolver,
     )
 
@@ -1196,8 +1244,8 @@ def test_catalog_port_reports_continuous_root_distribution_coverage_not_applicab
     port = CatalogBackedDataPort(catalog)
 
     # The surviving diagnostic query (ADR-0012): a pure report for an id that
-    # can never enter a window request — no verification is attempted, so no
-    # marker is ever written for the root.
+    # can never enter a window request — no provider fetch or materialization is
+    # attempted for the root.
     report = port.distribution_coverage_report(
         (continuous_root,),
         start="2024-01-01",
@@ -1436,7 +1484,7 @@ def test_catalog_port_reverifies_seeded_distribution_store_without_duplicates(
     events = (
         CatalogBackedDataPort(
             catalog,
-            distribution_provider=provider,
+            custom_data_client_factory=_adjusted_close_client_factory(provider),
         )
         .load_window(
             CatalogWindowRequest(
@@ -1492,7 +1540,10 @@ def test_catalog_port_backward_extension_persists_early_distribution_events(
             )
         }
     )
-    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port = CatalogBackedDataPort(
+        catalog,
+        custom_data_client_factory=_adjusted_close_client_factory(provider),
+    )
 
     later = port.load_window(
         CatalogWindowRequest(
@@ -1549,7 +1600,10 @@ def test_catalog_port_forward_request_clamps_to_stored_bar_frontier(
             )
         }
     )
-    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port = CatalogBackedDataPort(
+        catalog,
+        custom_data_client_factory=_adjusted_close_client_factory(provider),
+    )
 
     covered = port.load_window(
         CatalogWindowRequest(
@@ -1600,7 +1654,10 @@ def test_catalog_port_returns_no_distributions_with_too_few_trade_closes(
     )
 
     distributions = (
-        CatalogBackedDataPort(catalog, distribution_provider=provider)
+        CatalogBackedDataPort(
+            catalog,
+            custom_data_client_factory=_adjusted_close_client_factory(provider),
+        )
         .load_window(
             CatalogWindowRequest(
                 (instrument_id,),
@@ -1644,7 +1701,12 @@ def test_catalog_port_fetches_only_missing_distribution_gap_between_verified_ran
             )
         }
     )
-    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port = CatalogBackedDataPort(
+        catalog,
+        custom_data_client_factory=historic_custom_data_client_factory(
+            cast(Any, provider)
+        ),
+    )
     port.load_window(
         CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-03")
     ).distributions
@@ -1713,7 +1775,7 @@ def test_catalog_port_load_window_returns_one_coherent_value(
     )
     port = CatalogBackedDataPort(
         catalog,
-        distribution_provider=provider,
+        custom_data_client_factory=_adjusted_close_client_factory(provider),
         resolver=_fx_mid_resolver(fx_pair),
     )
 
@@ -1770,7 +1832,7 @@ def test_catalog_port_load_window_completeness_passes_via_fill_seeded_definition
     port = CatalogBackedDataPort(
         catalog,
         provider=provider,
-        distribution_provider=adjusted_last,
+        custom_data_client_factory=_adjusted_close_client_factory(adjusted_last),
         definition_seeder=lambda seeded_id: _write_definition(catalog, seeded_id),
     )
 
@@ -1953,7 +2015,9 @@ def test_verification_daily_absence_on_intraday_window_returns_no_distributions(
     )
     port = CatalogBackedDataPort(
         catalog,
-        distribution_provider=_AdjustedLastProvider({instrument_id: adjusted}),
+        custom_data_client_factory=_adjusted_close_client_factory(
+            _AdjustedLastProvider({instrument_id: adjusted})
+        ),
     )
 
     distributions = port.load_window(

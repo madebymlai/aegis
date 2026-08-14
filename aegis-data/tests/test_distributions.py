@@ -9,9 +9,10 @@ from nautilus_trader.adapters.interactive_brokers.common import IBContract
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.distributions import (
+    AdjustedClose,
     Distribution,
+    adjusted_close_records,
     query_distribution_data,
-    request_distribution_data,
     recover_distributions_from_adjusted_last,
     write_distribution_data,
 )
@@ -20,6 +21,27 @@ from aegis_data.ibkr.historical import _HistoricSession
 from aegis_data.storage import Catalog
 
 _SPY = InstrumentId.from_str("SPY.ARCA")
+
+
+def test_adjusted_close_records_keep_one_normalized_record_per_trading_day() -> None:
+    closes = pd.Series(
+        [100.0, 101.0, 102.0],
+        index=pd.DatetimeIndex(
+            [
+                "2024-01-02 09:30:00-05:00",
+                "2024-01-02 16:00:00-05:00",
+                "2024-01-03 16:00:00-05:00",
+            ]
+        ),
+    )
+
+    records = adjusted_close_records(_SPY, closes)
+
+    assert all(isinstance(record, AdjustedClose) for record in records)
+    assert [(record.ts_event, record.close) for record in records] == [
+        (pd.Timestamp("2024-01-02", tz="UTC").value, 101.0),
+        (pd.Timestamp("2024-01-03", tz="UTC").value, 102.0),
+    ]
 
 
 def test_recovery_ignores_sub_half_cent_rounding_noise() -> None:
@@ -125,7 +147,7 @@ class _FakeNautilusEClient:
         pass
 
 
-class _FakeNautilusBar:
+class _FakeCatalogBar:
     def __init__(self, timestamp: pd.Timestamp, close: float) -> None:
         self.ts_event = timestamp.value
         self.close = SimpleNamespace(as_double=lambda: close)
@@ -169,7 +191,7 @@ class _FakeNautilusClient:
             and self._eclient.contract != self.expected_contract
         ):
             closes = [(pd.Timestamp("2024-01-02", tz="UTC"), -1.0)]
-        return [_FakeNautilusBar(timestamp, close) for timestamp, close in closes]
+        return [_FakeCatalogBar(timestamp, close) for timestamp, close in closes]
 
     async def _stop_async(self) -> None:
         pass
@@ -399,31 +421,6 @@ def test_request_adjusted_last_rejects_a_qualified_currency_mismatch() -> None:
             end=pd.Timestamp("2024-02-01", tz="UTC"),
             currency="USD",
         )
-
-
-def test_request_distribution_data_fetches_adjusted_last_and_decodes_events() -> None:
-    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
-    trades = pd.Series([100.0, 100.0, 100.0], index=dates)
-    adjusted = pd.Series([100.0, 100.0 / (1.0 - 0.01), 100.0], index=dates)
-
-    class _Provider:
-        def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
-            assert kwargs["instrument_id"] == _SPY
-            assert kwargs["currency"] == "USD"
-            return adjusted
-
-    events = request_distribution_data(
-        _Provider(),
-        _SPY,
-        trades=trades,
-        start=dates[0],
-        end=dates[-1],
-        currency="USD",
-    )
-
-    assert [(event.ex_date, event.amount) for event in events] == [
-        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
-    ]
 
 
 def test_request_adjusted_last_wraps_session_fault() -> None:

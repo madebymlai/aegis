@@ -27,12 +27,12 @@ type ResearchBarClientFactory = Callable[
 ]
 
 
-class NautilusBarRequestCompletionError(RuntimeError):
+class CatalogBarRequestCompletionError(RuntimeError):
     """Nautilus did not complete a synchronous research Bar request."""
 
 
 @dataclass(frozen=True)
-class NautilusBarWarmer:
+class CatalogBarWarmer:
     """Warm Catalog Bars through Nautilus's request, gap, and write-back path."""
 
     catalog: Catalog
@@ -66,14 +66,14 @@ class NautilusBarWarmer:
         finally:
             engine.stop()
         if not completed:
-            raise NautilusBarRequestCompletionError(
+            raise CatalogBarRequestCompletionError(
                 f"Nautilus did not complete Bar request for {bar_type}"
             )
         return getattr(completed[-1], "client_id", None) is not None
 
 
 __all__ = [
-    "NautilusBarRequestCompletionError",
-    "NautilusBarWarmer",
+    "CatalogBarRequestCompletionError",
+    "CatalogBarWarmer",
     "ResearchBarClientFactory",
 ]

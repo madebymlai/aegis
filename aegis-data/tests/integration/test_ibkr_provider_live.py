@@ -26,13 +26,14 @@ from aegis_data.catalog import (
     bars_to_ohlcv,
     open_catalog,
 )
-from aegis_data.distributions import request_distribution_data
+from aegis_data.distributions import recover_distributions_from_adjusted_last
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
-    historic_bar_client_factory,
+    historic_custom_data_client_factory,
+    historic_data_client_factory,
     seed_instrument_definitions,
 )
-from aegis_data.research_bars import NautilusBarWarmer
+from aegis_data.research_bars import CatalogBarWarmer
 
 pytest.importorskip("ibapi")
 
@@ -145,10 +146,10 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     catalog = open_catalog(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
-        provider=NautilusBarWarmer(catalog, historic_bar_client_factory(provider)),
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
         # The window read verifies distribution coverage too (ADR-0012), so the
         # fill port carries both provider roles — the production composition.
-        distribution_provider=provider,
+        custom_data_client_factory=historic_custom_data_client_factory(provider),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
@@ -188,21 +189,25 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
             raw_bar_type(_GLD, "1D"), start=start, end=end
         )
     )["Close"]
-    spy = request_distribution_data(
-        provider,
-        _SPY,
-        trades=spy_trades,
-        start=start,
-        end=end,
-        currency="USD",
+    spy = tuple(
+        recover_distributions_from_adjusted_last(
+            instrument_id=_SPY,
+            trades=spy_trades,
+            adjusted_last=provider.request_adjusted_last(
+                _SPY, start=start, end=end, currency="USD"
+            ),
+            currency="USD",
+        )
     )
-    gld = request_distribution_data(
-        provider,
-        _GLD,
-        trades=gld_trades,
-        start=start,
-        end=end,
-        currency="USD",
+    gld = tuple(
+        recover_distributions_from_adjusted_last(
+            instrument_id=_GLD,
+            trades=gld_trades,
+            adjusted_last=provider.request_adjusted_last(
+                _GLD, start=start, end=end, currency="USD"
+            ),
+            currency="USD",
+        )
     )
 
     assert len(spy) >= 6

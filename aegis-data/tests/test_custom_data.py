@@ -16,7 +16,6 @@ from aegis_data.custom_data import (
     capture,
     correct,
     ensure_arrays,
-    ingest,
     records,
     records_for_arrays,
 )
@@ -77,7 +76,22 @@ class _ForeignRecordProvider(CustomDataProviderPort[FixtureRecord]):
         return (self.foreign,)
 
 
-def test_ingest_reports_a_foreign_provider_record_as_a_provider_fault(
+@dataclass
+class _OutOfWindowProvider(CustomDataProviderPort[FixtureRecord]):
+    record: FixtureRecord
+
+    def request_records(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> tuple[FixtureRecord, ...]:
+        del instrument_id, start, end
+        return (self.record,)
+
+
+def test_ensure_arrays_reports_a_foreign_provider_record_as_a_provider_fault(
     tmp_path: Path,
 ) -> None:
     """The fetch validates the answer, so the rejection is a provider fault.
@@ -88,12 +102,11 @@ def test_ingest_reports_a_foreign_provider_record_as_a_provider_fault(
     provider = _ForeignRecordProvider(_foreign_record())
 
     with pytest.raises(GapFillProviderError, match="another instrument"):
-        ingest(
-            FixtureRecord,
-            (_INSTRUMENT,),
+        ensure_arrays(
+            {_INSTRUMENT: ("FixtureValue",)},
             start=_utc("2024-01-01"),
             end=_utc("2024-01-03"),
-            provider=provider,
+            providers={FixtureRecord: provider},
             catalog=Catalog.open(tmp_path),
         )
 
@@ -106,12 +119,11 @@ def test_a_foreign_provider_record_never_reaches_storage(tmp_path: Path) -> None
     """
     provider = _ForeignRecordProvider(_foreign_record())
     with pytest.raises(GapFillProviderError):
-        ingest(
-            FixtureRecord,
-            (_INSTRUMENT,),
+        ensure_arrays(
+            {_INSTRUMENT: ("FixtureValue",)},
             start=_utc("2024-01-01"),
             end=_utc("2024-01-03"),
-            provider=provider,
+            providers={FixtureRecord: provider},
             catalog=Catalog.open(tmp_path),
         )
 
@@ -126,6 +138,21 @@ def test_a_foreign_provider_record_never_reaches_storage(tmp_path: Path) -> None
     assert stored == ()
 
 
+def test_ensure_arrays_rejects_a_record_outside_the_requested_window(
+    tmp_path: Path,
+) -> None:
+    provider = _OutOfWindowProvider(_record("2024-01-04", 7.0))
+
+    with pytest.raises(GapFillProviderError, match="outside the requested window"):
+        ensure_arrays(
+            {_INSTRUMENT: ("FixtureValue",)},
+            start=_utc("2024-01-01"),
+            end=_utc("2024-01-03"),
+            providers={FixtureRecord: provider},
+            catalog=Catalog.open(tmp_path),
+        )
+
+
 def _foreign_record() -> FixtureRecord:
     timestamp = _utc("2024-01-02").value
     return FixtureRecord(
@@ -137,23 +164,23 @@ def _foreign_record() -> FixtureRecord:
     )
 
 
-def test_ingest_is_idempotent_and_records_round_trip_typed(tmp_path: Path) -> None:
+def test_ensure_arrays_is_idempotent_and_records_round_trip_typed(
+    tmp_path: Path,
+) -> None:
     provider = _Provider((_record("2024-01-02", 7.0),))
 
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
-        provider=provider,
+        providers={FixtureRecord: provider},
         catalog=Catalog.open(tmp_path),
     )
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
-        provider=provider,
+        providers={FixtureRecord: provider},
         catalog=Catalog.open(tmp_path),
     )
     stored = records(
@@ -173,12 +200,11 @@ def test_records_for_arrays_resolves_kinds_and_returns_covered_records(
     tmp_path: Path,
 ) -> None:
     provider = _Provider((_record("2024-01-02", 7.0),))
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
-        provider=provider,
+        providers={FixtureRecord: provider},
         catalog=Catalog.open(tmp_path),
     )
     stored = records_for_arrays(
@@ -201,7 +227,7 @@ def test_records_for_arrays_rejects_an_unknown_array_name(tmp_path: Path) -> Non
         )
 
 
-def test_ingest_translates_provider_failures_at_the_shared_coverage_boundary(
+def test_ensure_arrays_translates_provider_failures_at_the_data_provider_port(
     tmp_path: Path,
 ) -> None:
     class _BrokenProvider(CustomDataProviderPort[FixtureRecord]):
@@ -215,28 +241,26 @@ def test_ingest_translates_provider_failures_at_the_shared_coverage_boundary(
             raise RuntimeError("vendor socket vanished")
 
     with pytest.raises(GapFillProviderError, match="custom data for SPY.ARCA"):
-        ingest(
-            FixtureRecord,
-            (_INSTRUMENT,),
+        ensure_arrays(
+            {_INSTRUMENT: ("FixtureValue",)},
             start=_utc("2024-01-01"),
             end=_utc("2024-01-03"),
-            provider=_BrokenProvider(),
+            providers={FixtureRecord: _BrokenProvider()},
             catalog=Catalog.open(tmp_path),
         )
 
 
-def test_ingest_records_the_whole_requested_window_when_provider_history_starts_late(
+def test_ensure_arrays_records_the_requested_window_when_history_starts_late(
     tmp_path: Path,
 ) -> None:
     provider = _Provider((_record("2024-01-05", 2.0),))
     catalog = Catalog.open(tmp_path)
 
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-06"),
-        provider=provider,
+        providers={FixtureRecord: provider},
         catalog=catalog,
     )
 
@@ -256,32 +280,29 @@ def test_ingest_records_the_whole_requested_window_when_provider_history_starts_
     )
 
 
-def test_ingest_fills_only_an_interior_native_gap(tmp_path: Path) -> None:
+def test_ensure_arrays_fills_only_an_interior_native_gap(tmp_path: Path) -> None:
     seed = _Provider((_record("2024-01-02", 2.0), _record("2024-01-08", 8.0)))
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
-        provider=seed,
+        providers={FixtureRecord: seed},
         catalog=Catalog.open(tmp_path),
     )
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-07"),
         end=_utc("2024-01-10"),
-        provider=seed,
+        providers={FixtureRecord: seed},
         catalog=Catalog.open(tmp_path),
     )
     healer = _Provider((_record("2024-01-05", 5.0),))
 
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-10"),
-        provider=healer,
+        providers={FixtureRecord: healer},
         catalog=Catalog.open(tmp_path),
     )
 
@@ -341,7 +362,7 @@ def test_empty_custom_dataset_is_requested_again_because_no_file_can_record_it(
     assert repeated.requests == [(_utc("2024-01-01"), _utc("2024-01-03"))]
 
 
-def test_marker_backed_gap_does_not_break_a_later_horizon_extension(
+def test_unfilled_gap_does_not_break_a_later_horizon_extension(
     tmp_path: Path,
 ) -> None:
     capture(_record("2024-01-01", 2.0), catalog=Catalog.open(tmp_path))
@@ -386,16 +407,15 @@ def test_arrays_returns_empty_values_for_never_ingested_window(
     assert panels["FixtureAvailable"].to_numpy().tolist() == [[0.0], [0.0], [0.0]]
 
 
-def test_correction_replaces_a_bounded_window_while_ingest_cannot_overwrite(
+def test_correction_replaces_a_bounded_window_while_warming_cannot_overwrite(
     tmp_path: Path,
 ) -> None:
     original = _Provider((_record("2024-01-02", 2.0),))
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
-        provider=original,
+        providers={FixtureRecord: original},
         catalog=Catalog.open(tmp_path),
     )
     correct(
@@ -408,12 +428,11 @@ def test_correction_replaces_a_bounded_window_while_ingest_cannot_overwrite(
     )
     attempted_overwrite = _Provider((_record("2024-01-02", 3.0),))
 
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
-        provider=attempted_overwrite,
+        providers={FixtureRecord: attempted_overwrite},
         catalog=Catalog.open(tmp_path),
     )
     stored = records(
@@ -433,12 +452,11 @@ def test_arrays_projects_fixture_records_causally_on_the_exact_index(
 ) -> None:
     index = pd.date_range("2024-01-01", "2024-01-05", tz="UTC")
     provider = _Provider((_record("2024-01-02", 2.0), _record("2024-01-04", 4.0)))
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=index[0],
         end=index[-1],
-        provider=provider,
+        providers={FixtureRecord: provider},
         catalog=Catalog.open(tmp_path),
     )
 
@@ -482,12 +500,11 @@ def test_arrays_carries_the_latest_record_from_before_the_requested_index(
 ) -> None:
     coverage_index = pd.date_range("2024-01-01", "2024-01-05", tz="UTC")
     provider = _Provider((_record("2024-01-01", 2.0),))
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
+    ensure_arrays(
+        {_INSTRUMENT: ("FixtureValue",)},
         start=coverage_index[0],
         end=coverage_index[-1],
-        provider=provider,
+        providers={FixtureRecord: provider},
         catalog=Catalog.open(tmp_path),
     )
     requested_index = coverage_index[2:]

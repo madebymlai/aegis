@@ -1,11 +1,12 @@
 # The gap fill stops at the no-data wall and owns its error taxonomy
 
-Status: superseded in part by GH #96/#97/#101
+Status: superseded in part by GH #96/#97/#101 and aegis-rd-bo4
 
 Provider-fault translation to `GapFillProviderError` remains current. The
 provider frontier, no-data wall orchestration, and fail-loud Coverage Gap below
-were retired: Nautilus's DataEngine now owns bar gaps and write-back, recording
-the whole interval it requested even when the vendor returns short history.
+were retired: Nautilus's DataEngine now owns Bar and provider-backed Custom Data
+gaps and write-back, recording the whole interval it requested when the vendor
+returns records occupying only part of it.
 
 Reinforces ADR-0006/0008. Fixes GH #75.
 

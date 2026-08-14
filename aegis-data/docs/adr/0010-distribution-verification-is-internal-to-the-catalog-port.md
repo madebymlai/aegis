@@ -37,7 +37,7 @@ package.
   injected clocks as the sanctioned remedy for uncontrolled variation, which
   classifies the field as a dependency made explicit — not a hook added only to
   make tests easier. It is composition of the same species as the port's
-  existing `distribution_provider` and `definition_seeder` fields; the method
+  former distribution-provider dependency and `definition_seeder` field; the method
   surface does not grow.
 
 - **The verified read is the ensure.** Arrangement that needs a verified
@@ -55,9 +55,9 @@ package.
   and `DistributionCoverageMarker` are the port's secret. Its only importer is
   `catalog.py` (lazily, inside the port methods).
 
-- **The provider Protocol lives beside the port.** `DistributionDataProviderPort`
-  is interface vocabulary — the type of the port's `distribution_provider`
-  field — so it moved into `catalog.py` next to `NautilusDataProviderPort`; the
+- **The provider Protocol lives beside the port.** The former distribution-provider
+  Protocol was interface vocabulary — the type of the port's corresponding
+  field — so it moved into `catalog.py` next to the Bar provider port; the
   internal module imports it from there.
 
 - **Test controls cross the production seam.** Tests and fixtures build a

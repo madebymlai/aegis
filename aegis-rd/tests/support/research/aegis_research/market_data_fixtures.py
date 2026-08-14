@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from aegis_data.bar_type import external_bar_type
 from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, raw_bar_type
+from aegis_data.ibkr import historic_custom_data_client_factory
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode, RawBarTypeResolver
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_data.testing import FakeCatalog
@@ -255,7 +256,9 @@ def _verify_zero_distribution_coverage(
     # start so seeded corpora stay byte-deterministic.
     window = CatalogBackedDataPort(
         catalog,
-        distribution_provider=_ZeroDistributionProvider(panels),
+        custom_data_client_factory=historic_custom_data_client_factory(
+            _ZeroDistributionProvider(panels)
+        ),
         resolver=resolver if resolver is not None else DeclaredMarkingResolver(),
     ).load_window(
         CatalogWindowRequest(

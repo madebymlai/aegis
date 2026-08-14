@@ -1,9 +1,10 @@
 # The catalog lazy fill is unconditional and shared by research and live
 
-Status: superseded in part by GH #96/#101
+Status: superseded in part by GH #96/#101 and aegis-rd-bo4
 
 Research and live still share provider-backed warming, but research now drives
-Nautilus's DataEngine directly. Absence no longer raises a Coverage Gap.
+Nautilus's DataEngine directly for Bars and provider-backed Custom Data.
+Absence no longer raises a Coverage Gap.
 
 ## Context
 

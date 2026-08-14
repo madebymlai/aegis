@@ -17,18 +17,18 @@ from aegis_data.definitions import (
     continuous_root_legs,
 )
 from aegis_data._distribution_verification import (
-    DistributionDataProviderPort,
     distribution_coverage_report,
     ensure_distribution_window,
     read_distribution_window,
 )
+from aegis_data.custom_data import CustomDataClientFactory
 from aegis_data.distributions import Distribution, distribution_records
 from aegis_data.instrument import native_multiplier, native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.ohlcv import bars_to_ohlcv
 from aegis_data.raw_bars import (
+    BarWarmerPort,
     GapFillProviderError,
-    NautilusDataProviderPort,
     RawBars,
 )
 from aegis_data.roll import DatedContract
@@ -100,8 +100,8 @@ class ResolvedContinuousRoot:
 @dataclass(frozen=True)
 class CatalogBackedDataPort:
     catalog: Catalog
-    provider: NautilusDataProviderPort | None = None
-    distribution_provider: DistributionDataProviderPort | None = None
+    provider: BarWarmerPort | None = None
+    custom_data_client_factory: CustomDataClientFactory | None = None
     # Optional Step-1 definition write, fired only when warming reaches a client.
     # Definitions remain a separate, idempotent lifecycle from Bar write-back.
     definition_seeder: Callable[[InstrumentId], None] | None = None
@@ -137,7 +137,7 @@ class CatalogBackedDataPort:
             request.instrument_ids,
             start=request.start,
             end=request.end,
-            provider=self.distribution_provider,
+            custom_data_client_factory=self.custom_data_client_factory,
             raw_bars=self.raw_bars,
         )
         verified = read_distribution_window(
@@ -348,17 +348,18 @@ def catalog_data_port(
     """
     from aegis_data.ibkr import (
         IbkrHistoricalProvider,
-        historic_bar_client_factory,
+        historic_custom_data_client_factory,
+        historic_data_client_factory,
         seed_instrument_definitions,
     )
-    from aegis_data.research_bars import NautilusBarWarmer
+    from aegis_data.research_bars import CatalogBarWarmer
 
     catalog = open_catalog(path)
     provider = IbkrHistoricalProvider()
     return CatalogBackedDataPort(
         catalog,
-        provider=NautilusBarWarmer(catalog, historic_bar_client_factory(provider)),
-        distribution_provider=provider,
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
+        custom_data_client_factory=historic_custom_data_client_factory(provider),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
@@ -379,10 +380,9 @@ __all__ = [
     "ContinuousRootLegsNotFoundError",
     "ContinuousRootVenueMismatchError",
     "Distribution",
-    "DistributionDataProviderPort",
     "GapFillProviderError",
     "MissingCatalogDefinitionsError",
-    "NautilusDataProviderPort",
+    "BarWarmerPort",
     "CatalogWindowRequest",
     "ResolvedContinuousRoot",
     "bars_to_ohlcv",

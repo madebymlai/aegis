@@ -11,7 +11,7 @@ from nautilus_trader.model.identifiers import ClientId, InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.research_bars import NautilusBarWarmer
+from aegis_data.research_bars import CatalogBarWarmer
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 
 
@@ -75,7 +75,7 @@ def test_data_engine_owns_gap_detection_and_records_the_requested_window(
         (_bar(bar_type, "2024-01-03", 10.0),),
         calls,
     )
-    warmer = NautilusBarWarmer(catalog, factory)
+    warmer = CatalogBarWarmer(catalog, factory)
 
     first_fetched = warmer.warm_bars(bar_type, interval)
     second_fetched = warmer.warm_bars(bar_type, interval)

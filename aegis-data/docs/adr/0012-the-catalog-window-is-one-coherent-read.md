@@ -1,10 +1,11 @@
 # The catalog window is one coherent read
 
-Status: accepted, amended by GH #96/#100/#101
+Status: accepted, amended by GH #96/#100/#101 and aegis-rd-bo4
 
-The coherent read remains current. Its bar warming now runs through Nautilus's
-DataEngine, absence is an empty answer, and adjusted closes are persisted as
-Catalog Custom Data before deterministic Distribution materialisation.
+The coherent read remains current. Bar and provider-backed Custom Data warming
+now run through Nautilus's DataEngine, absence is an empty answer, and adjusted
+closes are persisted as Catalog Custom Data before deterministic Distribution
+materialisation.
 
 Builds on ADR-0006/0008/0009/0010/0011.
 
@@ -63,8 +64,9 @@ projection of the catalog, but no module owned it.
 
 ## Non-changes
 
-- **ADR-0008** — instrument-definition seeding remains separate. Bar gaps and
-  write-back are now owned by Nautilus's DataEngine (GH #101).
+- **ADR-0008** — instrument-definition seeding remains separate. Bar and
+  provider-backed Custom Data gaps and write-back are now owned by Nautilus's
+  DataEngine (GH #101, aegis-rd-bo4).
 - **ADR-0009** — continuous series stay owned by `ContinuousContractModel`;
   synthetic roots do not enter a window request.
 - **ADR-0010** — Distribution materialisation stays internal to the port, now

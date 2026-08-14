@@ -1,11 +1,12 @@
 # The catalog fill is one pure-fetch port with a single writer; definitions are a separate Step-1 write
 
-Status: superseded in part by GH #96/#98/#100/#101
+Status: superseded in part by GH #96/#98/#100/#101 and aegis-rd-bo4
 
 The historical decision below kept Aegis-owned gap orchestration and a marker
-ledger. Research Bars now run through Nautilus's DataEngine, which owns missing
-intervals and Catalog write-back. Custom Data and Distributions use their own
-file extents, and adjusted closes are persisted as Custom Data. The separate,
+ledger. Research Bars and provider-backed Custom Data now run through Nautilus's
+DataEngine, which owns missing intervals and Catalog write-back. Locally derived
+Distributions keep their deterministic materialization and file extents, while
+adjusted closes are persisted as provider-backed Custom Data. The separate,
 idempotent instrument-definition write remains current.
 
 ## Context
@@ -14,7 +15,7 @@ ADR-0006 settled that the lazy fill is unconditional and shared. This ADR settle
 its *shape* — the seam between aegis-data and the IBKR adapter — because the
 existing draft conflated several concerns:
 
-- `NautilusDataProviderPort.request_bars(..., update_catalog=True)` told the
+- The former provider port's `request_bars(..., update_catalog=True)` told the
   *provider* to persist, while `CatalogBackedDataPort` *also* wrote the returned
   bars — a double-write with ambiguous ownership.
 - The catalog needs the `Instrument` *definition*, not just bars: the trader

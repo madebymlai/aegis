@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from aegis_data.custom_data import CustomDataProviderPort, ingest
+from aegis_data.custom_data import CustomDataProviderPort, ensure_arrays
 from tests.support.custom_data import FixtureRecord
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
@@ -24,6 +24,7 @@ from aegis_data.catalog import (
     MissingCatalogDefinitionsError,
     raw_bar_type,
 )
+from aegis_data.ibkr import historic_custom_data_client_factory
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
@@ -229,6 +230,10 @@ class _AdjustedLastProvider:
 
     def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
         return self.adjusted_last[kwargs["instrument_id"]]
+
+
+def _adjusted_close_client_factory(provider: Any):
+    return historic_custom_data_client_factory(provider)
 
 
 class _TwoVenueBundle(ExecutionBundle):
@@ -550,12 +555,11 @@ def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> N
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT_ID,),
+    ensure_arrays(
+        {_INSTRUMENT_ID: ("FixtureValue",)},
         start=pd.Timestamp("2020-01-01", tz="UTC"),
         end=pd.Timestamp("2020-01-05", tz="UTC"),
-        provider=_FixtureProvider(),
+        providers={FixtureRecord: _FixtureProvider()},
         catalog=Catalog.open(catalog_path),
     )
     registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
@@ -810,8 +814,14 @@ def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> Non
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
     data_port = CatalogBackedDataPort(
         Catalog.open(catalog_path),
-        distribution_provider=_AdjustedLastProvider(
-            {_INSTRUMENT_ID: _adjusted_last_for_distribution("2020-01-03", amount=0.75)}
+        custom_data_client_factory=_adjusted_close_client_factory(
+            _AdjustedLastProvider(
+                {
+                    _INSTRUMENT_ID: _adjusted_last_for_distribution(
+                        "2020-01-03", amount=0.75
+                    )
+                }
+            )
         ),
     )
 
@@ -834,8 +844,14 @@ def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0, 100.0])
     data_port = CatalogBackedDataPort(
         Catalog.open(catalog_path),
-        distribution_provider=_AdjustedLastProvider(
-            {_INSTRUMENT_ID: _adjusted_last_for_distribution("2020-01-04", amount=1.0)}
+        custom_data_client_factory=_adjusted_close_client_factory(
+            _AdjustedLastProvider(
+                {
+                    _INSTRUMENT_ID: _adjusted_last_for_distribution(
+                        "2020-01-04", amount=1.0
+                    )
+                }
+            )
         ),
     )
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
@@ -965,7 +981,9 @@ def _verified_zero_distribution_source(
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
             Catalog.open(catalog_path),
-            distribution_provider=_AdjustedLastProvider(adjusted_last),
+            custom_data_client_factory=_adjusted_close_client_factory(
+                _AdjustedLastProvider(adjusted_last)
+            ),
         )
     )
 

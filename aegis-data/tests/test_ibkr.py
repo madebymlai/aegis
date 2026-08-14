@@ -36,12 +36,12 @@ from aegis_data.catalog import (
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
-    historic_bar_client_factory,
+    historic_data_client_factory,
     seed_instrument_definitions,
 )
 from aegis_data.ibkr.historical import _HistoricSession
 from aegis_data.storage import Catalog
-from aegis_data.research_bars import NautilusBarWarmer
+from aegis_data.research_bars import CatalogBarWarmer
 
 
 class _FakeHistoricClient:
@@ -354,7 +354,7 @@ def test_catalog_port_preserves_vendor_connection_failure(tmp_path: Path) -> Non
     catalog = Catalog.open(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
-        provider=NautilusBarWarmer(catalog, historic_bar_client_factory(provider)),
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
     )
     request = CatalogWindowRequest(
         instrument_ids=(InstrumentId.from_str("AAPL.NASDAQ"),),
@@ -384,7 +384,7 @@ def test_catalog_port_translates_request_deadline_to_provider_failure(
     catalog = Catalog.open(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
-        provider=NautilusBarWarmer(catalog, historic_bar_client_factory(provider)),
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
     )
     request = CatalogWindowRequest(
         instrument_ids=(InstrumentId.from_str("AAPL.NASDAQ"),),
@@ -604,7 +604,7 @@ def test_historic_provider_public_surface_retains_only_adjusted_last_fetch() -> 
 
     assert callable(provider.request_adjusted_last)
     assert not hasattr(provider, "request_bars")
-    assert callable(historic_bar_client_factory(provider))
+    assert callable(historic_data_client_factory(provider))
 
 
 def test_importing_the_adapter_does_not_import_ibapi() -> None:

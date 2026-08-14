@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import pandas as pd
 from nautilus_trader.model.identifiers import InstrumentId
@@ -12,33 +12,19 @@ from aegis_data.definitions import (
     catalog_definitions,
     continuous_instrument_legs,
 )
+from aegis_data.custom_data import CustomDataClientFactory, CustomDataWarmer
 from aegis_data.raw_bars import RawBars
 from aegis_data.distributions import (
     AdjustedClose,
     Distribution,
-    adjusted_close_records,
     adjusted_close_series,
     query_distribution_data,
     recover_distributions_from_adjusted_last,
 )
 from aegis_data.marking import MarkMode, marking_for_mode
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
-from aegis_data.provider_errors import gap_fill_boundary
 
 _NANOS_PER_DAY = 86_400_000_000_000
-
-
-class DistributionDataProviderPort(Protocol):
-    """Fetch the adjusted-last series needed to verify distributions."""
-
-    def request_adjusted_last(
-        self,
-        instrument_id: InstrumentId,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-        currency: str = "USD",
-    ) -> pd.Series: ...
 
 
 class UnknownDistributionInstrumentTypeError(ValueError):
@@ -80,7 +66,7 @@ def ensure_distribution_window(
     *,
     start: str | int | pd.Timestamp,
     end: str | int | pd.Timestamp,
-    provider: DistributionDataProviderPort | None,
+    custom_data_client_factory: CustomDataClientFactory | None,
     raw_bars: RawBars,
 ) -> None:
     """Ensure Distribution coverage for one catalog window."""
@@ -94,7 +80,7 @@ def ensure_distribution_window(
         _ensure_assessment(
             catalog,
             assessment,
-            provider=provider,
+            custom_data_client_factory=custom_data_client_factory,
             raw_bars=raw_bars,
         )
 
@@ -143,30 +129,29 @@ def _ensure_assessment(
     catalog: Catalog,
     assessment: _Assessment,
     *,
-    provider: DistributionDataProviderPort | None,
+    custom_data_client_factory: CustomDataClientFactory | None,
     raw_bars: RawBars,
 ) -> None:
-    if not assessment.applicability.applicable or provider is None:
+    if not assessment.applicability.applicable or custom_data_client_factory is None:
         return
     subject = CatalogKey.for_instrument(Distribution, assessment.instrument_id)
 
     def fetch(gap: CatalogInterval) -> Sequence[Distribution]:
-        with gap_fill_boundary(f"distributions for {assessment.instrument_id.value}"):
-            return _verify_interval(
-                catalog,
-                provider,
-                assessment.instrument_id,
-                assessment.applicability.definition,
-                gap,
-                raw_bars=raw_bars,
-            )
+        return _verify_interval(
+            catalog,
+            custom_data_client_factory,
+            assessment.instrument_id,
+            assessment.applicability.definition,
+            gap,
+            raw_bars=raw_bars,
+        )
 
     catalog.fill(subject, assessment.interval, fetch)
 
 
 def _verify_interval(
     catalog: Catalog,
-    provider: DistributionDataProviderPort,
+    custom_data_client_factory: CustomDataClientFactory,
     instrument_id: InstrumentId,
     definition: Any,
     interval: CatalogInterval,
@@ -189,7 +174,7 @@ def _verify_interval(
         return ()
     adjusted_last = _stored_adjusted_last(
         catalog,
-        provider,
+        custom_data_client_factory,
         instrument_id,
         CatalogInterval(decode_start_ns, interval.end_ns),
         currency=_definition_currency(definition, instrument_id, interval),
@@ -208,27 +193,21 @@ def _verify_interval(
 
 def _stored_adjusted_last(
     catalog: Catalog,
-    provider: DistributionDataProviderPort,
+    custom_data_client_factory: CustomDataClientFactory,
     instrument_id: InstrumentId,
     interval: CatalogInterval,
     *,
     currency: str,
 ) -> pd.Series:
-    """Read adjusted closes from the Catalog, fetching only missing windows."""
+    """Warm adjusted closes through Nautilus, then read them from the Catalog."""
     subject = CatalogKey.for_instrument(AdjustedClose, instrument_id)
-
-    def fetch(gap: CatalogInterval) -> Sequence[AdjustedClose]:
-        return adjusted_close_records(
-            instrument_id,
-            provider.request_adjusted_last(
-                instrument_id=instrument_id,
-                start=gap.start,
-                end=gap.end,
-                currency=currency,
-            ),
-        )
-
-    catalog.fill(subject, interval, fetch)
+    CustomDataWarmer(catalog, custom_data_client_factory).warm(
+        AdjustedClose,
+        (instrument_id,),
+        start=interval.start,
+        end=interval.end,
+        params={"currency": currency},
+    )
     return adjusted_close_series(catalog.read(subject, interval))
 
 
@@ -406,7 +385,6 @@ def _dedupe(instrument_ids: Sequence[InstrumentId]) -> tuple[InstrumentId, ...]:
 
 __all__ = [
     "VerifiedDistributions",
-    "DistributionDataProviderPort",
     "distribution_coverage_report",
     "ensure_distribution_window",
     "read_distribution_window",

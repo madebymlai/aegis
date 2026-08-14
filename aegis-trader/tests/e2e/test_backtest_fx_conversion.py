@@ -33,6 +33,7 @@ from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_data.bar_type import external_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
+from aegis_data.ibkr import historic_custom_data_client_factory
 from aegis_trader.backtest import CatalogBacktestDataSource, run_book_backtest
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.data import build_currency_pair
@@ -181,7 +182,9 @@ def _seed_fx_catalog(catalog_path, rates: list[float]) -> None:
     )
 
 
-def _bar(bar_type: BarType, day: pd.Timestamp, close: float, *, precision: int = 2) -> Bar:
+def _bar(
+    bar_type: BarType, day: pd.Timestamp, close: float, *, precision: int = 2
+) -> Bar:
     ts_event = pd.Timestamp(day, tz="UTC").value
     price = Price(close, precision)
     return Bar(
@@ -215,7 +218,9 @@ def _zero_distribution_source(catalog_path) -> CatalogBacktestDataSource:
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
             Catalog.open(catalog_path),
-            distribution_provider=_AdjustedLastProvider(adjusted_last),
+            custom_data_client_factory=historic_custom_data_client_factory(
+                _AdjustedLastProvider(adjusted_last)
+            ),
             # The port reads what the bundle records: the FX conversion leg is
             # bar-marked MID by declaration, never by symbol shape.
             resolver=DeclaredMarkingResolver(declared={_EURUSD_ID: MarkMode.MID}),

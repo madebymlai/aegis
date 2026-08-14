@@ -39,6 +39,7 @@ from aegis_trader.bundles.stub import StubBundleRegistry
 
 from tests.e2e.test_backtest_catalog_runner import (
     _AdjustedLastProvider,
+    _adjusted_close_client_factory,
     _bar,
     _book_nav,
     _closed_orders,
@@ -678,7 +679,9 @@ def _weekly_distribution_source(
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
             Catalog.open(catalog_path),
-            distribution_provider=_AdjustedLastProvider({_WEEKLY_ID: values}),
+            custom_data_client_factory=_adjusted_close_client_factory(
+                _AdjustedLastProvider({_WEEKLY_ID: values})
+            ),
         )
     )
 

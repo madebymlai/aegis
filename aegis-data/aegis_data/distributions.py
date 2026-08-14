@@ -1,7 +1,5 @@
 from collections.abc import Sequence
 from itertools import groupby
-from typing import Any
-
 import pandas as pd
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
@@ -84,6 +82,10 @@ def adjusted_close_records(
 ) -> tuple[AdjustedClose, ...]:
     """Convert a vendor close series to one typed Catalog record per day."""
     values = _positive_series(closes)
+    if isinstance(values.index, pd.DatetimeIndex):
+        values = values.copy()
+        values.index = values.index.normalize()
+        values = values[~values.index.duplicated(keep="last")]
     return tuple(
         AdjustedClose.from_value(instrument_id, pd.Timestamp(timestamp), float(close))
         for timestamp, close in values.items()
@@ -139,36 +141,6 @@ def recover_distributions_from_adjusted_last(
             )
         )
     return events
-
-
-def request_distribution_data(
-    provider: Any,
-    instrument_id: InstrumentId,
-    *,
-    trades: pd.Series,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    currency: str,
-) -> tuple[Distribution, ...]:
-    """Fetch ``ADJUSTED_LAST`` and decode listed-ETF distributions.
-
-    The traded ``TRADES`` close series is supplied by the caller from the normal
-    catalog/bar path; only the adjusted-last fetch crosses the raw-IBKR seam.
-    """
-    adjusted_last = provider.request_adjusted_last(
-        instrument_id=instrument_id,
-        start=start,
-        end=end,
-        currency=currency,
-    )
-    return tuple(
-        recover_distributions_from_adjusted_last(
-            instrument_id=instrument_id,
-            trades=trades,
-            adjusted_last=adjusted_last,
-            currency=currency,
-        )
-    )
 
 
 def query_distribution_data(
@@ -293,6 +265,5 @@ __all__ = [
     "distribution_records",
     "query_distribution_data",
     "recover_distributions_from_adjusted_last",
-    "request_distribution_data",
     "write_distribution_data",
 ]

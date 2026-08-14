@@ -1,8 +1,9 @@
 """IBKR historic fetch for research and backfill.
 
 :class:`IbkrHistoricalProvider` hides the standalone vendor session's
-``asyncio`` surface. :class:`HistoricBarClient` presents its Bar request to a
-bare Nautilus DataEngine, which owns missing intervals and Catalog write-back.
+``asyncio`` surface. :class:`HistoricDataClient` presents Bar and provider-backed
+Custom Data requests to a bare Nautilus DataEngine, which owns missing intervals
+and Catalog write-back.
 The provider retains the instrument-definition and ``ADJUSTED_LAST`` extensions
 the stock Bar API cannot express, and resolves identity through IB simplified
 symbology (ADR-0005).
@@ -32,6 +33,8 @@ from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import raw_bar_type
+from aegis_data.custom_data import CustomDataClientFactory
+from aegis_data.distributions import AdjustedClose, adjusted_close_records
 from aegis_data.storage import Catalog
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
@@ -343,7 +346,7 @@ class IbkrHistoricalProvider:
         return _expired_future_contract(instrument_id)
 
 
-class HistoricBarClient(MarketDataClient):
+class HistoricDataClient(MarketDataClient):
     """Present Nautilus's standalone IBKR historic session to ``DataEngine``."""
 
     def __init__(
@@ -353,9 +356,11 @@ class HistoricBarClient(MarketDataClient):
         cache: Any,
         clock: Any,
         provider: IbkrHistoricalProvider,
+        custom_data_failures: list[Exception] | None = None,
     ) -> None:
         super().__init__(client_id, msgbus, cache, clock, None, None)
         self._provider = provider
+        self._custom_data_failures = custom_data_failures
 
     def _connect(self) -> None:
         pass
@@ -378,19 +383,83 @@ class HistoricBarClient(MarketDataClient):
             request.params,
         )
 
+    def request(self, request: Any) -> None:
+        if request.data_type.type is not AdjustedClose:
+            error = ValueError(
+                "IBKR historical client does not support Custom Data type "
+                f"{request.data_type.type.__name__}"
+            )
+            self._respond_to_custom_data_request(request, (), error=error)
+            return
+        try:
+            closes = self._provider.request_adjusted_last(
+                instrument_id=request.instrument_id,
+                start=pd.Timestamp(request.start),
+                end=pd.Timestamp(request.end),
+                currency=str(request.params.get("currency", "USD")),
+            )
+            records = adjusted_close_records(request.instrument_id, closes)
+        except Exception as error:  # noqa: BLE001 - surfaced by the warming command
+            self._respond_to_custom_data_request(request, (), error=error)
+            return
+        self._respond_to_custom_data_request(request, records)
 
-def historic_bar_client_factory(
+    def _respond_to_custom_data_request(
+        self,
+        request: Any,
+        records: Sequence[AdjustedClose],
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        if error is not None:
+            if self._custom_data_failures is None:
+                raise error
+            self._custom_data_failures.append(error)
+        self._handle_data_response_py(
+            request.data_type,
+            list(records),
+            request.id,
+            request.start,
+            request.end,
+            request.params,
+        )
+
+
+def historic_data_client_factory(
     provider: IbkrHistoricalProvider,
 ) -> Callable[[Any, Any, Any], MarketDataClient]:
     """Build the thin historic-session client used by a bare research engine."""
 
     def build(msgbus: Any, cache: Any, clock: Any) -> MarketDataClient:
-        return HistoricBarClient(
+        return HistoricDataClient(
             ClientId("AEGIS-IBKR-HIST"),
             msgbus,
             cache,
             clock,
             provider,
+        )
+
+    return build
+
+
+def historic_custom_data_client_factory(
+    provider: IbkrHistoricalProvider,
+) -> CustomDataClientFactory:
+    """Build the IBKR client with a visible Custom Data failure sink."""
+
+    def build(
+        msgbus: Any,
+        cache: Any,
+        clock: Any,
+        failures: list[Exception],
+    ) -> MarketDataClient:
+        return HistoricDataClient(
+            ClientId("AEGIS-IBKR-HIST"),
+            msgbus,
+            cache,
+            clock,
+            provider,
+            failures,
         )
 
     return build

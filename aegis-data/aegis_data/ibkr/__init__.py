@@ -10,9 +10,9 @@ responsibilities by consumer:
 - :mod:`aegis_data.ibkr.historical` — **historic fetch** (research / backfill):
   :class:`IbkrHistoricalProvider` wraps Nautilus's standalone
   ``HistoricInteractiveBrokersClient`` — the client "for backtesting and
-  research".  It is **pure fetch** (``request_bars`` *returns* bars;
-  :class:`CatalogBackedDataPort` is the single writer of record, ADR-0008),
-  **hides ``asyncio``** behind a synchronous port, and resolves identity through
+  research". Its Nautilus data client serves Bars and provider-backed Custom
+  Data, with the DataEngine owning Catalog write-back. The provider **hides
+  ``asyncio``** behind that client and resolves identity through
   IB **simplified symbology** — the native ``InstrumentId`` value
   (``SYMBOL.VENUE``) is the IBKR request id (ADR-0005).  Instrument
   *definitions* are a separate Step-1 write
@@ -39,7 +39,8 @@ from aegis_data.ibkr.historical import (
     IbkrHistoricalProvider,
     IbkrRequestError,
     close_connection,
-    historic_bar_client_factory,
+    historic_custom_data_client_factory,
+    historic_data_client_factory,
     seed_instrument_definitions,
 )
 from aegis_data.ibkr.live import IB_CLIENT_NAME, BrokerConnection, attach_live_clients
@@ -52,7 +53,8 @@ __all__ = [
     "IbkrRequestError",
     "attach_live_clients",
     "close_connection",
-    "historic_bar_client_factory",
+    "historic_custom_data_client_factory",
+    "historic_data_client_factory",
     "mic_instrument_provider_config",
     "seed_instrument_definitions",
 ]

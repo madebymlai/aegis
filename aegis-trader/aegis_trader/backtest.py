@@ -37,8 +37,8 @@ from nautilus_trader.portfolio.config import PortfolioConfig
 
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.catalog import (
+    BarWarmerPort,
     CatalogBackedDataPort,
-    NautilusDataProviderPort,
     CatalogWindowRequest,
     open_catalog,
 )
@@ -142,7 +142,7 @@ class CatalogBacktestDataSource:
     """Backtest data source backed by Aegis Data's Nautilus catalog port."""
 
     catalog_path: Path | None = None
-    provider: NautilusDataProviderPort | None = None
+    provider: BarWarmerPort | None = None
     port: CatalogBackedDataPort | None = None
     resolver: RawBarTypeResolver = DeclaredMarkingResolver()
 
@@ -192,7 +192,7 @@ def run_book_backtest(
     catalog_path: Path | None = None,
     registry: BundleRegistryPort | None = None,
     data_source: BacktestDataSource | None = None,
-    provider: NautilusDataProviderPort | None = None,
+    provider: BarWarmerPort | None = None,
     custom_data_providers: CustomDataProviderMap | None = None,
     custom_data_registry: CustomDataRegistry | None = None,
     starting_cash: float = 1_000_000.0,
@@ -387,13 +387,13 @@ def _custom_array_requirements(
     book: AssembledBook,
     registry: CustomDataRegistry | None,
 ) -> dict[InstrumentId, tuple[str, ...]]:
-    kinds = registry if registry is not None else custom_kinds.declared_custom_data_kinds()
+    kinds = (
+        registry if registry is not None else custom_kinds.declared_custom_data_kinds()
+    )
     names_by_instrument_id: dict[InstrumentId, dict[str, None]] = {}
     for bundle in book.sleeves.values():
         custom_names = tuple(
-            name
-            for name in bundle.contract.required_arrays
-            if name in kinds.vocabulary
+            name for name in bundle.contract.required_arrays if name in kinds.vocabulary
         )
         for instrument_id in bundle.contract.instrument_ids:
             names_by_instrument_id.setdefault(instrument_id, {}).update(

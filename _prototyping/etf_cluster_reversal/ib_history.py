@@ -94,7 +94,13 @@ def load_ucits_universe(
     """Qualify and load each candidate independently through one IBKR session."""
 
     from aegis_data.catalog import CatalogBackedDataPort, open_catalog
-    from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
+    from aegis_data.ibkr import (
+        IbkrHistoricalProvider,
+        historic_custom_data_client_factory,
+        historic_data_client_factory,
+        seed_instrument_definitions,
+    )
+    from aegis_data.research_bars import CatalogBarWarmer
 
     report = progress or (lambda _message: None)
     end = as_of or latest_completed_london_session().date().isoformat()
@@ -112,8 +118,8 @@ def load_ucits_universe(
     catalog = open_catalog(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
-        provider=provider,
-        distribution_provider=provider,
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
+        custom_data_client_factory=historic_custom_data_client_factory(provider),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
