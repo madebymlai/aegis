@@ -194,8 +194,6 @@ class _FakeCatalogBackend:
                 record_type=identifier.split("-", 1)[0],
                 start_ns=0,
                 end_ns=_UNBOUNDED_NS,
-                checked_at_ns=0,
-                applicable=True,
             )
             for identifier in identifiers
         ]
@@ -233,7 +231,7 @@ class _FakeCatalogBackend:
         return gaps
 
     def get_intervals(self, *_args: object, **_kwargs: object) -> list:
-        # No marker intervals stored: coverage reports read checked_at as None.
+        # No marker intervals stored.
         return []
 
     def write_data(

@@ -239,12 +239,16 @@ class Catalog:
         ``interval.end_ns`` that holds no hole. Nothing outside that run is
         touched, and a caller cannot ask for an unsafe merge.
 
-        ``ensure_contiguous_files`` asks the vendor to assert the same thing
-        before merging: a guard against a writer regressing, not a guarantee,
-        since ``python -O`` strips it. Do not reach for
-        ``consolidate_data_by_period`` instead — it renames files to period
-        boundaries or to record extents, and both rewrite the coverage answer
-        rather than preserving it.
+        ``ensure_contiguous_files`` asks the vendor to check the same thing,
+        but it is a second opinion rather than the protection. Against 1.231.0
+        it asserts adjacency *before* merging, and ``python -O`` strips the
+        assert; against the Rust backend it merges across a hole regardless and
+        only reports non-disjointness afterwards. Neither would stop an unsafe
+        merge on its own, which is why the narrowing above does not rely on it.
+
+        Do not reach for ``consolidate_data_by_period`` instead — it renames
+        files to period boundaries or to record extents, and both rewrite the
+        coverage answer rather than preserving it.
         """
         answered = self._answered_run_ending(key, interval)
         if answered is None:

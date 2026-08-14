@@ -24,7 +24,15 @@ from tests.test_catalog import (
 def test_missing_distribution_provider_fails_before_writing_other_markers(
     tmp_path: Path,
 ) -> None:
-    catalog = Catalog.open(tmp_path / "catalog")
+    """A failed window must leave no claim behind for the legs beside it.
+
+    The FX pair is not applicable and would ordinarily be claimed as checked,
+    but the equity in the same request has no provider. Nothing may be recorded
+    until the whole request can be satisfied, so no coverage marker should
+    reach the catalog at all.
+    """
+    catalog_path = tmp_path / "catalog"
+    catalog = Catalog.open(catalog_path)
     fx_pair = _id("EUR/USD.IDEALPRO")
     equity = _id("SPY.ARCA")
     _seed_fx_pair(catalog, fx_pair)
@@ -49,10 +57,11 @@ def test_missing_distribution_provider_fails_before_writing_other_markers(
 
     with pytest.raises(CatalogCoverageGapError, match="SPY.ARCA"):
         port.load_window(request)
-    report = port.distribution_coverage_report(
-        (fx_pair,),
-        start=request.start,
-        end=request.end,
-    )
+    claims = [
+        path
+        for path in catalog_path.rglob("*.parquet")
+        if "coverage_marker" in str(path)
+    ]
 
-    assert report[0]["checked_at"] is None
+    assert claims == []
+

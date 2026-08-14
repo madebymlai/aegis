@@ -152,7 +152,6 @@ class CatalogBackedDataPort:
             start=request.start,
             end=request.end,
             provider=self.distribution_provider,
-            clock_ns=self.clock_ns,
             raw_bars=self.raw_bars,
         )
         verified = read_distribution_window(

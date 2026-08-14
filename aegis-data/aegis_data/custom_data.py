@@ -7,7 +7,6 @@ kept inside this module.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from time import time_ns
 from typing import Any, Callable, Protocol, TypeVar, cast
 
 import pandas as pd
@@ -106,10 +105,9 @@ class UnknownCustomArrayError(ValueError):
 
 @dataclass(frozen=True)
 class CustomDataCoverage:
-    """Coverage provenance for one requested instrument window."""
+    """One requested instrument window, proven covered."""
 
     instrument_id: InstrumentId
-    checked_at_ns: int | None
 
 
 def ingest(
@@ -120,7 +118,6 @@ def ingest(
     end: pd.Timestamp,
     provider: CustomDataProviderPort[RecordT] | None,
     catalog: Catalog,
-    clock_ns: Callable[[], int] = time_ns,
     registry: CustomDataRegistry | None = None,
 ) -> None:
     """Fill only catalog-native missing intervals through the declared provider."""
@@ -137,7 +134,6 @@ def ingest(
             start=start,
             end=end,
             provider=provider,
-            clock_ns=clock_ns,
         )
 
 
@@ -148,7 +144,6 @@ def ensure_arrays(
     end: pd.Timestamp,
     providers: CustomDataProviderMap,
     catalog: Catalog,
-    clock_ns: Callable[[], int] = time_ns,
     registry: CustomDataRegistry | None = None,
 ) -> None:
     """Ensure catalog coverage for every kind behind the requested arrays."""
@@ -166,7 +161,6 @@ def ensure_arrays(
             end=end,
             provider=providers.get(record_type),
             catalog=catalog,
-            clock_ns=clock_ns,
             registry=registry,
         )
 
@@ -179,7 +173,6 @@ def _ensure_instrument_coverage(
     start: pd.Timestamp,
     end: pd.Timestamp,
     provider: CustomDataProviderPort[RecordT] | None,
-    clock_ns: Callable[[], int],
 ) -> None:
     requested = CoverageInterval(start.value, end.value)
     markers = CoverageMarkerLedger(catalog)
@@ -194,7 +187,6 @@ def _ensure_instrument_coverage(
             subject,
             verified,
             _records_within_event_window(verified_records, verified),
-            clock_ns=clock_ns,
         )
 
     ensure_coverage(
@@ -219,7 +211,6 @@ def capture(
     record: RecordT,
     *,
     catalog: Catalog,
-    clock_ns: Callable[[], int] = time_ns,
     registry: CustomDataRegistry | None = None,
 ) -> None:
     """Persist one observed record and its point coverage."""
@@ -236,7 +227,6 @@ def capture(
         CatalogKey.for_instrument(record_type, instrument_id),
         CoverageInterval(record.ts_event, record.ts_event),
         (record,),
-        clock_ns=clock_ns,
     )
 
 
@@ -245,8 +235,6 @@ def _record_verified(
     subject: CatalogKey[RecordT],
     verified: CoverageInterval,
     verified_records: Sequence[RecordT],
-    *,
-    clock_ns: Callable[[], int],
 ) -> None:
     """Record Custom Data and the verified interval it was checked over.
 
@@ -262,12 +250,7 @@ def _record_verified(
         CatalogInterval(verified.start_ns, verified.end_ns),
         tuple(verified_records),
     )
-    CoverageMarkerLedger(catalog).mark(
-        subject,
-        verified,
-        checked_at_ns=clock_ns(),
-        applicable=True,
-    )
+    CoverageMarkerLedger(catalog).mark(subject, verified)
 
 
 def correct(
@@ -278,7 +261,6 @@ def correct(
     start: pd.Timestamp,
     end: pd.Timestamp,
     catalog: Catalog,
-    clock_ns: Callable[[], int] = time_ns,
     registry: CustomDataRegistry | None = None,
 ) -> None:
     """Deliberately replace one bounded window, including verified emptiness."""
@@ -305,12 +287,7 @@ def correct(
         CatalogInterval(start.value, end.value),
         selected,
     )
-    markers.mark(
-        subject,
-        interval,
-        checked_at_ns=clock_ns(),
-        applicable=True,
-    )
+    markers.mark(subject, interval)
     markers.consolidate(subject, interval)
 
 
@@ -402,7 +379,7 @@ def coverage(
     catalog: Catalog,
     registry: CustomDataRegistry | None = None,
 ) -> tuple[CustomDataCoverage, ...]:
-    """Prove requested coverage and report checked-at marker provenance."""
+    """Prove every requested instrument's window is covered, or fail loud."""
     _kind_for(record_type, registry)
     markers = CoverageMarkerLedger(catalog)
     start = _utc(start)
@@ -414,16 +391,7 @@ def coverage(
         missing = tuple(markers.missing(subject, interval))
         if missing:
             raise _coverage_gap(subject, instrument_id, missing)
-        checked_at = markers.checked_at_values(
-            subject,
-            interval,
-        )
-        reports.append(
-            CustomDataCoverage(
-                instrument_id=instrument_id,
-                checked_at_ns=max(checked_at, default=None),
-            )
-        )
+        reports.append(CustomDataCoverage(instrument_id=instrument_id))
     return tuple(reports)
 
 

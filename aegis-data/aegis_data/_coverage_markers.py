@@ -20,8 +20,6 @@ class _CoverageMarker(Data):
     record_type: str = ""
     start_ns: int = 0
     end_ns: int = 0
-    checked_at_ns: int = 0
-    applicable: bool = True
 
 
 @dataclass(frozen=True)
@@ -56,10 +54,14 @@ class CoverageMarkerLedger:
         self,
         subject: CatalogKey[Data],
         interval: CoverageInterval,
-        *,
-        checked_at_ns: int,
-        applicable: bool,
     ) -> None:
+        """Claim *interval* as checked.
+
+        A claim says only that the question was asked. Whether the subject can
+        have distributions at all is recomputed from the instrument wherever it
+        is consulted, so it is not stored here — a stored copy would be a
+        second answer to a question that already has one.
+        """
         points = (
             (interval.start_ns,)
             if interval.start_ns == interval.end_ns
@@ -73,8 +75,6 @@ class CoverageMarkerLedger:
                 record_type=subject.record_type.__name__,
                 start_ns=interval.start_ns,
                 end_ns=interval.end_ns,
-                checked_at_ns=checked_at_ns,
-                applicable=applicable,
             )
             for point in points
         ]
@@ -88,9 +88,6 @@ class CoverageMarkerLedger:
         self,
         subject: CatalogKey[Data],
         window: CoverageInterval,
-        *,
-        checked_at_ns: int,
-        applicable: bool,
     ) -> None:
         """Claim whatever part of *window* no claim answers for yet.
 
@@ -107,26 +104,8 @@ class CoverageMarkerLedger:
         if not missing:
             return
         for interval in missing:
-            self.mark(
-                subject,
-                interval,
-                checked_at_ns=checked_at_ns,
-                applicable=applicable,
-            )
+            self.mark(subject, interval)
         self.consolidate(subject, window)
-
-    def checked_at_values(
-        self,
-        subject: CatalogKey[Data],
-        interval: CoverageInterval,
-    ) -> list[int]:
-        markers = self.catalog.read_all(self._key(subject))
-        return [
-            marker.checked_at_ns
-            for marker in markers
-            if marker.end_ns >= interval.start_ns
-            and marker.start_ns <= interval.end_ns
-        ]
 
     def covered_through(self, subject: CatalogKey[Data]) -> int | None:
         """Return the latest verified endpoint for *subject*, if one exists."""
@@ -153,27 +132,17 @@ class CoverageMarkerLedger:
     ) -> None:
         key = self._key(subject)
         claims = {
-            (
-                marker.start_ns,
-                marker.end_ns,
-                marker.checked_at_ns,
-                marker.applicable,
-            )
+            (marker.start_ns, marker.end_ns)
             for marker in self.catalog.read_all(key)
             if marker.end_ns >= interval.start_ns
             and marker.start_ns <= interval.end_ns
         }
-        for start_ns, end_ns, checked_at_ns, applicable in claims:
+        for start_ns, end_ns in claims:
             self.catalog.drop(key, CatalogInterval(start_ns, end_ns))
             for residual in _subtract(
                 CoverageInterval(start_ns, end_ns), interval
             ):
-                self.mark(
-                    subject,
-                    residual,
-                    checked_at_ns=checked_at_ns,
-                    applicable=applicable,
-                )
+                self.mark(subject, residual)
 
     @staticmethod
     def _key(subject: CatalogKey[Data]) -> CatalogKey[_CoverageMarker]:

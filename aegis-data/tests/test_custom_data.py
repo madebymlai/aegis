@@ -172,32 +172,6 @@ def test_ingest_is_idempotent_and_records_round_trip_typed(tmp_path: Path) -> No
     assert isinstance(stored[0], FixtureRecord)
 
 
-def test_nonempty_ingest_records_the_verified_interval_provenance(
-    tmp_path: Path,
-) -> None:
-    checked_at_ns = _utc("2024-02-01").value
-    provider = _Provider((_record("2024-01-02", 7.0),))
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
-        start=_utc("2024-01-01"),
-        end=_utc("2024-01-03"),
-        provider=provider,
-        catalog=Catalog.open(tmp_path),
-        clock_ns=lambda: checked_at_ns,
-    )
-
-    report = coverage(
-        FixtureRecord,
-        (_INSTRUMENT,),
-        start=_utc("2024-01-01"),
-        end=_utc("2024-01-03"),
-        catalog=Catalog.open(tmp_path),
-    )
-
-    assert report[0].checked_at_ns == checked_at_ns
-
-
 def test_records_for_arrays_resolves_kinds_and_returns_covered_records(
     tmp_path: Path,
 ) -> None:
@@ -402,7 +376,6 @@ def test_marker_backed_gap_does_not_break_a_later_horizon_extension(
 def test_arrays_distinguishes_verified_empty_from_never_ingested(
     tmp_path: Path,
 ) -> None:
-    checked_at_ns = _utc("2024-02-01").value
     empty = _Provider(())
     index = pd.date_range("2024-01-01", "2024-01-03", tz="UTC")
     ingest(
@@ -412,7 +385,6 @@ def test_arrays_distinguishes_verified_empty_from_never_ingested(
         end=index[-1],
         provider=empty,
         catalog=Catalog.open(tmp_path),
-        clock_ns=lambda: checked_at_ns,
     )
 
     panels = arrays(
@@ -431,7 +403,7 @@ def test_arrays_distinguishes_verified_empty_from_never_ingested(
 
     assert panels["FixtureValue"].to_numpy().tolist() == [[0.0], [0.0], [0.0]]
     assert panels["FixtureAvailable"].to_numpy().tolist() == [[0.0], [0.0], [0.0]]
-    assert report[0].checked_at_ns == checked_at_ns
+    assert report[0].instrument_id == _INSTRUMENT
     with pytest.raises(CatalogCoverageGapError):
         arrays(
             ("FixtureValue",),
@@ -460,7 +432,6 @@ def test_correction_replaces_a_bounded_window_while_ingest_cannot_overwrite(
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
         catalog=Catalog.open(tmp_path),
-        clock_ns=lambda: _utc("2024-02-01").value,
     )
     attempted_overwrite = _Provider((_record("2024-01-02", 3.0),))
 

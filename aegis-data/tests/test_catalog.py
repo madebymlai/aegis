@@ -935,7 +935,6 @@ def test_catalog_port_reports_verified_distribution_coverage(
             "verified_start": "2024-01-01T00:00:00+00:00",
             "verified_end": "2024-01-04T00:00:00+00:00",
             "event_count": 1,
-            "checked_at": "2026-01-01T00:00:00+00:00",
         },
     )
 
@@ -1126,7 +1125,6 @@ def test_catalog_port_reports_continuous_root_distribution_coverage_not_applicab
     assert report[0]["instrument_id"] == "ES.XCME"
     assert report[0]["applicable"] is False
     assert report[0]["event_count"] == 0
-    assert report[0]["checked_at"] is None
 
 
 def test_catalog_port_skips_distribution_verification_for_cash_fx(
@@ -1176,15 +1174,17 @@ def test_catalog_port_reports_cash_fx_distribution_coverage_not_applicable(
     assert report[0]["instrument_id"] == "EUR/USD.IDEALPRO"
     assert report[0]["applicable"] is False
     assert report[0]["event_count"] == 0
-    assert report[0]["checked_at"] is not None
 
 
 def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
     tmp_path: Path,
 ) -> None:
-    # The second read's clock runs EARLIER than the first's, and the report
-    # surfaces the oldest marker in the window — so an unchanged checked_at
-    # proves the second read wrote no duplicate marker.
+    """A second read of a not-applicable window must write nothing at all.
+
+    Proven by the durable files themselves: a repeat read that claimed the
+    window again would leave a new marker behind, so an unchanged set of
+    parquet files is what says the second pass was a pure read.
+    """
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -1197,6 +1197,8 @@ def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
         resolver=_fx_mid_resolver(fx_pair),
     ).load_window(CatalogWindowRequest((fx_pair,), **window)).distributions
 
+    after_first_read = sorted(path.name for path in catalog_path.rglob("*.parquet"))
+
     CatalogBackedDataPort(
         catalog,
         clock_ns=lambda: pd.Timestamp("2026-01-01", tz="UTC").value,
@@ -1207,7 +1209,7 @@ def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
         (fx_pair,), **window
     )
     assert report[0]["applicable"] is False
-    assert report[0]["checked_at"] == "2026-01-02T00:00:00+00:00"
+    assert sorted(path.name for path in catalog_path.rglob("*.parquet")) == after_first_read
 
 
 def test_not_applicable_coverage_marks_disjointly_across_overlapping_windows(

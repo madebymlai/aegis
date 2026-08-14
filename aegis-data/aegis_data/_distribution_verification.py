@@ -73,7 +73,6 @@ def ensure_distribution_window(
     start: str | int | pd.Timestamp,
     end: str | int | pd.Timestamp,
     provider: DistributionDataProviderPort | None,
-    clock_ns: Callable[[], int],
     raw_bars: RawBars,
 ) -> None:
     """Ensure Distribution coverage for one catalog window."""
@@ -121,7 +120,6 @@ def ensure_distribution_window(
             catalog,
             assessment,
             provider=provider,
-            clock_ns=clock_ns,
             raw_bars=raw_bars,
         )
 
@@ -171,7 +169,6 @@ def _ensure_assessment(
     assessment: _Assessment,
     *,
     provider: DistributionDataProviderPort | None,
-    clock_ns: Callable[[], int],
     raw_bars: RawBars,
 ) -> None:
     markers = CoverageMarkerLedger(catalog)
@@ -181,15 +178,8 @@ def _ensure_assessment(
         # Nothing streams or fetches distributions for this instrument, so
         # there is no window to fill — only the fact that it was checked,
         # which needs neither a provider nor a fill loop.
-        markers.claim_missing(
-            subject,
-            assessment.interval,
-            checked_at_ns=clock_ns(),
-            applicable=False,
-        )
+        markers.claim_missing(subject, assessment.interval)
         return
-
-    checked_at_ns = clock_ns()
 
     def commit(
         interval: CoverageInterval,
@@ -202,12 +192,7 @@ def _ensure_assessment(
             start=interval.start_ns,
             end=interval.end_ns,
         )
-        markers.mark(
-            subject,
-            interval,
-            checked_at_ns=checked_at_ns,
-            applicable=True,
-        )
+        markers.mark(subject, interval)
 
     ensure_coverage(
         subject=f"distributions for {assessment.instrument_id.value}",
@@ -424,10 +409,6 @@ def _coverage_row(
     *,
     event_count: int | None = None,
 ) -> dict[str, Any]:
-    checked = CoverageMarkerLedger(catalog).checked_at_values(
-        CatalogKey.for_instrument(Distribution, assessment.instrument_id),
-        assessment.interval,
-    )
     if event_count is None and assessment.applicability.applicable:
         event_count = len(
             query_distribution_data(
@@ -445,7 +426,6 @@ def _coverage_row(
         "verified_start": _timestamp_text(assessment.interval.start_ns),
         "verified_end": _timestamp_text(assessment.interval.end_ns),
         "event_count": event_count,
-        "checked_at": _timestamp_text(min(checked)) if checked else None,
     }
 
 

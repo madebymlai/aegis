@@ -158,8 +158,6 @@ def seed_catalog_frames(
         CoverageMarkerLedger(catalog).mark(
             CatalogKey.for_bar(bar_type),
             CoverageInterval(start_ts.value, end_ts.value),
-            checked_at_ns=start_ts.value,
-            applicable=True,
         )
         _verify_zero_distribution_coverage(
             catalog,
@@ -251,8 +249,6 @@ def seed_catalog_quote(
         CoverageMarkerLedger(catalog).mark(
             CatalogKey.for_bar(bar_type),
             CoverageInterval(start_ts.value, end_ts.value),
-            checked_at_ns=start_ts.value,
-            applicable=True,
         )
     _verify_zero_distribution_coverage(
         catalog,
@@ -280,7 +276,6 @@ def _verify_zero_distribution_coverage(
     window = CatalogBackedDataPort(
         catalog,
         distribution_provider=_ZeroDistributionProvider(panels),
-        clock_ns=lambda: start.value,
         resolver=resolver if resolver is not None else DeclaredMarkingResolver(),
     ).load_window(
         CatalogWindowRequest(
@@ -349,8 +344,6 @@ def seed_catalog_fx(
     CoverageMarkerLedger(catalog).mark(
         CatalogKey.for_bar(bar_type),
         CoverageInterval(start_ts.value, end_ts.value),
-        checked_at_ns=start_ts.value,
-        applicable=True,
     )
 
 
