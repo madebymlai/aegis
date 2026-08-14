@@ -49,9 +49,58 @@ class Distribution(Data):
     def ex_date(self) -> pd.Timestamp:
         return pd.Timestamp(self.ts_event, tz="UTC").normalize()
 
+
+@customdataclass
+class AdjustedClose(Data):
+    """One instrument's daily IBKR ``ADJUSTED_LAST`` close."""
+
+    instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
+    close: float = 0.0
+
+    @classmethod
+    def from_value(
+        cls,
+        instrument_id: InstrumentId,
+        timestamp: pd.Timestamp,
+        close: float,
+    ) -> "AdjustedClose":
+        ts_event = _ex_date_ns(timestamp)
+        return cls(
+            ts_event,
+            ts_event,
+            instrument_id=instrument_id,
+            close=float(close),
+        )
+
+
 def distribution_records(records: Sequence[Data]) -> tuple[Distribution, ...]:
     """Select the Distribution consumer view from generic typed records."""
     return tuple(record for record in records if isinstance(record, Distribution))
+
+
+def adjusted_close_records(
+    instrument_id: InstrumentId,
+    closes: pd.Series,
+) -> tuple[AdjustedClose, ...]:
+    """Convert a vendor close series to one typed Catalog record per day."""
+    values = _positive_series(closes)
+    return tuple(
+        AdjustedClose.from_value(instrument_id, pd.Timestamp(timestamp), float(close))
+        for timestamp, close in values.items()
+    )
+
+
+def adjusted_close_series(records: Sequence[AdjustedClose]) -> pd.Series:
+    """Project stored adjusted-close records back to the decode series."""
+    if not records:
+        return pd.Series(dtype=float)
+    return pd.Series(
+        [record.close for record in records],
+        index=pd.DatetimeIndex(
+            [pd.Timestamp(record.ts_event, tz="UTC") for record in records]
+        ),
+        dtype=float,
+    ).sort_index()
 
 
 def recover_distributions_from_adjusted_last(
@@ -138,7 +187,9 @@ def query_distribution_data(
             force_end=end,
         )
         events.extend(queried)
-    return tuple(sorted(events, key=lambda item: (item.instrument_id.value, item.ts_event)))
+    return tuple(
+        sorted(events, key=lambda item: (item.instrument_id.value, item.ts_event))
+    )
 
 
 def write_distribution_data(
@@ -150,9 +201,13 @@ def write_distribution_data(
     Repeating a decode over the same historical window is idempotent without relying
     on byte-dedup; bounded replacement lives in ``replace_distribution_data``.
     """
-    grouped = sorted(distributions, key=lambda item: (item.instrument_id.value, item.ts_event))
+    grouped = sorted(
+        distributions, key=lambda item: (item.instrument_id.value, item.ts_event)
+    )
     written = 0
-    for instrument_value, group in groupby(grouped, key=lambda item: item.instrument_id.value):
+    for instrument_value, group in groupby(
+        grouped, key=lambda item: item.instrument_id.value
+    ):
         items = list(group)
         frontier = _stored_frontier(catalog, instrument_value)
         selected = [item for item in items if item.ts_event > frontier]
@@ -196,9 +251,7 @@ def replace_distribution_data(
 
 def _stored_frontier(catalog: Catalog, instrument_value: str) -> int:
     stored = catalog.read_all(
-        CatalogKey.for_instrument(
-            Distribution, InstrumentId.from_str(instrument_value)
-        )
+        CatalogKey.for_instrument(Distribution, InstrumentId.from_str(instrument_value))
     )
     if not stored:
         return -1
@@ -255,7 +308,10 @@ def _optional_ns(value: str | int | pd.Timestamp | None) -> int | None:
 
 
 __all__ = [
+    "AdjustedClose",
     "Distribution",
+    "adjusted_close_records",
+    "adjusted_close_series",
     "distribution_records",
     "query_distribution_data",
     "recover_distributions_from_adjusted_last",

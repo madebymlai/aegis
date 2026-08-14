@@ -1,6 +1,12 @@
 # The catalog fill is one pure-fetch port with a single writer; definitions are a separate Step-1 write
 
-Status: accepted
+Status: superseded in part by GH #96/#98/#100/#101
+
+The historical decision below kept Aegis-owned gap orchestration and a marker
+ledger. Research Bars now run through Nautilus's DataEngine, which owns missing
+intervals and Catalog write-back. Custom Data and Distributions use their own
+file extents, and adjusted closes are persisted as Custom Data. The separate,
+idempotent instrument-definition write remains current.
 
 ## Context
 

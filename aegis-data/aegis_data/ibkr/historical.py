@@ -1,9 +1,11 @@
-"""IBKR historic fetch — the DataProvider adapter for research and backfill.
+"""IBKR historic fetch for research and backfill.
 
-:class:`IbkrHistoricalProvider` is pure fetch behind the Nautilus DataProvider
-port (``request_bars`` *returns* bars; :class:`CatalogBackedDataPort` is the
-single writer of record, ADR-0008), hides ``asyncio`` behind a synchronous
-surface, and resolves identity through IB simplified symbology (ADR-0005).
+:class:`IbkrHistoricalProvider` hides the standalone vendor session's
+``asyncio`` surface. :class:`HistoricBarClient` presents its Bar request to a
+bare Nautilus DataEngine, which owns missing intervals and Catalog write-back.
+The provider retains the instrument-definition and ``ADJUSTED_LAST`` extensions
+the stock Bar API cannot express, and resolves identity through IB simplified
+symbology (ADR-0005).
 The ``ADJUSTED_LAST`` extension and process-singleton connection live here with
 it; :func:`seed_instrument_definitions` is the separate Step-1 definition write.
 Every ``ibapi``/Nautilus-adapter import is lazy — importing this module never
@@ -25,10 +27,11 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 import pandas as pd
 from nautilus_trader.common.config import msgspec_encoding_hook
+from nautilus_trader.data.client import MarketDataClient
+from nautilus_trader.model.identifiers import ClientId
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.provider import ProviderAnswer
 from aegis_data.storage import Catalog
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
@@ -144,13 +147,13 @@ class IbkrHistoricalProvider:
                 f"expected one of {sorted(_IB_MARKET_DATA_TYPES)}"
             )
 
-    def request_bars(
+    def _request_bars_for_engine(
         self,
         bar_type: BarType,
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[Bar]:
+    ) -> Sequence[Bar]:
         """The vendor bars for *bar_type* over ``[start, end]`` in one native request.
 
         The whole window is asked for as a single IB ``duration`` ending at *end*.
@@ -158,12 +161,8 @@ class IbkrHistoricalProvider:
         does not re-implement that walk; and IB clamps the answer at the instrument's
         earliest available data, so no request ever steps past the listing into empty
         pre-history — the job the old backward walk did with a no-data wall (#75),
-        now done by IB itself in one request. ``oldest_verified`` reports how far back
-        the answer reached: the requested *start* when history covers it (so a
-        follow-on write abuts the prior file), or the oldest bar returned when IB
-        clamped at a later listing (so the pre-history head stays unclaimed for the
-        coverage gate).  A whole-unit duration overshoots below *start*; those extra
-        bars are trimmed back to the requested window.
+        now done by IB itself in one request. A whole-unit duration overshoots below
+        *start*; those extra bars are trimmed back to the requested window.
         """
         contract = self._expired_future_contract(bar_type.instrument_id)
         instrument_kwargs = (
@@ -190,7 +189,7 @@ class IbkrHistoricalProvider:
         start: pd.Timestamp,
         end: pd.Timestamp,
         instrument_kwargs: Mapping[str, Any],
-    ) -> ProviderAnswer[Bar]:
+    ) -> Sequence[Bar]:
         # The session turns its own timeout into an empty response. Keep that fallback
         # strictly later so Aegis can preserve the provider failure as an exception.
         request_deadline = min(float(self.timeout), self.call_deadline)
@@ -208,13 +207,7 @@ class IbkrHistoricalProvider:
             timeout=request_deadline,
         )
         # The whole-unit duration can reach before `start`; keep only the window.
-        bars = [bar for bar in (pulled or []) if bar.ts_event >= start.value]
-        # Coverage is served from `start` when history reaches it (contiguous with any
-        # prior file), else from the oldest bar IB clamped at (#75, the unclaimed head).
-        oldest_verified = (
-            start if _history_reached(bars, start) else _first_bar_instant(bars, end)
-        )
-        return ProviderAnswer.verified(bars, oldest_verified=oldest_verified)
+        return tuple(bar for bar in (pulled or []) if bar.ts_event >= start.value)
 
     def request_instruments(
         self, instrument_ids: Sequence[InstrumentId]
@@ -350,29 +343,57 @@ class IbkrHistoricalProvider:
         return _expired_future_contract(instrument_id)
 
 
-# The oldest returned bar within this of the requested start reads as history
-# reaching the start across a market closure; a wider gap reads as IB clamping at a
-# later listing date (#75).  Wider than any weekend/holiday and far narrower than a
-# real listing gap — the only blur is a start authored within this margin of an
-# unknown listing, a bounded (<= margin) over-claim the coverage gate tolerates.
-_WALL_PROBE_MARGIN = pd.Timedelta(days=14)
+class HistoricBarClient(MarketDataClient):
+    """Present Nautilus's standalone IBKR historic session to ``DataEngine``."""
+
+    def __init__(
+        self,
+        client_id: ClientId,
+        msgbus: Any,
+        cache: Any,
+        clock: Any,
+        provider: IbkrHistoricalProvider,
+    ) -> None:
+        super().__init__(client_id, msgbus, cache, clock, None, None)
+        self._provider = provider
+
+    def _connect(self) -> None:
+        pass
+
+    def _disconnect(self) -> None:
+        pass
+
+    def request_bars(self, request: Any) -> None:
+        bars = self._provider._request_bars_for_engine(
+            request.bar_type,
+            start=pd.Timestamp(request.start),
+            end=pd.Timestamp(request.end),
+        )
+        self._handle_bars_py(
+            request.bar_type,
+            list(bars),
+            request.id,
+            request.start,
+            request.end,
+            request.params,
+        )
 
 
-def _history_reached(bars: Sequence[Bar], start: pd.Timestamp) -> bool:
-    """Whether the answer's oldest bar is close enough to *start* that history covers
-    it — only a market closure lies between.  A wider gap is IB clamping at a later
-    listing date (#75): the oldest bar is where history begins, not *start*."""
-    if not bars:
-        return False
-    return bars[0].ts_event - start.value <= _WALL_PROBE_MARGIN.value
+def historic_bar_client_factory(
+    provider: IbkrHistoricalProvider,
+) -> Callable[[Any, Any, Any], MarketDataClient]:
+    """Build the thin historic-session client used by a bare research engine."""
 
+    def build(msgbus: Any, cache: Any, clock: Any) -> MarketDataClient:
+        return HistoricBarClient(
+            ClientId("AEGIS-IBKR-HIST"),
+            msgbus,
+            cache,
+            clock,
+            provider,
+        )
 
-def _first_bar_instant(bars: Sequence[Bar], fallback: pd.Timestamp) -> pd.Timestamp:
-    """Where served history begins: the oldest pulled bar's event time, or
-    *fallback* when nothing was pulled at all (nothing is claimed either way)."""
-    if not bars:
-        return fallback
-    return pd.Timestamp(bars[0].ts_event, tz="UTC")
+    return build
 
 
 async def _request_instrument_parts(

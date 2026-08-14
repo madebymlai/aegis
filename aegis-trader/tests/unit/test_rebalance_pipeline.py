@@ -12,7 +12,6 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.custom_data import (
     CustomDataProviderPort,
-    ProviderAnswer,
 )
 from aegis_data.storage import Catalog
 from aegis_runtime.domain.rebasing import ratio_rebasing, spread_rebasing
@@ -111,8 +110,8 @@ class _EmptyCustomProvider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
-        return ProviderAnswer((), start)
+    ) -> tuple[FixtureRecord, ...]:
+        return ()
 
 
 class _ContinuousWeightBundle(ExecutionBundle):

@@ -16,7 +16,6 @@ from nautilus_trader.model.objects import Price, Quantity
 from aegis_data.bar_type import external_bar_type, mic_canonical_instrument_id
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    CatalogCoverageGapError,
     ContinuousRootLegsNotFoundError,
     ContinuousRootVenueMismatchError,
     GapFillProviderError,
@@ -28,8 +27,8 @@ from aegis_data.catalog import (
     raw_bar_type,
     resolve_catalog_path,
 )
-from aegis_data.provider import ProviderAnswer
 from aegis_data.distributions import (
+    AdjustedClose,
     Distribution,
     write_distribution_data,
 )
@@ -78,26 +77,30 @@ def _write_span(
 
 class _ProviderPort:
     def __init__(
-        self, bars: list[Bar], *, oldest_verified: str | None = None
+        self,
+        catalog: Catalog,
+        bars: list[Bar],
     ) -> None:
+        self.catalog = catalog
         self.records = bars
-        self.oldest_verified = oldest_verified
         self.requests: list[BarType] = []
 
-    def request_bars(
+    def warm_bars(
         self,
         bar_type: BarType,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-    ) -> ProviderAnswer:
+        interval: CatalogInterval,
+    ) -> bool:
+        key = CatalogKey.for_bar(bar_type)
+        missing = self.catalog.missing(key, interval)
+        if not missing:
+            return False
         self.requests.append(bar_type)
-        served_from = (
-            (start if self.records else end)
-            if self.oldest_verified is None
-            else pd.Timestamp(self.oldest_verified, tz="UTC")
-        )
-        return ProviderAnswer(tuple(self.records), served_from)
+        for gap in missing:
+            selected = tuple(
+                record for record in self.records if record.bar_type == bar_type
+            )
+            self.catalog.replace(key, gap, selected)
+        return True
 
 
 class _AdjustedLastProvider:
@@ -186,7 +189,10 @@ def _write_definition(catalog: Catalog, *instrument_ids: InstrumentId) -> None:
     must key it the same way a real fill would.
     """
     catalog.store_definitions(
-        [_equity(mic_canonical_instrument_id(instrument_id)) for instrument_id in instrument_ids]
+        [
+            _equity(mic_canonical_instrument_id(instrument_id))
+            for instrument_id in instrument_ids
+        ]
     )
 
 
@@ -227,7 +233,8 @@ def test_catalog_writes_nautilus_native_bar_layout(tmp_path: Path) -> None:
     )
 
     layout = sorted(
-        path.relative_to(catalog_path).parts[:3] for path in catalog_path.rglob("*.parquet")
+        path.relative_to(catalog_path).parts[:3]
+        for path in catalog_path.rglob("*.parquet")
     )
 
     assert layout == [("data", "bar", "AAPL.XNAS-1-DAY-LAST-EXTERNAL")]
@@ -255,7 +262,7 @@ def test_a_stored_window_is_served_without_consulting_an_available_provider(
         interval,
         (_bar(bar_type, "2024-01-01", 9.0),),
     )
-    provider = _ProviderPort([_bar(bar_type, "2024-01-01", 10.0)])
+    provider = _ProviderPort(catalog, [_bar(bar_type, "2024-01-01", 10.0)])
     port = CatalogBackedDataPort(catalog, provider=provider)
     request = CatalogWindowRequest(
         instrument_ids=(instrument_id,),
@@ -283,7 +290,7 @@ def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
         start="2024-01-01",
         end="2024-01-02",
     )
-    provider = _ProviderPort([])
+    provider = _ProviderPort(catalog, [])
     port = CatalogBackedDataPort(catalog, provider=provider)
 
     frames = port._load_raw_bars(
@@ -313,7 +320,7 @@ def test_catalog_port_reads_mic_cache_hit_for_ib_exchange_alias(
         start="2024-01-01",
         end="2024-01-02",
     )
-    provider = _ProviderPort([])
+    provider = _ProviderPort(catalog, [])
     port = CatalogBackedDataPort(catalog, provider=provider)
 
     frames = port._load_raw_bars(
@@ -328,7 +335,9 @@ def test_catalog_port_reads_mic_cache_hit_for_ib_exchange_alias(
     assert provider.requests == []
 
 
-def test_catalog_port_backfills_missing_tail_with_update_catalog(tmp_path: Path) -> None:
+def test_catalog_port_backfills_missing_tail_with_update_catalog(
+    tmp_path: Path,
+) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -340,7 +349,7 @@ def test_catalog_port_backfills_missing_tail_with_update_catalog(tmp_path: Path)
         start="2024-01-01",
         end="2024-01-02",
     )
-    provider = _ProviderPort([_bar(bar_type, "2024-01-02", 11.0)])
+    provider = _ProviderPort(catalog, [_bar(bar_type, "2024-01-02", 11.0)])
     port = CatalogBackedDataPort(catalog, provider=provider)
 
     first = port._load_raw_bars(
@@ -380,7 +389,7 @@ def test_catalog_port_serves_a_quote_marked_instrument_as_the_derived_mid(
         start="2024-01-01",
         end="2024-01-02",
     )
-    provider = _ProviderPort([])
+    provider = _ProviderPort(catalog, [])
     port = CatalogBackedDataPort(catalog, provider=provider, resolver=resolver)
 
     frames = port._load_raw_bars(
@@ -415,14 +424,22 @@ def test_catalog_port_collapses_duplicate_ts_event_from_overlapping_batches(
     # one written series with a duplicated ts_event on each side.
     _write_span(
         catalog,
-        [_bar(bid_type, "2024-01-01", 100.0), _bar(ask_type, "2024-01-01", 101.0),
-         _bar(bid_type, "2024-01-02", 100.4), _bar(ask_type, "2024-01-02", 101.4),
-         _bar(bid_type, "2024-01-02", 102.0), _bar(ask_type, "2024-01-02", 103.0),
-         _bar(bid_type, "2024-01-03", 104.0), _bar(ask_type, "2024-01-03", 105.0)],
+        [
+            _bar(bid_type, "2024-01-01", 100.0),
+            _bar(ask_type, "2024-01-01", 101.0),
+            _bar(bid_type, "2024-01-02", 100.4),
+            _bar(ask_type, "2024-01-02", 101.4),
+            _bar(bid_type, "2024-01-02", 102.0),
+            _bar(ask_type, "2024-01-02", 103.0),
+            _bar(bid_type, "2024-01-03", 104.0),
+            _bar(ask_type, "2024-01-03", 105.0),
+        ],
         start="2024-01-01",
         end="2024-01-04",
     )
-    port = CatalogBackedDataPort(catalog, provider=_ProviderPort([]), resolver=resolver)
+    port = CatalogBackedDataPort(
+        catalog, provider=_ProviderPort(catalog, []), resolver=resolver
+    )
 
     frame = port._load_raw_bars(
         CatalogWindowRequest(
@@ -451,10 +468,11 @@ def test_catalog_port_cold_fills_a_quote_marked_instrument_from_bid_and_ask(
     resolver = DeclaredMarkingResolver(declared={instrument_id: MarkMode.QUOTE})
     bid_type, ask_type = resolver.resolve(instrument_id, "1D").mark_bars
     provider = _QuoteProviderPort(
+        catalog,
         {
             bid_type: [_bar(bid_type, "2024-01-01", 100.0)],
             ask_type: [_bar(ask_type, "2024-01-01", 101.0)],
-        }
+        },
     )
     port = CatalogBackedDataPort(catalog, provider=provider, resolver=resolver)
 
@@ -490,7 +508,9 @@ def test_catalog_port_serves_sided_quote_frames_for_quote_marked_legs_only(
         start="2024-01-01",
         end="2024-01-02",
     )
-    port = CatalogBackedDataPort(catalog, provider=_ProviderPort([]), resolver=resolver)
+    port = CatalogBackedDataPort(
+        catalog, provider=_ProviderPort(catalog, []), resolver=resolver
+    )
 
     frames = port.load_quote_frames(
         CatalogWindowRequest(
@@ -509,22 +529,31 @@ def test_catalog_port_serves_sided_quote_frames_for_quote_marked_legs_only(
 class _QuoteProviderPort:
     """Provider fake serving distinct bars per requested bar type."""
 
-    def __init__(self, bars_by_type: dict[BarType, list[Bar]]) -> None:
+    def __init__(
+        self, catalog: Catalog, bars_by_type: dict[BarType, list[Bar]]
+    ) -> None:
+        self.catalog = catalog
         self.bars_by_type = bars_by_type
         self.requests: list[BarType] = []
 
-    def request_bars(
+    def warm_bars(
         self,
         bar_type: BarType,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-    ) -> ProviderAnswer:
+        interval: CatalogInterval,
+    ) -> bool:
+        key = CatalogKey.for_bar(bar_type)
+        missing = self.catalog.missing(key, interval)
+        if not missing:
+            return False
         self.requests.append(bar_type)
-        return ProviderAnswer(tuple(self.bars_by_type[bar_type]), start)
+        for gap in missing:
+            self.catalog.replace(key, gap, tuple(self.bars_by_type[bar_type]))
+        return True
 
 
-def test_catalog_data_port_factory_wires_fill_and_definition_seeder(tmp_path: Path) -> None:
+def test_catalog_data_port_factory_wires_fill_and_definition_seeder(
+    tmp_path: Path,
+) -> None:
     """The factory returns a ready CatalogBackedDataPort with the fill provider and
     the definition seeder wired — callers depend only on the abstraction (DIP)."""
     port = catalog_data_port(tmp_path / "catalog")
@@ -546,7 +575,7 @@ def test_catalog_port_seeds_instrument_definition_on_backfill(tmp_path: Path) ->
         start="2024-01-01",
         end="2024-01-02",
     )
-    provider = _ProviderPort([_bar(bar_type, "2024-01-02", 11.0)])
+    provider = _ProviderPort(catalog, [_bar(bar_type, "2024-01-02", 11.0)])
     seeded: list[InstrumentId] = []
     port = CatalogBackedDataPort(
         catalog, provider=provider, definition_seeder=seeded.append
@@ -577,7 +606,7 @@ def test_catalog_port_does_not_seed_definition_on_cache_hit(tmp_path: Path) -> N
     )
     seeded: list[InstrumentId] = []
     port = CatalogBackedDataPort(
-        catalog, provider=_ProviderPort([]), definition_seeder=seeded.append
+        catalog, provider=_ProviderPort(catalog, []), definition_seeder=seeded.append
     )
 
     port._load_raw_bars(
@@ -609,37 +638,34 @@ def test_instruments_resolves_ib_exchange_name_against_mic_stored_definition(
     assert resolved[_id("BRNT.LSE")].id == _id("BRNT.XLON")
 
 
-def test_catalog_port_raises_coverage_gap_when_window_is_unservable(tmp_path: Path) -> None:
+def test_catalog_port_returns_empty_when_window_is_unservable(tmp_path: Path) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
     port = CatalogBackedDataPort(catalog)
 
-    with pytest.raises(CatalogCoverageGapError, match="catalog cannot serve AAPL.XNAS"):
-        port._load_raw_bars(
-            CatalogWindowRequest(
-                instrument_ids=(_id("AAPL.NASDAQ"),),
-                start="2024-01-01",
-                end="2024-01-02",
-            )
+    frames = port._load_raw_bars(
+        CatalogWindowRequest(
+            instrument_ids=(_id("AAPL.NASDAQ"),),
+            start="2024-01-01",
+            end="2024-01-02",
         )
+    )
+
+    assert frames[_id("AAPL.NASDAQ")].empty
 
 
-def test_catalog_port_persists_partial_fill_and_raises_gap_at_the_wall(
+def test_catalog_port_persists_partial_fill_over_the_whole_requested_window(
     tmp_path: Path,
 ) -> None:
-    """The no-data wall at port altitude (#75): the provider returns only the
-    history that exists, the port still writes those bars — even a failed fill
-    leaves the catalog warmer — and the coverage gate, the sole unsatisfiability
-    judge, raises naming the interval that remains missing."""
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
     instrument_id = _id("AAPL.NASDAQ")
     bar_type = raw_bar_type(instrument_id, "1D")
     provider = _ProviderPort(
+        catalog,
         [_bar(bar_type, "2024-01-04", 10.0), _bar(bar_type, "2024-01-05", 11.0)],
-        oldest_verified="2024-01-04",
     )
     port = CatalogBackedDataPort(catalog, provider=provider)
     request = CatalogWindowRequest(
@@ -648,10 +674,8 @@ def test_catalog_port_persists_partial_fill_and_raises_gap_at_the_wall(
         end="2024-01-05",
     )
 
-    with pytest.raises(CatalogCoverageGapError, match="2024-01-01") as excinfo:
-        port._load_raw_bars(request)
+    port._load_raw_bars(request)
 
-    assert "missing=" in str(excinfo.value)
     warmed = port.raw_bars.stored(
         port.raw_bars.marking(instrument_id, request.timeframe),
         CatalogInterval(
@@ -660,8 +684,22 @@ def test_catalog_port_persists_partial_fill_and_raises_gap_at_the_wall(
         ),
     ).bars
     assert len(warmed) == 2
-    assert pd.Timestamp(warmed[0].ts_event, tz="UTC") == pd.Timestamp("2024-01-04", tz="UTC")
-    assert pd.Timestamp(warmed[1].ts_event, tz="UTC") == pd.Timestamp("2024-01-05", tz="UTC")
+    assert pd.Timestamp(warmed[0].ts_event, tz="UTC") == pd.Timestamp(
+        "2024-01-04", tz="UTC"
+    )
+    assert pd.Timestamp(warmed[1].ts_event, tz="UTC") == pd.Timestamp(
+        "2024-01-05", tz="UTC"
+    )
+    assert (
+        catalog.missing(
+            CatalogKey.for_bar(bar_type),
+            CatalogInterval(
+                pd.Timestamp(request.start, tz="UTC").value,
+                pd.Timestamp(request.end, tz="UTC").value,
+            ),
+        )
+        == ()
+    )
 
 
 def test_catalog_port_translates_a_provider_failure_into_a_port_error(
@@ -677,7 +715,7 @@ def test_catalog_port_translates_a_provider_failure_into_a_port_error(
     instrument_id = _id("AAPL.NASDAQ")
 
     class _BrokenProvider:
-        def request_bars(self, bar_type: BarType, **kwargs: Any) -> ProviderAnswer:
+        def warm_bars(self, bar_type: BarType, interval: CatalogInterval) -> bool:
             raise IbkrRequestError("IBKR could not fetch historical bars: ib down")
 
     port = CatalogBackedDataPort(catalog, provider=_BrokenProvider())
@@ -702,7 +740,7 @@ def test_gap_fill_failure_bounds_the_vendor_prose(tmp_path: Path) -> None:
     vendor_prose = "gateway fault " + "x" * 400 + "\nraw vendor stack line two"
 
     class _VerboseProvider:
-        def request_bars(self, bar_type: BarType, **kwargs: Any) -> ProviderAnswer:
+        def warm_bars(self, bar_type: BarType, interval: CatalogInterval) -> bool:
             raise RuntimeError(vendor_prose)
 
     port = CatalogBackedDataPort(catalog, provider=_VerboseProvider())
@@ -710,7 +748,9 @@ def test_gap_fill_failure_bounds_the_vendor_prose(tmp_path: Path) -> None:
     with pytest.raises(GapFillProviderError) as excinfo:
         port._load_raw_bars(
             CatalogWindowRequest(
-                instrument_ids=(_id("AAPL.NASDAQ"),), start="2024-01-01", end="2024-01-05"
+                instrument_ids=(_id("AAPL.NASDAQ"),),
+                start="2024-01-01",
+                end="2024-01-05",
             )
         )
 
@@ -732,7 +772,8 @@ def test_catalog_port_translates_a_definition_seeder_failure_into_a_port_error(
     instrument_id = _id("AAPL.NASDAQ")
     bar_type = raw_bar_type(instrument_id, "1D")
     provider = _ProviderPort(
-        [_bar(bar_type, "2024-01-02", 10.0), _bar(bar_type, "2024-01-03", 11.0)]
+        catalog,
+        [_bar(bar_type, "2024-01-02", 10.0), _bar(bar_type, "2024-01-03", 11.0)],
     )
 
     def _broken_seeder(_: InstrumentId) -> None:
@@ -755,7 +796,7 @@ def test_catalog_port_translates_a_definition_seeder_failure_into_a_port_error(
 def test_catalog_port_translates_a_distribution_fetch_failure_into_a_port_error(
     tmp_path: Path,
 ) -> None:
-    """The adjusted-last fetch during Ensure Coverage is the same environmental
+    """The adjusted-last fetch during warming is the same environmental
     failure as a bar-fill fault: it surfaces as ``GapFillProviderError``, never as
     the vendor error — while the coverage gate's own verdicts pass through."""
     catalog_path = tmp_path / "catalog"
@@ -787,17 +828,19 @@ def test_catalog_port_translates_a_distribution_fetch_failure_into_a_port_error(
             del instrument_id, start, end, currency
             raise IbkrRequestError("IBKR could not fetch ADJUSTED_LAST closes: ib down")
 
-    port = CatalogBackedDataPort(
-        catalog, distribution_provider=_BrokenAdjustedLast()
-    )
+    port = CatalogBackedDataPort(catalog, distribution_provider=_BrokenAdjustedLast())
 
     with pytest.raises(GapFillProviderError, match="SPY.ARCA") as excinfo:
-        port.load_window(CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-04")).distributions
+        port.load_window(
+            CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-04")
+        ).distributions
 
     assert isinstance(excinfo.value.__cause__, IbkrRequestError)
 
 
-def test_catalog_port_rejects_unverified_distribution_events(tmp_path: Path) -> None:
+def test_catalog_port_reads_stored_distribution_events_without_a_second_ledger(
+    tmp_path: Path,
+) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -816,19 +859,22 @@ def test_catalog_port_rejects_unverified_distribution_events(tmp_path: Path) -> 
     )
     distribution = Distribution.from_ex_date(
         instrument_id,
-        "2024-01-15",
+        "2024-01-02",
         amount=0.42,
         currency="USD",
     )
     write_distribution_data(catalog, [distribution])
     port = CatalogBackedDataPort(catalog)
 
-    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
-        port.load_window(CatalogWindowRequest(
+    distributions = port.load_window(
+        CatalogWindowRequest(
             (instrument_id,),
             start="2024-01-01",
             end="2024-01-31",
-        )).distributions
+        )
+    ).distributions
+
+    assert distributions == (distribution,)
 
 
 def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
@@ -860,17 +906,29 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
         }
     )
     port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    warm_provider = _AdjustedLastProvider(provider.adjusted_last)
 
-    first = port.load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-04",
-    )).distributions
-    warm = CatalogBackedDataPort(Catalog.open(catalog_path)).load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-04",
-    )).distributions
+    first = port.load_window(
+        CatalogWindowRequest(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+    ).distributions
+    warm = (
+        CatalogBackedDataPort(
+            Catalog.open(catalog_path),
+            distribution_provider=warm_provider,
+        )
+        .load_window(
+            CatalogWindowRequest(
+                (instrument_id,),
+                start="2024-01-01",
+                end="2024-01-04",
+            )
+        )
+        .distributions
+    )
 
     assert [(event.ex_date, event.amount, event.currency) for event in first] == [
         (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0), "USD")
@@ -886,6 +944,14 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
             "currency": "USD",
         }
     ]
+    assert warm_provider.requests == []
+    stored_adjusted = catalog.read(
+        CatalogKey.for_instrument(AdjustedClose, instrument_id),
+        CatalogInterval(dates[0].value, pd.Timestamp("2024-01-04", tz="UTC").value),
+    )
+    assert [record.close for record in stored_adjusted] == pytest.approx(
+        [100.0, 100.0 / (1.0 - 0.01), 100.0]
+    )
 
 
 def test_catalog_port_reports_verified_distribution_coverage(
@@ -915,12 +981,10 @@ def test_catalog_port_reports_verified_distribution_coverage(
             )
         }
     )
-    port = CatalogBackedDataPort(
-        catalog,
-        distribution_provider=provider,
-        clock_ns=lambda: pd.Timestamp("2026-01-01", tz="UTC").value,
-    )
-    port.load_window(CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-04")).distributions
+    port = CatalogBackedDataPort(catalog, distribution_provider=provider)
+    port.load_window(
+        CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-04")
+    ).distributions
 
     report = port.distribution_coverage_report(
         (instrument_id,),
@@ -969,20 +1033,35 @@ def test_catalog_port_verifies_accumulating_distribution_window_as_empty(
     )
     port = CatalogBackedDataPort(catalog, distribution_provider=provider)
 
-    first = port.load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-04",
-    )).distributions
-    warm = CatalogBackedDataPort(Catalog.open(catalog_path)).load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-04",
-    )).distributions
+    first = port.load_window(
+        CatalogWindowRequest(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+    ).distributions
+    warm = (
+        CatalogBackedDataPort(Catalog.open(catalog_path))
+        .load_window(
+            CatalogWindowRequest(
+                (instrument_id,),
+                start="2024-01-01",
+                end="2024-01-04",
+            )
+        )
+        .distributions
+    )
 
     assert first == ()
     assert warm == ()
-    assert len(provider.requests) == 1
+    assert provider.requests == [
+        {
+            "instrument_id": instrument_id,
+            "start": pd.Timestamp("2024-01-01", tz="UTC"),
+            "end": pd.Timestamp("2024-01-04", tz="UTC"),
+            "currency": "USD",
+        }
+    ]
 
 
 def test_quote_marking_does_not_turn_bid_ask_moves_into_distributions(
@@ -1018,22 +1097,25 @@ def test_quote_marking_does_not_turn_bid_ask_moves_into_distributions(
             )
             self.bar_requests: list[BarType] = []
 
-        def request_bars(
+        def warm_bars(
             self,
             bar_type: BarType,
-            *,
-            start: pd.Timestamp,
-            end: pd.Timestamp,
-        ) -> ProviderAnswer:
+            interval: CatalogInterval,
+        ) -> bool:
+            key = CatalogKey.for_bar(bar_type)
+            if not catalog.missing(key, interval):
+                return False
             self.bar_requests.append(bar_type)
-            return ProviderAnswer(
+            catalog.replace(
+                key,
+                interval,
                 (
                     _bar(trade_type, "2024-01-01", 100.0),
                     _bar(trade_type, "2024-01-02", 100.0),
                     _bar(trade_type, "2024-01-03", 100.0),
                 ),
-                start,
             )
+            return True
 
     provider = _QuoteDistributionProvider()
     port = CatalogBackedDataPort(
@@ -1044,9 +1126,7 @@ def test_quote_marking_does_not_turn_bid_ask_moves_into_distributions(
     )
 
     window = port.load_window(
-        CatalogWindowRequest(
-            (instrument_id,), start="2024-01-01", end="2024-01-04"
-        )
+        CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-04")
     )
 
     assert window.ohlcv[instrument_id]["Close"].tolist() == [100.5, 90.5, 100.5]
@@ -1080,11 +1160,13 @@ def test_catalog_port_skips_distribution_verification_for_futures_and_roots(
     )
 
     # A dated futures leg rides the window read: not-applicable, no provider needed.
-    window = CatalogBackedDataPort(catalog).load_window(CatalogWindowRequest(
-        (dated_leg,),
-        start="2024-01-01",
-        end="2024-01-04",
-    ))
+    window = CatalogBackedDataPort(catalog).load_window(
+        CatalogWindowRequest(
+            (dated_leg,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+    )
     # A continuous root has no raw bars and can never enter a window request;
     # its verdict comes from the surviving coverage-report diagnostic query.
     root_report = CatalogBackedDataPort(catalog).distribution_coverage_report(
@@ -1139,13 +1221,17 @@ def test_catalog_port_skips_distribution_verification_for_cash_fx(
     fx_pair = _id("EUR/USD.IDEALPRO")
     _seed_fx_pair(catalog, fx_pair)
 
-    events = CatalogBackedDataPort(
-        catalog, resolver=_fx_mid_resolver(fx_pair)
-    ).load_window(CatalogWindowRequest(
-        (fx_pair,),
-        start="2024-01-01",
-        end="2024-01-04",
-    )).distributions
+    events = (
+        CatalogBackedDataPort(catalog, resolver=_fx_mid_resolver(fx_pair))
+        .load_window(
+            CatalogWindowRequest(
+                (fx_pair,),
+                start="2024-01-01",
+                end="2024-01-04",
+            )
+        )
+        .distributions
+    )
 
     assert events == ()
 
@@ -1159,11 +1245,13 @@ def test_catalog_port_reports_cash_fx_distribution_coverage_not_applicable(
     fx_pair = _id("EUR/USD.IDEALPRO")
     _seed_fx_pair(catalog, fx_pair)
     port = CatalogBackedDataPort(catalog, resolver=_fx_mid_resolver(fx_pair))
-    port.load_window(CatalogWindowRequest(
-        (fx_pair,),
-        start="2024-01-01",
-        end="2024-01-04",
-    )).distributions
+    port.load_window(
+        CatalogWindowRequest(
+            (fx_pair,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+    ).distributions
 
     report = port.distribution_coverage_report(
         (fx_pair,),
@@ -1179,12 +1267,7 @@ def test_catalog_port_reports_cash_fx_distribution_coverage_not_applicable(
 def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
     tmp_path: Path,
 ) -> None:
-    """A second read of a not-applicable window must write nothing at all.
-
-    Proven by the durable files themselves: a repeat read that claimed the
-    window again would leave a new marker behind, so an unchanged set of
-    parquet files is what says the second pass was a pure read.
-    """
+    """A second read of a not-applicable window writes nothing."""
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -1193,7 +1276,6 @@ def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
     window = {"start": "2024-01-01", "end": "2024-01-04"}
     CatalogBackedDataPort(
         catalog,
-        clock_ns=lambda: pd.Timestamp("2026-01-02", tz="UTC").value,
         resolver=_fx_mid_resolver(fx_pair),
     ).load_window(CatalogWindowRequest((fx_pair,), **window)).distributions
 
@@ -1201,7 +1283,6 @@ def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
 
     CatalogBackedDataPort(
         catalog,
-        clock_ns=lambda: pd.Timestamp("2026-01-01", tz="UTC").value,
         resolver=_fx_mid_resolver(fx_pair),
     ).load_window(CatalogWindowRequest((fx_pair,), **window)).distributions
 
@@ -1209,50 +1290,10 @@ def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
         (fx_pair,), **window
     )
     assert report[0]["applicable"] is False
-    assert sorted(path.name for path in catalog_path.rglob("*.parquet")) == after_first_read
-
-
-def test_not_applicable_coverage_marks_disjointly_across_overlapping_windows(
-    tmp_path: Path,
-) -> None:
-    """A not-applicable leg shared by two configs (a cash FX conversion pair) verified
-    over OVERLAPPING windows must write DISJOINT coverage markers.  The second window
-    marks only its missing tail, not the whole window over the first marker - which
-    Nautilus rejects as a non-disjoint interval (the EUR/USD.IDEALPRO regression: the
-    commodity book marked 2020-01-23..2025-01-01, the put-write book 2020-08-10..2026-07-01)."""
-    catalog_path = tmp_path / "catalog"
-    catalog_path.mkdir()
-    catalog = Catalog.open(catalog_path)
-    fx_pair = _id("EUR/USD.IDEALPRO")
-    catalog.store_definitions([_currency_pair(fx_pair)])
-    mid = external_bar_type(fx_pair, "1D", "MID")
-    _write_span(
-        catalog,
-        [_bar(mid, "2020-02-03", 1.10), _bar(mid, "2026-06-01", 1.11)],
-        start="2020-01-01",
-        end="2027-01-01",
+    assert (
+        sorted(path.name for path in catalog_path.rglob("*.parquet"))
+        == after_first_read
     )
-    resolver = _fx_mid_resolver(fx_pair)
-
-    # First config's window verifies + marks the shared leg over 2020-01-23..2025-01-01.
-    CatalogBackedDataPort(catalog, resolver=resolver).load_window(
-        CatalogWindowRequest((fx_pair,), start="2020-01-23", end="2025-01-01")
-    )
-    # Second config's OVERLAPPING window must not collide on the shared leg's marker.
-    CatalogBackedDataPort(catalog, resolver=resolver).load_window(
-        CatalogWindowRequest((fx_pair,), start="2020-08-10", end="2026-07-01")
-    )
-    # A third window fully inside the marked union is a no-op: the marker write clips
-    # to the empty set rather than rewriting (and colliding) an already-covered span.
-    CatalogBackedDataPort(catalog, resolver=resolver).load_window(
-        CatalogWindowRequest((fx_pair,), start="2021-01-01", end="2024-01-01")
-    )
-
-    # The union is fully marked: a read across both windows finds no coverage gap.
-    report = CatalogBackedDataPort(catalog).distribution_coverage_report(
-        (fx_pair,), start="2020-01-23", end="2026-07-01"
-    )
-    assert report[0]["applicable"] is False
 
 
 def test_catalog_port_rejects_distribution_read_for_unresolved_instrument(
@@ -1265,7 +1306,7 @@ def test_catalog_port_rejects_distribution_read_for_unresolved_instrument(
     # The surviving diagnostic query still fails loud for an unresolvable id
     # (through the window read the same typo fails earlier, at the bar gate
     # or the completeness check).
-    with pytest.raises(CatalogCoverageGapError, match="cannot resolve"):
+    with pytest.raises(ValueError, match="cannot resolve"):
         CatalogBackedDataPort(catalog).distribution_coverage_report(
             (_id("TYPO.ARCA"),),
             start="2024-01-01",
@@ -1273,7 +1314,7 @@ def test_catalog_port_rejects_distribution_read_for_unresolved_instrument(
         )
 
 
-def test_catalog_port_reports_all_uncovered_distribution_instruments_without_provider(
+def test_catalog_port_returns_no_distributions_without_provider(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -1295,18 +1336,22 @@ def test_catalog_port_reports_all_uncovered_distribution_instruments_without_pro
             end="2024-01-04",
         )
 
-    with pytest.raises(CatalogCoverageGapError) as error:
-        CatalogBackedDataPort(catalog).load_window(CatalogWindowRequest(
-            (spy, hyg),
-            start="2024-01-01",
-            end="2024-01-04",
-        )).distributions
+    distributions = (
+        CatalogBackedDataPort(catalog)
+        .load_window(
+            CatalogWindowRequest(
+                (spy, hyg),
+                start="2024-01-01",
+                end="2024-01-04",
+            )
+        )
+        .distributions
+    )
 
-    assert "SPY.ARCA" in str(error.value)
-    assert "HYG.ARCA" in str(error.value)
+    assert distributions == ()
 
 
-def test_catalog_port_rejects_uncovered_distributions_with_bar_only_provider(
+def test_catalog_port_accepts_absent_distributions_with_bar_only_provider(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -1326,15 +1371,26 @@ def test_catalog_port_rejects_uncovered_distributions_with_bar_only_provider(
         end="2024-01-04",
     )
 
-    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
-        CatalogBackedDataPort(
-            catalog,
-            provider=_ProviderPort([]),
-        ).load_window(CatalogWindowRequest(
+    port = CatalogBackedDataPort(
+        catalog,
+        provider=_ProviderPort(catalog, []),
+    )
+    distributions = port.load_window(
+        CatalogWindowRequest(
             (instrument_id,),
             start="2024-01-01",
             end="2024-01-04",
-        )).distributions
+        )
+    ).distributions
+
+    assert distributions == ()
+    report = port.distribution_coverage_report(
+        (instrument_id,),
+        start="2024-01-01",
+        end="2024-01-04",
+    )
+    assert report[0]["verified_start"] is None
+    assert report[0]["verified_end"] is None
 
 
 def test_catalog_port_reverifies_seeded_distribution_store_without_duplicates(
@@ -1377,19 +1433,25 @@ def test_catalog_port_reverifies_seeded_distribution_store_without_duplicates(
         }
     )
 
-    events = CatalogBackedDataPort(
-        catalog,
-        distribution_provider=provider,
-    ).load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-04",
-    )).distributions
+    events = (
+        CatalogBackedDataPort(
+            catalog,
+            distribution_provider=provider,
+        )
+        .load_window(
+            CatalogWindowRequest(
+                (instrument_id,),
+                start="2024-01-01",
+                end="2024-01-04",
+            )
+        )
+        .distributions
+    )
 
     assert [(event.ex_date, event.amount) for event in events] == [
         (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
     ]
-    assert len(provider.requests) == 1
+    assert provider.requests == []
 
 
 def test_catalog_port_backward_extension_persists_early_distribution_events(
@@ -1419,23 +1481,33 @@ def test_catalog_port_backward_extension_persists_early_distribution_events(
     provider = _AdjustedLastProvider(
         {
             instrument_id: pd.Series(
-                [100.0, 100.0 * first_factor, 100.0 * first_factor, 100.0 * second_factor, 100.0],
+                [
+                    100.0,
+                    100.0 * first_factor,
+                    100.0 * first_factor,
+                    100.0 * second_factor,
+                    100.0,
+                ],
                 index=dates,
             )
         }
     )
     port = CatalogBackedDataPort(catalog, distribution_provider=provider)
 
-    later = port.load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-03",
-        end="2024-01-06",
-    )).distributions
-    extended = port.load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-06",
-    )).distributions
+    later = port.load_window(
+        CatalogWindowRequest(
+            (instrument_id,),
+            start="2024-01-03",
+            end="2024-01-06",
+        )
+    ).distributions
+    extended = port.load_window(
+        CatalogWindowRequest(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-06",
+        )
+    ).distributions
 
     assert [(event.ex_date, event.amount) for event in later] == [
         (pd.Timestamp("2024-01-04", tz="UTC"), pytest.approx(2.0))
@@ -1479,16 +1551,20 @@ def test_catalog_port_forward_request_clamps_to_stored_bar_frontier(
     )
     port = CatalogBackedDataPort(catalog, distribution_provider=provider)
 
-    covered = port.load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-04",
-    )).distributions
-    extended = port.load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-08",
-    )).distributions
+    covered = port.load_window(
+        CatalogWindowRequest(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-04",
+        )
+    ).distributions
+    extended = port.load_window(
+        CatalogWindowRequest(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-08",
+        )
+    ).distributions
 
     assert [(event.ex_date, event.amount) for event in covered] == [
         (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
@@ -1499,7 +1575,7 @@ def test_catalog_port_forward_request_clamps_to_stored_bar_frontier(
     assert len(provider.requests) == 1
 
 
-def test_catalog_port_rejects_distribution_gap_with_too_few_trade_closes(
+def test_catalog_port_returns_no_distributions_with_too_few_trade_closes(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -1523,12 +1599,19 @@ def test_catalog_port_rejects_distribution_gap_with_too_few_trade_closes(
         }
     )
 
-    with pytest.raises(CatalogCoverageGapError, match="fewer than two TRADES closes"):
-        CatalogBackedDataPort(catalog, distribution_provider=provider).load_window(CatalogWindowRequest(
-            (instrument_id,),
-            start="2024-01-01",
-            end="2024-01-04",
-        )).distributions
+    distributions = (
+        CatalogBackedDataPort(catalog, distribution_provider=provider)
+        .load_window(
+            CatalogWindowRequest(
+                (instrument_id,),
+                start="2024-01-01",
+                end="2024-01-04",
+            )
+        )
+        .distributions
+    )
+
+    assert distributions == ()
 
 
 def test_catalog_port_fetches_only_missing_distribution_gap_between_verified_ranges(
@@ -1562,15 +1645,21 @@ def test_catalog_port_fetches_only_missing_distribution_gap_between_verified_ran
         }
     )
     port = CatalogBackedDataPort(catalog, distribution_provider=provider)
-    port.load_window(CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-03")).distributions
-    port.load_window(CatalogWindowRequest((instrument_id,), start="2024-01-05", end="2024-01-07")).distributions
+    port.load_window(
+        CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-03")
+    ).distributions
+    port.load_window(
+        CatalogWindowRequest((instrument_id,), start="2024-01-05", end="2024-01-07")
+    ).distributions
     provider.requests.clear()
 
-    events = port.load_window(CatalogWindowRequest(
-        (instrument_id,),
-        start="2024-01-01",
-        end="2024-01-07",
-    )).distributions
+    events = port.load_window(
+        CatalogWindowRequest(
+            (instrument_id,),
+            start="2024-01-01",
+            end="2024-01-07",
+        )
+    ).distributions
 
     assert events == ()
     assert len(provider.requests) == 1
@@ -1663,11 +1752,12 @@ def test_catalog_port_load_window_completeness_passes_via_fill_seeded_definition
     instrument_id = _id("AAPL.XNAS")
     bar_type = raw_bar_type(instrument_id, "1D")
     provider = _ProviderPort(
+        catalog,
         [
             _bar(bar_type, "2024-01-01", 10.0),
             _bar(bar_type, "2024-01-02", 10.0),
             _bar(bar_type, "2024-01-03", 10.0),
-        ]
+        ],
     )
     adjusted_last = _AdjustedLastProvider(
         {
@@ -1729,28 +1819,11 @@ def test_catalog_port_load_window_rejects_missing_definitions_as_authoring(
 
     assert "SPY.ARCA" in str(excinfo.value)
     assert "QQQ.XNAS" in str(excinfo.value)
-    assert not isinstance(excinfo.value, CatalogCoverageGapError)
 
 
-def test_catalog_port_load_window_raises_environmental_errors_unchanged(
-    tmp_path: Path,
-) -> None:
-    catalog_path = tmp_path / "catalog"
-    catalog_path.mkdir()
-    catalog = Catalog.open(catalog_path)
-    instrument_id = _id("SPY.ARCA")
-
-    with pytest.raises(CatalogCoverageGapError, match="catalog cannot serve"):
-        CatalogBackedDataPort(catalog).load_window(
-            CatalogWindowRequest(
-                instrument_ids=(instrument_id,),
-                start="2024-01-01",
-                end="2024-01-04",
-            )
-        )
-
-
-def test_distribution_applicability_fails_closed_for_an_unknown_instrument_type() -> None:
+def test_distribution_applicability_fails_closed_for_an_unknown_instrument_type() -> (
+    None
+):
     instrument_id = _id("OPT.XNAS")
 
     class UnknownInstrument:
@@ -1758,7 +1831,7 @@ def test_distribution_applicability_fails_closed_for_an_unknown_instrument_type(
 
     catalog = FakeCatalog([UnknownInstrument()], bars={})  # type: ignore[list-item]
 
-    with pytest.raises(CatalogCoverageGapError, match="UnknownInstrument"):
+    with pytest.raises(ValueError, match="UnknownInstrument"):
         CatalogBackedDataPort(catalog).distribution_coverage_report(
             (instrument_id,),
             start="2024-01-01",
@@ -1855,13 +1928,9 @@ def test_catalog_port_does_not_expose_roll_dialect_bar_readers() -> None:
     assert not hasattr(port, "read_native_bars")
 
 
-def test_verification_daily_gap_on_intraday_window_names_its_origin_and_remedy(
+def test_verification_daily_absence_on_intraday_window_returns_no_distributions(
     tmp_path: Path,
 ) -> None:
-    """An hourly-traded instrument without its daily series fails distribution
-    verification — the error must say the daily read belongs to verification
-    and how to cure it, not just complain about an unrequested 1D bar type
-    (aegis-rd-qb7g)."""
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -1887,18 +1956,13 @@ def test_verification_daily_gap_on_intraday_window_names_its_origin_and_remedy(
         distribution_provider=_AdjustedLastProvider({instrument_id: adjusted}),
     )
 
-    with pytest.raises(CatalogCoverageGapError) as excinfo:
-        port.load_window(
-            CatalogWindowRequest(
-                instrument_ids=(instrument_id,),
-                start="2024-01-01",
-                end="2024-01-04",
-                timeframe="1H",
-            )
+    distributions = port.load_window(
+        CatalogWindowRequest(
+            instrument_ids=(instrument_id,),
+            start="2024-01-01",
+            end="2024-01-04",
+            timeframe="1H",
         )
+    ).distributions
 
-    message = str(excinfo.value)
-    assert "distribution verification" in message
-    assert "daily" in message
-    assert "FAST.XLON" in message
-    assert "provider-backed" in message
+    assert distributions == ()

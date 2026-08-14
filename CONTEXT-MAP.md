@@ -46,7 +46,9 @@ records what the contexts are and how they relate.
 
 - **Aegis RD → Aegis Data**: Aegis RD declares native Nautilus
   **InstrumentIds** in its **Run Config**. Aegis Data serves Raw Bars from the
-  Catalog, lazily filling Coverage Gaps through the DataProvider port.
+  Catalog, warming missing intervals through Nautilus's DataEngine when a
+  DataProvider client is configured. Research follows **Warm Then Sweep**;
+  absence itself is ordinary empty data.
 
 - **Aegis Trader → Aegis Data**: Aegis Trader backtests read historical bars for
   the **InstrumentId** values baked into each **Execution Bundle**. Trader does

@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data.catalog import CatalogCoverageGapError, GapFillProviderError
+from aegis_data.catalog import GapFillProviderError
 from aegis_data.custom_data import (
     CustomDataProviderPort,
     UnknownCustomArrayError,
@@ -15,15 +15,13 @@ from aegis_data.custom_data import (
     arrays,
     capture,
     correct,
-    coverage,
     ensure_arrays,
     ingest,
     records,
     records_for_arrays,
 )
-from aegis_data.provider import ProviderAnswer
 from aegis_data.distributions import Distribution
-from aegis_data.storage import Catalog
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from tests.support.custom_data import FIXTURE_CUSTOM_DATA_KINDS, FixtureRecord
 
 _INSTRUMENT = InstrumentId.from_str("SPY.ARCA")
@@ -43,7 +41,6 @@ def test_distribution_is_not_a_custom_array_record_kind(tmp_path: Path) -> None:
 @dataclass
 class _Provider(CustomDataProviderPort[FixtureRecord]):
     available: tuple[FixtureRecord, ...]
-    oldest_verified: pd.Timestamp | None = None
     requests: list[tuple[pd.Timestamp, pd.Timestamp]] = field(default_factory=list)
 
     def request_records(
@@ -52,7 +49,7 @@ class _Provider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         self.requests.append((start, end))
         selected = tuple(
             record
@@ -60,7 +57,7 @@ class _Provider(CustomDataProviderPort[FixtureRecord]):
             if record.instrument_id == instrument_id
             and start.value <= record.ts_event <= end.value
         )
-        return ProviderAnswer(selected, self.oldest_verified or start)
+        return selected
 
 
 @dataclass
@@ -75,9 +72,9 @@ class _ForeignRecordProvider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         del end
-        return ProviderAnswer((self.foreign,), start)
+        return (self.foreign,)
 
 
 def test_ingest_reports_a_foreign_provider_record_as_a_provider_fault(
@@ -214,7 +211,7 @@ def test_ingest_translates_provider_failures_at_the_shared_coverage_boundary(
             *,
             start: pd.Timestamp,
             end: pd.Timestamp,
-        ) -> ProviderAnswer[FixtureRecord]:
+        ) -> tuple[FixtureRecord, ...]:
             raise RuntimeError("vendor socket vanished")
 
     with pytest.raises(GapFillProviderError, match="custom data for SPY.ARCA"):
@@ -228,31 +225,32 @@ def test_ingest_translates_provider_failures_at_the_shared_coverage_boundary(
         )
 
 
-def test_ingest_never_persists_records_before_provider_served_from(
+def test_ingest_records_the_whole_requested_window_when_provider_history_starts_late(
     tmp_path: Path,
 ) -> None:
-    provider = _Provider(
-        (_record("2024-01-02", 2.0),),
-        oldest_verified=_utc("2024-01-05"),
+    provider = _Provider((_record("2024-01-05", 2.0),))
+    catalog = Catalog.open(tmp_path)
+
+    ingest(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-06"),
+        provider=provider,
+        catalog=catalog,
     )
 
-    with pytest.raises(CatalogCoverageGapError):
-        ingest(
-            FixtureRecord,
-            (_INSTRUMENT,),
-            start=_utc("2024-01-01"),
-            end=_utc("2024-01-06"),
-            provider=provider,
-            catalog=Catalog.open(tmp_path),
-        )
-
+    assert records(
+        FixtureRecord,
+        (_INSTRUMENT,),
+        start=_utc("2024-01-01"),
+        end=_utc("2024-01-06"),
+        catalog=catalog,
+    ) == (_record("2024-01-05", 2.0),)
     assert (
-        records(
-            FixtureRecord,
-            (_INSTRUMENT,),
-            start=_utc("2024-01-01"),
-            end=_utc("2024-01-06"),
-            catalog=Catalog.open(tmp_path),
+        catalog.missing(
+            CatalogKey.for_instrument(FixtureRecord, _INSTRUMENT),
+            CatalogInterval(_utc("2024-01-01").value, _utc("2024-01-06").value),
         )
         == ()
     )
@@ -319,7 +317,7 @@ def test_ensure_arrays_heals_only_the_gap_between_live_records(
     ]
 
 
-def test_ensure_arrays_makes_no_request_for_a_fully_covered_window(
+def test_empty_custom_dataset_is_requested_again_because_no_file_can_record_it(
     tmp_path: Path,
 ) -> None:
     seed = _Provider(())
@@ -330,17 +328,17 @@ def test_ensure_arrays_makes_no_request_for_a_fully_covered_window(
         providers={FixtureRecord: seed},
         catalog=Catalog.open(tmp_path),
     )
-    unused = _Provider(())
+    repeated = _Provider(())
 
     ensure_arrays(
         {_INSTRUMENT: ("FixtureValue", "FixtureAvailable")},
         start=_utc("2024-01-01"),
         end=_utc("2024-01-03"),
-        providers={FixtureRecord: unused},
+        providers={FixtureRecord: repeated},
         catalog=Catalog.open(tmp_path),
     )
 
-    assert unused.requests == []
+    assert repeated.requests == [(_utc("2024-01-01"), _utc("2024-01-03"))]
 
 
 def test_marker_backed_gap_does_not_break_a_later_horizon_extension(
@@ -373,19 +371,10 @@ def test_marker_backed_gap_does_not_break_a_later_horizon_extension(
     ]
 
 
-def test_arrays_distinguishes_verified_empty_from_never_ingested(
+def test_arrays_returns_empty_values_for_never_ingested_window(
     tmp_path: Path,
 ) -> None:
-    empty = _Provider(())
     index = pd.date_range("2024-01-01", "2024-01-03", tz="UTC")
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT,),
-        start=index[0],
-        end=index[-1],
-        provider=empty,
-        catalog=Catalog.open(tmp_path),
-    )
 
     panels = arrays(
         ("FixtureValue", "FixtureAvailable"),
@@ -393,24 +382,8 @@ def test_arrays_distinguishes_verified_empty_from_never_ingested(
         index=index,
         catalog=Catalog.open(tmp_path),
     )
-    report = coverage(
-        FixtureRecord,
-        (_INSTRUMENT,),
-        start=index[0],
-        end=index[-1],
-        catalog=Catalog.open(tmp_path),
-    )
-
     assert panels["FixtureValue"].to_numpy().tolist() == [[0.0], [0.0], [0.0]]
     assert panels["FixtureAvailable"].to_numpy().tolist() == [[0.0], [0.0], [0.0]]
-    assert report[0].instrument_id == _INSTRUMENT
-    with pytest.raises(CatalogCoverageGapError):
-        arrays(
-            ("FixtureValue",),
-            (_INSTRUMENT,),
-            index=index,
-            catalog=Catalog.open(tmp_path / "never-ingested"),
-        )
 
 
 def test_correction_replaces_a_bounded_window_while_ingest_cannot_overwrite(

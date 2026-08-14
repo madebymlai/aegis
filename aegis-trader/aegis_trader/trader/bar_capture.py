@@ -86,7 +86,7 @@ class BarCapture:
         )
         self.raw_bars.record_verified(
             bar_type,
-            CatalogInterval(frontier + 1, timestamp_ns),
+            CatalogInterval.after(frontier, timestamp_ns),
             records,
         )
         self._pending_by_type[bar_type] = [

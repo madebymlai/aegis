@@ -15,16 +15,10 @@ from nautilus_trader.core.data import Data
 from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data._coverage_markers import CoverageMarkerLedger
-from aegis_data._ensure_coverage import (
-    CatalogCoverageGapError,
-    CoverageInterval,
-    ensure_coverage,
-)
 from aegis_data import custom_kinds
 from aegis_data.custom_kinds import CustomDataKind, CustomDataRegistry
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
-from aegis_data.provider import ProviderAnswer
+from aegis_data.provider_errors import gap_fill_boundary
 
 
 RecordT = TypeVar("RecordT", bound=Data)
@@ -40,7 +34,7 @@ class CustomDataProviderPort(Protocol[ProviderRecordT]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[ProviderRecordT]: ...
+    ) -> Sequence[ProviderRecordT]: ...
 
 
 type CustomArrayRequirements = Mapping[InstrumentId, Sequence[str]]
@@ -101,13 +95,6 @@ class UnknownCustomArrayError(ValueError):
     def __init__(self, array_names: Sequence[str]) -> None:
         self.array_names = tuple(array_names)
         super().__init__(f"unknown custom arrays: {list(self.array_names)}")
-
-
-@dataclass(frozen=True)
-class CustomDataCoverage:
-    """One requested instrument window, proven covered."""
-
-    instrument_id: InstrumentId
 
 
 def ingest(
@@ -174,12 +161,11 @@ def _ensure_instrument_coverage(
     end: pd.Timestamp,
     provider: CustomDataProviderPort[RecordT] | None,
 ) -> None:
-    requested = CoverageInterval(start.value, end.value)
-    markers = CoverageMarkerLedger(catalog)
+    requested = CatalogInterval(start.value, end.value)
     subject = CatalogKey.for_instrument(record_type, instrument_id)
 
     def commit(
-        verified: CoverageInterval,
+        verified: CatalogInterval,
         verified_records: tuple[RecordT, ...],
     ) -> None:
         _record_verified(
@@ -189,22 +175,16 @@ def _ensure_instrument_coverage(
             _records_within_event_window(verified_records, verified),
         )
 
-    ensure_coverage(
-        subject=f"custom data for {instrument_id.value}",
-        provider=(
-            _record_fetcher(provider, instrument_id, record_type)
-            if provider is not None
-            else None
-        ),
-        missing_intervals=lambda: markers.missing(subject, requested),
-        coverage_error=lambda missing: _coverage_gap(
-            subject,
-            instrument_id,
-            missing,
-        ),
-        commit=commit,
-        on_filled=lambda: markers.consolidate(subject, requested),
-    )
+    if provider is None:
+        return
+    fetch = _record_fetcher(provider, instrument_id, record_type)
+    missing_intervals = catalog.missing(subject, requested)
+    for missing in missing_intervals:
+        with gap_fill_boundary(f"custom data for {instrument_id.value}"):
+            records = fetch(missing.start, missing.end)
+        commit(missing, tuple(records))
+    if missing_intervals and not catalog.missing(subject, requested):
+        catalog.compact(subject, requested)
 
 
 def capture(
@@ -225,7 +205,7 @@ def capture(
     _record_verified(
         catalog,
         CatalogKey.for_instrument(record_type, instrument_id),
-        CoverageInterval(record.ts_event, record.ts_event),
+        CatalogInterval(record.ts_event, record.ts_event),
         (record,),
     )
 
@@ -233,7 +213,7 @@ def capture(
 def _record_verified(
     catalog: Catalog,
     subject: CatalogKey[RecordT],
-    verified: CoverageInterval,
+    verified: CatalogInterval,
     verified_records: Sequence[RecordT],
 ) -> None:
     """Record Custom Data and the verified interval it was checked over.
@@ -250,7 +230,6 @@ def _record_verified(
         CatalogInterval(verified.start_ns, verified.end_ns),
         tuple(verified_records),
     )
-    CoverageMarkerLedger(catalog).mark(subject, verified)
 
 
 def correct(
@@ -267,10 +246,8 @@ def correct(
     _kind_for(record_type, registry)
     start = _utc(start)
     end = _utc(end)
-    markers = CoverageMarkerLedger(catalog)
-    interval = CoverageInterval(start.value, end.value)
+    interval = CatalogInterval(start.value, end.value)
     subject = CatalogKey.for_instrument(record_type, instrument_id)
-    markers.delete(subject, interval)
     selected = tuple(
         record
         for record in replacement
@@ -287,8 +264,8 @@ def correct(
         CatalogInterval(start.value, end.value),
         selected,
     )
-    markers.mark(subject, interval)
-    markers.consolidate(subject, interval)
+    if not catalog.missing(subject, interval):
+        catalog.compact(subject, interval)
 
 
 def arrays(
@@ -311,14 +288,6 @@ def arrays(
         for name in array_names
     }
     for kind in kinds:
-        coverage(
-            cast(type[Data], kind.record_type),
-            instrument_ids,
-            start=pd.Timestamp(index[0]),
-            end=pd.Timestamp(index[-1]),
-            catalog=catalog,
-            registry=registry,
-        )
         stored = _query_records(
             kind.record_type,
             instrument_ids,
@@ -349,14 +318,6 @@ def records_for_arrays(
             for instrument_id, names in required_arrays.items()
             if set(names).intersection(kind.array_names)
         )
-        coverage(
-            cast(type[Data], kind.record_type),
-            instrument_ids,
-            start=start,
-            end=end,
-            catalog=catalog,
-            registry=registry,
-        )
         selected.extend(
             records(
                 kind.record_type,
@@ -368,31 +329,6 @@ def records_for_arrays(
             )
         )
     return tuple(selected)
-
-
-def coverage(
-    record_type: type[RecordT],
-    instrument_ids: Sequence[InstrumentId],
-    *,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    catalog: Catalog,
-    registry: CustomDataRegistry | None = None,
-) -> tuple[CustomDataCoverage, ...]:
-    """Prove every requested instrument's window is covered, or fail loud."""
-    _kind_for(record_type, registry)
-    markers = CoverageMarkerLedger(catalog)
-    start = _utc(start)
-    end = _utc(end)
-    reports: list[CustomDataCoverage] = []
-    for instrument_id in instrument_ids:
-        interval = CoverageInterval(start.value, end.value)
-        subject = CatalogKey.for_instrument(record_type, instrument_id)
-        missing = tuple(markers.missing(subject, interval))
-        if missing:
-            raise _coverage_gap(subject, instrument_id, missing)
-        reports.append(CustomDataCoverage(instrument_id=instrument_id))
-    return tuple(reports)
 
 
 def records(
@@ -451,10 +387,10 @@ def _record_fetcher(
     provider: CustomDataProviderPort[RecordT],
     instrument_id: InstrumentId,
     record_type: type[RecordT],
-) -> Callable[[pd.Timestamp, pd.Timestamp], ProviderAnswer[RecordT]]:
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ProviderAnswer[RecordT]:
+) -> Callable[[pd.Timestamp, pd.Timestamp], Sequence[RecordT]]:
+    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> Sequence[RecordT]:
         served = provider.request_records(instrument_id, start=start, end=end)
-        selected = tuple(
+        return tuple(
             sorted(
                 (
                     _validate_record(
@@ -462,14 +398,10 @@ def _record_fetcher(
                         record_type=record_type,
                         instrument_id=instrument_id,
                     )
-                    for record in served.records
+                    for record in served
                 ),
                 key=lambda record: record.ts_event,
             )
-        )
-        return ProviderAnswer.verified(
-            selected,
-            oldest_verified=_utc(served.oldest_verified),
         )
 
     return fetch
@@ -493,7 +425,7 @@ def _validate_record(
 
 
 def _records_within_event_window(
-    stored: Sequence[RecordT], interval: CoverageInterval
+    stored: Sequence[RecordT], interval: CatalogInterval
 ) -> tuple[RecordT, ...]:
     return tuple(
         record
@@ -519,7 +451,9 @@ def _record_belongs_to_interval(
 
 
 def _registry(registry: CustomDataRegistry | None) -> CustomDataRegistry:
-    return registry if registry is not None else custom_kinds.declared_custom_data_kinds()
+    return (
+        registry if registry is not None else custom_kinds.declared_custom_data_kinds()
+    )
 
 
 def _kind_for(
@@ -590,25 +524,8 @@ def _utc(value: pd.Timestamp) -> pd.Timestamp:
     return timestamp.tz_convert("UTC")
 
 
-def _coverage_gap(
-    subject: CatalogKey[RecordT],
-    instrument_id: InstrumentId,
-    missing: Sequence[CoverageInterval],
-) -> CatalogCoverageGapError:
-    intervals = tuple(missing)
-    return CatalogCoverageGapError(
-        subject,
-        intervals,
-        message=(
-            f"custom data coverage is missing for {instrument_id.value}: "
-            f"{[(item.start_ns, item.end_ns) for item in intervals]}"
-        ),
-    )
-
-
 __all__ = [
     "CustomArrayRequirements",
-    "CustomDataCoverage",
     "CustomDataAdapterMap",
     "CustomDataProviderMap",
     "CustomDataProviderPort",
@@ -621,7 +538,6 @@ __all__ = [
     "arrays",
     "capture",
     "correct",
-    "coverage",
     "ensure_arrays",
     "ingest",
     "records",

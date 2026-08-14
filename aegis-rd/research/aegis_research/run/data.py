@@ -10,7 +10,6 @@ import pandas as pd
 from aegis_data.array_names import is_bar_derived_array
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    CatalogCoverageGapError,
     CatalogWindow,
     CatalogWindowRequest,
     GapFillProviderError,
@@ -194,10 +193,7 @@ def load_run_data(
             catalog=port.catalog,
             custom_data_providers=custom_data_providers,
         )
-    except (
-        CatalogCoverageGapError,
-        GapFillProviderError,
-    ) as error:
+    except GapFillProviderError as error:
         _raise_unavailable(error, config, requested_ids, start=start, end=end)
     currency_conversion = _catalog_currency_conversion(
         config,

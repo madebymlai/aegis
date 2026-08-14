@@ -6,10 +6,8 @@ import pandas as pd
 import pytest
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    CatalogCoverageGapError,
     GapFillProviderError,
 )
-from aegis_data.custom_data import ProviderAnswer
 from aegis_data.distributions import Distribution, write_distribution_data
 from aegis_data.storage import Catalog
 from aegis_data.testing import FakeCatalog
@@ -38,7 +36,6 @@ from tests.support.research.aegis_research.market_data_fixtures import (
     seed_catalog_frames,
     seed_catalog_fx,
     seed_catalog_ohlcv,
-    unservable_port,
 )
 
 
@@ -176,31 +173,6 @@ def test_load_run_data_rejects_mismatching_tradeable_calendars_under_raise(
             port=port,
             custom_data_providers=None,
         )
-
-
-def test_load_run_data_carries_compact_failure_context_for_catalog_gaps() -> None:
-    config = make_data_config(
-        arrays=["Open", "Close"],
-        base_currency="USD",
-        instruments=["MSFT.XNAS"],
-        start="2024-01-01",
-        end="2024-01-03",
-    )
-
-    with pytest.raises(RunDataUnavailable) as excinfo:
-        load_run_data(
-            config,
-            required_arrays=("Open", "Close"),
-            port=unservable_port(),
-            custom_data_providers=None,
-        )
-
-    assert isinstance(excinfo.value.__cause__, CatalogCoverageGapError)
-    context = to_builtin(excinfo.value.context)
-    assert context["schema_version"] == "run_data_failure.v1"
-    assert context["requested_instrument_ids"] == ["MSFT.XNAS"]
-    assert context["error_type"] == "CatalogCoverageGapError"
-    assert "quality" not in context
 
 
 def test_load_run_data_chains_gap_fill_provider_failures() -> None:
@@ -392,23 +364,6 @@ def test_load_run_data_persists_and_warm_reads_custom_arrays_without_provider_id
     assert "credential-must-not-persist" not in str(to_builtin(cold.identity))
 
 
-def test_load_run_data_reports_missing_custom_coverage_as_unavailable(
-    tmp_path: Path,
-) -> None:
-    config, port = _custom_config_and_port(tmp_path)
-
-    with pytest.raises(RunDataUnavailable) as excinfo:
-        load_run_data(
-            config,
-            required_arrays=("Open", "Close", "FixtureValue"),
-            port=port,
-            custom_data_providers=None,
-        )
-
-    assert isinstance(excinfo.value.__cause__, CatalogCoverageGapError)
-    assert excinfo.value.context.error_type == "CatalogCoverageGapError"
-
-
 def test_load_run_data_chains_custom_provider_failures(tmp_path: Path) -> None:
     config, port = _custom_config_and_port(tmp_path)
 
@@ -536,7 +491,7 @@ def _custom_config_and_port(tmp_path: Path):
 
 
 class _BrokenProvider:
-    def request_bars(self, bar_type: BarType, **_kwargs: object) -> object:
+    def warm_bars(self, bar_type: BarType, _interval: object) -> bool:
         raise RuntimeError(f"gateway dropped while fetching {bar_type}")
 
 
@@ -551,7 +506,7 @@ class _FixtureProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         self.requests.append((instrument_id, start, end))
         record = FixtureRecord(
             end.value,
@@ -560,7 +515,7 @@ class _FixtureProvider:
             value=7.0,
             provider="fixture",
         )
-        return ProviderAnswer(records=(record,), oldest_verified=start)
+        return (record,)
 
 
 class _FailingFixtureProvider:
@@ -570,7 +525,7 @@ class _FailingFixtureProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         raise RuntimeError("custom provider offline")
 
 
@@ -581,7 +536,7 @@ class _NonFiniteFixtureProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         record = FixtureRecord(
             end.value,
             end.value,
@@ -589,4 +544,4 @@ class _NonFiniteFixtureProvider:
             value=float("nan"),
             provider="fixture",
         )
-        return ProviderAnswer(records=(record,), oldest_verified=start)
+        return (record,)

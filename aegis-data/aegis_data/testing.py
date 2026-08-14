@@ -109,9 +109,7 @@ def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
     bar_type = raw_bar_type(instrument_id, "1D")
     out: list[Bar] = []
     for day, row in ohlcv.iterrows():
-        ts_event = int(
-            datetime.combine(day.date(), time(0, 0), _UTC).timestamp() * 1e9
-        )
+        ts_event = int(datetime.combine(day.date(), time(0, 0), _UTC).timestamp() * 1e9)
         out.append(
             Bar(
                 bar_type,
@@ -165,8 +163,6 @@ class _FakeCatalogBackend:
         end: object = None,
         **_kwargs: object,
     ) -> list:
-        if data_cls.__name__ == "_CoverageMarker":
-            return self._claims(data_cls, identifiers or [])
         if data_cls is not Bar:
             return []  # no non-bar data stored; distributions read as honestly empty
         lo, hi = pd.Timestamp(start).value, pd.Timestamp(end).value
@@ -175,27 +171,6 @@ class _FakeCatalogBackend:
             for ident in (identifiers or [])
             for bar in self._bars.get(ident, [])
             if lo <= bar.ts_event <= hi
-        ]
-
-    def _claims(self, marker_cls: type, identifiers: list[str]) -> list:
-        """Whole-timeline claims for the record kinds that still keep them.
-
-        Bars answer coverage from their file extents now, so nothing here
-        narrows a claim: a fixture not exercising sparse-record coverage must
-        never provoke a gap. One claim per identifier, each naming the dataset
-        it belongs to rather than a fixed kind, so Custom Data subjects are not
-        described as Distributions.
-        """
-        return [
-            marker_cls(
-                0,
-                0,
-                instrument_id=InstrumentId.from_str("COVERAGE.AEGIS"),
-                record_type=identifier.split("-", 1)[0],
-                start_ns=0,
-                end_ns=_UNBOUNDED_NS,
-            )
-            for identifier in identifiers
         ]
 
     def _covered(self, data_cls: type) -> tuple[int, int]:
@@ -381,10 +356,11 @@ def _port(
         instruments=instruments,
         bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
         coverage_horizon=(
-            pd.Timestamp(min(frame.index.min() for frame in frames.values()), tz="UTC").value,
             pd.Timestamp(
-                coverage_end
-                or max(frame.index.max() for frame in frames.values()),
+                min(frame.index.min() for frame in frames.values()), tz="UTC"
+            ).value,
+            pd.Timestamp(
+                coverage_end or max(frame.index.max() for frame in frames.values()),
                 tz="UTC",
             ).value,
         ),

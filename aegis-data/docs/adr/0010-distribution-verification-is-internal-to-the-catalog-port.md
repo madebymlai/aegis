@@ -1,6 +1,10 @@
 # Distribution verification is internal to the Catalog port; the port owns the clock
 
-Status: accepted
+Status: superseded in part by GH #96/#98/#100
+
+Distribution materialisation remains internal to the Catalog port. Its marker
+ledger and injected marker clock were retired; stored traded and adjusted-close
+inputs now make the materialisation deterministic, while absence reads empty.
 
 Reinforces ADR-0008.
 

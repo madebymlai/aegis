@@ -48,12 +48,6 @@ class _CatalogBackend(Protocol):
         end: object = None,
     ) -> None: ...
 
-    def reset_data_file_names(
-        self,
-        data_cls: type,
-        identifier: str | None = None,
-    ) -> None: ...
-
     def get_missing_intervals_for_request(
         self,
         start: int,
@@ -80,6 +74,14 @@ class _CatalogBackend(Protocol):
     ) -> list[Instrument]: ...
 
 
+class _CatalogAwareEngine(Protocol):
+    def register_catalog(
+        self,
+        catalog: _CatalogBackend,
+        name: str = "catalog_0",
+    ) -> None: ...
+
+
 @dataclass(frozen=True)
 class CatalogInterval:
     """One inclusive nanosecond window addressing part of a catalog dataset."""
@@ -91,6 +93,16 @@ class CatalogInterval:
         if self.start_ns > self.end_ns:
             raise ValueError("catalog interval start must not be after end")
 
+    @classmethod
+    def after(cls, frontier_ns: int, through_ns: int) -> "CatalogInterval":
+        """Advance coverage with exact nanosecond adjacency.
+
+        Coverage windows must tile: a previous window ends at ``T - 1`` and
+        the next begins at ``T``. Nautilus permits gaps, so every frontier
+        advance goes through this constructor rather than repeating arithmetic.
+        """
+        return cls(frontier_ns + 1, through_ns)
+
     @property
     def start(self) -> pd.Timestamp:
         return pd.Timestamp(self.start_ns, tz="UTC")
@@ -99,24 +111,13 @@ class CatalogInterval:
     def end(self) -> pd.Timestamp:
         return pd.Timestamp(self.end_ns, tz="UTC")
 
-    def from_frontier(self, oldest_verified: pd.Timestamp) -> "CatalogInterval | None":
-        start_ns = max(self.start_ns, oldest_verified.value)
-        if start_ns > self.end_ns:
-            return None
-        return CatalogInterval(start_ns, self.end_ns)
-
-
-@dataclass(frozen=True)
-class _CoverageSubject:
-    key: CatalogKey[Data]
-
 
 @dataclass(frozen=True)
 class CatalogKey(Generic[RecordT]):
     """A durable dataset address whose serialized form is Catalog-private."""
 
     record_type: type[RecordT]
-    _subject: InstrumentId | BarType | _CoverageSubject
+    _subject: InstrumentId | BarType
 
     @classmethod
     def for_instrument(
@@ -130,14 +131,6 @@ class CatalogKey(Generic[RecordT]):
     def for_bar(cls, bar_type: BarType) -> CatalogKey[Bar]:
         return cls(Bar, bar_type)
 
-    @classmethod
-    def for_coverage(
-        cls,
-        record_type: type[RecordT],
-        subject: CatalogKey[Data],
-    ) -> CatalogKey[RecordT]:
-        return cls(record_type, _CoverageSubject(subject))
-
 
 @dataclass(frozen=True)
 class Catalog:
@@ -149,7 +142,11 @@ class Catalog:
     def open(cls, path: str | Path) -> Catalog:
         root = Path(path).expanduser()
         root.mkdir(parents=True, exist_ok=True)
-        return cls(ParquetDataCatalog(root))
+        return cls(cast(_CatalogBackend, ParquetDataCatalog(root)))
+
+    def register_with(self, engine: _CatalogAwareEngine) -> None:
+        """Register this Catalog with a Nautilus data engine."""
+        engine.register_catalog(self._store)
 
     def replace(
         self,
@@ -193,12 +190,10 @@ class Catalog:
         are what the Nautilus data engine reads when deciding whether to fetch,
         so there is no second opinion to keep in step with.
 
-        The exception decides which record kinds may rely on this. An empty
-        window is recorded by extending a neighbouring file's name over it, so
-        a window that is empty *and* has no neighbour records nothing at all
-        and reads as missing here for ever after. Raw Bars are dense enough
-        that a neighbour exists; sparse kinds are not, which is why
-        Distributions and Custom Data keep coverage claims instead.
+        An empty window is recorded by extending a neighbouring file's name
+        over it. If a dataset has never held a record, an empty write records
+        nothing and the window remains missing; absence is still an empty read,
+        so the only cost is a later request asking again.
         """
         unstored = self._store.get_missing_intervals_for_request(
             interval.start_ns,
@@ -227,79 +222,22 @@ class Catalog:
         return unanswered_tail.start_ns - 1
 
     def compact(self, key: CatalogKey[RecordT], interval: CatalogInterval) -> None:
-        """Merge this dataset's files back from the end of *interval*.
+        """Merge the requested range, whose writer windows abut by one nanosecond.
 
-        The merged file is named for the span of the files it replaces, so
-        merging a run of adjacent windows preserves the coverage answer
-        exactly. Merging across a hole would not: the survivor's name would
-        stretch over a window nobody checked, and it would read as covered ever
-        after.
-
-        Such holes are ordinary rather than faulty. A fill covers the early
-        morning, capture starts an hour later, and the hour between was simply
-        never asked about; a provider whose history begins late leaves the same
-        shape. So the range is narrowed here to the run ending at
-        ``interval.end_ns`` that holds no hole, and the rest is left alone —
-        merging around unchecked data rather than refusing to run, because
-        unchecked data is a normal state for this catalog to be in.
-
-        ``ensure_contiguous_files`` is on, but do not read it as the guard: the
-        narrowing above hands the vendor a contiguous run every time, so it
-        never has a gap to object to and cannot fire. It is left on to state
-        the intent, and to catch the day someone removes the narrowing — which
-        is the only way it would ever be reached. It would also be a weak guard
-        if reached: against 1.231.0 it is an ``assert``, which ``python -O``
-        strips, and against the Rust backend it merges across a hole anyway and
-        only reports non-disjointness afterwards.
-
-        Nothing in the vendor enforces the adjacency this depends on. Its
-        write-time check is disjointness, which rejects overlapping ranges and
-        permits gaps by design — a catalog with holes is an ordinary catalog to
-        Nautilus. Gaps cost only us, because a window recorded as empty is a
-        neighbour's filename stretched over it, and a gap leaves no neighbour.
-
-        Do not reach for ``consolidate_data_by_period`` instead — it renames
-        files to period boundaries or to record extents, and both rewrite the
-        coverage answer rather than preserving it.
+        The merged file is named for the span of the adjacent files it replaces,
+        preserving the Catalog's coverage answer. Production writers tile every
+        requested missing interval exactly; they must end one window at ``T - 1``
+        and begin the next at ``T``. Nautilus rejects overlap but permits gaps,
+        so that nanosecond-adjacency requirement lives with this arithmetic and
+        cannot be delegated to the vendor.
         """
-        answered = self._answered_run_ending(key, interval)
-        if answered is None:
-            return
         self._store.consolidate_data(
             key.record_type,
             identifier=_identifier(key),
-            start=answered.start_ns,
-            end=answered.end_ns,
+            start=interval.start_ns,
+            end=interval.end_ns,
             ensure_contiguous_files=True,
             deduplicate=True,
-        )
-
-    def _answered_run_ending(
-        self,
-        key: CatalogKey[RecordT],
-        interval: CatalogInterval,
-    ) -> CatalogInterval | None:
-        """The gap-free tail of *interval*, or None if its end is unanswered."""
-        start_ns = interval.start_ns
-        for gap in self.missing(key, interval):
-            if gap.end_ns >= interval.end_ns:
-                return None
-            start_ns = max(start_ns, gap.end_ns + 1)
-        return CatalogInterval(start_ns, interval.end_ns)
-
-    def repair_interval_descriptions(self, key: CatalogKey[RecordT]) -> None:
-        """Rebuild filename intervals from stored record extents.
-
-        Only safe on a dataset whose coverage is carried by its records rather
-        than by its filenames — the coverage-claim dataset, and nothing else.
-        Rebuilding from contents cannot see a window that was checked and held
-        nothing, so on any dataset answering :meth:`missing` from its extents
-        this silently erases coverage. That is the same reason ``compact`` uses
-        ``consolidate_data`` rather than ``consolidate_data_by_period``.
-        """
-        self._store.reset_data_file_names(
-            key.record_type,
-            identifier=_identifier(key),
         )
 
     def read(
@@ -316,7 +254,6 @@ class Catalog:
         records = (_record(item, key.record_type) for item in queried)
         by_ts_event = {record.ts_event: record for record in records}
         return tuple(by_ts_event[ts_event] for ts_event in sorted(by_ts_event))
-
 
     def read_all(self, key: CatalogKey[RecordT]) -> tuple[RecordT, ...]:
         queried = self._store.query(
@@ -352,13 +289,6 @@ class Catalog:
 def _identifier(key: CatalogKey[Data]) -> str:
     if isinstance(key._subject, BarType):
         return str(key._subject)
-    if isinstance(key._subject, _CoverageSubject):
-        covered = key._subject.key
-        if isinstance(covered._subject, BarType):
-            return f"Bar-{covered._subject}"
-        if isinstance(covered._subject, InstrumentId):
-            return f"{covered.record_type.__name__}-{covered._subject.value}"
-        raise TypeError("coverage keys cannot address the coverage dataset")
     return key._subject.value
 
 
@@ -375,11 +305,6 @@ def _records_for_write(
     key: CatalogKey[RecordT],
     records: tuple[RecordT, ...],
 ) -> list[object]:
-    if not isinstance(key._subject, _CoverageSubject):
-        return list(records)
-    identifier = InstrumentId.from_str(_identifier(key))
-    for record in records:
-        record.instrument_id = identifier
     return list(records)
 
 

@@ -2,32 +2,34 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
-import pytest
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
-from aegis_data._ensure_coverage import CoverageInterval
-from aegis_data.provider import ProviderAnswer
-from aegis_data.raw_bars import CatalogCoverageGapError, RawBars
+from aegis_data.raw_bars import RawBars
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 
 
 @dataclass
 class _Provider:
+    catalog: Catalog
     records: tuple[Bar, ...]
     requests: list[BarType] = field(default_factory=list)
 
-    def request_bars(
+    def warm_bars(
         self,
         bar_type: BarType,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-    ) -> ProviderAnswer[Bar]:
+        interval: CatalogInterval,
+    ) -> bool:
+        key = CatalogKey.for_bar(bar_type)
+        missing = self.catalog.missing(key, interval)
+        if not missing:
+            return False
         self.requests.append(bar_type)
-        return ProviderAnswer.verified(self.records, oldest_verified=start)
+        for gap in missing:
+            self.catalog.replace(key, gap, self.records)
+        return True
 
 
 def test_stored_reads_payload_without_filling(tmp_path: Path) -> None:
@@ -40,7 +42,7 @@ def test_stored_reads_payload_without_filling(tmp_path: Path) -> None:
         interval,
         (_bar(bar_type, "2024-01-01", 10.0),),
     )
-    provider = _Provider((_bar(bar_type, "2024-01-01", 20.0),))
+    provider = _Provider(catalog, (_bar(bar_type, "2024-01-01", 20.0),))
     raw_bars = RawBars(catalog, provider=provider)
     marking = raw_bars.marking(instrument_id, "1D")
 
@@ -79,28 +81,20 @@ def test_a_window_the_data_engine_stored_reads_as_covered(tmp_path: Path) -> Non
     assert covered.ohlcv["Close"].tolist() == [10.0]
 
 
-def test_covered_read_fails_on_missing_coverage_without_filling(tmp_path: Path) -> None:
-    """A window nothing has answered for is a gap, and reading never fills it.
-
-    The window is left unwritten rather than written-without-a-claim: a write
-    now records the window it answered for, so "stored but unchecked" is not a
-    state the Catalog can be in.
-    """
+def test_covered_read_returns_empty_on_missing_coverage_without_filling(
+    tmp_path: Path,
+) -> None:
     catalog = Catalog.open(tmp_path)
     instrument_id = InstrumentId.from_str("AAPL.XNAS")
     bar_type = raw_bar_type(instrument_id, "1D")
     interval = _interval()
-    provider = _Provider((_bar(bar_type, "2024-01-01", 20.0),))
+    provider = _Provider(catalog, (_bar(bar_type, "2024-01-01", 20.0),))
     raw_bars = RawBars(catalog, provider=provider)
     marking = raw_bars.marking(instrument_id, "1D")
 
-    with pytest.raises(CatalogCoverageGapError, match="missing") as excinfo:
-        raw_bars.covered(marking, interval)
+    window = raw_bars.covered(marking, interval)
 
-    assert excinfo.value.subject == CatalogKey.for_bar(bar_type)
-    assert excinfo.value.missing == (
-        CoverageInterval(interval.start_ns, interval.end_ns),
-    )
+    assert window.bars == ()
     assert provider.requests == []
 
 
@@ -108,7 +102,7 @@ def test_ensure_is_a_command_and_covered_is_the_following_query(tmp_path: Path) 
     catalog = Catalog.open(tmp_path)
     instrument_id = InstrumentId.from_str("AAPL.XNAS")
     bar_type = raw_bar_type(instrument_id, "1D")
-    provider = _Provider((_bar(bar_type, "2024-01-01", 20.0),))
+    provider = _Provider(catalog, (_bar(bar_type, "2024-01-01", 20.0),))
     raw_bars = RawBars(catalog, provider=provider)
     marking = raw_bars.marking(instrument_id, "1D")
 
@@ -127,7 +121,7 @@ def test_record_verified_keeps_explicit_empty_time_covered(
     catalog = Catalog.open(tmp_path)
     instrument_id = InstrumentId.from_str("AAPL.XNAS")
     bar_type = raw_bar_type(instrument_id, "1D")
-    provider = _Provider(())
+    provider = _Provider(catalog, ())
     raw_bars = RawBars(catalog, provider=provider)
     marking = raw_bars.marking(instrument_id, "1D")
     friday = pd.Timestamp("2024-01-05", tz="UTC").value
@@ -174,39 +168,6 @@ def _bar(bar_type: BarType, day: str, close: float) -> Bar:
         timestamp,
         timestamp,
     )
-
-
-def test_recording_a_second_window_never_swallows_the_hole_before_it(
-    tmp_path: Path,
-) -> None:
-    """Consolidating after a write must not stretch over an unchecked window.
-
-    ``record_verified`` tidies the day it just wrote into, and a day is not a
-    range anyone has proven whole — a provider whose history starts late leaves
-    an earlier hour unchecked behind the window it did verify. Merging across
-    that hour would name one file for both and turn a genuine Coverage Gap into
-    a silent empty read, so the hole must survive the tidy-up.
-    """
-    catalog = Catalog.open(tmp_path)
-    bar_type = BarType.from_str("SPY.ARCA-1-MINUTE-LAST-EXTERNAL")
-    key = CatalogKey.for_bar(bar_type)
-    raw_bars = RawBars(catalog)
-    day = pd.Timestamp("2024-01-08", tz="UTC")
-    hour = lambda index: (day + pd.Timedelta(hours=index)).value  # noqa: E731
-    unchecked = CatalogInterval(hour(10), hour(11) - 1)
-
-    raw_bars.record_verified(
-        bar_type,
-        CatalogInterval(hour(9), hour(10) - 1),
-        (_bar_at(bar_type, hour(9)),),
-    )
-    raw_bars.record_verified(
-        bar_type,
-        CatalogInterval(hour(11), hour(12) - 1),
-        (_bar_at(bar_type, hour(11)),),
-    )
-
-    assert catalog.missing(key, unchecked) == (unchecked,)
 
 
 def _bar_at(bar_type: BarType, at: int) -> Bar:

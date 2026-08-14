@@ -12,9 +12,7 @@ from typing import Any
 import pandas as pd
 import pytest
 from aegis_data.custom_data import CustomDataProviderPort, ingest
-from aegis_data.provider import ProviderAnswer
 from tests.support.custom_data import FixtureRecord
-from aegis_data.distributions import Distribution, write_distribution_data
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
@@ -23,11 +21,9 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    CatalogCoverageGapError,
     MissingCatalogDefinitionsError,
     raw_bar_type,
 )
-from aegis_data._coverage_markers import CoverageInterval, CoverageMarkerLedger
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
@@ -213,20 +209,17 @@ class _FixtureProvider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         self.requests.append((instrument_id, start, end))
         timestamp = pd.Timestamp("2020-01-01", tz="UTC").value
-        return ProviderAnswer(
-            (
-                FixtureRecord(
-                    timestamp,
-                    timestamp,
-                    instrument_id=instrument_id,
-                    value=0.5,
-                    provider="fixture",
-                ),
+        return (
+            FixtureRecord(
+                timestamp,
+                timestamp,
+                instrument_id=instrument_id,
+                value=0.5,
+                provider="fixture",
             ),
-            start,
         )
 
 
@@ -236,17 +229,6 @@ class _AdjustedLastProvider:
 
     def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
         return self.adjusted_last[kwargs["instrument_id"]]
-
-
-class _BarOnlyProvider:
-    def request_bars(
-        self,
-        _bar_type: BarType,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-    ) -> ProviderAnswer:
-        return ProviderAnswer((), start)
 
 
 class _TwoVenueBundle(ExecutionBundle):
@@ -283,7 +265,8 @@ class _TwoVenueBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={
-                instrument_id: DriftBand.symmetric(0.0) for instrument_id in self._instrument_ids
+                instrument_id: DriftBand.symmetric(0.0)
+                for instrument_id in self._instrument_ids
             },
             direction="longonly",
         )
@@ -432,6 +415,7 @@ class _RollingContinuousDesk:
     def rolled(self) -> bool:
         return self._rolled
 
+
 class _ContinuousRootDataSource:
     def __init__(self, frame: pd.DataFrame) -> None:
         self._frame = frame
@@ -545,9 +529,7 @@ def test_run_book_backtest_fills_custom_array_coverage_on_cold_catalog(
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(
-            catalog_path, (_INSTRUMENT_ID,)
-        ),
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
         custom_data_providers={FixtureRecord: provider},
     )
 
@@ -593,26 +575,6 @@ def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> N
         assert unused.requests == []
     finally:
         result.engine.dispose()
-
-
-def test_run_book_backtest_fails_on_uncovered_custom_arrays(tmp_path) -> None:
-    book_path = tmp_path / "book.toml"
-    book_path.write_text(_BOOK_TOML)
-    catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
-
-    with pytest.raises(CatalogCoverageGapError, match="custom data"):
-        run_book_backtest(
-            book_path,
-            start="2020-01-01",
-            end="2020-01-05",
-            catalog_path=catalog_path,
-            registry=registry,
-            data_source=_verified_zero_distribution_source(
-                catalog_path, (_INSTRUMENT_ID,)
-            ),
-        )
 
 
 def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
@@ -718,7 +680,9 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
     engine.dispose()
 
 
-def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path) -> None:
+def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(
+    tmp_path,
+) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
@@ -797,11 +761,7 @@ def _run_margin_interest_fixture(tmp_path):
         _INSTRUMENT_ID,
         [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
     )
-    registry = StubBundleRegistry(
-        {
-            _WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 1.5)
-        }
-    )
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 1.5)})
 
     financed = run_book_backtest(
         book_path,
@@ -828,11 +788,7 @@ def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -
     book_path.write_text(_FINANCING_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    registry = StubBundleRegistry(
-        {
-            _WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)
-        }
-    )
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -866,47 +822,9 @@ def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> Non
         end="2020-01-05",
     )
 
-    assert [(item.instrument_id, item.ex_date, item.amount) for item in data.distributions] == [
-        (_INSTRUMENT_ID, pd.Timestamp("2020-01-03", tz="UTC"), pytest.approx(0.75))
-    ]
-
-
-def test_catalog_backtest_data_source_rejects_unverified_distribution_store(tmp_path) -> None:
-    catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    distribution = Distribution.from_ex_date(
-        _INSTRUMENT_ID,
-        "2020-01-03",
-        amount=0.75,
-        currency="EUR",
-    )
-    write_distribution_data(Catalog.open(catalog_path), [distribution])
-
-    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
-        CatalogBacktestDataSource(catalog_path=catalog_path).load(
-            (_INSTRUMENT_ID,),
-            timeframe="1D",
-            start="2020-01-01",
-            end="2020-01-05",
-        )
-
-
-def test_catalog_backtest_data_source_rejects_unverified_store_with_bar_only_provider(
-    tmp_path,
-) -> None:
-    catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-
-    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
-        CatalogBacktestDataSource(
-            catalog_path=catalog_path,
-            provider=_BarOnlyProvider(),
-        ).load(
-            (_INSTRUMENT_ID,),
-            timeframe="1D",
-            start="2020-01-01",
-            end="2020-01-05",
-        )
+    assert [
+        (item.instrument_id, item.ex_date, item.amount) for item in data.distributions
+    ] == [(_INSTRUMENT_ID, pd.Timestamp("2020-01-03", tz="UTC"), pytest.approx(0.75))]
 
 
 def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
@@ -995,23 +913,6 @@ def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
         )
 
 
-def test_run_book_backtest_fails_on_catalog_coverage_gap(tmp_path) -> None:
-    book_path = tmp_path / "book.toml"
-    book_path.write_text(_BOOK_TOML)
-    catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0])
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
-
-    with pytest.raises(CatalogCoverageGapError, match="VUSA.XLON"):
-        run_book_backtest(
-            book_path,
-            start="2020-01-01",
-            end="2020-01-05",
-            catalog_path=catalog_path,
-            registry=registry,
-        )
-
-
 def _seed_catalog(
     catalog_path,
     instrument_id: InstrumentId,
@@ -1029,21 +930,18 @@ def _seed_catalog_bars_only(
     catalog = Catalog.open(catalog_path)
     bars = [
         _bar(raw_bar_type(instrument_id, "1D"), day, close)
-        for day, close in zip(pd.date_range("2020-01-01", periods=len(closes), freq="D"), closes, strict=True)
+        for day, close in zip(
+            pd.date_range("2020-01-01", periods=len(closes), freq="D"),
+            closes,
+            strict=True,
+        )
     ]
     interval = CatalogInterval(
         pd.Timestamp("2020-01-01", tz="UTC").value,
-        pd.Timestamp("2020-01-01", tz="UTC").value
-        + len(closes) * 86_400_000_000_000,
+        pd.Timestamp("2020-01-01", tz="UTC").value + len(closes) * 86_400_000_000_000,
     )
     key = CatalogKey.for_bar(raw_bar_type(instrument_id, "1D"))
     catalog.replace(key, interval, tuple(bars))
-    CoverageMarkerLedger(catalog).mark(
-        key,
-        CoverageInterval(interval.start_ns, interval.end_ns),
-        checked_at_ns=interval.start_ns,
-        applicable=True,
-    )
 
 
 def _adjusted_last_for_distribution(ex_date: str, *, amount: float) -> pd.Series:

@@ -27,7 +27,12 @@ from aegis_data.catalog import (
     open_catalog,
 )
 from aegis_data.distributions import request_distribution_data
-from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
+from aegis_data.ibkr import (
+    IbkrHistoricalProvider,
+    historic_bar_client_factory,
+    seed_instrument_definitions,
+)
+from aegis_data.research_bars import NautilusBarWarmer
 
 pytest.importorskip("ibapi")
 
@@ -62,11 +67,12 @@ def _provider() -> IbkrHistoricalProvider:
 
 
 def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
-    served = _provider().request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
+    served = _provider()._request_bars_for_engine(
+        raw_bar_type(_AAPL, "1D"), start=_START, end=_END
+    )
 
-    assert served.records
-    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in served.records)
-    assert served.oldest_verified == _START
+    assert served
+    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in served)
 
 
 def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
@@ -77,10 +83,10 @@ def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
     bar_type = raw_bar_type(_EUR_USD, "1D")
     assert bar_type.spec.price_type == PriceType.MID
 
-    served = _provider().request_bars(bar_type, start=_START, end=_END)
+    served = _provider()._request_bars_for_engine(bar_type, start=_START, end=_END)
 
-    assert served.records
-    assert all(bar.bar_type == bar_type for bar in served.records)
+    assert served
+    assert all(bar.bar_type == bar_type for bar in served)
 
 
 def test_request_instruments_round_trips_native_identity() -> None:
@@ -139,7 +145,7 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     catalog = open_catalog(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
-        provider=provider,
+        provider=NautilusBarWarmer(catalog, historic_bar_client_factory(provider)),
         # The window read verifies distribution coverage too (ADR-0012), so the
         # fill port carries both provider roles — the production composition.
         distribution_provider=provider,
@@ -156,11 +162,7 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     assert (filled[_AAPL]["Close"] > 0).all()
 
     # Provider-less read: must serve entirely from the catalog (no IBKR contact).
-    warm = (
-        CatalogBackedDataPort(open_catalog(catalog_path))
-        .load_window(request)
-        .ohlcv
-    )
+    warm = CatalogBackedDataPort(open_catalog(catalog_path)).load_window(request).ohlcv
     assert warm[_AAPL]["Close"].tolist() == filled[_AAPL]["Close"].tolist()
 
     # AC6: the served instrument's definition was persisted as a Step-1 write.
@@ -177,10 +179,14 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
     end = pd.Timestamp("2026-06-01", tz="UTC")
 
     spy_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end).records
+        provider._request_bars_for_engine(
+            raw_bar_type(_SPY, "1D"), start=start, end=end
+        )
     )["Close"]
     gld_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end).records
+        provider._request_bars_for_engine(
+            raw_bar_type(_GLD, "1D"), start=start, end=end
+        )
     )["Close"]
     spy = request_distribution_data(
         provider,

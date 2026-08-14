@@ -7,8 +7,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data.catalog import CatalogCoverageGapError
-from aegis_data.custom_data import CustomDataProviderPort, ProviderAnswer
+from aegis_data.custom_data import CustomDataProviderPort
 from aegis_data.storage import Catalog
 from aegis_runtime import DataContract, MissingIndexPolicy
 
@@ -37,7 +36,7 @@ class _Provider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         self.requests.append((start, end))
         records = tuple(
             record
@@ -45,7 +44,7 @@ class _Provider(CustomDataProviderPort[FixtureRecord]):
             if record.instrument_id == instrument_id
             and start.value <= record.ts_event <= end.value
         )
-        return ProviderAnswer(records, start)
+        return records
 
 
 def test_sleeve_arrays_projects_every_required_bar_array_on_the_union_grid(
@@ -157,7 +156,7 @@ def test_array_need_rejects_an_inverted_coverage_window() -> None:
         )
 
 
-def test_sleeve_arrays_projection_fails_when_catalog_coverage_was_not_prepared(
+def test_sleeve_arrays_projection_treats_absent_custom_data_as_empty(
     tmp_path: Path,
 ) -> None:
     contract = _contract(
@@ -170,8 +169,10 @@ def test_sleeve_arrays_projection_fails_when_catalog_coverage_was_not_prepared(
     )
     arrays = SleeveArrays.prepared(catalog=Catalog.open(tmp_path))
 
-    with pytest.raises(CatalogCoverageGapError):
-        arrays.project(grid)
+    panels = arrays.project(grid)
+
+    assert panels["FixtureValue"].to_numpy().tolist() == [[0.0], [0.0]]
+    assert panels["FixtureAvailable"].to_numpy().tolist() == [[0.0], [0.0]]
 
 
 def _contract(

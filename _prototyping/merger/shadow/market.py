@@ -11,10 +11,7 @@ from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
-from aegis_data.catalog import (
-    CatalogCoverageGapError,
-    GapFillProviderError,
-)
+from aegis_data.catalog import GapFillProviderError
 from nautilus_trader.model.identifiers import InstrumentId
 
 from .ledger import EventObservation, EventStatus
@@ -73,7 +70,8 @@ class AegisCatalogMarkSource:
             return MarketMarkBatch((), ())
 
         ids = {
-            event.event_id: InstrumentId.from_str(event.instrument_id) for event in pending
+            event.event_id: InstrumentId.from_str(event.instrument_id)
+            for event in pending
         }
         market_id = InstrumentId.from_str(self._market_instrument_id)
         earliest = min(datetime.fromisoformat(event.observed_at) for event in pending)
@@ -87,10 +85,7 @@ class AegisCatalogMarkSource:
                 start=start,
                 end=end,
             )[market_id]
-        except (
-            CatalogCoverageGapError,
-            GapFillProviderError,
-        ) as error:
+        except GapFillProviderError as error:
             reason = _unavailable_reason(error)
             return MarketMarkBatch(
                 (),
@@ -109,10 +104,7 @@ class AegisCatalogMarkSource:
                     start=start,
                     end=end,
                 )[ids[event.event_id]]
-            except (
-                CatalogCoverageGapError,
-                GapFillProviderError,
-            ) as error:
+            except GapFillProviderError as error:
                 unavailable.append(
                     MarketUnavailable(
                         event.event_id,
@@ -131,10 +123,14 @@ class AegisCatalogMarkSource:
             if mark is not None:
                 marks.append(mark)
             if reason is not None:
-                unavailable.append(MarketUnavailable(event.event_id, event.ticker, reason))
+                unavailable.append(
+                    MarketUnavailable(event.event_id, event.ticker, reason)
+                )
         return MarketMarkBatch(
             marks=tuple(sorted(marks, key=lambda item: item.ticker)),
-            unavailable=tuple(sorted(unavailable, key=lambda item: (item.event_id, item.reason))),
+            unavailable=tuple(
+                sorted(unavailable, key=lambda item: (item.event_id, item.reason))
+            ),
         )
 
 
@@ -153,7 +149,9 @@ def _mark(
     as_of: datetime,
     annual_cash_rate: float,
 ) -> tuple[MarketMark | None, str | None]:
-    announced = pd.Timestamp(datetime.fromisoformat(event.observed_at)).tz_localize(None)
+    announced = pd.Timestamp(datetime.fromisoformat(event.observed_at)).tz_localize(
+        None
+    )
     cutoff = pd.Timestamp(as_of).tz_localize(None)
     target = target.loc[target.index <= cutoff]
     market = market.loc[market.index <= cutoff]
@@ -162,7 +160,10 @@ def _mark(
     if target.empty or market.empty or before_target.empty or before_market.empty:
         return None, "missing current or pre-announcement bars"
     joined = pd.concat(
-        [before_target["Close"].rename("target"), before_market["Close"].rename("market")],
+        [
+            before_target["Close"].rename("target"),
+            before_market["Close"].rename("market"),
+        ],
         axis=1,
         join="inner",
     ).dropna()
@@ -212,4 +213,6 @@ def _window_frames(
 ) -> dict[InstrumentId, pd.DataFrame]:
     from aegis_data.catalog import CatalogWindowRequest
 
-    return port.load_window(CatalogWindowRequest(instrument_ids, start, end, "1D")).ohlcv
+    return port.load_window(
+        CatalogWindowRequest(instrument_ids, start, end, "1D")
+    ).ohlcv

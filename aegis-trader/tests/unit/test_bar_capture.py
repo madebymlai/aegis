@@ -4,30 +4,65 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.provider import ProviderAnswer
 from aegis_data.raw_bars import RawBars
-from aegis_data.storage import Catalog, CatalogInterval
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_trader.trader.bar_capture import BarCapture
 
 
 @dataclass
 class _Provider:
+    catalog: Catalog
     requests: list[tuple[pd.Timestamp, pd.Timestamp]] = field(default_factory=list)
 
-    def request_bars(
+    def warm_bars(
+        self,
+        bar_type: BarType,
+        interval: CatalogInterval,
+    ) -> bool:
+        if self.catalog.missing(CatalogKey.for_bar(bar_type), interval):
+            self.requests.append((interval.start, interval.end))
+            return True
+        return False
+
+
+@dataclass
+class _RecordingRawBars:
+    intervals: list[CatalogInterval] = field(default_factory=list)
+
+    def covered_through(self, _bar_type: BarType) -> int | None:
+        return None
+
+    def record_verified(
         self,
         _bar_type: BarType,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-    ) -> ProviderAnswer[Bar]:
-        self.requests.append((start, end))
-        return ProviderAnswer.verified((), oldest_verified=start)
+        interval: CatalogInterval,
+        _records: tuple[Bar, ...],
+    ) -> None:
+        self.intervals.append(interval)
+
+
+def test_capture_frontier_advances_by_exact_nanosecond_adjacency() -> None:
+    bar_type = BarType.from_str("SPY.ARCA-1-MINUTE-LAST-EXTERNAL")
+    subscribed_at = pd.Timestamp("2024-01-08 09:00", tz="UTC").value
+    cadence = pd.Timedelta(minutes=1).value
+    raw_bars = _RecordingRawBars()
+    capture = BarCapture(raw_bars)  # type: ignore[arg-type]
+
+    capture.subscribe(bar_type, at_ns=subscribed_at)
+    capture.verify_clock(subscribed_at + 2 * cadence)
+
+    previous_end = subscribed_at - 1
+    written = raw_bars.intervals[0]
+    deliberately_gapped = CatalogInterval(subscribed_at + 1, written.end_ns)
+    assert written.start_ns == previous_end + 1
+    with pytest.raises(AssertionError):
+        assert deliberately_gapped.start_ns == previous_end + 1
 
 
 def test_silent_subscribed_weekend_is_verified_empty_and_needs_no_fill(
@@ -36,7 +71,7 @@ def test_silent_subscribed_weekend_is_verified_empty_and_needs_no_fill(
     catalog = Catalog.open(tmp_path)
     instrument_id = InstrumentId.from_str("AAPL.XNAS")
     bar_type = raw_bar_type(instrument_id, "1D")
-    provider = _Provider()
+    provider = _Provider(catalog)
     raw_bars = RawBars(catalog, provider=provider)
     friday = pd.Timestamp("2024-01-05", tz="UTC").value
     monday = pd.Timestamp("2024-01-08", tz="UTC").value

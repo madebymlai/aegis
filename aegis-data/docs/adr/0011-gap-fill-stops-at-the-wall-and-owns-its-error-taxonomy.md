@@ -1,6 +1,11 @@
 # The gap fill stops at the no-data wall and owns its error taxonomy
 
-Status: accepted
+Status: superseded in part by GH #96/#97/#101
+
+Provider-fault translation to `GapFillProviderError` remains current. The
+provider frontier, no-data wall orchestration, and fail-loud Coverage Gap below
+were retired: Nautilus's DataEngine now owns bar gaps and write-back, recording
+the whole interval it requested even when the vendor returns short history.
 
 Reinforces ADR-0006/0008. Fixes GH #75.
 

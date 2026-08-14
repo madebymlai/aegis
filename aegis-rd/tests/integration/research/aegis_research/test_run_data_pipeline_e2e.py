@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import pytest
 from aegis_data.catalog import CatalogBackedDataPort
-from aegis_data.custom_data import ProviderAnswer
 from aegis_data.testing import FakeCatalog, future
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -194,16 +193,13 @@ class _FixtureProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
-        return ProviderAnswer(
-            records=(
-                FixtureRecord(
-                    end.value,
-                    end.value,
-                    instrument_id=instrument_id,
-                    value=7.0,
-                    provider="fixture",
-                ),
+    ) -> tuple[FixtureRecord, ...]:
+        return (
+            FixtureRecord(
+                end.value,
+                end.value,
+                instrument_id=instrument_id,
+                value=7.0,
+                provider="fixture",
             ),
-            oldest_verified=start,
         )

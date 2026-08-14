@@ -6,7 +6,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from aegis_data._coverage_markers import CoverageInterval, CoverageMarkerLedger
 from aegis_data.bar_type import external_bar_type
 from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, raw_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode, RawBarTypeResolver
@@ -94,21 +93,10 @@ def deterministic_ohlcv_panels(
 
 
 class UnservableCatalog(FakeCatalog):
-    """A catalog nothing has ever been checked against, so the real port's
-    coverage gate judges every window unservable (no provider wired: pure gap).
-
-    Said the way coverage is actually read — as the claims on record. Its one
-    claim covers a single nanosecond at the epoch, which no requested window
-    reaches, so every request is wholly unaccounted for."""
+    """A cold catalog used to exercise provider-failure translation."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**{**kwargs, "coverage_horizon": (0, 0)})
-
-
-def unservable_port() -> CatalogBackedDataPort:
-    """A real port over a catalog that cannot serve any window (no provider):
-    every load ends in the coverage gate's verdict."""
-    return CatalogBackedDataPort(UnservableCatalog(instruments=[], bars={}))
 
 
 def seed_catalog_frames(
@@ -155,10 +143,6 @@ def seed_catalog_frames(
         )
         interval = CatalogInterval(start_ts.value, end_ts.value)
         catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
-        CoverageMarkerLedger(catalog).mark(
-            CatalogKey.for_bar(bar_type),
-            CoverageInterval(start_ts.value, end_ts.value),
-        )
         _verify_zero_distribution_coverage(
             catalog,
             current_id,
@@ -246,10 +230,6 @@ def seed_catalog_quote(
         )
         interval = CatalogInterval(start_ts.value, end_ts.value)
         catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
-        CoverageMarkerLedger(catalog).mark(
-            CatalogKey.for_bar(bar_type),
-            CoverageInterval(start_ts.value, end_ts.value),
-        )
     _verify_zero_distribution_coverage(
         catalog,
         current_id,
@@ -341,10 +321,6 @@ def seed_catalog_fx(
     )
     interval = CatalogInterval(start_ts.value, end_ts.value)
     catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
-    CoverageMarkerLedger(catalog).mark(
-        CatalogKey.for_bar(bar_type),
-        CoverageInterval(start_ts.value, end_ts.value),
-    )
 
 
 def equity_definition(instrument_id: InstrumentId, currency: str) -> Equity:

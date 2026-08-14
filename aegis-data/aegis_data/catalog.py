@@ -27,7 +27,6 @@ from aegis_data.instrument import native_multiplier, native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 from aegis_data.ohlcv import bars_to_ohlcv
 from aegis_data.raw_bars import (
-    CatalogCoverageGapError,
     GapFillProviderError,
     NautilusDataProviderPort,
     RawBars,
@@ -98,23 +97,14 @@ class ResolvedContinuousRoot:
     legs: tuple[DatedContract, ...]
 
 
-def _now_ns() -> int:
-    return pd.Timestamp.now(tz="UTC").value
-
-
 @dataclass(frozen=True)
 class CatalogBackedDataPort:
     catalog: Catalog
     provider: NautilusDataProviderPort | None = None
     distribution_provider: DistributionDataProviderPort | None = None
-    # Optional Step-1 definition write, fired only when a fill actually serves an
-    # instrument (ADR-0008): the bar port stays pure-fetch — definitions are a
-    # separate, idempotent lifecycle wired in by the caller, not a port method.
+    # Optional Step-1 definition write, fired only when warming reaches a client.
+    # Definitions remain a separate, idempotent lifecycle from Bar write-back.
     definition_seeder: Callable[[InstrumentId], None] | None = None
-    # The clock that stamps coverage markers' checked-at (ADR-0010): an injected
-    # dependency, so deterministic callers cross this seam instead of building
-    # the coverage service themselves.
-    clock_ns: Callable[[], int] = _now_ns
     # The one raw bar-type resolution seam (aegis-rd-tggo): every mark/fill
     # read resolves its bar identity here, so a different marking policy plugs
     # in without reshaping the port.
@@ -136,13 +126,9 @@ class CatalogBackedDataPort:
     def load_window(self, request: CatalogWindowRequest) -> CatalogWindow:
         """One coherent read of the requested window (ADR-0012).
 
-        The internal ordering is contract, not style: the bar coverage-gate /
-        lazy-fill pass runs FIRST (a fill's Step-1 write may seed the very
-        definition completeness needs), definition completeness is judged
-        BEFORE distribution verification (a missing definition is an authoring
-        fault and must never surface as the environmental coverage-gap error),
-        and ONE verification command gates the subsequent warm record/report
-        query.
+        The internal ordering is contract, not style: Bar warming runs FIRST
+        (a client request may seed the definition completeness needs), then
+        definition completeness is judged before Distribution materialisation.
         """
         ohlcv = self._load_raw_bars(request)
         instruments = self._complete_definitions(request.instrument_ids)
@@ -328,6 +314,7 @@ class CatalogBackedDataPort:
             InstrumentId(Symbol(root), next(iter(venues))), legs
         )
 
+
 def catalog_root(env: Mapping[str, str] | None = None) -> Path:
     values = os.environ if env is None else env
     base = values.get(AEGIS_DATA_DIR_ENV)
@@ -361,14 +348,16 @@ def catalog_data_port(
     """
     from aegis_data.ibkr import (
         IbkrHistoricalProvider,
+        historic_bar_client_factory,
         seed_instrument_definitions,
     )
+    from aegis_data.research_bars import NautilusBarWarmer
 
     catalog = open_catalog(path)
     provider = IbkrHistoricalProvider()
     return CatalogBackedDataPort(
         catalog,
-        provider=provider,
+        provider=NautilusBarWarmer(catalog, historic_bar_client_factory(provider)),
         distribution_provider=provider,
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
@@ -392,7 +381,6 @@ def _bar_cls() -> type:
 
 __all__ = [
     "CatalogBackedDataPort",
-    "CatalogCoverageGapError",
     "CatalogWindow",
     "ContinuousRootLegsNotFoundError",
     "ContinuousRootVenueMismatchError",

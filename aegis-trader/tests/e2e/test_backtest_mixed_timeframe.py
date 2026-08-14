@@ -33,9 +33,7 @@ from aegis_trader.backtest import (
     run_book_backtest,
 )
 from aegis_data.catalog import CatalogBackedDataPort
-from aegis_data._coverage_markers import CoverageMarkerLedger
-from aegis_data._ensure_coverage import CoverageInterval
-from aegis_data.storage import Catalog, CatalogKey
+from aegis_data.storage import Catalog
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.bundles.stub import StubBundleRegistry
 
@@ -129,9 +127,7 @@ class _AlternatingWeightBundle(ExecutionBundle):
 def _seed_hourly(catalog_path, instrument_id: InstrumentId, timestamps) -> None:
     catalog = ParquetDataCatalog(catalog_path)
     catalog.write_data([_equity(instrument_id)])
-    bars = [
-        _bar(raw_bar_type(instrument_id, "1H"), ts, 100.0) for ts in timestamps
-    ]
+    bars = [_bar(raw_bar_type(instrument_id, "1H"), ts, 100.0) for ts in timestamps]
     # Coverage spans the whole backtest window: hours without bars are the
     # venue's closed session, not missing catalog data.
     catalog.write_data(
@@ -150,41 +146,17 @@ def _seed_hourly(catalog_path, instrument_id: InstrumentId, timestamps) -> None:
         start=int(pd.Timestamp("2020-01-01", tz="UTC").value),
         end=int(pd.Timestamp("2020-01-05", tz="UTC").value),
     )
-    _mark_bar_coverage(catalog_path, raw_bar_type(instrument_id, "1H"))
-    _mark_bar_coverage(catalog_path, raw_bar_type(instrument_id, "1D"))
 
 
 def _seed_daily(catalog_path, instrument_id: InstrumentId, days: int) -> None:
     catalog = ParquetDataCatalog(catalog_path)
     catalog.write_data([_equity(instrument_id)])
     timestamps = pd.date_range("2020-01-01", periods=days, freq="D")
-    bars = [
-        _bar(raw_bar_type(instrument_id, "1D"), ts, 100.0) for ts in timestamps
-    ]
+    bars = [_bar(raw_bar_type(instrument_id, "1D"), ts, 100.0) for ts in timestamps]
     catalog.write_data(
         bars,
         start=int(pd.Timestamp("2020-01-01", tz="UTC").value),
         end=int(pd.Timestamp("2020-01-05", tz="UTC").value),
-    )
-    _mark_bar_coverage(catalog_path, raw_bar_type(instrument_id, "1D"))
-
-
-def _mark_bar_coverage(
-    catalog_path,
-    bar_type,
-    *,
-    start_ns: int | None = None,
-    end_ns: int | None = None,
-) -> None:
-    if start_ns is None:
-        start_ns = int(pd.Timestamp("2020-01-01", tz="UTC").value)
-    if end_ns is None:
-        end_ns = int(pd.Timestamp("2020-01-05", tz="UTC").value)
-    CoverageMarkerLedger(Catalog.open(catalog_path)).mark(
-        CatalogKey.for_bar(bar_type),
-        CoverageInterval(start_ns, end_ns),
-        checked_at_ns=start_ns,
-        applicable=True,
     )
 
 
@@ -693,18 +665,6 @@ def _seed_weekly(catalog_path, instrument_id: InstrumentId, fridays) -> None:
         for ts in pd.date_range("2020-01-01", "2020-02-04", freq="B")
     ]
     catalog.write_data(daily_bars, start=start, end=end)
-    _mark_bar_coverage(
-        catalog_path,
-        raw_bar_type(instrument_id, "1W"),
-        start_ns=start,
-        end_ns=end,
-    )
-    _mark_bar_coverage(
-        catalog_path,
-        raw_bar_type(instrument_id, "1D"),
-        start_ns=start,
-        end_ns=end,
-    )
 
 
 def _weekly_distribution_source(
@@ -764,9 +724,7 @@ def test_weekly_book_derives_its_horizon_and_trades_weekly(tmp_path) -> None:
         assert fills != []
         # NEXT-CLOSE at weekly cadence: every fill sits on a weekly bar stamp
         # (Friday 16:30) plus the 1ns re-net alert, across distinct weeks.
-        assert all(
-            (ts.hour, ts.minute, ts.nanosecond) == (16, 30, 1) for ts in fills
-        )
+        assert all((ts.hour, ts.minute, ts.nanosecond) == (16, 30, 1) for ts in fills)
         assert len({ts.date() for ts in fills}) >= 2
         assert fills == _fill_timestamps(second.engine, _WEEKLY_ID)
 

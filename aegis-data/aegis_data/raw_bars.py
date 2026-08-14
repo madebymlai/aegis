@@ -8,28 +8,23 @@ import pandas as pd
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data._ensure_coverage import (
-    CatalogCoverageGapError,
-    CoverageInterval,
-    GapFillProviderError,
-    ensure_coverage,
-    gap_fill_boundary,
+from aegis_data.marking import (
+    DeclaredMarkingResolver,
+    InstrumentMarking,
+    RawBarTypeResolver,
 )
-from aegis_data.marking import DeclaredMarkingResolver, InstrumentMarking, RawBarTypeResolver
-from aegis_data.provider import ProviderAnswer
+from aegis_data.provider_errors import GapFillProviderError, gap_fill_boundary
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 
 
 class NautilusDataProviderPort(Protocol):
-    """Fetch Bars without owning persistence or coverage decisions."""
+    """Warm Bars while the Nautilus engine owns persistence and coverage."""
 
-    def request_bars(
+    def warm_bars(
         self,
         bar_type: BarType,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-    ) -> ProviderAnswer[Bar]: ...
+        interval: CatalogInterval,
+    ) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -42,9 +37,7 @@ class RawBarWindow:
     @property
     def bars(self) -> tuple[Bar, ...]:
         return tuple(
-            bar
-            for bar_type in self.marking.mark_bars
-            for bar in self.by_type[bar_type]
+            bar for bar_type in self.marking.mark_bars for bar in self.by_type[bar_type]
         )
 
     @property
@@ -79,11 +72,7 @@ class RawBars:
         marking: InstrumentMarking,
         interval: CatalogInterval,
     ) -> RawBarWindow:
-        """Read a covered window, failing loud on any gap without filling."""
-        for bar_type in marking.mark_bars:
-            missing = self.catalog.missing(CatalogKey.for_bar(bar_type), interval)
-            if missing:
-                raise _coverage_gap(bar_type, missing)
+        """Read the records stored in a window; absence is an empty answer."""
         return self._read(marking, interval)
 
     def stored(
@@ -146,27 +135,13 @@ class RawBars:
         bar_type: BarType,
         interval: CatalogInterval,
     ) -> None:
-        subject = CatalogKey.for_bar(bar_type)
-        provider = _bar_fetcher(self.provider, bar_type) if self.provider else None
-
-        def consolidate_and_seed() -> None:
-            self.catalog.compact(subject, interval)
-            if self.definition_seeder is not None:
-                with gap_fill_boundary(str(bar_type)):
-                    self.definition_seeder(bar_type.instrument_id)
-
-        ensure_coverage(
-            subject=str(bar_type),
-            provider=provider,
-            missing_intervals=lambda: list(self.catalog.missing(subject, interval)),
-            commit=lambda verified, records: self.record_verified(
-                bar_type,
-                verified,
-                records,
-            ),
-            coverage_error=lambda missing: _coverage_gap(bar_type, missing),
-            on_filled=consolidate_and_seed,
-        )
+        if self.provider is None:
+            return
+        with gap_fill_boundary(str(bar_type)):
+            fetched = self.provider.warm_bars(bar_type, interval)
+        if fetched and self.definition_seeder is not None:
+            with gap_fill_boundary(str(bar_type)):
+                self.definition_seeder(bar_type.instrument_id)
 
 
 def _utc_day_interval(timestamp_ns: int) -> CatalogInterval:
@@ -174,35 +149,7 @@ def _utc_day_interval(timestamp_ns: int) -> CatalogInterval:
     return CatalogInterval(day.value, (day + pd.Timedelta(days=1)).value - 1)
 
 
-def _bar_fetcher(
-    provider: NautilusDataProviderPort,
-    bar_type: BarType,
-) -> Callable[[pd.Timestamp, pd.Timestamp], ProviderAnswer[Bar]]:
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ProviderAnswer[Bar]:
-        return provider.request_bars(bar_type, start=start, end=end)
-
-    return fetch
-
-
-def _coverage_gap(
-    bar_type: BarType,
-    intervals: Sequence[CoverageInterval],
-) -> CatalogCoverageGapError:
-    ranges = [
-        f"{interval.start.isoformat()}..{interval.end.isoformat()}"
-        for interval in intervals
-    ]
-    return CatalogCoverageGapError(
-        CatalogKey.for_bar(bar_type),
-        intervals,
-        message=(
-            f"catalog cannot serve {bar_type} for requested window; missing={ranges}"
-        ),
-    )
-
-
 __all__ = [
-    "CatalogCoverageGapError",
     "GapFillProviderError",
     "NautilusDataProviderPort",
     "RawBarWindow",

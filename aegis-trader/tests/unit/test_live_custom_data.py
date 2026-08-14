@@ -30,7 +30,6 @@ from aegis_data.custom_data import (
     InvalidLiveCustomDataCapabilityError,
     LiveCustomDataCapability,
     LiveDataClientName,
-    ProviderAnswer,
 )
 from aegis_data.storage import Catalog
 from aegis_trader.data.market_data import MarketBar
@@ -108,7 +107,7 @@ class _StreamingProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ProviderAnswer[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         self.requests.append((start, end))
         records = tuple(
             record
@@ -116,7 +115,7 @@ class _StreamingProvider:
             if record.instrument_id == instrument_id
             and start.value <= record.ts_event <= end.value
         )
-        return ProviderAnswer(records, start)
+        return records
 
 
 class _InvalidStreamingProvider:
@@ -283,7 +282,7 @@ def test_native_capture_gap_is_healed_by_live_array_coverage(tmp_path: Path) -> 
     assert panels["FixtureValue"].to_numpy().tolist() == [[2.0], [2.0], [8.0]]
 
 
-def test_live_array_coverage_makes_no_request_for_a_covered_window(
+def test_live_array_coverage_rechecks_a_window_that_has_never_stored_a_record(
     tmp_path: Path,
 ) -> None:
     instrument_id = InstrumentId.from_str("SPY.ARCA")
@@ -301,7 +300,7 @@ def test_live_array_coverage_makes_no_request_for_a_covered_window(
 
     build_live_sleeve_arrays({FixtureRecord: unused}, catalog=catalog).ensure(need)
 
-    assert unused.requests == []
+    assert unused.requests == [(index[0], index[-1])]
 
 
 def test_live_startup_warms_the_declared_custom_array_window(
@@ -401,8 +400,7 @@ def _custom_array_grid(
     ).contract
     bars = {
         instrument_id: tuple(
-            MarketBar(timestamp.value, 1.0, 1.0, 1.0, 1.0, 1.0)
-            for timestamp in index
+            MarketBar(timestamp.value, 1.0, 1.0, 1.0, 1.0, 1.0) for timestamp in index
         )
     }
     return SleeveArrayGrid.from_bars(contract, bars)
