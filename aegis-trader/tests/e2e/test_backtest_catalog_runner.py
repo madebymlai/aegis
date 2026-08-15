@@ -25,7 +25,7 @@ from aegis_data.catalog import (
     raw_bar_type,
 )
 from aegis_data.custom_data import CustomDataWarmer
-from aegis_data.ibkr import historic_custom_data_client_factory
+from aegis_data.ibkr import historic_catalog_client_factory
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
@@ -236,7 +236,7 @@ class _AdjustedLastProvider:
 def _adjusted_close_warmer(catalog: Catalog, provider: Any) -> CustomDataWarmer:
     return CustomDataWarmer(
         catalog,
-        historic_custom_data_client_factory(provider),
+        historic_catalog_client_factory(provider),
     )
 
 

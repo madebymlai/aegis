@@ -1,9 +1,9 @@
 """IBKR historic fetch for research and backfill.
 
 :class:`IbkrHistoricalProvider` hides the standalone vendor session's
-``asyncio`` surface. :class:`HistoricDataClient` presents Bar and provider-backed
-Custom Data requests to a bare Nautilus DataEngine, which owns missing intervals
-and Catalog write-back.
+``asyncio`` surface. :class:`HistoricDataClient` presents Instrument, Bar, and
+provider-backed Custom Data requests to a bare Nautilus DataEngine, which owns
+catalog-first lookup, missing intervals, and Catalog write-back.
 The provider retains the instrument-definition and ``ADJUSTED_LAST`` extensions
 the stock Bar API cannot express, and resolves identity through IB simplified
 symbology (ADR-0005).
@@ -28,24 +28,26 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 import pandas as pd
 from nautilus_trader.common.config import msgspec_encoding_hook
+from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.data.client import MarketDataClient
-from nautilus_trader.model.identifiers import ClientId
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.data.messages import RequestInstrument
+from nautilus_trader.model.identifiers import ClientId, InstrumentId
 
 from aegis_data._catalog_request import (
     CatalogClientBinding,
+    CatalogClientBindingFactory,
     CatalogClientFailure,
     CatalogClientFailureRecorder,
+    run_catalog_request,
 )
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.custom_data import CustomDataClientFactory
 from aegis_data.distributions import (
     AdjustedClose,
     AdjustedCloseRequestMetadata,
     adjusted_close_records,
 )
-from aegis_data.storage import Catalog
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
+from aegis_data.storage import Catalog
 
 if TYPE_CHECKING:
     from nautilus_trader.adapters.interactive_brokers.common import IBContract
@@ -372,7 +374,7 @@ class HistoricDataClient(MarketDataClient):
     ) -> None:
         super().__init__(client_id, msgbus, cache, clock, None, None)
         self._provider = provider
-        self._custom_data_failure = CatalogClientFailureRecorder()
+        self._request_failure = CatalogClientFailureRecorder()
 
     def _connect(self) -> None:
         pass
@@ -389,6 +391,39 @@ class HistoricDataClient(MarketDataClient):
         self._handle_bars_py(
             request.bar_type,
             list(bars),
+            request.id,
+            request.start,
+            request.end,
+            request.params,
+        )
+
+    def request_instrument(self, request: Any) -> None:
+        """Answer a native instrument request from the vendor provider."""
+        try:
+            instruments = self._provider.request_instruments((request.instrument_id,))
+        except Exception as error:  # noqa: BLE001 - surfaced by the seeding command
+            self._request_failure.record(error)
+            return
+        instrument = next(
+            (
+                instrument
+                for instrument in instruments
+                if instrument.id == request.instrument_id
+            ),
+            None,
+        )
+        if instrument is None:
+            self._handle_instruments_py(
+                request.instrument_id.venue,
+                [],
+                request.id,
+                request.start,
+                request.end,
+                request.params,
+            )
+            return
+        self._handle_instrument_py(
+            _catalog_safe_instrument(instrument),
             request.id,
             request.start,
             request.end,
@@ -426,7 +461,7 @@ class HistoricDataClient(MarketDataClient):
         error: Exception | None = None,
     ) -> None:
         if error is not None:
-            self._custom_data_failure.record(error)
+            self._request_failure.record(error)
             return
         self._handle_data_response_py(
             request.data_type,
@@ -438,7 +473,7 @@ class HistoricDataClient(MarketDataClient):
         )
 
     def request_failure(self) -> CatalogClientFailure | None:
-        return self._custom_data_failure.failure
+        return self._request_failure.failure
 
 
 def historic_data_client_factory(
@@ -458,10 +493,10 @@ def historic_data_client_factory(
     return build
 
 
-def historic_custom_data_client_factory(
+def historic_catalog_client_factory(
     provider: IbkrHistoricalProvider,
-) -> CustomDataClientFactory:
-    """Build the IBKR client with a visible Custom Data failure sink."""
+) -> CatalogClientBindingFactory:
+    """Build the IBKR client with a visible catalog-request failure sink."""
 
     def build(
         msgbus: Any,
@@ -821,34 +856,44 @@ def seed_instrument_definitions(
     provider: IbkrHistoricalProvider,
     instrument_ids: Sequence[InstrumentId],
 ) -> None:
-    """Persist instrument definitions to *catalog* (the Step-1 write, ADR-0008).
+    """Ensure definitions through Nautilus's catalog-first request path.
 
-    Definitions are a **separate lifecycle** from the per-window bar fill — static
-    setup, not windowed data (ADR-0008, ISP: the bar port is not widened). It is
-    **idempotent**: only the definitions missing from *catalog* are fetched and
-    written, so calling it is free when they are already present — which is what
-    lets the lazy fill trigger it on a backfill without making a warm read connect
-    to IBKR. The provider *fetches* definitions, aegis-data *writes* them.
+    ``DataEngine`` answers a warm request from the Catalog and dispatches a cold
+    request to the vendor client. With ``update_catalog=True`` it owns the
+    idempotent write-back as well; this adapter only normalizes IBKR's auxiliary
+    ``info`` payload before returning the definition to the engine.
     """
-    missing = _missing_definitions(catalog, instrument_ids)
-    if not missing:
-        return
-    instruments = provider.request_instruments(missing)
-    if instruments:
-        catalog.store_definitions(
-            [_catalog_safe_instrument(instrument) for instrument in instruments]
+    client_factory = historic_catalog_client_factory(provider)
+    for instrument_id in instrument_ids:
+        outcome = run_catalog_request(
+            catalog,
+            end_ns=pd.Timestamp.max.value - 1,
+            client_factory=client_factory,
+            request_factory=functools.partial(
+                _catalog_instrument_request,
+                instrument_id,
+            ),
         )
+        if outcome.failure is not None:
+            raise outcome.failure.cause
 
 
-def _missing_definitions(
-    catalog: Catalog, instrument_ids: Sequence[InstrumentId]
-) -> list[InstrumentId]:
-    present = {instrument.id for instrument in catalog.definitions(instrument_ids)}
-    return [
-        instrument_id
-        for instrument_id in instrument_ids
-        if instrument_id not in present
-    ]
+def _catalog_instrument_request(
+    instrument_id: InstrumentId,
+    clock: Any,
+    callback: Callable[[object], None],
+) -> RequestInstrument:
+    return RequestInstrument(
+        instrument_id=instrument_id,
+        start=None,
+        end=None,
+        client_id=None,
+        venue=instrument_id.venue,
+        callback=callback,
+        request_id=UUID4(),
+        ts_init=clock.timestamp_ns(),
+        params={"update_catalog": True},
+    )
 
 
 _DROP_INFO_VALUE = object()

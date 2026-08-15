@@ -11,17 +11,17 @@ from nautilus_trader.core.data import Data
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from platformdirs import user_data_dir
 
-from aegis_data.bar_type import raw_bar_type
-from aegis_data.definitions import (
-    catalog_definitions,
-    continuous_root_legs,
-)
 from aegis_data._distribution_verification import (
     distribution_coverage_report,
     ensure_distribution_window,
     read_distribution_window,
 )
+from aegis_data.bar_type import raw_bar_type
 from aegis_data.custom_data import CustomDataWarmer
+from aegis_data.definitions import (
+    catalog_definitions,
+    continuous_root_legs,
+)
 from aegis_data.distributions import Distribution, distribution_records
 from aegis_data.instrument import native_multiplier, native_size_increment
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
@@ -348,7 +348,7 @@ def catalog_data_port(
     """
     from aegis_data.ibkr import (
         IbkrHistoricalProvider,
-        historic_custom_data_client_factory,
+        historic_catalog_client_factory,
         historic_data_client_factory,
         seed_instrument_definitions,
     )
@@ -361,7 +361,7 @@ def catalog_data_port(
         provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
         custom_data_warmer=CustomDataWarmer(
             catalog,
-            historic_custom_data_client_factory(provider),
+            historic_catalog_client_factory(provider),
         ),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)

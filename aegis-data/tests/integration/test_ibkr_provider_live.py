@@ -30,7 +30,7 @@ from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.distributions import recover_distributions_from_adjusted_last
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
-    historic_custom_data_client_factory,
+    historic_catalog_client_factory,
     historic_data_client_factory,
     seed_instrument_definitions,
 )
@@ -152,7 +152,7 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
         # fill port carries both provider roles — the production composition.
         custom_data_warmer=CustomDataWarmer(
             catalog,
-            historic_custom_data_client_factory(provider),
+            historic_catalog_client_factory(provider),
         ),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)

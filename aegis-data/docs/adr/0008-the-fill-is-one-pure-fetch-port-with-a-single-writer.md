@@ -7,7 +7,10 @@ ledger. Research Bars and provider-backed Custom Data now run through Nautilus's
 DataEngine, which owns missing intervals and Catalog write-back. Locally derived
 Distributions keep their deterministic materialization and file extents, while
 adjusted closes are persisted as provider-backed Custom Data. The separate,
-idempotent instrument-definition write remains current.
+idempotent instrument-definition lifecycle remains current, but its catalog
+lookup and write-back now run through Nautilus `RequestInstrument` with
+`update_catalog=True`; Aegis no longer computes the missing set or calls a
+catalog definition writer itself.
 
 ## Context
 
@@ -104,11 +107,13 @@ existing draft conflated several concerns:
   a successful backfill (a miss the provider served) triggers an *idempotent*
   definition Step-1 write through a **separate injected seeder**
   (`CatalogBackedDataPort.definition_seeder`), not a port method. The seeder
-  (`seed_instrument_definitions`) writes only the definitions missing from the
-  catalog, so it is free when they are already present — which is why it can fire on
-  the fill yet a *warm* read (a cache hit, no miss) never seeds and never connects.
-  The bar port stays a single pure-fetch method; definitions remain a distinct
-  lifecycle, merely *triggered* at the point a new instrument is first served.
+  (`seed_instrument_definitions`) issues native `RequestInstrument` commands;
+  Nautilus answers existing definitions from the Catalog and sends only misses
+  to the IBKR client, then performs the `update_catalog=True` write-back. It is
+  therefore free when definitions are already present, while a *warm* bar read
+  (a cache hit, no miss) never invokes the seeder at all. The bar port stays a
+  single pure-fetch method; definitions remain a distinct lifecycle, merely
+  *triggered* at the point a new instrument is first served.
 - The catalog partitions one folder per `bar_type`, so a partial-instrument write
   cannot clobber other instruments (a known hazard for bucketed parquet caches). Do
   not consolidate multiple instruments into shared files.

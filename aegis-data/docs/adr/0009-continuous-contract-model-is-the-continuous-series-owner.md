@@ -48,12 +48,26 @@ model's `continuous_id` against the declaration at the existing continuous
 venue parity gate, then drives the model. Research constructs the same model and
 reads its frame.
 
+Nautilus owns historical segmentation and adjustment through a native
+`RequestBars` carrying the transition table. Its live `SubscribeBars` state
+machine is intentionally not the owner of Aegis's live tail: it schedules a
+switch only from a transition supplied before that transition instant, while
+Aegis learns a liquidity crossover causally from the coincident boundary bars.
+A 1.231 compatibility spike confirmed that unsubscribing and re-subscribing with
+the newly expanded table switches the source leg but cannot replay the already
+consumed post-leg boundary bar; the result retains the old-leg boundary and
+omits the new-leg boundary. Keeping the tail in this shared model therefore
+preserves the causal, gap-free contract instead of creating a second live
+subscription lifecycle.
+
 ## Consequences
 
 - Live/research parity becomes one implementation with two adapters, not two
   implementations that happen to agree.
 - The continuous front leg has one authority: the liquidity-timed roll schedule
   that also builds the adjusted frame.
+- Nautilus owns continuous historical request segmentation and adjustment;
+  `ContinuousContractModel` owns the causally discovered live boundary and tail.
 - `continuous_catalog` can shrink to the cheap continuous-root identity
   resolver after research and live both construct the model directly.
 - `aegis-trader` stops importing catalog internals for continuous-series

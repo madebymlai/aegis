@@ -22,8 +22,7 @@ from typing import Any, cast
 import pandas as pd
 import pytest
 from nautilus_trader.model.currencies import USD
-from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 
@@ -38,7 +37,7 @@ from aegis_data.distributions import Distribution
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
-    historic_custom_data_client_factory,
+    historic_catalog_client_factory,
     historic_data_client_factory,
     seed_instrument_definitions,
 )
@@ -46,8 +45,8 @@ from aegis_data.ibkr.historical import (
     UnsupportedHistoricCustomDataError,
     _HistoricSession,
 )
-from aegis_data.storage import Catalog
 from aegis_data.research_bars import CatalogBarWarmer
+from aegis_data.storage import Catalog
 
 
 def test_historic_client_rejects_unsupported_custom_data_before_vendor_fetch(
@@ -55,7 +54,7 @@ def test_historic_client_rejects_unsupported_custom_data_before_vendor_fetch(
 ) -> None:
     warmer = CustomDataWarmer(
         Catalog.open(tmp_path),
-        historic_custom_data_client_factory(cast(Any, object())),
+        historic_catalog_client_factory(cast(Any, object())),
     )
 
     with pytest.raises(GapFillProviderError) as excinfo:
@@ -680,35 +679,33 @@ class _IneligibilityReasonLike:
     pass
 
 
-class _FakeCatalog:
-    def __init__(self, present: list[_Instr] | None = None) -> None:
-        self._present = present or []
-        self.writes: list[list[Any]] = []
-
-    def definitions(
-        self, instrument_ids: tuple[InstrumentId, ...]
-    ) -> tuple[_Instr, ...]:
-        wanted = {instrument_id.value for instrument_id in instrument_ids}
-        return [
-            instrument for instrument in self._present if instrument.id.value in wanted
-        ]
-
-    def store_definitions(self, data: list[Any]) -> None:
-        self.writes.append(data)
+def _definition(instrument_id: InstrumentId, *, ts_init: int = 0) -> Equity:
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=instrument_id.symbol,
+        currency=USD,
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(100),
+        ts_event=0,
+        ts_init=ts_init,
+    )
 
 
-def test_seed_writes_all_definitions_when_none_present() -> None:
-    aapl = InstrumentId.from_str("AAPL.NASDAQ")
-    vusa = InstrumentId.from_str("VUSA.XLON")
-    fetched = [_Instr(aapl), _Instr(vusa)]
+def test_seed_persists_a_definition_through_native_request_write_back(
+    tmp_path: Path,
+) -> None:
+    aapl = InstrumentId.from_str("AAPL.XNAS")
+    fetched = [_definition(aapl)]
     fake = _FakeHistoricClient(bars=[], instruments=fetched)
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
-    catalog = _FakeCatalog()
+    catalog = Catalog.open(tmp_path)
 
-    seed_instrument_definitions(catalog, provider, (aapl, vusa))
+    seed_instrument_definitions(catalog, provider, (aapl,))
 
-    assert fake.instrument_calls[0]["instrument_ids"] == ["AAPL.NASDAQ", "VUSA.XLON"]
-    assert catalog.writes == [fetched]
+    loaded = catalog.definitions((aapl,))
+    assert len(loaded) == 1
+    assert loaded[0].id == aapl
 
 
 def test_request_instruments_can_pass_expired_future_contracts() -> None:
@@ -759,31 +756,46 @@ def test_request_instruments_splits_expired_futures_from_plain_ids() -> None:
     assert contract.includeExpired is True
 
 
-def test_seed_fetches_only_the_missing_definitions() -> None:
-    aapl = InstrumentId.from_str("AAPL.NASDAQ")
+def test_seed_fetches_only_the_missing_definitions(tmp_path: Path) -> None:
+    aapl = InstrumentId.from_str("AAPL.XNAS")
     vusa = InstrumentId.from_str("VUSA.XLON")
-    fetched = [_Instr(vusa)]
+    fetched = [_definition(vusa)]
     fake = _FakeHistoricClient(bars=[], instruments=fetched)
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
-    catalog = _FakeCatalog(present=[_Instr(aapl)])
+    catalog = Catalog.open(tmp_path)
+    catalog.store_definitions([_definition(aapl)])
 
     seed_instrument_definitions(catalog, provider, (aapl, vusa))
 
-    assert fake.instrument_calls[0]["instrument_ids"] == ["VUSA.XLON"]
-    assert catalog.writes == [fetched]
+    loaded = catalog.definitions((aapl, vusa))
+    assert len(loaded) == 2
+    assert loaded[0].id == aapl
+    assert loaded[1].id == vusa
 
 
-def test_seed_is_a_noop_and_never_connects_when_all_present() -> None:
-    aapl = InstrumentId.from_str("AAPL.NASDAQ")
+def test_seed_is_a_noop_and_never_connects_when_all_present(tmp_path: Path) -> None:
+    aapl = InstrumentId.from_str("AAPL.XNAS")
+    catalog = Catalog.open(tmp_path)
+    catalog.store_definitions(
+        [_definition(aapl, ts_init=1_700_000_000_000_000_000)]
+    )
+
+    seed_instrument_definitions(catalog, cast(Any, object()), (aapl,))
+
+    loaded = catalog.definitions((aapl,))
+    assert len(loaded) == 1
+    assert loaded[0].id == aapl
+
+
+def test_seed_treats_an_absent_vendor_definition_as_a_noop(tmp_path: Path) -> None:
+    aapl = InstrumentId.from_str("AAPL.XNAS")
     fake = _FakeHistoricClient(bars=[], instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
-    catalog = _FakeCatalog(present=[_Instr(aapl)])
+    catalog = Catalog.open(tmp_path)
 
     seed_instrument_definitions(catalog, provider, (aapl,))
 
-    assert fake.events == []
-    assert fake.instrument_calls == []
-    assert catalog.writes == []
+    assert catalog.definitions((aapl,)) == ()
 
 
 def test_seed_strips_ibkr_ineligibility_reasons_before_catalog_write(

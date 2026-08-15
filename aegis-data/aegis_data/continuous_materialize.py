@@ -5,8 +5,10 @@ Nautilus's ``DataEngine`` owns the back-adjustment arithmetic; this drives it fr
 one-shot historical ``request_bars`` carrying the roll-transition table
 (:meth:`~aegis_data.continuous_future.ContinuousFuture.request_params`).  The adjusted
 series is captured off the historical-bars topic and returned; it is **never
-persisted** (r8b.2).  Research reads its continuous series through here; live reads the
-same engine arithmetic through ``subscribe_bars`` on the trading node.
+persisted** (r8b.2). Research and live recovery both rebuild through this native
+request path. The causal live tail stays in ``ContinuousContractModel`` because
+its volume-led transition is not known until the boundary bars have arrived;
+Nautilus's subscription path requires that transition before the boundary.
 
 Mechanism (``engine.pyx``): a ``RequestBars`` whose ``params`` carry
 ``continuous_future_transitions`` is routed to ``_handle_continuous_future_request``,

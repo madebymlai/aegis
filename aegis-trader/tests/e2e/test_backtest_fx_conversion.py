@@ -33,7 +33,7 @@ from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_data.bar_type import external_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
-from aegis_data.ibkr import historic_custom_data_client_factory
+from aegis_data.ibkr import historic_catalog_client_factory
 from aegis_data.custom_data import CustomDataWarmer
 from aegis_trader.backtest import CatalogBacktestDataSource, run_book_backtest
 from aegis_trader.bundles.stub import StubBundleRegistry
@@ -222,7 +222,7 @@ def _zero_distribution_source(catalog_path) -> CatalogBacktestDataSource:
             catalog,
             custom_data_warmer=CustomDataWarmer(
                 catalog,
-                historic_custom_data_client_factory(
+                historic_catalog_client_factory(
                     _AdjustedLastProvider(adjusted_last)
                 ),
             ),

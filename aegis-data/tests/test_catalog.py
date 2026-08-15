@@ -10,17 +10,16 @@ from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity
-from nautilus_trader.model.objects import Currency
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from aegis_data.bar_type import external_bar_type, mic_canonical_instrument_id
 from aegis_data.catalog import (
     CatalogBackedDataPort,
+    CatalogWindowRequest,
     ContinuousRootLegsNotFoundError,
     ContinuousRootVenueMismatchError,
     GapFillProviderError,
     MissingCatalogDefinitionsError,
-    CatalogWindowRequest,
     catalog_data_port,
     catalog_root,
     continuous_root_legs,
@@ -38,7 +37,7 @@ from aegis_data.distributions import (
     adjusted_close_records,
     write_distribution_data,
 )
-from aegis_data.ibkr import IbkrRequestError, historic_custom_data_client_factory
+from aegis_data.ibkr import IbkrRequestError, historic_catalog_client_factory
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.roll import DatedContract
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
@@ -166,7 +165,7 @@ def _historic_adjusted_close_warmer(
 ) -> CustomDataWarmer:
     return CustomDataWarmer(
         catalog,
-        historic_custom_data_client_factory(provider),
+        historic_catalog_client_factory(provider),
     )
 
 

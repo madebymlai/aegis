@@ -33,12 +33,15 @@ _Avoid_: adjusted series, converted bars, continuous future
 The explicit list of roll seams — transition instant, the two legs by native
 `InstrumentId`, and each leg's seam Close — that aegis-data derives as a pure
 function over catalog legs (`continuous_future.py`). Handed to Nautilus via
-`request_bars`/`subscribe_bars` `params`; the engine materialises the back-adjusted
-continuous series on demand (Path A) under an explicitly supplied adjustment mode
-(`BACKWARD_RATIO` or `BACKWARD_SPREAD`) — research supplies the mode it records as
-Run evidence, live supplies the locked bundle contract's mode — and it is never
-persisted. Golden tests pin the engine's output byte-for-byte for both backward
-modes (root ADR-0009).
+`request_bars` `params`; the engine materialises the back-adjusted continuous
+series on demand (Path A) under an explicitly supplied adjustment mode
+(`BACKWARD_RATIO` or `BACKWARD_SPREAD`). A `subscribe_bars` handoff is valid only
+when its next transition is known before the boundary. Aegis learns a
+volume-led live roll from the boundary bars themselves, so the live tail remains
+in the shared `ContinuousContractModel`. Research supplies the mode it records
+as Run evidence, live supplies the locked bundle contract's mode, and the series
+is never persisted. Golden tests pin the engine's output byte-for-byte for both
+backward modes (root ADR-0009).
 _Avoid_: implicit mode defaults on the shared path, bespoke back-adjust, persisted continuous series
 
 **ContinuousContractModel**:
