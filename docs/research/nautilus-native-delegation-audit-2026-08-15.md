@@ -1,10 +1,12 @@
 # Nautilus-native delegation audit
 
 **Date:** 2026-08-15
-**Status:** Research only; no production changes or tickets created
+**Status:** Completed audit with implementation follow-up
 
-**Implementation follow-up:** The two strong candidates were implemented later the
-same day. The remaining findings retain their investigate/keep classifications.
+**Implementation follow-up:** The strong candidates, native instrument seeding,
+native-Bar backtest input, and native Distribution request lifecycle were
+implemented later the same day. The remaining findings retain their
+investigate/keep classifications.
 
 ## Conclusion
 
@@ -38,7 +40,7 @@ The graph recorded no source gaps in the cited production files. The only bounde
 | **Strong candidate** | FX quote construction | Use native `QuoteTickDataWrangler` |
 | **Already native** | Historical continuous-future stitching | Keep supplying Aegis's transition table to Nautilus's request machinery |
 | **Investigate** | IB instrument seeding | Test native request-to-catalog persistence after resolving metadata serialization |
-| **Investigate** | Distribution materialization | Prototype native `RequestData(update_catalog=True)` against the small local `Catalog.fill` loop |
+| **Implemented** | Distribution materialization | Native `RequestData(update_catalog=True)` owns missing intervals and Catalog write-back |
 | **Prototype only** | Request joining and `BacktestNode` | Evaluate newer/native orchestration; do not make it an implementation dependency yet |
 | **Investigate** | Backtest data loading | Separate native engine input from Aegis's research/domain frame view |
 | **Investigate** | Live capture | Test whether native streaming can preserve Aegis's canonical and verified-silence semantics |
@@ -73,17 +75,25 @@ The Aegis input is a mid/mark series rather than a real bid/ask feed, but that d
 
 ## Investigate before changing
 
-### 3. Route derived Distribution filling through the DataEngine
+### 3. Route derived Distribution filling through the DataEngine — implemented
 
-[`Catalog.fill`](../../aegis-data/aegis_data/storage.py#L243) asks the catalog for missing intervals, invokes a callback for each interval, and writes results with interval bounds. Its production use is [`_ensure_assessment`](../../aegis-data/aegis_data/_distribution_verification.py#L129), where the callback deterministically derives `Distribution` records from stored trade closes and `AdjustedClose` custom data.
+The Context7/API review and an executable spike against the installed 1.231.0
+runtime compared cold records, a never-populated empty dataset, an empty tail
+beside stored data, warm repetition, and failure propagation. Native
+`RequestData(update_catalog=True)` matched `Catalog.fill`'s file-extent and
+repeat-request behavior in every storage case.
 
-That mechanical gap/request/write-back sequence overlaps Nautilus's `DataEngine`: a request can query catalogs, fetch missing components, group responses, and write them back when `update_catalog=True`. The relevant native implementation is in [`DataEngine`](https://github.com/nautechsystems/nautilus_trader/blob/v1.231.0/nautilus_trader/data/engine.pyx#L1994-L2065) and its [catalog update path](https://github.com/nautechsystems/nautilus_trader/blob/v1.231.0/nautilus_trader/data/engine.pyx#L3116-L3240).
+Distribution derivation is now a local provider behind the existing Custom Data
+client. Aegis still owns the deterministic calculation from stored trade closes
+and `AdjustedClose`; Nautilus's `DataEngine` owns missing-interval discovery,
+request grouping, and Catalog write-back. Existing `GapFillProviderError` values
+pass through the nested request unchanged, avoiding a duplicate provider-error
+layer. The now-redundant `Catalog.fill` algorithm was deleted.
 
-A native design would expose distribution derivation as a local `DataClient`, request `Distribution` via `RequestData(update_catalog=True)`, and let the engine own the mechanical request/write-back lifecycle. However, that may replace a small pure materializer with a bus, engine, client registration, and request lifecycle solely to derive one dataset. Prototype and compare interface depth, dependency count, empty-interval behavior, and failure attribution. The prototype must retain Aegis's authoritative catalog-extent coverage semantics and its deterministic `Distribution` derivation; only the orchestration is in question. Delete `Catalog.fill` only if the native route is demonstrably simpler end to end.
-
-Newer/nightly Nautilus documentation also exposes `Strategy.request_join`, which coordinates and combines multiple sub-requests. That API is absent from the locally installed 1.231.0 source used for this audit, and joining responses would not itself define Aegis's distribution calculation or verified-empty coverage. Treat [native request joining](https://nautilustrader.io/docs/python-api-nightly/trading.html) as a prototype input for a future-version spike, not as an implementation recommendation for the current lock.
-
-**Why not strong:** the duplication is real, but native orchestration may cost more than the local implementation it replaces.
+This is reuse rather than a new lifecycle: provider-backed custom data already
+constructs the request engine and client binding. Adding `Distribution` to that
+path removes a second gap/write algorithm while retaining the Catalog port as
+the single public verification seam.
 
 ### 4. Avoid the catalog Bar → DataFrame → Bar backtest round trip
 
@@ -166,7 +176,7 @@ Do not create all investigation tickets as implementation work. The following or
 
 1. **Use `QuoteTickDataWrangler` for backtest FX quote construction.** Implementation ticket; include behavioral parity tests.
 2. **Compose live data/execution clients before `TradingNode` construction.** Implementation ticket; acceptance criterion is zero access to `TradingNode._config`.
-3. **Spike: native request lifecycle for deterministic Distribution materialization.** Decision ticket; compare code/dependency surface and empty-interval semantics, then explicitly choose native DataEngine or retain `Catalog.fill`.
+3. **Implemented: native request lifecycle for deterministic Distribution materialization.** The exact-version spike preserved extent and empty-interval behavior; `Catalog.fill` was deleted.
 4. **Implemented: feed the catalog window's native Bars directly to the backtest engine.** DataFrame projections remain only for validation and domain consumers; `BacktestNode` orchestration was rejected for 1.231.0.
 5. **Validate native IB instrument request-to-catalog persistence.** Compatibility ticket; cover msgspec metadata and MIC identity before deleting the seeding path.
 6. **Spike: native streaming equivalence for observed custom data and bars.** Decision ticket; verified-empty time is a hard acceptance criterion for bars.

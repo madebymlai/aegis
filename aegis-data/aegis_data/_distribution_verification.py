@@ -12,7 +12,10 @@ from aegis_data.definitions import (
     catalog_definitions,
     continuous_instrument_legs,
 )
-from aegis_data.custom_data import CustomDataWarmer
+from aegis_data.custom_data import (
+    CustomDataWarmer,
+    provider_backed_custom_data_client_factory,
+)
 from aegis_data.raw_bars import RawBars
 from aegis_data.distributions import (
     AdjustedClose,
@@ -59,6 +62,48 @@ class _Assessment:
     instrument_id: InstrumentId
     applicability: _Applicability
     interval: CatalogInterval
+
+
+@dataclass(frozen=True)
+class _DerivedDistributionProvider:
+    catalog: Catalog
+    adjusted_close_warmer: CustomDataWarmer
+    definition: Any
+    raw_bars: RawBars
+
+    def request_records(
+        self,
+        instrument_id: InstrumentId,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> tuple[Distribution, ...]:
+        interval = CatalogInterval(start.value, end.value)
+        decode_start_ns = pd.Timestamp(interval.start_ns, tz="UTC").normalize().value
+        trade_marking = marking_for_mode(instrument_id, "1D", MarkMode.LAST)
+        bar_interval = CatalogInterval(decode_start_ns, interval.end_ns)
+        self.raw_bars.ensure(trade_marking, bar_interval)
+        trades = self.raw_bars.stored(trade_marking, bar_interval).ohlcv["Close"]
+        if len(trades) < 2:
+            return ()
+        currency = _definition_currency(self.definition, instrument_id, interval)
+        adjusted_last = _stored_adjusted_last(
+            self.catalog,
+            self.adjusted_close_warmer,
+            instrument_id,
+            bar_interval,
+            currency=currency,
+        )
+        return tuple(
+            record
+            for record in recover_distributions_from_adjusted_last(
+                instrument_id=instrument_id,
+                trades=trades,
+                adjusted_last=adjusted_last,
+                currency=currency,
+            )
+            if interval.start_ns <= record.ts_event <= interval.end_ns
+        )
 
 
 def ensure_distribution_window(
@@ -135,60 +180,21 @@ def _ensure_assessment(
 ) -> None:
     if not assessment.applicability.applicable or custom_data_warmer is None:
         return
-    subject = CatalogKey.for_instrument(Distribution, assessment.instrument_id)
-
-    def fetch(gap: CatalogInterval) -> Sequence[Distribution]:
-        return _verify_interval(
-            catalog,
-            custom_data_warmer,
-            assessment.instrument_id,
-            assessment.applicability.definition,
-            gap,
-            raw_bars=raw_bars,
-        )
-
-    catalog.fill(subject, assessment.interval, fetch)
-
-
-def _verify_interval(
-    catalog: Catalog,
-    custom_data_warmer: CustomDataWarmer,
-    instrument_id: InstrumentId,
-    definition: Any,
-    interval: CatalogInterval,
-    *,
-    raw_bars: RawBars,
-) -> tuple[Distribution, ...]:
-    """Recover the distributions *interval* verifies, and only those.
-
-    The decode needs two closes to compare, so it reads back to the start of the
-    requested day. Records recovered from that widened read but falling outside
-    *interval* belong to a window this call did not answer for, and are dropped
-    here rather than by whoever stores the result.
-    """
-    decode_start_ns = pd.Timestamp(interval.start_ns, tz="UTC").normalize().value
-    trade_marking = marking_for_mode(instrument_id, "1D", MarkMode.LAST)
-    bar_interval = CatalogInterval(decode_start_ns, interval.end_ns)
-    raw_bars.ensure(trade_marking, bar_interval)
-    trades = raw_bars.stored(trade_marking, bar_interval).ohlcv["Close"]
-    if len(trades) < 2:
-        return ()
-    adjusted_last = _stored_adjusted_last(
+    provider = _DerivedDistributionProvider(
         catalog,
         custom_data_warmer,
-        instrument_id,
-        CatalogInterval(decode_start_ns, interval.end_ns),
-        currency=_definition_currency(definition, instrument_id, interval),
+        assessment.applicability.definition,
+        raw_bars,
     )
-    return tuple(
-        record
-        for record in recover_distributions_from_adjusted_last(
-            instrument_id=instrument_id,
-            trades=trades,
-            adjusted_last=adjusted_last,
-            currency=_definition_currency(definition, instrument_id, interval),
-        )
-        if interval.start_ns <= record.ts_event <= interval.end_ns
+    warmer = CustomDataWarmer(
+        catalog,
+        provider_backed_custom_data_client_factory({Distribution: provider}),
+    )
+    warmer.warm(
+        Distribution,
+        (assessment.instrument_id,),
+        start=assessment.interval.start,
+        end=assessment.interval.end,
     )
 
 

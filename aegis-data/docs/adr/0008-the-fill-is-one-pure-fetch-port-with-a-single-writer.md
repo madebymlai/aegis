@@ -3,10 +3,11 @@
 Status: superseded in part by GH #96/#98/#100/#101 and aegis-rd-bo4
 
 The historical decision below kept Aegis-owned gap orchestration and a marker
-ledger. Research Bars and provider-backed Custom Data now run through Nautilus's
-DataEngine, which owns missing intervals and Catalog write-back. Locally derived
-Distributions keep their deterministic materialization and file extents, while
-adjusted closes are persisted as provider-backed Custom Data. The separate,
+ledger. Research Bars, provider-backed Custom Data, and locally derived
+Distributions now run through Nautilus's DataEngine, which owns missing
+intervals and Catalog write-back. Distribution calculation remains deterministic
+Aegis domain logic, while adjusted closes are persisted as provider-backed
+Custom Data. The separate,
 idempotent instrument-definition lifecycle remains current, but its catalog
 lookup and write-back now run through Nautilus `RequestInstrument` with
 `update_catalog=True`; Aegis no longer computes the missing set or calls a

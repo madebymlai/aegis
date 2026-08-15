@@ -16,6 +16,8 @@ def gap_fill_boundary(subject: str) -> Iterator[None]:
     """Name the failed provider subject while preserving the original cause."""
     try:
         yield
+    except GapFillProviderError:
+        raise
     except Exception as exc:
         first_line = str(exc).splitlines()[0] if str(exc) else ""
         if len(first_line) > _CAUSE_SUMMARY_LIMIT:

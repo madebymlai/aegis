@@ -5,6 +5,9 @@ Status: superseded in part by GH #96/#98/#100
 Distribution materialisation remains internal to the Catalog port. Its marker
 ledger and injected marker clock were retired; stored traded and adjusted-close
 inputs now make the materialisation deterministic, while absence reads empty.
+The calculation is exposed as a local Custom Data provider: native
+`RequestData(update_catalog=True)` owns gap discovery and Catalog write-back, so
+the former Aegis-owned `Catalog.fill` algorithm no longer exists.
 
 Reinforces ADR-0008.
 
