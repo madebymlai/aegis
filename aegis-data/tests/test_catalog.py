@@ -312,11 +312,11 @@ def test_a_stored_window_is_served_without_consulting_an_available_provider(
         end="2024-01-02",
     )
 
-    first = port._load_raw_bars(request)
-    second = port._load_raw_bars(request)
+    first = port._load_bar_windows(request)
+    second = port._load_bar_windows(request)
 
-    assert first[instrument_id]["Close"].tolist() == [9.0]
-    assert second[instrument_id]["Close"].tolist() == [9.0]
+    assert first[instrument_id].ohlcv["Close"].tolist() == [9.0]
+    assert second[instrument_id].ohlcv["Close"].tolist() == [9.0]
     assert provider.requests == []
 
 
@@ -335,7 +335,7 @@ def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
     provider = _ProviderPort(catalog, [])
     port = CatalogBackedDataPort(catalog, provider=provider)
 
-    frames = port._load_raw_bars(
+    frames = port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(instrument_id,),
             start="2024-01-01",
@@ -343,7 +343,7 @@ def test_catalog_port_reads_cache_hit_without_backfill(tmp_path: Path) -> None:
         )
     )
 
-    assert frames[instrument_id]["Close"].tolist() == [10.0]
+    assert frames[instrument_id].ohlcv["Close"].tolist() == [10.0]
     assert provider.requests == []
 
 
@@ -365,7 +365,7 @@ def test_catalog_port_reads_mic_cache_hit_for_ib_exchange_alias(
     provider = _ProviderPort(catalog, [])
     port = CatalogBackedDataPort(catalog, provider=provider)
 
-    frames = port._load_raw_bars(
+    frames = port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(requested_id,),
             start="2024-01-01",
@@ -373,7 +373,7 @@ def test_catalog_port_reads_mic_cache_hit_for_ib_exchange_alias(
         )
     )
 
-    assert frames[requested_id]["Close"].tolist() == [99.0]
+    assert frames[requested_id].ohlcv["Close"].tolist() == [99.0]
     assert provider.requests == []
 
 
@@ -394,14 +394,14 @@ def test_catalog_port_backfills_missing_tail_with_update_catalog(
     provider = _ProviderPort(catalog, [_bar(bar_type, "2024-01-02", 11.0)])
     port = CatalogBackedDataPort(catalog, provider=provider)
 
-    first = port._load_raw_bars(
+    first = port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(instrument_id,),
             start="2024-01-01",
             end="2024-01-03",
         )
     )
-    second = port._load_raw_bars(
+    second = port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(instrument_id,),
             start="2024-01-01",
@@ -409,8 +409,8 @@ def test_catalog_port_backfills_missing_tail_with_update_catalog(
         )
     )
 
-    assert first[instrument_id]["Close"].tolist() == [10.0, 11.0]
-    assert second[instrument_id]["Close"].tolist() == [10.0, 11.0]
+    assert first[instrument_id].ohlcv["Close"].tolist() == [10.0, 11.0]
+    assert second[instrument_id].ohlcv["Close"].tolist() == [10.0, 11.0]
     assert provider.requests == [bar_type]
 
 
@@ -434,7 +434,7 @@ def test_catalog_port_serves_a_quote_marked_instrument_as_the_derived_mid(
     provider = _ProviderPort(catalog, [])
     port = CatalogBackedDataPort(catalog, provider=provider, resolver=resolver)
 
-    frames = port._load_raw_bars(
+    frames = port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(instrument_id,),
             start="2024-01-01",
@@ -442,7 +442,7 @@ def test_catalog_port_serves_a_quote_marked_instrument_as_the_derived_mid(
         )
     )
 
-    assert frames[instrument_id]["Close"].tolist() == [100.5]
+    assert frames[instrument_id].ohlcv["Close"].tolist() == [100.5]
     assert provider.requests == []
 
 
@@ -483,13 +483,13 @@ def test_catalog_port_collapses_duplicate_ts_event_from_overlapping_batches(
         catalog, provider=_ProviderPort(catalog, []), resolver=resolver
     )
 
-    frame = port._load_raw_bars(
+    frame = port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(instrument_id,),
             start="2024-01-01",
             end="2024-01-04",
         )
-    )[instrument_id]
+    )[instrument_id].ohlcv
 
     # One row per ts_event: the boundary duplicate (01-02) is collapsed and the index stays
     # unique (before the fix the duplicate made a two-row index that broke downstream).
@@ -506,7 +506,7 @@ def test_catalog_port_cold_fills_a_quote_marked_instrument_from_bid_and_ask(
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
-    instrument_id = _id("UEQC.XETR")
+    instrument_id = _id("EUR/USD.IDEALPRO")
     resolver = DeclaredMarkingResolver(declared={instrument_id: MarkMode.QUOTE})
     bid_type, ask_type = resolver.resolve(instrument_id, "1D").mark_bars
     provider = _QuoteProviderPort(
@@ -516,9 +516,10 @@ def test_catalog_port_cold_fills_a_quote_marked_instrument_from_bid_and_ask(
             ask_type: [_bar(ask_type, "2024-01-01", 101.0)],
         },
     )
+    catalog.store_definitions([_currency_pair(instrument_id)])
     port = CatalogBackedDataPort(catalog, provider=provider, resolver=resolver)
 
-    frames = port._load_raw_bars(
+    window = port.load_window(
         CatalogWindowRequest(
             instrument_ids=(instrument_id,),
             start="2024-01-01",
@@ -526,46 +527,44 @@ def test_catalog_port_cold_fills_a_quote_marked_instrument_from_bid_and_ask(
         )
     )
 
-    assert frames[instrument_id]["Close"].tolist() == [100.5]
+    assert window.ohlcv[instrument_id]["Close"].tolist() == [100.5]
     assert provider.requests == [bid_type, ask_type]
 
 
-def test_catalog_port_serves_sided_quote_frames_for_quote_marked_legs_only(
+def test_catalog_window_carries_native_quote_bars_and_their_projections(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
-    quote_id = _id("UEQC.XETR")
-    last_id = _id("AAPL.XNAS")
+    quote_id = _id("EUR/USD.IDEALPRO")
     resolver = DeclaredMarkingResolver(declared={quote_id: MarkMode.QUOTE})
     bid_type, ask_type = resolver.resolve(quote_id, "1D").mark_bars
+    bid_bar = _bar(bid_type, "2024-01-01", 100.0)
+    ask_bar = _bar(ask_type, "2024-01-01", 101.0)
     _write_span(
         catalog,
-        [
-            _bar(bid_type, "2024-01-01", 100.0),
-            _bar(ask_type, "2024-01-01", 101.0),
-            _bar(raw_bar_type(last_id, "1D"), "2024-01-01", 10.0),
-        ],
+        [bid_bar, ask_bar],
         start="2024-01-01",
         end="2024-01-02",
     )
-    port = CatalogBackedDataPort(
-        catalog, provider=_ProviderPort(catalog, []), resolver=resolver
-    )
+    catalog.store_definitions([_currency_pair(quote_id)])
+    port = CatalogBackedDataPort(catalog, resolver=resolver)
 
-    frames = port.load_quote_frames(
+    window = port.load_window(
         CatalogWindowRequest(
-            instrument_ids=(quote_id, last_id),
+            instrument_ids=(quote_id,),
             start="2024-01-01",
             end="2024-01-02",
         )
     )
 
-    assert set(frames) == {quote_id}
-    bid_frame, ask_frame = frames[quote_id]
+    assert window.bars == {quote_id: (bid_bar, ask_bar)}
+    assert set(window.quote_frames) == {quote_id}
+    bid_frame, ask_frame = window.quote_frames[quote_id]
     assert bid_frame["Close"].tolist() == [100.0]
     assert ask_frame["Close"].tolist() == [101.0]
+    assert window.ohlcv[quote_id]["Close"].tolist() == [100.5]
 
 
 class _QuoteProviderPort:
@@ -623,7 +622,7 @@ def test_catalog_port_seeds_instrument_definition_on_backfill(tmp_path: Path) ->
         catalog, provider=provider, definition_seeder=seeded.append
     )
 
-    port._load_raw_bars(
+    port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(instrument_id,),
             start="2024-01-01",
@@ -651,7 +650,7 @@ def test_catalog_port_does_not_seed_definition_on_cache_hit(tmp_path: Path) -> N
         catalog, provider=_ProviderPort(catalog, []), definition_seeder=seeded.append
     )
 
-    port._load_raw_bars(
+    port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(instrument_id,),
             start="2024-01-01",
@@ -686,7 +685,7 @@ def test_catalog_port_returns_empty_when_window_is_unservable(tmp_path: Path) ->
     catalog = Catalog.open(catalog_path)
     port = CatalogBackedDataPort(catalog)
 
-    frames = port._load_raw_bars(
+    frames = port._load_bar_windows(
         CatalogWindowRequest(
             instrument_ids=(_id("AAPL.NASDAQ"),),
             start="2024-01-01",
@@ -694,7 +693,7 @@ def test_catalog_port_returns_empty_when_window_is_unservable(tmp_path: Path) ->
         )
     )
 
-    assert frames[_id("AAPL.NASDAQ")].empty
+    assert frames[_id("AAPL.NASDAQ")].ohlcv.empty
 
 
 def test_catalog_port_persists_partial_fill_over_the_whole_requested_window(
@@ -716,7 +715,7 @@ def test_catalog_port_persists_partial_fill_over_the_whole_requested_window(
         end="2024-01-05",
     )
 
-    port._load_raw_bars(request)
+    port._load_bar_windows(request)
 
     warmed = port.raw_bars.stored(
         port.raw_bars.marking(instrument_id, request.timeframe),
@@ -766,7 +765,7 @@ def test_catalog_port_translates_a_provider_failure_into_a_port_error(
     )
 
     with pytest.raises(GapFillProviderError, match="AAPL.XNAS") as excinfo:
-        port._load_raw_bars(request)
+        port._load_bar_windows(request)
 
     assert not isinstance(excinfo.value, IbkrRequestError)
     assert isinstance(excinfo.value.__cause__, IbkrRequestError)
@@ -788,7 +787,7 @@ def test_gap_fill_failure_bounds_the_vendor_prose(tmp_path: Path) -> None:
     port = CatalogBackedDataPort(catalog, provider=_VerboseProvider())
 
     with pytest.raises(GapFillProviderError) as excinfo:
-        port._load_raw_bars(
+        port._load_bar_windows(
             CatalogWindowRequest(
                 instrument_ids=(_id("AAPL.NASDAQ"),),
                 start="2024-01-01",
@@ -826,7 +825,7 @@ def test_catalog_port_translates_a_definition_seeder_failure_into_a_port_error(
     )
 
     with pytest.raises(GapFillProviderError) as excinfo:
-        port._load_raw_bars(
+        port._load_bar_windows(
             CatalogWindowRequest(
                 instrument_ids=(instrument_id,), start="2024-01-02", end="2024-01-03"
             )

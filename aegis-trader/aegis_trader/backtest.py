@@ -10,7 +10,7 @@ Catalog through the Aegis Data port, and the same
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -36,6 +36,7 @@ from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.config import PortfolioConfig
 
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
+from aegis_data.raw_bars import RawBarWindow
 from aegis_data.catalog import (
     BarWarmerPort,
     CatalogBackedDataPort,
@@ -49,7 +50,7 @@ from aegis_trader.bundles.marking import recorded_marking_resolver
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
-from aegis_trader.data import wrangle_bars, wrangle_fx_quotes, wrangle_quote_bars
+from aegis_trader.data import wrangle_fx_quotes
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.streams import MarketStream
@@ -94,18 +95,38 @@ class ContractDataError(ValueError):
 class BacktestMarketData:
     """Catalog material the runner feeds into Nautilus' ``BacktestEngine``.
 
-    ``ohlcv`` is each instrument's mark series (a quote-marked leg's derived
-    mid).  ``quote_frames`` carries the ``(bid, ask)`` sided frames for
-    quote-marked legs only — the research fill projection's feed, derived here
-    and never serialized (aegis-rd-tggo.5).
+    ``bar_windows`` are the one authoritative market-data representation. Their
+    native Bars feed Nautilus directly; OHLCV and sided quote frames are derived
+    projections for validation and vectorized domain consumers.
     """
 
     instruments: Mapping[InstrumentId, Instrument]
-    ohlcv: Mapping[InstrumentId, pd.DataFrame]
+    bar_windows: Mapping[InstrumentId, RawBarWindow]
     records: tuple[Data, ...] = ()
-    quote_frames: Mapping[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = field(
-        default_factory=dict
-    )
+
+    @property
+    def bars(self) -> dict[InstrumentId, tuple[Bar, ...]]:
+        return {
+            instrument_id: window.bars
+            for instrument_id, window in self.bar_windows.items()
+        }
+
+    @property
+    def ohlcv(self) -> dict[InstrumentId, pd.DataFrame]:
+        return {
+            instrument_id: window.ohlcv
+            for instrument_id, window in self.bar_windows.items()
+        }
+
+    @property
+    def quote_frames(
+        self,
+    ) -> dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]]:
+        return {
+            instrument_id: sided
+            for instrument_id, window in self.bar_windows.items()
+            if (sided := window.quote_ohlcv) is not None
+        }
 
     @property
     def distributions(self) -> tuple[Distribution, ...]:
@@ -168,9 +189,8 @@ class CatalogBacktestDataSource:
         window = data_port.load_window(request)
         return BacktestMarketData(
             instruments=window.instruments,
-            ohlcv=window.ohlcv,
+            bar_windows=window.bar_windows,
             records=window.records,
-            quote_frames=data_port.load_quote_frames(request),
         )
 
     def _data_port(self) -> CatalogBackedDataPort:
@@ -285,12 +305,10 @@ def run_book_backtest(
         quote_marked_ids=frozenset(market_data.quote_frames),
     )
     added_instrument_ids: set[InstrumentId] = set()
-    for timeframe, group_data in loaded:
+    for _timeframe, group_data in loaded:
         _add_instruments_and_bars(
             engine,
             market_data=group_data,
-            timeframe=timeframe,
-            resolver=resolver,
             added_instrument_ids=added_instrument_ids,
         )
     _add_custom_data(engine, (*market_data.records, *array_records))
@@ -356,19 +374,16 @@ def _merged_market_data(
     if len(loaded) == 1:
         return loaded[0][1]
     instruments: dict[InstrumentId, Instrument] = {}
-    ohlcv: dict[InstrumentId, pd.DataFrame] = {}
+    bar_windows: dict[InstrumentId, RawBarWindow] = {}
     records: list[Data] = []
-    quote_frames: dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = {}
     for _timeframe, market_data in loaded:
         instruments.update(market_data.instruments)
-        ohlcv.update(market_data.ohlcv)
+        bar_windows.update(market_data.bar_windows)
         records.extend(market_data.records)
-        quote_frames.update(market_data.quote_frames)
     return BacktestMarketData(
         instruments=instruments,
-        ohlcv=ohlcv,
+        bar_windows=bar_windows,
         records=tuple(records),
-        quote_frames=quote_frames,
     )
 
 
@@ -580,8 +595,6 @@ def _add_instruments_and_bars(
     engine: BacktestEngine,
     *,
     market_data: BacktestMarketData,
-    timeframe: str,
-    resolver: RawBarTypeResolver,
     added_instrument_ids: set[InstrumentId],
 ) -> None:
     """Register one timeframe group's instruments and bars.
@@ -595,45 +608,21 @@ def _add_instruments_and_bars(
         if not already_added:
             engine.add_instrument(instrument)
             added_instrument_ids.add(instrument_id)
-        frame = market_data.ohlcv[instrument_id]
-        sided = market_data.quote_frames.get(instrument_id)
-        if sided is not None:
+        engine.add_data(list(market_data.bars[instrument_id]), sort=False)
+        if instrument_id in market_data.quote_frames:
             # Quote-marked (aegis-rd-tggo.5): BID + ASK EXTERNAL bars are the
             # single source — the venue pairs them into L1 quotes (fills at the
             # real touch), and the strategy both signals on and publishes the
             # derived mid mark from the same bars (the one publisher, research
             # and live alike — aegis-rd-tggo.3).  No LAST/MID bar exists.
-            bid_frame, ask_frame = sided
-            engine.add_data(
-                _wrangle_quote_external_bars(
-                    instrument, bid_frame, ask_frame, timeframe, resolver
-                ),
-                sort=False,
-            )
             continue
-        bars = _wrangle_external_bars(instrument, frame, timeframe, resolver)
-        engine.add_data(bars, sort=False)
         if isinstance(instrument, CurrencyPair) and not already_added:
             # An FX conversion leg feeds the cache mark xrate the same way live
             # does: one quote per bar close (strategy.on_quote_tick), so sizing's
             # fx_rate read works from the same series the panel conversion uses.
-            engine.add_data(_fx_quotes(instrument, frame), sort=False)
-
-
-def _wrangle_quote_external_bars(
-    instrument: Instrument,
-    bid_ohlcv: pd.DataFrame,
-    ask_ohlcv: pd.DataFrame,
-    timeframe: str,
-    resolver: RawBarTypeResolver,
-) -> list[Bar]:
-    return wrangle_quote_bars(
-        instrument,
-        _normalize_ohlcv(bid_ohlcv),
-        _normalize_ohlcv(ask_ohlcv),
-        timeframe,
-        resolver=resolver,
-    )
+            engine.add_data(
+                _fx_quotes(instrument, market_data.ohlcv[instrument_id]), sort=False
+            )
 
 
 def _add_custom_data(
@@ -658,16 +647,6 @@ def _fx_quotes(pair: CurrencyPair, ohlcv: pd.DataFrame) -> list[Any]:
     if closes.index.tz is None:
         closes = closes.tz_localize("UTC")
     return wrangle_fx_quotes(pair, closes)
-
-
-def _wrangle_external_bars(
-    instrument: Instrument,
-    ohlcv: pd.DataFrame,
-    timeframe: str,
-    resolver: RawBarTypeResolver,
-) -> list[Bar]:
-    frame = _normalize_ohlcv(ohlcv)
-    return wrangle_bars(instrument, frame, timeframe, resolver=resolver)
 
 
 def _normalize_ohlcv(ohlcv: pd.DataFrame) -> pd.DataFrame:

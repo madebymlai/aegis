@@ -27,6 +27,7 @@ from aegis_runtime import (
 from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_data.bar_type import timeframe_to_ns
+from aegis_data.marking import MarkMode
 from aegis_trader.backtest import (
     CatalogBacktestDataSource,
     book_return_stats,
@@ -46,6 +47,7 @@ from tests.e2e.test_backtest_catalog_runner import (
     _equity,
     _verified_zero_distribution_source,
 )
+from tests.support.market_data import bar_window_from_frames
 
 _HOURLY_ID = InstrumentId.from_str("FAST.XLON")
 _DAILY_ID = InstrumentId.from_str("SLOW.XLON")
@@ -320,8 +322,11 @@ class _MixedMarkingDataSource:
             ask = _sided_hourly_frame(100.05)
             return BacktestMarketData(
                 instruments={_HOURLY_ID: _equity(_HOURLY_ID)},
-                ohlcv={_HOURLY_ID: (bid + ask) / 2.0},
-                quote_frames={_HOURLY_ID: (bid, ask)},
+                bar_windows={
+                    _HOURLY_ID: bar_window_from_frames(
+                        _HOURLY_ID, "1H", MarkMode.QUOTE, (bid, ask)
+                    )
+                },
             )
         assert timeframe == "1D"
         days = pd.date_range("2020-01-01", periods=4, freq="D")
@@ -337,7 +342,11 @@ class _MixedMarkingDataSource:
         )
         return BacktestMarketData(
             instruments={_DAILY_ID: _equity(_DAILY_ID)},
-            ohlcv={_DAILY_ID: daily},
+            bar_windows={
+                _DAILY_ID: bar_window_from_frames(
+                    _DAILY_ID, "1D", MarkMode.LAST, (daily,)
+                )
+            },
         )
 
 
@@ -514,11 +523,20 @@ class _IntegratedDataSource:
                     _HOURLY_ID: _equity(_HOURLY_ID),
                     _SECOND_HOURLY_ID: _equity(_SECOND_HOURLY_ID),
                 },
-                ohlcv={
-                    _HOURLY_ID: _sided_hourly_frame(100.0),
-                    _SECOND_HOURLY_ID: (bid + ask) / 2.0,
+                bar_windows={
+                    _HOURLY_ID: bar_window_from_frames(
+                        _HOURLY_ID,
+                        "1H",
+                        MarkMode.LAST,
+                        (_sided_hourly_frame(100.0),),
+                    ),
+                    _SECOND_HOURLY_ID: bar_window_from_frames(
+                        _SECOND_HOURLY_ID,
+                        "1H",
+                        MarkMode.QUOTE,
+                        (bid, ask),
+                    ),
                 },
-                quote_frames={_SECOND_HOURLY_ID: (bid, ask)},
             )
         assert timeframe == "1D"
         days = pd.date_range("2020-01-01", periods=4, freq="D")
@@ -541,10 +559,23 @@ class _IntegratedDataSource:
                 _EURUSD_ID: build_currency_pair("EUR", "USD", "IDEALPRO"),
                 _ES: _equity(_ES),
             },
-            ohlcv={
-                _USD_DAILY_ID: _daily(100.0),
-                _EURUSD_ID: _daily(1.25),
-                _ES: _ohlcv_frame([100.0, 101.0, 102.0, 103.0]),
+            bar_windows={
+                _USD_DAILY_ID: bar_window_from_frames(
+                    _USD_DAILY_ID, "1D", MarkMode.LAST, (_daily(100.0),)
+                ),
+                _EURUSD_ID: bar_window_from_frames(
+                    _EURUSD_ID,
+                    "1D",
+                    MarkMode.MID,
+                    (_daily(1.25),),
+                    price_precision=5,
+                ),
+                _ES: bar_window_from_frames(
+                    _ES,
+                    "1D",
+                    MarkMode.LAST,
+                    (_ohlcv_frame([100.0, 101.0, 102.0, 103.0]),),
+                ),
             },
         )
 

@@ -33,9 +33,11 @@ from aegis_runtime import (
 )
 from aegis_runtime.domain.currency import CurrencyConversion
 
+from aegis_data.marking import MarkMode
 from aegis_trader.backtest import BacktestMarketData, run_book_backtest
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.portfolio.performance import BookEquityRecorder
+from tests.support.market_data import bar_window_from_frames
 
 _TIGHT = InstrumentId.from_str("TIGHT.XETR")
 _WIDE = InstrumentId.from_str("WIDE.XETR")
@@ -203,13 +205,19 @@ class _QuoteMarkedDataSource:
         wide_ask = _flat_frame(_WIDE_ASK)
         return BacktestMarketData(
             instruments={_TIGHT: _equity(_TIGHT), _WIDE: _equity(_WIDE)},
-            ohlcv={
-                _TIGHT: (tight_bid + tight_ask) / 2.0,
-                _WIDE: (wide_bid + wide_ask) / 2.0,
-            },
-            quote_frames={
-                _TIGHT: (tight_bid, tight_ask),
-                _WIDE: (wide_bid, wide_ask),
+            bar_windows={
+                _TIGHT: bar_window_from_frames(
+                    _TIGHT,
+                    "1D",
+                    MarkMode.QUOTE,
+                    (tight_bid, tight_ask),
+                ),
+                _WIDE: bar_window_from_frames(
+                    _WIDE,
+                    "1D",
+                    MarkMode.QUOTE,
+                    (wide_bid, wide_ask),
+                ),
             },
         )
 

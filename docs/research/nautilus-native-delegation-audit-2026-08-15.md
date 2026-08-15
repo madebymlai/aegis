@@ -89,14 +89,14 @@ Newer/nightly Nautilus documentation also exposes `Strategy.request_join`, which
 
 [`CatalogBacktestDataSource.load`](../../aegis-trader/aegis_trader/backtest.py#L141) obtains OHLCV frames from catalog-backed native bars. Later, [`_add_instruments_and_bars`](../../aegis-trader/aegis_trader/backtest.py#L579) converts those frames back into Nautilus `Bar` objects with `BarDataWrangler` and adds them to `BacktestEngine`. [`run_book_backtest`](../../aegis-trader/aegis_trader/backtest.py#L187) also coordinates instruments, bars, quotes, custom events, and simulation modules manually.
 
-Nautilus 1.231.0's `BacktestDataConfig` can query `Bar` or custom data directly from a `ParquetDataCatalog`, including explicit `bar_types` or instrument/bar-spec combinations. `BacktestNode` then loads instruments and data and supports one-shot or streaming execution. See [`BacktestDataConfig`](https://github.com/nautechsystems/nautilus_trader/blob/v1.231.0/nautilus_trader/backtest/config.py#L195-L289) and [`BacktestNode`](https://github.com/nautechsystems/nautilus_trader/blob/v1.231.0/nautilus_trader/backtest/node.py). This is a prototype direction, not a recommendation to replace Aegis's runner wholesale.
+Nautilus 1.231.0's `BacktestDataConfig` can query `Bar` or custom data directly from a `ParquetDataCatalog`, including explicit `bar_types` or instrument/bar-spec combinations. `BacktestNode` then loads instruments and data and supports one-shot or streaming execution. See [`BacktestDataConfig`](https://github.com/nautechsystems/nautilus_trader/blob/v1.231.0/nautilus_trader/backtest/config.py#L195-L289) and [`BacktestNode`](https://github.com/nautechsystems/nautilus_trader/blob/v1.231.0/nautilus_trader/backtest/node.py).
 
 The clean seam is likely two views:
 
 - native catalog records/configs for engine input;
 - Aegis DataFrames only where vectorized research, validation, or domain array assembly needs them.
 
-Do not replace the entire runner immediately. Aegis still needs warm-before-run behavior, distribution events, custom simulation modules, continuous-root handling, and synthetic FX marking. First prove that direct native loading removes the conversion round trip without duplicating catalog queries or weakening existing validation. This spike should also measure native streaming/chunked loading for larger books.
+The spike rejected a wholesale `BacktestNode` migration on Nautilus 1.231.0: native catalog loading was lossless and runtime strategies could attach after `build()`, but the config surface rejected Aegis's already-constructed financing/dividend simulation modules. The implemented narrower design keeps the existing runner and carries the native Bars already held by `RawBarWindow` through `CatalogWindow` into `BacktestEngine`. OHLCV and sided quote frames remain projections for validation, domain arrays, marking, and synthetic FX quotes. This removes the conversion and a second quote-frame catalog read without weakening preflight or changing simulation composition.
 
 ### 5. Let native instrument requests update the catalog—if IB metadata is safe
 
@@ -167,7 +167,7 @@ Do not create all investigation tickets as implementation work. The following or
 1. **Use `QuoteTickDataWrangler` for backtest FX quote construction.** Implementation ticket; include behavioral parity tests.
 2. **Compose live data/execution clients before `TradingNode` construction.** Implementation ticket; acceptance criterion is zero access to `TradingNode._config`.
 3. **Spike: native request lifecycle for deterministic Distribution materialization.** Decision ticket; compare code/dependency surface and empty-interval semantics, then explicitly choose native DataEngine or retain `Catalog.fill`.
-4. **Spike: load backtest engine bars directly from the Nautilus catalog.** Decision ticket; retain a separate DataFrame projection only for research/domain consumers and benchmark streaming.
+4. **Implemented: feed the catalog window's native Bars directly to the backtest engine.** DataFrame projections remain only for validation and domain consumers; `BacktestNode` orchestration was rejected for 1.231.0.
 5. **Validate native IB instrument request-to-catalog persistence.** Compatibility ticket; cover msgspec metadata and MIC identity before deleting the seeding path.
 6. **Spike: native streaming equivalence for observed custom data and bars.** Decision ticket; verified-empty time is a hard acceptance criterion for bars.
 7. **Spike: native continuous subscription after transition freeze.** Low-priority decision ticket; Aegis remains the owner of roll discovery and execution-front policy.

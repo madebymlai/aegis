@@ -26,6 +26,7 @@ from aegis_data.catalog import (
 )
 from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.ibkr import historic_catalog_client_factory
+from aegis_data.marking import MarkMode
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
 from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
@@ -45,6 +46,7 @@ from aegis_trader.backtest import (
     BacktestMarketData,
     CatalogBacktestDataSource,
     CatalogInstrumentError,
+    ContractDataError,
     run_book_backtest,
 )
 from aegis_trader.bundles.stub import StubBundleRegistry
@@ -52,6 +54,7 @@ from aegis_trader.domain.roll import RollEvent, SubscribeBars, UnsubscribeBars
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.portfolio import NautilusBookState
 from aegis_trader.trader.strategy import RebalanceStrategy
+from tests.support.market_data import bar_window_from_frames
 
 _INSTRUMENT_ID = InstrumentId.from_str("VUSA.XLON")
 _SECOND_INSTRUMENT_ID = InstrumentId.from_str("AAPL.XNAS")
@@ -441,7 +444,11 @@ class _ContinuousRootDataSource:
         assert (timeframe, start, end) == ("1D", "2020-01-01", "2020-01-05")
         return BacktestMarketData(
             instruments={_ES: _equity(_ES)},
-            ohlcv={_ES: self._frame},
+            bar_windows={
+                _ES: bar_window_from_frames(
+                    _ES, "1D", MarkMode.LAST, (self._frame,)
+                )
+            },
         )
 
 
@@ -465,10 +472,16 @@ class _RollingContinuousRootDataSource:
                 _ES_OLD: _equity(_ES_OLD),
                 _ES_NEW: _equity(_ES_NEW),
             },
-            ohlcv={
-                _ES: self._frame,
-                _ES_OLD: self._frame.iloc[:1],
-                _ES_NEW: self._frame.iloc[1:],
+            bar_windows={
+                _ES: bar_window_from_frames(
+                    _ES, "1D", MarkMode.LAST, (self._frame,)
+                ),
+                _ES_OLD: bar_window_from_frames(
+                    _ES_OLD, "1D", MarkMode.LAST, (self._frame.iloc[:1],)
+                ),
+                _ES_NEW: bar_window_from_frames(
+                    _ES_NEW, "1D", MarkMode.LAST, (self._frame.iloc[1:],)
+                ),
             },
         )
 
@@ -494,6 +507,46 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     assert len(fills) == 1
     assert fills[0].instrument_id == _INSTRUMENT_ID
     engine.dispose()
+
+
+def test_run_book_backtest_feeds_native_catalog_bars_to_nautilus(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    catalog = Catalog.open(catalog_path)
+    catalog.store_definitions([_equity(_INSTRUMENT_ID)])
+    bar_type = raw_bar_type(_INSTRUMENT_ID, "1D")
+    bars = (
+        _bar_with_init_delay(bar_type, "2020-01-01", 100.0),
+        _bar_with_init_delay(bar_type, "2020-01-02", 101.0),
+        _bar_with_init_delay(bar_type, "2020-01-03", 102.0),
+        _bar_with_init_delay(bar_type, "2020-01-04", 103.0),
+    )
+    catalog.replace(
+        CatalogKey.for_bar(bar_type),
+        CatalogInterval(
+            pd.Timestamp("2020-01-01", tz="UTC").value,
+            pd.Timestamp("2020-01-05", tz="UTC").value,
+        ),
+        bars,
+    )
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_verified_zero_distribution_source(
+            catalog_path, (_INSTRUMENT_ID,)
+        ),
+    )
+
+    try:
+        assert result.engine.cache.bar(bar_type) == bars[-1]
+    finally:
+        result.engine.dispose()
 
 
 def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> None:
@@ -843,6 +896,43 @@ def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> Non
     ] == [(_INSTRUMENT_ID, pd.Timestamp("2020-01-03", tz="UTC"), pytest.approx(0.75))]
 
 
+def test_catalog_backtest_data_source_preserves_native_bars(tmp_path) -> None:
+    catalog_path = tmp_path / "catalog"
+    catalog = Catalog.open(catalog_path)
+    catalog.store_definitions([_equity(_INSTRUMENT_ID)])
+    bar_type = raw_bar_type(_INSTRUMENT_ID, "1D")
+    ts_event = pd.Timestamp("2020-01-01", tz="UTC").value
+    price = Price.from_str("100.00")
+    bar = Bar(
+        bar_type,
+        price,
+        price,
+        price,
+        price,
+        Quantity.from_int(1000),
+        ts_event,
+        ts_event + 37,
+    )
+    catalog.replace(
+        CatalogKey.for_bar(bar_type),
+        CatalogInterval(ts_event, pd.Timestamp("2020-01-02", tz="UTC").value),
+        (bar,),
+    )
+    data_source = _verified_zero_distribution_source(
+        catalog_path,
+        (_INSTRUMENT_ID,),
+    )
+
+    data = data_source.load(
+        (_INSTRUMENT_ID,),
+        timeframe="1D",
+        start="2020-01-01",
+        end="2020-01-02",
+    )
+
+    assert data.bars == {_INSTRUMENT_ID: (bar,)}
+
+
 def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
@@ -912,7 +1002,22 @@ class _EmptyDataSource:
         start: str,
         end: str,
     ) -> BacktestMarketData:
-        return BacktestMarketData(instruments={}, ohlcv={})
+        return BacktestMarketData(instruments={}, bar_windows={})
+
+
+class _MissingBarWindowDataSource:
+    def load(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> BacktestMarketData:
+        return BacktestMarketData(
+            instruments={_INSTRUMENT_ID: _equity(_INSTRUMENT_ID)},
+            bar_windows={},
+        )
 
 
 def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
@@ -934,6 +1039,21 @@ def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
             end="2020-01-05",
             registry=registry,
             data_source=_EmptyDataSource(),
+        )
+
+
+def test_run_book_backtest_fails_preflight_without_native_bars(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+
+    with pytest.raises(ContractDataError, match="did not return raw bars"):
+        run_book_backtest(
+            book_path,
+            start="2020-01-01",
+            end="2020-01-05",
+            registry=registry,
+            data_source=_MissingBarWindowDataSource(),
         )
 
 
@@ -1045,6 +1165,21 @@ def _bar(bar_type: BarType, day: pd.Timestamp, close: float) -> Bar:
         Quantity.from_int(1000),
         ts_event,
         ts_event,
+    )
+
+
+def _bar_with_init_delay(bar_type: BarType, day: str, close: float) -> Bar:
+    ts_event = pd.Timestamp(day, tz="UTC").value
+    price = Price.from_str(f"{close:.2f}")
+    return Bar(
+        bar_type,
+        price,
+        price,
+        price,
+        price,
+        Quantity.from_int(1000),
+        ts_event,
+        ts_event + 37,
     )
 
 

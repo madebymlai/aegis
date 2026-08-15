@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from nautilus_trader.core.data import Data
+from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from platformdirs import user_data_dir
 
@@ -29,6 +30,7 @@ from aegis_data.ohlcv import bars_to_ohlcv
 from aegis_data.raw_bars import (
     BarWarmerPort,
     GapFillProviderError,
+    RawBarWindow,
     RawBars,
 )
 from aegis_data.roll import DatedContract
@@ -73,17 +75,46 @@ class CatalogWindowRequest:
 class CatalogWindow:
     """One coherent catalog read: the requested window's run-constant facts (ADR-0012).
 
-    OHLCV per requested id, complete definitions (guaranteed — the read fails
-    loud naming every missing id before verification), native sizing facts,
-    verified distributions, and their coverage report.
+    Native Raw Bar windows per requested id are the authoritative market-data
+    read. OHLCV and sided quote frames are projections of those same records;
+    complete definitions (guaranteed — the read fails loud naming every missing
+    id before verification), native sizing facts, verified distributions, and
+    their coverage report complete the window.
     """
 
-    ohlcv: dict[InstrumentId, pd.DataFrame]
+    bar_windows: dict[InstrumentId, RawBarWindow]
     instruments: dict[InstrumentId, "Instrument"]
     size_increment_by_instrument: dict[InstrumentId, float]
     multiplier_by_instrument: dict[InstrumentId, float]
     records: tuple[Data, ...]
     distribution_coverage: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def bars(self) -> dict[InstrumentId, tuple[Bar, ...]]:
+        """Native bars for direct Nautilus engine input."""
+        return {
+            instrument_id: window.bars
+            for instrument_id, window in self.bar_windows.items()
+        }
+
+    @property
+    def ohlcv(self) -> dict[InstrumentId, pd.DataFrame]:
+        """Mark OHLCV projections for vectorized domain consumers."""
+        return {
+            instrument_id: window.ohlcv
+            for instrument_id, window in self.bar_windows.items()
+        }
+
+    @property
+    def quote_frames(
+        self,
+    ) -> dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]]:
+        """Sided OHLCV projections for quote-marked instruments only."""
+        return {
+            instrument_id: sided
+            for instrument_id, window in self.bar_windows.items()
+            if (sided := window.quote_ohlcv) is not None
+        }
 
     @property
     def distributions(self) -> tuple[Distribution, ...]:
@@ -130,7 +161,7 @@ class CatalogBackedDataPort:
         (a client request may seed the definition completeness needs), then
         definition completeness is judged before Distribution materialisation.
         """
-        ohlcv = self._load_raw_bars(request)
+        bar_windows = self._load_bar_windows(request)
         instruments = self._complete_definitions(request.instrument_ids)
         ensure_distribution_window(
             self.catalog,
@@ -148,7 +179,7 @@ class CatalogBackedDataPort:
             raw_bars=self.raw_bars,
         )
         return CatalogWindow(
-            ohlcv=ohlcv,
+            bar_windows=bar_windows,
             instruments=instruments,
             size_increment_by_instrument={
                 instrument_id: native_size_increment(instrument)
@@ -178,38 +209,16 @@ class CatalogBackedDataPort:
             )
         return definitions
 
-    def _load_raw_bars(
+    def _load_bar_windows(
         self, request: CatalogWindowRequest
-    ) -> dict[InstrumentId, pd.DataFrame]:
-        # Internal since ADR-0012's contraction: the window read and the
-        # contract-leg OHLCV fetch are the only callers.
-        frames: dict[InstrumentId, pd.DataFrame] = {}
+    ) -> dict[InstrumentId, RawBarWindow]:
+        windows: dict[InstrumentId, RawBarWindow] = {}
         interval = _request_interval(request)
         for instrument_id in request.instrument_ids:
             marking = self.raw_bars.marking(instrument_id, request.timeframe)
             self.raw_bars.ensure(marking, interval)
-            frames[instrument_id] = self.raw_bars.stored(marking, interval).ohlcv
-        return frames
-
-    def load_quote_frames(
-        self, request: CatalogWindowRequest
-    ) -> dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]]:
-        """The ``(bid, ask)`` OHLCV frames for the quote-marked legs in *request*.
-
-        The research fill projection's feed: a quote-marked instrument's two
-        sided series, warmed then read like the window read's bar pass; bar-marked
-        legs are simply absent.  Live never reads this — the fill projection is
-        derived research-side and never serialized (aegis-rd-tggo.5).
-        """
-        frames: dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = {}
-        interval = _request_interval(request)
-        for instrument_id in request.instrument_ids:
-            marking = self.raw_bars.marking(instrument_id, request.timeframe)
-            self.raw_bars.ensure(marking, interval)
-            sided = self.raw_bars.stored(marking, interval).quote_ohlcv
-            if sided is not None:
-                frames[instrument_id] = sided
-        return frames
+            windows[instrument_id] = self.raw_bars.stored(marking, interval)
+        return windows
 
     def instruments(
         self, instrument_ids: Sequence[InstrumentId]

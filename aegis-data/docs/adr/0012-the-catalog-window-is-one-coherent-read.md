@@ -26,10 +26,13 @@ projection of the catalog, but no module owned it.
 ## Decision
 
 - **One query answers the whole window.** `CatalogBackedDataPort.load_window`
-  takes the raw-bar request and returns a frozen `CatalogWindow`: OHLCV per
-  requested id, the complete definitions, the verified distributions, and the
-  distribution coverage report (defaulted to empty so consumers that never
-  read it never mention it).
+  takes the raw-bar request and returns a frozen `CatalogWindow`: one native
+  `RawBarWindow` per requested id, its OHLCV/quote projections, the complete
+  definitions, the verified distributions, and the distribution coverage
+  report (defaulted to empty so consumers that never read it never mention it).
+  Native Bars remain the authoritative records for engine consumers; DataFrames
+  are projections for vectorized validation and domain consumers, never an
+  intermediate serialization format.
 
 - **The internal ordering is contract, not style.**
   1. The bar warming pass runs FIRST: a fill's Step-1 write
@@ -87,5 +90,8 @@ projection of the catalog, but no module owned it.
   offline absence reads empty and is governed operationally by Warm Then Sweep.
 - A new catalog-owned window fact lands in one place (`CatalogWindow` and the
   read behind it) instead of once per consumer.
+- Trader feeds the window's native Bars directly to Nautilus's backtest engine.
+  It does not regenerate Bars from the OHLCV projections, so catalog price,
+  volume, type, and nanosecond timestamps remain intact end to end.
 - The request type keeps its `RawBarRequest` name until the contraction
   ticket renames it `CatalogWindowRequest`, once the old callers are gone.
