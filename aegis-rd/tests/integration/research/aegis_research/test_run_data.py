@@ -8,9 +8,9 @@ from aegis_data.catalog import (
     CatalogBackedDataPort,
     GapFillProviderError,
 )
-from aegis_data.distributions import Distribution, write_distribution_data
+from aegis_data.distributions import Distribution
 from aegis_data.storage import Catalog
-from aegis_data.testing import FakeCatalog
+from aegis_data.testing import FakeCatalog, store_custom_data_fixtures
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -295,7 +295,7 @@ def test_load_run_data_carries_verified_distributions_and_native_instrument_fact
         amount=0.42,
         currency="USD",
     )
-    write_distribution_data(Catalog.open(catalog_path), [distribution])
+    store_custom_data_fixtures(Catalog.open(catalog_path), [distribution])
     config = make_data_config(
         arrays=["OHLCV"],
         base_currency="USD",

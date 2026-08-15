@@ -47,6 +47,7 @@ from aegis_data.ibkr.historical import (
 )
 from aegis_data.research_bars import CatalogBarWarmer
 from aegis_data.storage import Catalog
+from aegis_data.testing import store_instrument_fixtures
 
 
 def test_historic_client_rejects_unsupported_custom_data_before_vendor_fetch(
@@ -763,7 +764,7 @@ def test_seed_fetches_only_the_missing_definitions(tmp_path: Path) -> None:
     fake = _FakeHistoricClient(bars=[], instruments=fetched)
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     catalog = Catalog.open(tmp_path)
-    catalog.store_definitions([_definition(aapl)])
+    store_instrument_fixtures(catalog, [_definition(aapl)])
 
     seed_instrument_definitions(catalog, provider, (aapl, vusa))
 
@@ -776,8 +777,8 @@ def test_seed_fetches_only_the_missing_definitions(tmp_path: Path) -> None:
 def test_seed_is_a_noop_and_never_connects_when_all_present(tmp_path: Path) -> None:
     aapl = InstrumentId.from_str("AAPL.XNAS")
     catalog = Catalog.open(tmp_path)
-    catalog.store_definitions(
-        [_definition(aapl, ts_init=1_700_000_000_000_000_000)]
+    store_instrument_fixtures(
+        catalog, [_definition(aapl, ts_init=1_700_000_000_000_000_000)]
     )
 
     seed_instrument_definitions(catalog, cast(Any, object()), (aapl,))

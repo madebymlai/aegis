@@ -12,7 +12,7 @@ from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.ibkr import historic_catalog_client_factory
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode, RawBarTypeResolver
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
-from aegis_data.testing import FakeCatalog
+from aegis_data.testing import FakeCatalog, store_instrument_fixtures
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity
@@ -127,7 +127,7 @@ def seed_catalog_frames(
     )
     for value, frame in frames.items():
         current_id = instrument_id(value)
-        catalog.store_definitions([equity_definition(current_id, currency)])
+        store_instrument_fixtures(catalog, [equity_definition(current_id, currency)])
         bar_type = raw_bar_type(current_id, "1D")
         records = tuple(
             [
@@ -208,7 +208,7 @@ def seed_catalog_quote(
     bid_type, ask_type = resolver.resolve(current_id, "1D").mark_bars
     trade_type = raw_bar_type(current_id, "1D")
     trade_frame = (bid_frame + ask_frame) / 2.0
-    catalog.store_definitions([equity_definition(current_id, currency)])
+    store_instrument_fixtures(catalog, [equity_definition(current_id, currency)])
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = pd.Timestamp(end, tz="UTC")
     for bar_type, frame in (
@@ -302,7 +302,7 @@ def seed_catalog_fx(
     catalog_path.mkdir(parents=True, exist_ok=True)
     catalog = Catalog.open(catalog_path)
     pair_id = instrument_id(pair_value)
-    catalog.store_definitions([currency_pair_definition(pair_id)])
+    store_instrument_fixtures(catalog, [currency_pair_definition(pair_id)])
     index = pd.date_range(start, periods=periods, freq="D")
     rates = base_rate * np.exp(np.arange(periods) * drift)
     # MID stated where the leg is seeded — the same declaration production

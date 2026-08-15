@@ -12,6 +12,7 @@ from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.ibkr import historic_catalog_client_factory
 from aegis_data.raw_bars import RawBars
 from aegis_data.storage import Catalog, CatalogInterval
+from aegis_data.testing import store_instrument_fixtures
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
@@ -200,7 +201,7 @@ def _write_always_long_strategy(path: Path) -> None:
 def _seed_flat_catalog(catalog_path: Path, instrument: InstrumentId) -> None:
     catalog_path.mkdir(parents=True, exist_ok=True)
     catalog = Catalog.open(catalog_path)
-    catalog.store_definitions([equity_definition(instrument, "USD")])
+    store_instrument_fixtures(catalog, [equity_definition(instrument, "USD")])
     index = pd.date_range(_START, periods=_PERIODS, freq="D")
     bar_type = raw_bar_type(instrument, "1D")
     RawBars(catalog).record_verified(

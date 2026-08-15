@@ -28,6 +28,7 @@ from aegis_data.custom_data import CustomDataWarmer
 from aegis_data.ibkr import historic_catalog_client_factory
 from aegis_data.marking import MarkMode
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
+from aegis_data.testing import store_instrument_fixtures
 from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
@@ -445,9 +446,7 @@ class _ContinuousRootDataSource:
         return BacktestMarketData(
             instruments={_ES: _equity(_ES)},
             bar_windows={
-                _ES: bar_window_from_frames(
-                    _ES, "1D", MarkMode.LAST, (self._frame,)
-                )
+                _ES: bar_window_from_frames(_ES, "1D", MarkMode.LAST, (self._frame,))
             },
         )
 
@@ -473,9 +472,7 @@ class _RollingContinuousRootDataSource:
                 _ES_NEW: _equity(_ES_NEW),
             },
             bar_windows={
-                _ES: bar_window_from_frames(
-                    _ES, "1D", MarkMode.LAST, (self._frame,)
-                ),
+                _ES: bar_window_from_frames(_ES, "1D", MarkMode.LAST, (self._frame,)),
                 _ES_OLD: bar_window_from_frames(
                     _ES_OLD, "1D", MarkMode.LAST, (self._frame.iloc[:1],)
                 ),
@@ -514,7 +511,7 @@ def test_run_book_backtest_feeds_native_catalog_bars_to_nautilus(tmp_path) -> No
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     catalog = Catalog.open(catalog_path)
-    catalog.store_definitions([_equity(_INSTRUMENT_ID)])
+    store_instrument_fixtures(catalog, [_equity(_INSTRUMENT_ID)])
     bar_type = raw_bar_type(_INSTRUMENT_ID, "1D")
     bars = (
         _bar_with_init_delay(bar_type, "2020-01-01", 100.0),
@@ -538,9 +535,7 @@ def test_run_book_backtest_feeds_native_catalog_bars_to_nautilus(tmp_path) -> No
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(
-            catalog_path, (_INSTRUMENT_ID,)
-        ),
+        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
 
     try:
@@ -643,7 +638,8 @@ def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     catalog = Catalog.open(catalog_path)
-    catalog.store_definitions(
+    store_instrument_fixtures(
+        catalog,
         [
             Equity(
                 instrument_id=_INSTRUMENT_ID,
@@ -655,7 +651,7 @@ def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
                 ts_event=0,
                 ts_init=0,
             )
-        ]
+        ],
     )
     _seed_catalog_bars_only(catalog_path, _INSTRUMENT_ID, [30.0] * 4)
     registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.4)})
@@ -899,7 +895,7 @@ def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> Non
 def test_catalog_backtest_data_source_preserves_native_bars(tmp_path) -> None:
     catalog_path = tmp_path / "catalog"
     catalog = Catalog.open(catalog_path)
-    catalog.store_definitions([_equity(_INSTRUMENT_ID)])
+    store_instrument_fixtures(catalog, [_equity(_INSTRUMENT_ID)])
     bar_type = raw_bar_type(_INSTRUMENT_ID, "1D")
     ts_event = pd.Timestamp("2020-01-01", tz="UTC").value
     price = Price.from_str("100.00")
@@ -1062,7 +1058,7 @@ def _seed_catalog(
     instrument_id: InstrumentId,
     closes: list[float],
 ) -> None:
-    Catalog.open(catalog_path).store_definitions([_equity(instrument_id)])
+    store_instrument_fixtures(Catalog.open(catalog_path), [_equity(instrument_id)])
     _seed_catalog_bars_only(catalog_path, instrument_id, closes)
 
 

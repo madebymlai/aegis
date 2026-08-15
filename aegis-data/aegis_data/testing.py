@@ -18,9 +18,11 @@ ceiling exactly as they do live.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, time, timezone
 
 import pandas as pd
+from nautilus_trader.core.data import Data
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AssetClass
@@ -30,7 +32,12 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import CatalogBackedDataPort
-from aegis_data.storage import Catalog
+from aegis_data.storage import (
+    Catalog,
+    CatalogInterval,
+    CatalogKey,
+    _store_instrument_fixtures as store_instrument_fixtures,
+)
 
 ES_START = "2024-01-15"
 ES_END = "2024-05-31"
@@ -39,6 +46,16 @@ _UTC = timezone.utc
 _DAY_NS = 86_400_000_000_000
 _PRECISION = 2
 _CROSSOVER = pd.Timestamp("2024-03-01")
+
+
+def store_custom_data_fixtures(catalog: Catalog, records: Sequence[Data]) -> None:
+    """Persist Custom Data fixtures through the retained storage command."""
+    for record in records:
+        catalog.replace(
+            CatalogKey.for_instrument(type(record), record.instrument_id),
+            CatalogInterval(record.ts_event, record.ts_event),
+            (record,),
+        )
 
 
 def future(
@@ -379,4 +396,6 @@ __all__ = [
     "frame",
     "future",
     "lead_frame",
+    "store_custom_data_fixtures",
+    "store_instrument_fixtures",
 ]

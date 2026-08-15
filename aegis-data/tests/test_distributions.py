@@ -9,15 +9,11 @@ from nautilus_trader.adapters.interactive_brokers.common import IBContract
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.distributions import (
-    Distribution,
     adjusted_close_records,
-    query_distribution_data,
     recover_distributions_from_adjusted_last,
-    write_distribution_data,
 )
 from aegis_data.ibkr import IbkrHistoricalProvider, IbkrRequestError
 from aegis_data.ibkr.historical import _HistoricSession
-from aegis_data.storage import Catalog
 
 _SPY = InstrumentId.from_str("SPY.ARCA")
 
@@ -105,23 +101,6 @@ def test_recovery_collapses_duplicate_daily_trade_rows() -> None:
 
     assert [(event.ex_date, event.amount) for event in events] == [
         (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
-    ]
-
-
-def test_distribution_catalog_write_is_append_only_new(tmp_path) -> None:
-    catalog = Catalog.open(tmp_path / "catalog")
-    first = Distribution.from_ex_date(_SPY, "2024-01-02", amount=0.25, currency="USD")
-    second = Distribution.from_ex_date(_SPY, "2024-03-02", amount=0.30, currency="USD")
-    third = Distribution.from_ex_date(_SPY, "2024-06-02", amount=0.35, currency="USD")
-
-    assert write_distribution_data(catalog, [first, second]) == 2
-    assert write_distribution_data(catalog, [first, second, third]) == 1
-
-    stored = query_distribution_data(catalog, [_SPY])
-    assert [(item.ex_date, item.amount) for item in stored] == [
-        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(0.25)),
-        (pd.Timestamp("2024-03-02", tz="UTC"), pytest.approx(0.30)),
-        (pd.Timestamp("2024-06-02", tz="UTC"), pytest.approx(0.35)),
     ]
 
 

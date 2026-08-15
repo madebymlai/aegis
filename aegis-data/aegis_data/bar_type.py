@@ -24,24 +24,29 @@ from __future__ import annotations
 
 import re
 
-from nautilus_trader.model.data import BarType
+from nautilus_trader.model.data import BarSpecification, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 
 # pandas offset-alias unit (lowercased) -> Nautilus bar aggregation.  Month is
 # intentionally absent: it is not a fixed duration, so it has no period width.
 _NAUTILUS_UNIT = {
-    "s": "SECOND", "sec": "SECOND", "second": "SECOND", "seconds": "SECOND",
-    "min": "MINUTE", "t": "MINUTE", "minute": "MINUTE", "minutes": "MINUTE",
-    "h": "HOUR", "hour": "HOUR", "hours": "HOUR",
-    "d": "DAY", "day": "DAY", "days": "DAY",
-    "w": "WEEK", "week": "WEEK", "weeks": "WEEK",
-}
-_UNIT_NS = {
-    "SECOND": 1_000_000_000,
-    "MINUTE": 60_000_000_000,
-    "HOUR": 3_600_000_000_000,
-    "DAY": 86_400_000_000_000,
-    "WEEK": 604_800_000_000_000,
+    "s": "SECOND",
+    "sec": "SECOND",
+    "second": "SECOND",
+    "seconds": "SECOND",
+    "min": "MINUTE",
+    "t": "MINUTE",
+    "minute": "MINUTE",
+    "minutes": "MINUTE",
+    "h": "HOUR",
+    "hour": "HOUR",
+    "hours": "HOUR",
+    "d": "DAY",
+    "day": "DAY",
+    "days": "DAY",
+    "w": "WEEK",
+    "week": "WEEK",
+    "weeks": "WEEK",
 }
 _TIMEFRAME = re.compile(r"\s*(\d+)\s*([A-Za-z]+)\s*")
 
@@ -92,9 +97,7 @@ def external_bar_type(
     """
     step, unit = _parse(timeframe)
     catalog_id = mic_canonical_instrument_id(instrument_id)
-    return BarType.from_str(
-        f"{catalog_id.value}-{step}-{unit}-{price_type}-EXTERNAL"
-    )
+    return BarType.from_str(f"{catalog_id.value}-{step}-{unit}-{price_type}-EXTERNAL")
 
 
 def mic_canonical_instrument_id(instrument_id: InstrumentId) -> InstrumentId:
@@ -138,7 +141,11 @@ def continuous_bar_type(root_id: InstrumentId, timeframe: str) -> BarType:
 def timeframe_to_ns(timeframe: str) -> int:
     """The rebalance-period width, in nanoseconds, for *timeframe*."""
     step, unit = _parse(timeframe)
-    return step * _UNIT_NS[unit]
+    try:
+        specification = BarSpecification.from_str(f"{step}-{unit}-LAST")
+    except ValueError as exc:
+        raise UnsupportedTimeframeError(timeframe) from exc
+    return specification.get_interval_ns()
 
 
 __all__ = [

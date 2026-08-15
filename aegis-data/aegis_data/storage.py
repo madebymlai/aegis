@@ -281,9 +281,14 @@ class Catalog:
             if isinstance(instrument, FuturesContract) and instrument.underlying == root
         )
 
-    def store_definitions(self, instruments: Sequence[Instrument]) -> None:
-        if instruments:
-            self._store.write_data(list(instruments))
+
+def _store_instrument_fixtures(
+    catalog: Catalog,
+    instruments: Sequence[Instrument],
+) -> None:
+    """Seed native instrument fixtures without exposing a production command."""
+    if instruments:
+        catalog._store.write_data(list(instruments))
 
 
 def _identifier(key: CatalogKey[Data]) -> str:

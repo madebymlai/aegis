@@ -19,7 +19,7 @@ from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.marking import DeclaredMarkingResolver
 from aegis_data.raw_bars import RawBars
 from aegis_data.storage import Catalog, CatalogInterval
-from aegis_data.testing import es_port_two_rolls
+from aegis_data.testing import es_port_two_rolls, store_instrument_fixtures
 from aegis_trader.bundles.book import ContinuousRootDeclaration
 from aegis_trader.domain.roll import (
     Halt,
@@ -495,7 +495,7 @@ def _seed_roll_catalog(
     startup_ns: int,
 ) -> RawBars:
     leg_ids = (_ESH4, _ESM4, _ESU4)
-    catalog.store_definitions(source.catalog.definitions(leg_ids))
+    store_instrument_fixtures(catalog, source.catalog.definitions(leg_ids))
     raw_bars = RawBars(catalog)
     for instrument_id in leg_ids:
         bar_type = raw_bar_type(instrument_id, "1D")
@@ -588,9 +588,7 @@ def test_strategy_flushes_the_coalesced_due_set_as_one_book_re_net() -> None:
 
     _fire_alert(callback, ts_event=2_001)
 
-    assert harness._pipeline.requests == [
-        RebalanceRequest(due=due, timestamp_ns=2_001)
-    ]
+    assert harness._pipeline.requests == [RebalanceRequest(due=due, timestamp_ns=2_001)]
     assert harness._book_market_clock.has_pending_due is False
 
 

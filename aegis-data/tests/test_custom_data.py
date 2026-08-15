@@ -16,7 +16,6 @@ from aegis_data.custom_data import (
     UnknownCustomDataRecordError,
     arrays,
     capture,
-    correct,
     ensure_arrays,
     records,
     records_for_arrays,
@@ -462,46 +461,6 @@ def test_arrays_returns_empty_values_for_never_ingested_window(
     )
     assert panels["FixtureValue"].to_numpy().tolist() == [[0.0], [0.0], [0.0]]
     assert panels["FixtureAvailable"].to_numpy().tolist() == [[0.0], [0.0], [0.0]]
-
-
-def test_correction_replaces_a_bounded_window_while_warming_cannot_overwrite(
-    tmp_path: Path,
-) -> None:
-    original = _Provider((_record("2024-01-02", 2.0),))
-    ensure_arrays(
-        {_INSTRUMENT: ("FixtureValue",)},
-        start=_utc("2024-01-01"),
-        end=_utc("2024-01-03"),
-        providers={FixtureRecord: original},
-        catalog=Catalog.open(tmp_path),
-    )
-    correct(
-        FixtureRecord,
-        _INSTRUMENT,
-        (_record("2024-01-02", 9.0),),
-        start=_utc("2024-01-01"),
-        end=_utc("2024-01-03"),
-        catalog=Catalog.open(tmp_path),
-    )
-    attempted_overwrite = _Provider((_record("2024-01-02", 3.0),))
-
-    ensure_arrays(
-        {_INSTRUMENT: ("FixtureValue",)},
-        start=_utc("2024-01-01"),
-        end=_utc("2024-01-03"),
-        providers={FixtureRecord: attempted_overwrite},
-        catalog=Catalog.open(tmp_path),
-    )
-    stored = records(
-        FixtureRecord,
-        (_INSTRUMENT,),
-        start=_utc("2024-01-01"),
-        end=_utc("2024-01-03"),
-        catalog=Catalog.open(tmp_path),
-    )
-
-    assert attempted_overwrite.requests == []
-    assert stored == (_record("2024-01-02", 9.0),)
 
 
 def test_arrays_projects_fixture_records_causally_on_the_exact_index(

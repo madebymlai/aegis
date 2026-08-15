@@ -18,6 +18,7 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 from aegis_data.catalog import CatalogBackedDataPort, raw_bar_type
 from aegis_data.raw_bars import RawBars
 from aegis_data.storage import Catalog, CatalogInterval
+from aegis_data.testing import store_instrument_fixtures
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -144,7 +145,7 @@ def _seed_usd_catalog(catalog_path, closes: list[float]) -> None:
         ts_event=0,
         ts_init=0,
     )
-    catalog.store_definitions([instrument])
+    store_instrument_fixtures(catalog, [instrument])
     start_ns = pd.Timestamp("2020-01-01", tz="UTC").value
     end_ns = start_ns + len(closes) * 86_400_000_000_000
     bar_type = raw_bar_type(_USD_INSTRUMENT_ID, "1D")
@@ -165,7 +166,7 @@ def _seed_usd_catalog(catalog_path, closes: list[float]) -> None:
 def _seed_fx_catalog(catalog_path, rates: list[float]) -> None:
     catalog = Catalog.open(catalog_path)
     pair = build_currency_pair("EUR", "USD", "IDEALPRO")
-    catalog.store_definitions([pair])
+    store_instrument_fixtures(catalog, [pair])
     start_ns = pd.Timestamp("2020-01-01", tz="UTC").value
     end_ns = start_ns + len(rates) * 86_400_000_000_000
     bar_type = external_bar_type(_EURUSD_ID, "1D", "MID")
@@ -222,9 +223,7 @@ def _zero_distribution_source(catalog_path) -> CatalogBacktestDataSource:
             catalog,
             custom_data_warmer=CustomDataWarmer(
                 catalog,
-                historic_catalog_client_factory(
-                    _AdjustedLastProvider(adjusted_last)
-                ),
+                historic_catalog_client_factory(_AdjustedLastProvider(adjusted_last)),
             ),
             # The port reads what the bundle records: the FX conversion leg is
             # bar-marked MID by declaration, never by symbol shape.

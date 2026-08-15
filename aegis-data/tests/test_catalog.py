@@ -35,13 +35,17 @@ from aegis_data.distributions import (
     AdjustedClose,
     Distribution,
     adjusted_close_records,
-    write_distribution_data,
 )
 from aegis_data.ibkr import IbkrRequestError, historic_catalog_client_factory
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.roll import DatedContract
 from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
-from aegis_data.testing import FakeCatalog, future
+from aegis_data.testing import (
+    FakeCatalog,
+    future,
+    store_custom_data_fixtures,
+    store_instrument_fixtures,
+)
 
 
 def _bar(bar_type: BarType, day: str, close: float) -> Bar:
@@ -174,7 +178,7 @@ def _seed_fx_pair(catalog: Catalog, fx_pair: InstrumentId) -> None:
 
     The MID key is stated where the leg is seeded — exactly as production
     declares it — matching the resolver the reading port carries."""
-    catalog.store_definitions([_currency_pair(fx_pair)])
+    store_instrument_fixtures(catalog, [_currency_pair(fx_pair)])
     bar_type = external_bar_type(fx_pair, "1D", "MID")
     _write_span(
         catalog,
@@ -230,11 +234,12 @@ def _write_definition(catalog: Catalog, *instrument_ids: InstrumentId) -> None:
     (``convert_exchange_to_mic_venue``), so a fixture that writes a definition directly
     must key it the same way a real fill would.
     """
-    catalog.store_definitions(
+    store_instrument_fixtures(
+        catalog,
         [
             _equity(mic_canonical_instrument_id(instrument_id))
             for instrument_id in instrument_ids
-        ]
+        ],
     )
 
 
@@ -516,7 +521,7 @@ def test_catalog_port_cold_fills_a_quote_marked_instrument_from_bid_and_ask(
             ask_type: [_bar(ask_type, "2024-01-01", 101.0)],
         },
     )
-    catalog.store_definitions([_currency_pair(instrument_id)])
+    store_instrument_fixtures(catalog, [_currency_pair(instrument_id)])
     port = CatalogBackedDataPort(catalog, provider=provider, resolver=resolver)
 
     window = port.load_window(
@@ -548,7 +553,7 @@ def test_catalog_window_carries_native_quote_bars_and_their_projections(
         start="2024-01-01",
         end="2024-01-02",
     )
-    catalog.store_definitions([_currency_pair(quote_id)])
+    store_instrument_fixtures(catalog, [_currency_pair(quote_id)])
     port = CatalogBackedDataPort(catalog, resolver=resolver)
 
     window = port.load_window(
@@ -670,7 +675,7 @@ def test_instruments_resolves_ib_exchange_name_against_mic_stored_definition(
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
-    catalog.store_definitions([_equity(_id("BRNT.XLON"))])
+    store_instrument_fixtures(catalog, [_equity(_id("BRNT.XLON"))])
     port = CatalogBackedDataPort(catalog)
 
     resolved = port.instruments((_id("BRNT.LSE"),))
@@ -909,7 +914,7 @@ def test_catalog_port_reads_stored_distribution_events_without_a_second_ledger(
         amount=0.42,
         currency="USD",
     )
-    write_distribution_data(catalog, [distribution])
+    store_custom_data_fixtures(catalog, [distribution])
     port = CatalogBackedDataPort(catalog)
 
     distributions = port.load_window(
@@ -1201,11 +1206,12 @@ def test_catalog_port_skips_distribution_verification_for_futures_and_roots(
     catalog = Catalog.open(catalog_path)
     dated_leg = _id("ESH4.XCME")
     continuous_root = _id("ES.XCME")
-    catalog.store_definitions(
+    store_instrument_fixtures(
+        catalog,
         [
             future("ESH4.XCME", "2024-03-15"),
             future("ESM4.XCME", "2024-06-21"),
-        ]
+        ],
     )
     bar_type = raw_bar_type(dated_leg, "1D")
     _write_span(
@@ -1246,11 +1252,12 @@ def test_catalog_port_reports_continuous_root_distribution_coverage_not_applicab
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
     continuous_root = _id("ES.XCME")
-    catalog.store_definitions(
+    store_instrument_fixtures(
+        catalog,
         [
             future("ESH4.XCME", "2024-03-15"),
             future("ESM4.XCME", "2024-06-21"),
-        ]
+        ],
     )
     port = CatalogBackedDataPort(catalog)
 
@@ -1450,67 +1457,6 @@ def test_catalog_port_accepts_absent_distributions_with_bar_only_provider(
     )
     assert report[0]["verified_start"] is None
     assert report[0]["verified_end"] is None
-
-
-def test_catalog_port_reverifies_seeded_distribution_store_without_duplicates(
-    tmp_path: Path,
-) -> None:
-    catalog_path = tmp_path / "catalog"
-    catalog_path.mkdir()
-    catalog = Catalog.open(catalog_path)
-    instrument_id = _id("SPY.ARCA")
-    bar_type = raw_bar_type(instrument_id, "1D")
-    _write_span(
-        catalog,
-        [
-            _bar(bar_type, "2024-01-01", 100.0),
-            _bar(bar_type, "2024-01-02", 100.0),
-            _bar(bar_type, "2024-01-03", 100.0),
-        ],
-        start="2024-01-01",
-        end="2024-01-04",
-    )
-    _write_definition(catalog, instrument_id)
-    write_distribution_data(
-        catalog,
-        [
-            Distribution.from_ex_date(
-                instrument_id,
-                "2024-01-02",
-                amount=1.0,
-                currency="USD",
-            )
-        ],
-    )
-    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
-    provider = _AdjustedLastProvider(
-        {
-            instrument_id: pd.Series(
-                [100.0, 100.0 / (1.0 - 0.01), 100.0],
-                index=dates,
-            )
-        }
-    )
-
-    events = (
-        CatalogBackedDataPort(
-            catalog,
-            custom_data_warmer=_adjusted_close_warmer(catalog, provider),
-        )
-        .load_window(
-            CatalogWindowRequest(
-                (instrument_id,),
-                start="2024-01-01",
-                end="2024-01-04",
-            )
-        )
-        .distributions
-    )
-
-    assert [(event.ex_date, event.amount) for event in events] == [
-        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
-    ]
-    assert provider.requests == []
 
 
 def test_catalog_port_backward_extension_persists_early_distribution_events(
@@ -1773,7 +1719,7 @@ def test_catalog_port_load_window_returns_one_coherent_value(
         end="2024-01-04",
     )
     _write_definition(catalog, equity_id)
-    catalog.store_definitions([_currency_pair(fx_pair)])
+    store_instrument_fixtures(catalog, [_currency_pair(fx_pair)])
     provider = _AdjustedLastProvider(
         {
             equity_id: pd.Series(
@@ -2006,7 +1952,7 @@ def test_verification_daily_absence_on_intraday_window_returns_no_distributions(
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
     instrument_id = _id("FAST.XLON")
-    catalog.store_definitions([_equity(instrument_id)])
+    store_instrument_fixtures(catalog, [_equity(instrument_id)])
     hourly_type = raw_bar_type(instrument_id, "1H")
     _write_span(
         catalog,

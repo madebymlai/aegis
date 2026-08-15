@@ -1,17 +1,15 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from itertools import groupby
 from typing import Any
 import pandas as pd
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
+from aegis_data.storage import Catalog, CatalogKey
 
 
 _DEFAULT_MIN_CASH_AMOUNT = 0.005
-_NANOS_PER_DAY = 86_400_000_000_000
 _ADJUSTED_CLOSE_CURRENCY_PARAM = "currency"
 
 
@@ -193,50 +191,6 @@ def query_distribution_data(
     )
 
 
-def write_distribution_data(
-    catalog: Catalog,
-    distributions: Sequence[Distribution],
-) -> int:
-    """Write only distributions beyond each instrument's stored ex-date frontier.
-
-    Repeating a decode over the same historical window is idempotent without relying
-    on byte-dedup; bounded replacement lives in ``replace_distribution_data``.
-    """
-    grouped = sorted(
-        distributions, key=lambda item: (item.instrument_id.value, item.ts_event)
-    )
-    written = 0
-    for instrument_value, group in groupby(
-        grouped, key=lambda item: item.instrument_id.value
-    ):
-        items = list(group)
-        frontier = _stored_frontier(catalog, instrument_value)
-        selected = [item for item in items if item.ts_event > frontier]
-        if not selected:
-            continue
-        catalog.replace(
-            CatalogKey.for_instrument(
-                Distribution, InstrumentId.from_str(instrument_value)
-            ),
-            CatalogInterval(
-                min(item.ts_event for item in selected),
-                max(item.ts_event for item in selected) + _NANOS_PER_DAY,
-            ),
-            tuple(selected),
-        )
-        written += len(selected)
-    return written
-
-
-def _stored_frontier(catalog: Catalog, instrument_value: str) -> int:
-    stored = catalog.read_all(
-        CatalogKey.for_instrument(Distribution, InstrumentId.from_str(instrument_value))
-    )
-    if not stored:
-        return -1
-    return max(item.ts_event for item in stored)
-
-
 def _force_window_items(
     items: Sequence[Distribution],
     *,
@@ -296,5 +250,4 @@ __all__ = [
     "distribution_records",
     "query_distribution_data",
     "recover_distributions_from_adjusted_last",
-    "write_distribution_data",
 ]

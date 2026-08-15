@@ -368,37 +368,6 @@ def capture(
     )
 
 
-def correct(
-    record_type: type[RecordT],
-    instrument_id: InstrumentId,
-    replacement: Sequence[RecordT],
-    *,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    catalog: Catalog,
-    registry: CustomDataRegistry | None = None,
-) -> None:
-    """Deliberately replace one bounded window, including verified emptiness."""
-    _kind_for(record_type, registry)
-    start = _utc(start)
-    end = _utc(end)
-    interval = CatalogInterval(start.value, end.value)
-    subject = CatalogKey.for_instrument(record_type, instrument_id)
-    selected = tuple(
-        record
-        for record in replacement
-        if _record_belongs_to_interval(
-            record,
-            record_type=record_type,
-            instrument_id=instrument_id,
-            start=start,
-            end=end,
-        )
-    )
-    catalog.replace(subject, interval, selected)
-    catalog.compact(subject, interval)
-
-
 def arrays(
     array_names: Sequence[str],
     instrument_ids: Sequence[InstrumentId],
@@ -640,7 +609,6 @@ __all__ = [
     "InvalidCustomDataWarmIntervalError",
     "arrays",
     "capture",
-    "correct",
     "ensure_arrays",
     "records",
     "records_for_arrays",
