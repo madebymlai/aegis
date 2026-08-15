@@ -14,7 +14,7 @@ requires-python = ">=3.12"
 dependencies = [
   "aegis-runtime",
   "aegis-data",
-  "nautilus_trader",
+  "nautilus_trader>=1.231.0",
   "pydantic>=2.0",
   "aegis-exec-aegis-heldhedge-cand-b60",
   "aegis-exec-atalanta-keystone-shortmute-cand-06c",
@@ -25,7 +25,7 @@ dependencies = [
 # IBKR adapter (ibapi) — required only for paper/live runs and the IBKR
 # verification script (scripts/verify_paper_ibkr.py); backtests don't need it.
 [project.optional-dependencies]
-ib = ["nautilus_trader[ib,docker]"]
+ib = ["nautilus_trader[ib,docker]>=1.231.0"]
 
 [project.scripts]
 # Operator entrypoint: `aegis-trader backtest --start --end` (offline) and

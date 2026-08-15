@@ -20,14 +20,13 @@ import asyncio
 import os
 from contextlib import suppress
 
-import msgspec
 import pytest
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.test_kit.functions import eventually
 
-from aegis_data.ibkr import IB_CLIENT_NAME, mic_instrument_provider_config
+from aegis_data.ibkr import BrokerClients, mic_instrument_provider_config
 from aegis_trader.config.connection import IBConnectionSettings
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import RequestInstrument, SubscribeBars, UnsubscribeBars
@@ -78,10 +77,9 @@ class _RollIntentProbe(RebalanceStrategy):
         self.roll_commands_routed = True
 
 
-def _attach_running_gateway_clients(
-    node: TradingNode,
+def _running_gateway_clients(
     connection: IBConnectionSettings,
-) -> None:
+) -> BrokerClients:
     from nautilus_trader.adapters.interactive_brokers.config import (
         IBMarketDataTypeEnum,
         InteractiveBrokersDataClientConfig,
@@ -106,16 +104,17 @@ def _attach_running_gateway_clients(
         account_id=connection.account_id,
         instrument_provider=provider,
     )
-    node._config = msgspec.structs.replace(
-        node._config,
-        data_clients={IB_CLIENT_NAME: data_config},
-        exec_clients={IB_CLIENT_NAME: exec_config},
+    return BrokerClients(
+        data_config=data_config,
+        exec_config=exec_config,
+        data_factory=InteractiveBrokersLiveDataClientFactory,
+        exec_factory=InteractiveBrokersLiveExecClientFactory,
     )
-    node.add_data_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveDataClientFactory)
-    node.add_exec_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveExecClientFactory)
 
 
-def test_live_node_roll_intents_route_subscribe_unsubscribe_on_the_ib_data_client() -> None:
+def test_live_node_roll_intents_route_subscribe_unsubscribe_on_the_ib_data_client() -> (
+    None
+):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -128,8 +127,15 @@ def test_live_node_roll_intents_route_subscribe_unsubscribe_on_the_ib_data_clien
 
 async def _run_live_node_roll_intent_smoke() -> None:
     connection = IBConnectionSettings.from_env()
-    node = TradingNode(config=build_live_node_config(trader_id=connection.trader_id))
-    _attach_running_gateway_clients(node, connection)
+    clients = _running_gateway_clients(connection)
+    node = TradingNode(
+        config=build_live_node_config(
+            trader_id=connection.trader_id,
+            data_clients=clients.data_clients,
+            exec_clients=clients.exec_clients,
+        )
+    )
+    clients.register(node)
     node.build()
     probe = _RollIntentProbe(
         RebalanceStrategyConfig(

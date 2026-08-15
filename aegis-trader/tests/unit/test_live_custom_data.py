@@ -35,8 +35,8 @@ from aegis_data.storage import Catalog
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.trader.live_custom_data import (
     LiveDataClientConflictError,
-    add_live_custom_data,
     build_live_sleeve_arrays,
+    live_custom_data,
     warm_live_custom_data,
 )
 from aegis_trader.trader.sleeve_arrays import ArrayNeed, SleeveArrayGrid
@@ -132,12 +132,7 @@ class _Trader:
 
 
 class _Node:
-    def __init__(
-        self,
-        broker_config: LiveDataClientConfig,
-        broker_client_id: str = "INTERACTIVE_BROKERS",
-    ) -> None:
-        self._config = TradingNodeConfig(data_clients={broker_client_id: broker_config})
+    def __init__(self) -> None:
         self.data_factories: dict[str, object] = {}
         self.trader = _Trader()
 
@@ -151,13 +146,18 @@ def _native_capture(
     provider: _StreamingProvider | None = None,
 ) -> Iterator[Callable[[Data], None]]:
     loop = asyncio.new_event_loop()
+    streaming = live_custom_data(
+        {FixtureRecord: provider or _StreamingProvider(LiveDataClientConfig())}
+    )
     node = TradingNode(
-        TradingNodeConfig(logging=LoggingConfig(log_level="ERROR")),
+        TradingNodeConfig(
+            logging=LoggingConfig(log_level="ERROR"),
+            data_clients=streaming.data_clients,
+        ),
         loop=loop,
     )
-    add_live_custom_data(
+    streaming.register(
         cast(TradingNode, node),
-        {FixtureRecord: provider or _StreamingProvider(LiveDataClientConfig())},
         catalog=catalog,
     )
     node.build()
@@ -192,51 +192,38 @@ def test_live_custom_data_merges_client_config_and_registers_its_factory(
 ) -> None:
     broker_config = LiveDataClientConfig()
     fixture_config = LiveDataClientConfig()
-    node = _Node(broker_config)
-
-    add_live_custom_data(
-        cast(TradingNode, node),
+    streaming = live_custom_data(
         {FixtureRecord: _StreamingProvider(fixture_config)},
+        configured_client_names=("INTERACTIVE_BROKERS",),
+    )
+    config = TradingNodeConfig(
+        data_clients={"INTERACTIVE_BROKERS": broker_config, **streaming.data_clients}
+    )
+    node = _Node()
+
+    streaming.register(
+        cast(TradingNode, node),
         catalog=Catalog.open(tmp_path),
     )
 
-    assert node._config.data_clients == {
+    assert config.data_clients == {
         "INTERACTIVE_BROKERS": broker_config,
         "FIXTURE": fixture_config,
     }
     assert node.data_factories == {"FIXTURE": _FixtureFactory}
 
 
-def test_live_custom_data_rejects_a_client_id_already_owned_by_the_node(
-    tmp_path: Path,
-) -> None:
-    broker_config = LiveDataClientConfig()
-    node = _Node(broker_config, broker_client_id="FIXTURE")
-
+def test_live_custom_data_rejects_an_already_configured_client_id() -> None:
     with pytest.raises(LiveDataClientConflictError, match="FIXTURE"):
-        add_live_custom_data(
-            cast(TradingNode, node),
+        live_custom_data(
             {FixtureRecord: _StreamingProvider(LiveDataClientConfig())},
-            catalog=Catalog.open(tmp_path),
+            configured_client_names=("FIXTURE",),
         )
 
-    assert node._config.data_clients == {"FIXTURE": broker_config}
-    assert node.data_factories == {}
 
-
-def test_live_custom_data_rejects_an_invalid_provider_capability(
-    tmp_path: Path,
-) -> None:
-    node = _Node(LiveDataClientConfig())
-
+def test_live_custom_data_rejects_an_invalid_provider_capability() -> None:
     with pytest.raises(InvalidLiveCustomDataCapabilityError):
-        add_live_custom_data(
-            cast(TradingNode, node),
-            {FixtureRecord: _InvalidStreamingProvider()},
-            catalog=Catalog.open(tmp_path),
-        )
-
-    assert node.data_factories == {}
+        live_custom_data({FixtureRecord: _InvalidStreamingProvider()})
 
 
 def test_native_capture_gap_is_healed_by_live_array_coverage(tmp_path: Path) -> None:

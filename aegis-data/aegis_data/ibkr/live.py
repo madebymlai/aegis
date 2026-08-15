@@ -1,9 +1,10 @@
-"""IBKR live client wiring — the Trader's one broker touch.
+"""IBKR live client configuration — the Trader's one broker touch.
 
-:func:`attach_live_clients` builds Nautilus's *stock*
+:func:`live_clients` builds Nautilus's *stock*
 ``InteractiveBrokers{Data,Exec}ClientConfig`` with a Nautilus-managed Dockerized
-IB Gateway and registers the stock live factories on a live ``TradingNode`` —
-no custom adapter code or container lifecycle code (epic thesis).  The
+IB Gateway.  Its returned value contributes those configs before a live node is
+constructed and registers the stock factories afterward — no private node access,
+custom adapter code, or container lifecycle code (epic thesis).  The
 ibapi-backed config/factory classes are imported lazily so importing this
 module never requires ``ibapi``.
 """
@@ -11,8 +12,11 @@ module never requires ``ibapi``.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
+from nautilus_trader.config import LiveDataClientConfig, LiveExecClientConfig
+from nautilus_trader.live.factories import LiveDataClientFactory, LiveExecClientFactory
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
@@ -37,26 +41,47 @@ class BrokerConnection(Protocol):
     account_id: str
 
 
-def attach_live_clients(
-    node: Any,
+@dataclass(frozen=True)
+class BrokerClients:
+    """IBKR client configs plus the factories that consume them at node build."""
+
+    data_config: LiveDataClientConfig
+    exec_config: LiveExecClientConfig
+    data_factory: type[LiveDataClientFactory]
+    exec_factory: type[LiveExecClientFactory]
+
+    @property
+    def data_clients(self) -> dict[str, LiveDataClientConfig]:
+        return {IB_CLIENT_NAME: self.data_config}
+
+    @property
+    def exec_clients(self) -> dict[str, LiveExecClientConfig]:
+        return {IB_CLIENT_NAME: self.exec_config}
+
+    def register(self, node: Any) -> None:
+        """Register the stock factories after the complete node is constructed."""
+        node.add_data_client_factory(IB_CLIENT_NAME, self.data_factory)
+        node.add_exec_client_factory(IB_CLIENT_NAME, self.exec_factory)
+
+
+def live_clients(
     connection: BrokerConnection,
     instrument_ids: Sequence[InstrumentId],
-) -> None:
-    """Wire IBKR's stock live data + exec clients onto *node* (before ``build()``).
+) -> BrokerClients:
+    """Build IBKR's stock live client contribution for a complete node config.
 
     The single live-broker call the Trader's broker-neutral ``node.py`` makes:
     builds Nautilus's *stock* ``InteractiveBrokers{Data,Exec}ClientConfig`` —
     ``market_data_type=REALTIME``, a Nautilus-managed Dockerized IB Gateway, and
     an ``InstrumentProviderConfig`` whose ``load_ids`` are exactly the declared
-    native ids (the data-only FX ``exchange:`` natives ride in here too) — and
-    registers the stock live factories.  No custom adapter code: paper vs live is
-    *only* ``connection.port``, translated here into the dockerized
-    ``trading_mode``.
+    native ids (the data-only FX ``exchange:`` natives ride in here too).  The
+    returned value registers the corresponding stock factories through the node's
+    public API after construction.  Paper vs live is *only* ``connection.port``,
+    translated here into the dockerized ``trading_mode``.
 
     The ibapi-backed config/factory classes are imported lazily so importing this
     module never needs ``ibapi`` (the same lazy boundary as the historic client).
     """
-    import msgspec
     from nautilus_trader.adapters.interactive_brokers.config import (
         IBMarketDataTypeEnum,
         InteractiveBrokersDataClientConfig,
@@ -84,22 +109,12 @@ def attach_live_clients(
         instrument_provider=provider,
         **endpoint,
     )
-    # Nautilus consumes ``data_clients``/``exec_clients`` from the node's stored
-    # config at ``build()``; there is no public setter, so swap the (immutable)
-    # config for one carrying the IBKR clients, then register the factories.
-    node._config = msgspec.structs.replace(
-        node._config,
-        data_clients={
-            **node._config.data_clients,
-            IB_CLIENT_NAME: data_config,
-        },
-        exec_clients={
-            **node._config.exec_clients,
-            IB_CLIENT_NAME: exec_config,
-        },
+    return BrokerClients(
+        data_config=data_config,
+        exec_config=exec_config,
+        data_factory=InteractiveBrokersLiveDataClientFactory,
+        exec_factory=InteractiveBrokersLiveExecClientFactory,
     )
-    node.add_data_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveDataClientFactory)
-    node.add_exec_client_factory(IB_CLIENT_NAME, InteractiveBrokersLiveExecClientFactory)
 
 
 _GATEWAY_TRADING_MODE: dict[int, Literal["paper", "live"]] = {

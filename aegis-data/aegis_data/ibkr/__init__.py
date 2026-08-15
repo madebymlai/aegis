@@ -4,7 +4,7 @@
 One seam for IBKR: research and live connect to Interactive Brokers through this
 package, so the unified path (epic ``aegis-rd-r8b``) depends on the Nautilus
 DataProvider port with IBKR as its first — and only — adapter.  The public
-surface is this package's eight names; the submodules split the two
+surface is deliberately narrow; the submodules split the two
 responsibilities by consumer:
 
 - :mod:`aegis_data.ibkr.historical` — **historic fetch** (research / backfill):
@@ -18,12 +18,12 @@ responsibilities by consumer:
   *definitions* are a separate Step-1 write
   (:func:`seed_instrument_definitions`), not per-window fill data (ADR-0008).
 - :mod:`aegis_data.ibkr.live` — **live client wiring**:
-  :func:`attach_live_clients` builds Nautilus's *stock*
+  :func:`live_clients` builds Nautilus's *stock*
   ``InteractiveBrokers{Data,Exec}ClientConfig`` with a Nautilus-managed
-  Dockerized IB Gateway and registers the stock live factories on a live
-  ``TradingNode`` — no custom adapter code or container lifecycle code (epic
-  thesis).  The Trader's broker-neutral ``node.py`` reaches IBKR through this
-  one call.
+  Dockerized IB Gateway before node construction and returns the stock factory
+  registration behavior — no private node access, custom adapter code, or
+  container lifecycle code (epic thesis).  The Trader's broker-neutral
+  ``node.py`` reaches IBKR through this one call.
 - :mod:`aegis_data.ibkr.symbology` — the **venue pin** both sides share:
   :func:`mic_instrument_provider_config` qualifies IBKR exchanges to MIC venues
   so historic backfill and live subscriptions mint byte-identical ids.
@@ -43,18 +43,24 @@ from aegis_data.ibkr.historical import (
     historic_data_client_factory,
     seed_instrument_definitions,
 )
-from aegis_data.ibkr.live import IB_CLIENT_NAME, BrokerConnection, attach_live_clients
+from aegis_data.ibkr.live import (
+    IB_CLIENT_NAME,
+    BrokerClients,
+    BrokerConnection,
+    live_clients,
+)
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
 
 __all__ = [
     "IB_CLIENT_NAME",
+    "BrokerClients",
     "BrokerConnection",
     "IbkrHistoricalProvider",
     "IbkrRequestError",
-    "attach_live_clients",
     "close_connection",
     "historic_custom_data_client_factory",
     "historic_data_client_factory",
+    "live_clients",
     "mic_instrument_provider_config",
     "seed_instrument_definitions",
 ]

@@ -13,7 +13,7 @@ from nautilus_trader.model.data import Bar, QuoteTick
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import CurrencyPair, Instrument
 from nautilus_trader.model.objects import Currency, Price, Quantity
-from nautilus_trader.persistence.wranglers import BarDataWrangler
+from nautilus_trader.persistence.wranglers import BarDataWrangler, QuoteTickDataWrangler
 
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
 
@@ -59,7 +59,9 @@ def wrangle_quote_bars(
     ]
 
 
-def build_currency_pair(base_currency: str, quote_currency: str, venue: str) -> CurrencyPair:
+def build_currency_pair(
+    base_currency: str, quote_currency: str, venue: str
+) -> CurrencyPair:
     """A spot FX ``CurrencyPair`` (``base/quote``) on *venue*.
 
     Backtests feed FX the same way live does — as a quote-tick'd reference pair —
@@ -74,7 +76,7 @@ def build_currency_pair(base_currency: str, quote_currency: str, venue: str) -> 
         quote_currency=Currency.from_str(quote_currency),
         price_precision=_FX_PRICE_PRECISION,
         size_precision=0,
-        price_increment=Price(10 ** -_FX_PRICE_PRECISION, _FX_PRICE_PRECISION),
+        price_increment=Price(10**-_FX_PRICE_PRECISION, _FX_PRICE_PRECISION),
         size_increment=Quantity.from_int(1),
         ts_event=0,
         ts_init=0,
@@ -88,20 +90,12 @@ def wrangle_fx_quotes(pair: CurrencyPair, fx_series: pd.Series) -> list[QuoteTic
     accounting layer values foreign legs from the same per-date quotes, so a
     backtest tracks historical FX instead of one flat rate across the window.
     """
-    precision = pair.price_precision
-    # Size must carry the pair's own size precision — the catalog's real FX
-    # instruments are not integer-sized, and the matching engine rejects a
-    # tick whose size precision differs from the instrument's.
-    size = Quantity(_FX_SIZE, pair.size_precision)
-    return [
-        QuoteTick(
-            instrument_id=pair.id,
-            bid_price=Price(float(rate), precision),
-            ask_price=Price(float(rate), precision),
-            bid_size=size,
-            ask_size=size,
-            ts_event=ts.value,
-            ts_init=ts.value,
-        )
-        for ts, rate in fx_series.items()
-    ]
+    if fx_series.empty:
+        return []
+    quotes = pd.DataFrame(
+        {
+            "bid_price": fx_series,
+            "ask_price": fx_series,
+        }
+    )
+    return QuoteTickDataWrangler(pair).process(quotes, default_volume=_FX_SIZE)

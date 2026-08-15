@@ -27,7 +27,7 @@ trader/_rebalancer.py -> pure planning implementation of the pipeline (imports d
 trader/strategy.py  -> Nautilus lifecycle and I/O effects over the pipeline
 trader/node.py      -> broker-neutral Nautilus node + live run/stop lifecycle; no IBKR SDK
                        import and no ibg_*/IDEALPRO vocabulary — reaches IBKR only through the
-                       single aegis_data.ibkr.attach_live_clients seam (lazy ibapi behind it)
+                       single aegis_data.ibkr.live_clients seam (lazy ibapi behind it)
 backtest.py         -> backtest engine + non-live RiskEngine config (was trader/modes.py)
 ```
 
@@ -95,7 +95,7 @@ code** — one IBKR seam, not several.
 - **Live node** config (`Environment.LIVE`, `trader_id`, live `RiskEngine`,
   cache, logging, catalogs) + the run/stop lifecycle → broker-neutral
   `aegis_trader/trader/node.py`. It wires the broker through one call,
-  `ibkr.attach_live_clients(node, connection, instrument_ids)`, and
+  `ibkr.live_clients(connection, instrument_ids)`, and
   carries **no** `ibg_*`/`IDEALPRO` vocabulary.
 - **IBKR** client-config building + factory registration + IB constants → the
   **single** IBKR adapter `aegis-data/aegis_data/ibkr.py` (renamed from

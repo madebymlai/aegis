@@ -14,7 +14,7 @@ def mic_instrument_provider_config(load_ids: Iterable[str] | None = None) -> Any
     so every IBKR contract — a static native, a live subscription, or a discovered
     futures-chain leg — resolves to ONE deterministic venue.  The synthetic continuous-root
     id ``{root}.{venue}`` then inherits it and aegis-data's single-venue chain build holds.
-    Shared by the live wiring (:func:`attach_live_clients`) and the historic seed/backfill so
+    Shared by the live wiring (:func:`live_clients`) and the historic seed/backfill so
     both sides mint byte-identical ids.  Lazily imports the ibapi-backed config, preserving
     the package's lazy-``ibapi`` boundary.
     """

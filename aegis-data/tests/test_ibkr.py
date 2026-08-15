@@ -5,7 +5,7 @@ tested.  What *is* unit testable — and what these tests pin — is the adapter
 own logic: translating a ``BarType`` + window into the historic client's request
 shape (naive UTC datetimes), hiding ``asyncio`` behind a synchronous port, and
 connecting/closing around every call.  A fake session stands in for IBKR.  The
-live client wiring (:func:`attach_live_clients`) needs ``ibapi`` and is covered
+    live client wiring (:func:`live_clients`) needs ``ibapi`` and is covered
 from the Trader's node tests (where ``ibapi`` is installed); here we pin only that
 importing the adapter never pulls ``ibapi`` (the lazy boundary).
 """
