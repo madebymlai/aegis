@@ -35,7 +35,6 @@ from aegis_runtime import (
     ComponentSpec,
     DataContract,
     DriftBand,
-    ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
     MissingIndexPolicy,
@@ -50,11 +49,11 @@ from aegis_trader.backtest import (
     ContractDataError,
     run_book_backtest,
 )
-from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.domain.roll import RollEvent, SubscribeBars, UnsubscribeBars
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.portfolio import NautilusBookState
 from aegis_trader.trader.strategy import RebalanceStrategy
+from tests.support.bundle_double import BundleDouble, make_bundle_registry
 from tests.support.market_data import bar_window_from_frames
 
 _INSTRUMENT_ID = InstrumentId.from_str("VUSA.XLON")
@@ -102,7 +101,7 @@ _ZERO_RATE_FINANCING_BOOK_TOML = _FINANCING_BOOK_TOML.replace(
 )
 
 
-class _FixedWeightBundle(ExecutionBundle):
+class _FixedWeightBundle(BundleDouble):
     """Synthetic bundle that returns one fixed target weight."""
 
     def __init__(
@@ -158,7 +157,7 @@ class _FixedWeightBundle(ExecutionBundle):
         return weights
 
 
-class _FixtureArrayBundle(ExecutionBundle):
+class _FixtureArrayBundle(BundleDouble):
     """Synthetic bundle whose target is supplied by a Custom Data panel."""
 
     def __init__(self, instrument_id: InstrumentId) -> None:
@@ -244,7 +243,7 @@ def _adjusted_close_warmer(catalog: Catalog, provider: Any) -> CustomDataWarmer:
     )
 
 
-class _TwoVenueBundle(ExecutionBundle):
+class _TwoVenueBundle(BundleDouble):
     """Synthetic bundle that targets instruments on two native venues."""
 
     def __init__(self) -> None:
@@ -303,7 +302,7 @@ class _TwoVenueBundle(ExecutionBundle):
         return weights
 
 
-class _ContinuousRootBundle(ExecutionBundle):
+class _ContinuousRootBundle(BundleDouble):
     """Synthetic bundle that targets the declared continuous-root id."""
 
     def __init__(self) -> None:
@@ -488,7 +487,7 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -527,7 +526,7 @@ def test_run_book_backtest_feeds_native_catalog_bars_to_nautilus(tmp_path) -> No
         ),
         bars,
     )
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -550,7 +549,7 @@ def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> No
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
     provider = _FixtureProvider()
-    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+    registry = make_bundle_registry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
 
     result = run_book_backtest(
         book_path,
@@ -578,7 +577,7 @@ def test_run_book_backtest_fills_custom_array_coverage_on_cold_catalog(
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
     provider = _FixtureProvider()
-    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+    registry = make_bundle_registry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
 
     result = run_book_backtest(
         book_path,
@@ -614,7 +613,7 @@ def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> N
         providers={FixtureRecord: _FixtureProvider()},
         catalog=Catalog.open(catalog_path),
     )
-    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+    registry = make_bundle_registry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
     unused = _FixtureProvider()
 
     result = run_book_backtest(
@@ -654,7 +653,7 @@ def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
         ],
     )
     _seed_catalog_bars_only(catalog_path, _INSTRUMENT_ID, [30.0] * 4)
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.4)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.4)})
 
     result = run_book_backtest(
         book_path,
@@ -686,7 +685,7 @@ def test_run_book_backtest_trades_a_declared_continuous_root(
         return desk
 
     monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_static_desk)
-    registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
+    registry = make_bundle_registry({_WHEEL: _ContinuousRootBundle()})
 
     result = run_book_backtest(
         book_path,
@@ -719,7 +718,7 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
         return desk
 
     monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_rolling_desk)
-    registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
+    registry = make_bundle_registry({_WHEEL: _ContinuousRootBundle()})
 
     result = run_book_backtest(
         book_path,
@@ -745,7 +744,7 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
     _seed_catalog(catalog_path, _SECOND_INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    registry = StubBundleRegistry({_WHEEL: _TwoVenueBundle()})
+    registry = make_bundle_registry({_WHEEL: _TwoVenueBundle()})
 
     result = run_book_backtest(
         book_path,
@@ -818,7 +817,7 @@ def _run_margin_interest_fixture(tmp_path):
         _INSTRUMENT_ID,
         [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
     )
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 1.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 1.5)})
 
     financed = run_book_backtest(
         book_path,
@@ -845,7 +844,7 @@ def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -
     book_path.write_text(_FINANCING_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -948,7 +947,7 @@ def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
             ),
         ),
     )
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -977,7 +976,7 @@ def test_run_book_backtest_fails_on_missing_catalog_instrument(tmp_path) -> None
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog_bars_only(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     with pytest.raises(MissingCatalogDefinitionsError, match="VUSA.XLON"):
         run_book_backtest(
@@ -1024,7 +1023,7 @@ def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
     # carry still fails with Trader's own error before the engine starts.
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     with pytest.raises(
         CatalogInstrumentError, match="did not return instrument definition"
@@ -1041,7 +1040,7 @@ def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
 def test_run_book_backtest_fails_preflight_without_native_bars(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     with pytest.raises(ContractDataError, match="did not return raw bars"):
         run_book_backtest(

@@ -26,7 +26,6 @@ from aegis_runtime import (
     ComponentSpec,
     DataContract,
     DriftBand,
-    ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
     MissingIndexPolicy,
@@ -35,8 +34,8 @@ from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_data.marking import MarkMode
 from aegis_trader.backtest import BacktestMarketData, run_book_backtest
-from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.portfolio.performance import BookEquityRecorder
+from tests.support.bundle_double import BundleDouble, make_bundle_registry
 from tests.support.market_data import bar_window_from_frames
 
 _TIGHT = InstrumentId.from_str("TIGHT.XETR")
@@ -76,7 +75,7 @@ class _QuoteFillOutcome:
 def outcome(tmp_path_factory: pytest.TempPathFactory) -> _QuoteFillOutcome:
     book_path = tmp_path_factory.mktemp("quote-fills") / "book.toml"
     book_path.write_text(_BOOK_TOML)
-    registry = StubBundleRegistry({_WHEEL: _TwoLegFixedWeightBundle()})
+    registry = make_bundle_registry({_WHEEL: _TwoLegFixedWeightBundle()})
 
     result = run_book_backtest(
         book_path,
@@ -131,7 +130,7 @@ def test_open_positions_mark_at_the_quote_mid_not_the_touch(
     assert outcome.final_equity == pytest.approx(998_631.05, abs=0.01)
 
 
-class _TwoLegFixedWeightBundle(ExecutionBundle):
+class _TwoLegFixedWeightBundle(BundleDouble):
     """Synthetic bundle holding both quote-marked legs at a fixed weight."""
 
     def __init__(self) -> None:

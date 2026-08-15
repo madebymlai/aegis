@@ -37,6 +37,7 @@ from aegis_trader.trader.book_startup import (
 )
 from aegis_trader.trader.pipeline import RebalancePipeline
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
+from tests.support.bundle_double import BundleDouble
 from tests.support.factories import assemble_test_book
 
 _NOW = datetime(2026, 6, 22, 12, 0, tzinfo=timezone.utc)
@@ -48,7 +49,7 @@ _FX_EURUSD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 _FX_USDJPY = InstrumentId.from_str("USD/JPY.IDEALPRO")
 
 
-class _FixedWeightBundle(ExecutionBundle):
+class _FixedWeightBundle(BundleDouble):
     def __init__(
         self,
         instrument_id: InstrumentId = _INSTRUMENT_ID,
@@ -214,10 +215,7 @@ def _bootstrap(
     loaded = bundles or {_SLEEVE: _FixedWeightBundle()}
     assembled = assemble_test_book(
         config,
-        {
-            sleeve.wheel_filename: loaded[sleeve.name]
-            for sleeve in config.sleeves
-        },
+        {sleeve.wheel_filename: loaded[sleeve.name] for sleeve in config.sleeves},
     )
     pipeline = RebalancePipeline(
         book_state=book_state or _BookState(),
@@ -278,7 +276,7 @@ class _FuturesBundle(_FixedWeightBundle):
             instrument_bands={continuous_id: DriftBand.symmetric(0.0)},
             direction="both",
         )
-        ExecutionBundle.__init__(self, contract=contract, manifest=manifest, plan=plan)
+        BundleDouble.__init__(self, contract=contract, manifest=manifest, plan=plan)
 
 
 def test_bootstrap_passes_coherent_declarations_to_roll_desk() -> None:

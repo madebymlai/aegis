@@ -105,23 +105,23 @@ dev = [
 
 [[package]]
 name = "aegis-runtime"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "../aegis-runtime" }
 dependencies = [
+    { name = "msgspec" },
     { name = "nautilus-trader" },
     { name = "numba" },
     { name = "numpy" },
     { name = "pandas" },
-    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "nautilus-trader" },
+    { name = "msgspec", specifier = ">=0.21.1" },
+    { name = "nautilus-trader", specifier = ">=1.231.0" },
     { name = "numba", specifier = ">=0.66.0" },
     { name = "numpy" },
     { name = "pandas" },
-    { name = "pydantic", specifier = ">=2.12" },
 ]
 
 [package.metadata.requires-dev]

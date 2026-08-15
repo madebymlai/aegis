@@ -19,7 +19,6 @@ from aegis_runtime import (
     ComponentSpec,
     DataContract,
     DriftBand,
-    ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
     MissingIndexPolicy,
@@ -36,7 +35,6 @@ from aegis_trader.backtest import (
 from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.storage import Catalog
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
-from aegis_trader.bundles.stub import StubBundleRegistry
 
 from tests.e2e.test_backtest_catalog_runner import (
     _AdjustedLastProvider,
@@ -47,6 +45,7 @@ from tests.e2e.test_backtest_catalog_runner import (
     _equity,
     _verified_zero_distribution_source,
 )
+from tests.support.bundle_double import BundleDouble, make_bundle_registry
 from tests.support.market_data import bar_window_from_frames
 
 _HOURLY_ID = InstrumentId.from_str("FAST.XLON")
@@ -72,7 +71,7 @@ group = "Floor"
 """
 
 
-class _AlternatingWeightBundle(ExecutionBundle):
+class _AlternatingWeightBundle(BundleDouble):
     """One-instrument sleeve whose target flips every completed period, so
     every due recomputation emits an order through the zero-width band."""
 
@@ -193,7 +192,7 @@ def _run_mixed_book(tmp_path, registry_bundles, instrument_ids) -> Any:
         start="2020-01-01",
         end="2020-01-05",
         catalog_path=catalog_path,
-        registry=StubBundleRegistry(registry_bundles),
+        registry=make_bundle_registry(registry_bundles),
         data_source=_verified_zero_distribution_source(catalog_path, instrument_ids),
     )
 
@@ -253,7 +252,7 @@ def test_simultaneous_due_transitions_coalesce_into_one_re_net(tmp_path) -> None
         engine.dispose()
 
 
-class _QuoteMarkedHourlyBundle(ExecutionBundle):
+class _QuoteMarkedHourlyBundle(BundleDouble):
     """A fixed-weight hourly sleeve whose leg is quote-marked (BID/ASK bars)."""
 
     def __init__(self, instrument_id: InstrumentId) -> None:
@@ -375,7 +374,7 @@ def test_quote_marked_hourly_sleeve_fills_from_its_own_bid_ask_streams(
         start="2020-01-01",
         end="2020-01-05",
         catalog_path=tmp_path / "catalog",
-        registry=StubBundleRegistry(
+        registry=make_bundle_registry(
             {
                 "fast.whl": _QuoteMarkedHourlyBundle(_HOURLY_ID),
                 "slow.whl": _AlternatingWeightBundle(_DAILY_ID, "1D"),
@@ -453,7 +452,7 @@ group = "Floor"
 """
 
 
-class _UsdConversionDailyBundle(ExecutionBundle):
+class _UsdConversionDailyBundle(BundleDouble):
     """A daily fixed-weight sleeve over a USD instrument with an FX leg."""
 
     def __init__(self) -> None:
@@ -619,7 +618,7 @@ def _run_integrated_book(tmp_path, monkeypatch) -> Any:
         start="2020-01-01",
         end="2020-01-05",
         catalog_path=tmp_path / "catalog",
-        registry=StubBundleRegistry(
+        registry=make_bundle_registry(
             {
                 "cash_hourly.whl": _AlternatingWeightBundle(_HOURLY_ID, "1H"),
                 "quote_hourly.whl": _QuoteMarkedHourlyBundle(_SECOND_HOURLY_ID),
@@ -737,7 +736,7 @@ def _run_weekly_book(tmp_path, *, distribution_ex_date: str | None = None) -> An
         start="2020-01-01",
         end="2020-02-05",
         catalog_path=catalog_path,
-        registry=StubBundleRegistry(
+        registry=make_bundle_registry(
             {"glacial.whl": _AlternatingWeightBundle(_WEEKLY_ID, "1W")}
         ),
         data_source=source,

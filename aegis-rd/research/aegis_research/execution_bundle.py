@@ -11,6 +11,7 @@ from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
+    ExecutionBundle,
     InstrumentId,
     LockedExecutionPlan,
     MissingIndexPolicy,
@@ -54,9 +55,7 @@ class BundleArtifact:
     dist_name: str
     package_name: str
     wheel_filename: str
-    contract: DataContract
-    manifest: BundleManifest
-    plan: LockedExecutionPlan
+    bundle: ExecutionBundle
     component_sources: Mapping[str, str]
 
 
@@ -120,6 +119,7 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
     )
     version = strategy_definition.version
     wheel_filename = f"{_wheel_safe(dist_name)}-{version}-py3-none-any.whl"
+    bundle = ExecutionBundle(contract=contract, manifest=manifest, plan=plan)
     return BundleArtifact(
         strategy_id=strategy_id,
         candidate_key=candidate_key,
@@ -127,9 +127,7 @@ def assemble_bundle(config_path: Path) -> BundleArtifact:
         dist_name=dist_name,
         package_name=package_name,
         wheel_filename=wheel_filename,
-        contract=contract,
-        manifest=manifest,
-        plan=plan,
+        bundle=bundle,
         component_sources=components.source_texts,
     )
 

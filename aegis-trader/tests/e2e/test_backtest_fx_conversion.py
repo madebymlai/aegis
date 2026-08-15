@@ -24,7 +24,6 @@ from aegis_runtime import (
     ComponentSpec,
     DataContract,
     DriftBand,
-    ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
     MissingIndexPolicy,
@@ -37,9 +36,9 @@ from aegis_data.marking import DeclaredMarkingResolver, MarkMode
 from aegis_data.ibkr import historic_catalog_client_factory
 from aegis_data.custom_data import CustomDataWarmer
 from aegis_trader.backtest import CatalogBacktestDataSource, run_book_backtest
-from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.data import build_currency_pair
 from nautilus_trader.model.data import Bar
+from tests.support.bundle_double import BundleDouble, make_bundle_registry
 
 _USD_INSTRUMENT_ID = InstrumentId.from_str("AAPL.XNAS")
 _EURUSD_ID = InstrumentId.from_str("EUR/USD.IDEALPRO")
@@ -56,7 +55,7 @@ group = "Floor"
 """
 
 
-class _UsdFixedWeightBundle(ExecutionBundle):
+class _UsdFixedWeightBundle(BundleDouble):
     """Synthetic bundle holding one USD-quoted instrument at a fixed weight."""
 
     def __init__(self, weight: float) -> None:
@@ -116,7 +115,7 @@ def test_usd_quoted_sleeve_trades_in_eur_base_book(tmp_path) -> None:
     catalog_path = tmp_path / "catalog"
     _seed_usd_catalog(catalog_path, closes=[100.0, 101.0, 102.0, 103.0])
     _seed_fx_catalog(catalog_path, rates=[1.10, 1.10, 1.10, 1.10])
-    registry = StubBundleRegistry({_WHEEL: _UsdFixedWeightBundle(0.5)})
+    registry = make_bundle_registry({_WHEEL: _UsdFixedWeightBundle(0.5)})
 
     result = run_book_backtest(
         book_path,

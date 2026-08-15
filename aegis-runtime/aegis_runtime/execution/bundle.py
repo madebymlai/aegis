@@ -2,23 +2,16 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
-from typing import Annotated, Any
+from typing import Any, Literal
 
+import msgspec
 import numpy as np
 import pandas as pd
+from nautilus_trader.common.config import NautilusConfig
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
-from pydantic import (
-    AfterValidator,
-    BeforeValidator,
-    ConfigDict,
-    Field,
-    PlainSerializer,
-    with_config,
-)
 
 from aegis_runtime.domain.component_inputs import ComponentStrategyInputs
 from aegis_runtime.domain.currency import CurrencyConversion
@@ -50,57 +43,13 @@ SUPPORTED_ADJUSTMENT_MODES = (
 # The closed mark-mode wire vocabulary (aegis-rd-tggo.3). The runtime owns only
 # the serialization slot; resolution semantics live in aegis-data's marking seam.
 RECORDED_MARK_MODES = ("LAST", "MID", "QUOTE")
+BUNDLE_PAYLOAD_SCHEMA_VERSION: Literal["execution_bundle.v6"] = "execution_bundle.v6"
 
 
 class MissingIndexPolicy(str, Enum):
     NAN = "nan"
     DROP = "drop"
     RAISE = "raise"
-
-
-# ── Wire vocabulary ────────────────────────────────────────────────────────
-#
-# The serialized Execution Bundle is the research→live seam, so each field's
-# wire form is declared exactly once, as an annotation on the type that owns it,
-# and both directions are derived from it — there is no second module restating
-# the payload shape. Nautilus types are adapted through `Annotated` hooks rather
-# than `__get_pydantic_core_schema__`: we do not own them and need no JSON
-# Schema, which is pydantic's documented cue to prefer the annotation form.
-
-WireInstrumentId = Annotated[
-    InstrumentId,
-    BeforeValidator(lambda v: InstrumentId.from_str(v) if isinstance(v, str) else v),
-    PlainSerializer(lambda v: v.value, return_type=str),
-]
-
-
-def _wire_adjustment_mode(
-    mode: ContinuousFutureAdjustmentType,
-) -> ContinuousFutureAdjustmentType:
-    """The Nautilus enum has forward members; the wire vocabulary does not."""
-    if mode not in SUPPORTED_ADJUSTMENT_MODES:
-        supported = sorted(member.value for member in SUPPORTED_ADJUSTMENT_MODES)
-        raise ValueError(
-            f"{mode.value!r} is not a supported mode; expected one of {supported}"
-        )
-    return mode
-
-
-WireAdjustmentMode = Annotated[
-    ContinuousFutureAdjustmentType,
-    AfterValidator(_wire_adjustment_mode),
-    PlainSerializer(lambda v: v.value, return_type=str),
-]
-
-WireMissingIndex = Annotated[
-    MissingIndexPolicy,
-    PlainSerializer(lambda v: v.value, return_type=str),
-]
-
-# The bundle types stay stdlib dataclasses: construction keeps raising
-# DataContractError from __post_init__, unwrapped. Pydantic validates *into*
-# them at the wire boundary only, where bundle_loader translates its errors.
-BUNDLE_TYPE_CONFIG = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
 
 class DataContractError(ValueError):
@@ -115,19 +64,17 @@ class MarketDataMissingIndexError(DataContractError):
     """Market data contains missing values forbidden by the contract policy."""
 
 
-@dataclass(frozen=True)
-@with_config(BUNDLE_TYPE_CONFIG)
-class DataContract:
+class DataContract(NautilusConfig, frozen=True, omit_defaults=True):
     # The declared universe, and therefore the rebalance-target set: every id here
     # is either native or continuous (the two projections below partition this
     # tuple), and data-only ``exchange`` legs are excluded from it by the
     # no-overlap rule in ``__post_init__``. Callers take this directly — there is
     # no narrower target set to derive.
-    instrument_ids: tuple[WireInstrumentId, ...]
+    instrument_ids: tuple[InstrumentId, ...]
     required_arrays: tuple[str, ...]
     base_currency: str
     timeframe: str
-    missing_index: WireMissingIndex
+    missing_index: MissingIndexPolicy
     lookback_bars: int = 0
     # Bare continuous-future root symbols (e.g. ``("ES",)``), declared identically to
     # research's ``DataConfig.futures``. Each root must resolve to exactly one synthetic
@@ -139,27 +86,23 @@ class DataContract:
     # never compute columns or rebalance targets — their bars convert non-base-quoted
     # tradeables to the book's base currency (research parity) and mark the FX rate
     # sizing reads.
-    exchange: tuple[WireInstrumentId, ...] = ()
+    exchange: tuple[InstrumentId, ...] = ()
     # The continuous-futures re-basing algebra the locked Run's frames were actually
     # materialised under — a recorded historical fact, never a current code default.
     # Present iff ``futures`` declares roots. Independent of ``exchange``: both
     # backward modes are valid with or without FX conversion legs.
-    adjustment_mode: WireAdjustmentMode | None = None
+    adjustment_mode: ContinuousFutureAdjustmentType | None = None
     # Recorded mark modes (aegis-rd-tggo.3): how each leg's mark was resolved in
     # research (LAST / MID / QUOTE), pinned at export so live subscribes exactly
     # the mark the run validated and never re-derives it. Keys are declared
     # loadable ids; continuous roots and their dated legs are LAST by
     # construction and are never recorded. Only the mark travels — the research
     # fill/sim projection is never serialized.
-    mark_modes: Mapping[WireInstrumentId, str] = field(default_factory=dict)
+    mark_modes: Mapping[InstrumentId, str] = msgspec.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "DataContract.instrument_ids")
-        object.__setattr__(
-            self,
-            "missing_index",
-            _coerce_missing_index_policy(self.missing_index),
-        )
+        _validate_missing_index_policy(self.missing_index)
         _validate_bare_roots(self.futures, "DataContract.futures")
         _continuous_instrument_ids(self.instrument_ids, self.futures)
         _validate_adjustment_mode(self.adjustment_mode, self.futures)
@@ -205,22 +148,18 @@ class DataContract:
         return (*self.native_instrument_ids, *self.exchange)
 
 
-@dataclass(frozen=True)
-@with_config(BUNDLE_TYPE_CONFIG)
-class BundleManifest:
+class BundleManifest(NautilusConfig, frozen=True):
     run_id: str
     role: str
     candidate_key: str
     component_source_hashes: Mapping[str, str]
-    instrument_ids: tuple[WireInstrumentId, ...]
+    instrument_ids: tuple[InstrumentId, ...]
 
     def __post_init__(self) -> None:
         _validate_instrument_ids(self.instrument_ids, "BundleManifest.instrument_ids")
 
 
-@dataclass(frozen=True)
-@with_config(BUNDLE_TYPE_CONFIG)
-class ComponentSpec:
+class ComponentSpec(NautilusConfig, frozen=True):
     family: str
     component_id: str
     module: str
@@ -229,17 +168,11 @@ class ComponentSpec:
     params: Mapping[str, Any]
 
 
-@dataclass(frozen=True)
-@with_config(BUNDLE_TYPE_CONFIG)
-class LockedExecutionPlan:
+class LockedExecutionPlan(NautilusConfig, frozen=True):
     strategy: ComponentSpec
     indicators: tuple[ComponentSpec, ...]
-    instrument_bands: Mapping[WireInstrumentId, DriftBand]
+    instrument_bands: Mapping[InstrumentId, DriftBand]
     direction: str
-    # Derived at construction from `direction`; never serialized.
-    _exposure_limits: Annotated[ExposureLimits, Field(exclude=True)] = field(
-        init=False, repr=False, compare=False
-    )
 
     def __post_init__(self) -> None:
         for instrument_id, band in self.instrument_bands.items():
@@ -254,42 +187,34 @@ class LockedExecutionPlan:
         # An illegal direction fails here — at plan construction (bundle load) —
         # not on the first weight computation. Gross is the fixed sleeve contract,
         # never a locked number.
-        object.__setattr__(
-            self,
-            "_exposure_limits",
-            ExposureLimits(SLEEVE_GROSS_LIMIT, None, self.direction),
-        )
+        ExposureLimits(SLEEVE_GROSS_LIMIT, None, self.direction)
 
     @property
     def exposure_limits(self) -> ExposureLimits:
         """This plan's Exposure Limits: the unit-gross sleeve contract plus the
         locked direction."""
-        return self._exposure_limits
+        return ExposureLimits(SLEEVE_GROSS_LIMIT, None, self.direction)
 
 
-class ExecutionBundle:
-    def __init__(
-        self,
-        *,
-        contract: DataContract,
-        manifest: BundleManifest,
-        plan: LockedExecutionPlan,
-    ) -> None:
-        _validate_instrument_band_contract(contract=contract, plan=plan)
-        self.contract = contract
-        self.manifest = manifest
-        self._plan = plan
+class ExecutionBundle(NautilusConfig, frozen=True):
+    contract: DataContract
+    manifest: BundleManifest
+    plan: LockedExecutionPlan
+    schema_version: Literal["execution_bundle.v6"] = BUNDLE_PAYLOAD_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        _validate_instrument_band_contract(contract=self.contract, plan=self.plan)
 
     @property
     def direction(self) -> str:
         """The locked plan's allowed exposure direction
         (``longonly`` / ``shortonly`` / ``both``)."""
-        return self._plan.direction
+        return self.plan.direction
 
     @property
     def instrument_bands(self) -> Mapping[InstrumentId, DriftBand]:
         """Per-instrument drift bands validated by research for this bundle."""
-        return self._plan.instrument_bands
+        return self.plan.instrument_bands
 
     def compute_weights(
         self,
@@ -339,37 +264,37 @@ class ExecutionBundle:
         expected_shape = (n_bars, n_candidates * n_symbols)
         data = _slice_data(prices, index, self.contract.required_arrays)
         indicator_outputs = _compute_indicators(
-            self._plan.indicators,
+            self.plan.indicators,
             data=data,
             expected_shape=expected_shape,
         )
-        strategy_module = _load_component_module(self._plan.strategy.module)
+        strategy_module = _load_component_module(self.plan.strategy.module)
         strategy_inputs = ComponentStrategyInputs(
             data=data,
             indicators=indicator_outputs,
             n_candidates=n_candidates,
             n_symbols=n_symbols,
             metadata={
-                "strategy_id": self._plan.strategy.component_id,
-                "indicator_ids": [spec.component_id for spec in self._plan.indicators],
+                "strategy_id": self.plan.strategy.component_id,
+                "indicator_ids": [spec.component_id for spec in self.plan.indicators],
             },
         )
         raw = strategy_module.run(
             strategy_inputs,
             n_candidates=n_candidates,
-            **_candidate_param_lists(self._plan.strategy.params, n_candidates),
+            **_candidate_param_lists(self.plan.strategy.params, n_candidates),
         )
         arr = _validated_array(
             raw,
             expected_shape=expected_shape,
-            label=f"strategy {self._plan.strategy.component_id} allocation",
+            label=f"strategy {self.plan.strategy.component_id} allocation",
         )
         weights = pd.DataFrame(
             arr[:, :n_symbols], index=close.index, columns=close.columns
         )
         weights.columns.name = INSTRUMENT_ID_LEVEL
         _assert_latest_row_not_nan(weights)
-        validate_exposure(weights, self._plan.exposure_limits)
+        validate_exposure(weights, self.plan.exposure_limits)
         return weights
 
 
@@ -388,14 +313,13 @@ def _validate_instrument_ids(
         raise ValueError(f"{label} contains duplicates: {sorted(duplicates)}")
 
 
-def _coerce_missing_index_policy(value: object) -> MissingIndexPolicy:
-    try:
-        return MissingIndexPolicy(value)
-    except ValueError:
-        allowed = [policy.value for policy in MissingIndexPolicy]
-        raise InvalidMissingIndexPolicy(
-            f"DataContract.missing_index must be one of {allowed}; got {value!r}"
-        ) from None
+def _validate_missing_index_policy(value: object) -> None:
+    if isinstance(value, MissingIndexPolicy):
+        return
+    allowed = [policy.value for policy in MissingIndexPolicy]
+    raise InvalidMissingIndexPolicy(
+        f"DataContract.missing_index must be one of {allowed}; got {value!r}"
+    )
 
 
 def _validate_instrument_band_contract(

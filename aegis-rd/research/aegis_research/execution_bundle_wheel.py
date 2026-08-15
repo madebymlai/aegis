@@ -10,8 +10,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
 
-from aegis_runtime.execution.bundle_loader import dump_bundle_payload
-
 from research.aegis_research.execution_bundle import BundleArtifact
 
 ENTRY_POINT_GROUP = "aegis.execution_bundles"
@@ -71,15 +69,7 @@ def _write_package(artifact: BundleArtifact, package_dir: Path) -> None:
     for filename, source in sorted(artifact.component_sources.items()):
         (package_dir / filename).write_text(source, encoding="utf-8")
     (package_dir / "__init__.py").write_text(LOADER_SOURCE, encoding="utf-8")
-    payload = dump_bundle_payload(
-        contract=artifact.contract,
-        manifest=artifact.manifest,
-        plan=artifact.plan,
-    )
-    (package_dir / "bundle_manifest.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    (package_dir / "bundle_manifest.json").write_bytes(artifact.bundle.json())
 
 
 def _raise_on_name_collision(artifact: BundleArtifact, out_dir: Path) -> None:
@@ -136,9 +126,9 @@ def _write_dist_info(
         f"Name: {dist_name}\n"
         f"Version: {version}\n"
         "Summary: Aegis locked execution bundle\n"
-        # The first aegis-runtime that speaks execution_bundle.v5; schema
+        # The first aegis-runtime that speaks execution_bundle.v6; schema
         # rejection stays the safety mechanism, this just resolves it earlier.
-        "Requires-Dist: aegis-runtime>=0.3.0\n",
+        "Requires-Dist: aegis-runtime>=0.4.0\n",
         encoding="utf-8",
     )
     wheel_metadata = "\n".join(

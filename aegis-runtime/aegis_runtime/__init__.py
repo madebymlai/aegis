@@ -9,6 +9,7 @@ from aegis_runtime.domain.financing import debit_interest
 from aegis_runtime.domain.futures_roots import validate_bare_root
 from aegis_runtime.domain.market_data import MarketDataBundle
 from aegis_runtime.execution.bundle import (
+    BUNDLE_PAYLOAD_SCHEMA_VERSION,
     SLEEVE_GROSS_LIMIT,
     SUPPORTED_ADJUSTMENT_MODES,
     BundleManifest,
@@ -23,7 +24,6 @@ from aegis_runtime.execution.bundle import (
     MissingIndexPolicy,
 )
 from aegis_runtime.execution.bundle_loader import (
-    dump_bundle_payload,
     load_bundle_payload,
     load_installed_bundle,
 )
@@ -31,6 +31,7 @@ from aegis_runtime.execution.roll_sensitivity import RollSensitivityError
 
 __all__ = [
     "BundleManifest",
+    "BUNDLE_PAYLOAD_SCHEMA_VERSION",
     "RollSensitivityError",
     "SLEEVE_GROSS_LIMIT",
     "SUPPORTED_ADJUSTMENT_MODES",
@@ -40,7 +41,6 @@ __all__ = [
     "DataContract",
     "debit_interest",
     "DriftBand",
-    "dump_bundle_payload",
     "ExecutionBundle",
     "ExposureLimits",
     "ExposureValidationError",

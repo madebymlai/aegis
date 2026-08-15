@@ -200,3 +200,22 @@ This also withdraws the 2026-06-14 amendment's claim that Trader compares Book c
 Sleeve research evidence or prevents allocator scaling through such a comparison. The
 Execution Bundle enforces its locked limits before Trader allocation; the Book limits govern
 the independent post-allocation result.
+
+## Amendment (2026-08-16): the Execution Bundle is the native v6 configuration root
+
+This supersedes the dump/load-pair implementation detail above. `ExecutionBundle` and every
+value nested beneath its artifact boundary (`DataContract`, `BundleManifest`,
+`ComponentSpec`, `LockedExecutionPlan`, and `DriftBand`) form one frozen
+`NautilusConfig` graph. Research constructs that root once, the wheel writes its native
+`json()` bytes, and the installed loader returns its native `parse()` result directly. The
+loader retains only Aegis schema-version negotiation and the public error taxonomy; there is
+no private payload envelope, reflected field ledger, null patch, or decoded-to-behavioral
+copy.
+
+The forward contract is `execution_bundle.v6`; older artifacts are regenerated from their
+Locks rather than read through compatibility branches. Nautilus/msgspec owns structural
+encoding, native identifier and enum restoration, strict nested fields, defaults, and JSON
+paths. Aegis still owns the artifact schema identity and all Data Contract, Drift Band,
+Exposure Validation, roll-sensitivity, Component-execution, and cross-record invariants.
+`ExecutionBundle.compute_weights` remains the pure Sleeve-decision interface beneath the one
+native Rebalance Strategy.

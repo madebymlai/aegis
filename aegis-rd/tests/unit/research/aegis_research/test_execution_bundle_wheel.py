@@ -2,17 +2,20 @@ import json
 import sys
 import zipfile
 
+import pandas as pd
 import pytest
 from aegis_runtime import (
+    BUNDLE_PAYLOAD_SCHEMA_VERSION,
     BundleManifest,
     ComponentSpec,
     DataContract,
     DriftBand,
+    ExecutionBundle,
     InstrumentId,
     LockedExecutionPlan,
+    MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.execution.bundle_loader import BUNDLE_PAYLOAD_SCHEMA_VERSION
 
 from research.aegis_research.execution_bundle import BundleArtifact
 from research.aegis_research.execution_bundle_wheel import (
@@ -35,13 +38,7 @@ def _artifact(*, candidate_key: str = "0123456789abcdef", version: str = "1.2.3"
         output_names=("target_weights",),
         params={"window": 5},
     )
-    return BundleArtifact(
-        strategy_id="tests.strategy",
-        candidate_key=candidate_key,
-        version=version,
-        dist_name=dist_name,
-        package_name=package_name,
-        wheel_filename=f"{dist_name.replace('-', '_')}-{version}-py3-none-any.whl",
+    bundle = ExecutionBundle(
         contract=DataContract(
             instrument_ids=(instrument_id,),
             required_arrays=("Close",),
@@ -63,7 +60,23 @@ def _artifact(*, candidate_key: str = "0123456789abcdef", version: str = "1.2.3"
             instrument_bands={instrument_id: DriftBand(up=0.10, down=0.20)},
             direction="longonly",
         ),
-        component_sources={"strategy.py": "def run(*args, **kwargs):\n    raise AssertionError\n"},
+    )
+    return BundleArtifact(
+        strategy_id="tests.strategy",
+        candidate_key=candidate_key,
+        version=version,
+        dist_name=dist_name,
+        package_name=package_name,
+        wheel_filename=f"{dist_name.replace('-', '_')}-{version}-py3-none-any.whl",
+        bundle=bundle,
+        component_sources={
+            "strategy.py": (
+                "import numpy as np\n\n"
+                "def run(inputs, *, n_candidates, **params):\n"
+                "    n_bars, n_symbols = inputs.data.array('Close').shape\n"
+                "    return np.ones((n_bars, n_candidates * n_symbols))\n"
+            )
+        },
     )
 
 
@@ -86,24 +99,40 @@ def test_write_wheel_materializes_data_manifest_and_constant_loader(tmp_path) ->
     assert manifest["schema_version"] == BUNDLE_PAYLOAD_SCHEMA_VERSION
     assert manifest["contract"]["instrument_ids"] == ["AAPL.NASDAQ"]
     assert manifest["contract"]["missing_index"] == "drop"
-    assert manifest["plan"]["instrument_bands"] == {
-        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0}
-    }
+    assert manifest["plan"]["instrument_bands"] == {"AAPL.NASDAQ": {"up": 0.10, "down": 0.20}}
+
+
+def test_generated_wheel_loads_native_root_and_executes_component(tmp_path) -> None:
+    artifact = _artifact()
+    wheel_path = write_wheel(artifact, tmp_path)
 
     sys.path.insert(0, str(wheel_path))
     try:
         module = __import__(artifact.package_name)
         bundle = module.get_bundle()
+        instrument_id = InstrumentId.from_str("AAPL.NASDAQ")
+        weights = bundle.compute_weights(
+            MarketDataBundle(
+                {
+                    "Close": pd.DataFrame(
+                        {instrument_id: [100.0, 101.0, 102.0, 103.0, 104.0]},
+                        index=pd.date_range("2024-01-01", periods=5, freq="D"),
+                    )
+                }
+            ),
+            currency_conversion=None,
+        )
     finally:
         sys.path.remove(str(wheel_path))
         sys.modules.pop(artifact.package_name, None)
 
     assert bundle.manifest.candidate_key == "0123456789abcdef"
+    assert weights[instrument_id].tolist() == [1.0, 1.0, 1.0, 1.0, 1.0]
 
 
-def test_write_wheel_requires_the_first_v4_capable_runtime(tmp_path) -> None:
+def test_write_wheel_requires_the_first_v6_capable_runtime(tmp_path) -> None:
     # Schema rejection is the safety mechanism; the package bound makes
-    # installation resolve a v4-capable aegis-runtime up front.
+    # installation resolve a v6-capable aegis-runtime up front.
     artifact = _artifact()
 
     wheel_path = write_wheel(artifact, tmp_path)
@@ -112,7 +141,7 @@ def test_write_wheel_requires_the_first_v4_capable_runtime(tmp_path) -> None:
         metadata_path = next(name for name in zf.namelist() if name.endswith(".dist-info/METADATA"))
         metadata = zf.read(metadata_path).decode()
 
-    assert "Requires-Dist: aegis-runtime>=0.3.0" in metadata
+    assert "Requires-Dist: aegis-runtime>=0.4.0" in metadata
 
 
 def test_write_wheel_uses_same_name_when_same_candidate_already_exists(tmp_path) -> None:

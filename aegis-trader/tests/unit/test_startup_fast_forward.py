@@ -39,6 +39,7 @@ from aegis_trader.trader.startup_fast_forward import (
     RecoveryUpdate,
     StartupFastForward,
 )
+from tests.support.bundle_double import BundleDouble
 from tests.support.factories import assemble_test_book, make_bundle
 
 _INSTRUMENT = InstrumentId.from_str("SPY.ARCA")
@@ -118,12 +119,12 @@ class _MarketData:
         return True
 
 
-class _FixedBundle(ExecutionBundle):
+class _FixedBundle(BundleDouble):
     def __init__(self, bundle: ExecutionBundle) -> None:
         super().__init__(
             contract=bundle.contract,
             manifest=bundle.manifest,
-            plan=bundle._plan,  # noqa: SLF001 - clone the test fixture bundle
+            plan=bundle.plan,
         )
 
     def compute_weights(

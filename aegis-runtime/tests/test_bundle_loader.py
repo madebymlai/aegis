@@ -1,32 +1,41 @@
 import json
 import sys
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_runtime.domain.drift_band import DriftBand
+from aegis_runtime.domain.exposure_validation import InvalidExposureLimits
 from aegis_runtime.execution.bundle import (
     BundleManifest,
     ComponentSpec,
     DataContract,
     DataContractError,
+    ExecutionBundle,
+    InvalidMissingIndexPolicy,
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
 from aegis_runtime.execution.bundle_loader import (
-    BUNDLE_PAYLOAD_SCHEMA_VERSION,
     BundlePayloadFieldError,
     BundlePayloadSchemaError,
-    dump_bundle_payload,
     load_bundle_payload,
     load_installed_bundle,
 )
-from aegis_runtime.domain.drift_band import DriftBand
+
+Payload = dict[str, Any]
+
+
+def _id(value: str) -> InstrumentId:
+    return InstrumentId.from_str(value)
 
 
 def _contract() -> DataContract:
     return DataContract(
-        instrument_ids=(_id("AAPL.NASDAQ"), _id("ESZ6.XCME")),
+        instrument_ids=(_id("AAPL.NASDAQ"), _id("MSFT.NASDAQ")),
         required_arrays=("Close", "Open"),
         base_currency="EUR",
         timeframe="1D",
@@ -45,98 +54,36 @@ def _manifest(contract: DataContract) -> BundleManifest:
     )
 
 
-def _plan(instrument_ids: tuple[InstrumentId, ...] | None = None) -> LockedExecutionPlan:
-    if instrument_ids is None:
-        instrument_ids = _contract().instrument_ids
-    strategy = ComponentSpec(
-        family="strategies",
-        component_id="tests.strategy",
-        module="bundle.strategy",
-        input_names=("Close",),
-        output_names=("target_weights",),
-        params={"window": 5},
-    )
-    indicator = ComponentSpec(
-        family="indicators",
-        component_id="tests.indicator",
-        module="bundle.indicator_0",
-        input_names=("Close",),
-        output_names=("score",),
-        params={"half_life": 3},
-    )
+def _plan(instrument_ids: tuple[InstrumentId, ...]) -> LockedExecutionPlan:
     return LockedExecutionPlan(
-        strategy=strategy,
-        indicators=(indicator,),
+        strategy=ComponentSpec(
+            family="strategies",
+            component_id="tests.strategy",
+            module="bundle.strategy",
+            input_names=("Close",),
+            output_names=("target_weights",),
+            params={"window": 5, "nested": {"thresholds": [0.1, 0.2]}},
+        ),
+        indicators=(),
         instrument_bands={
-            instrument_id: DriftBand(up=0.10, down=0.20) for instrument_id in instrument_ids
+            instrument_id: DriftBand(up=0.10, down=0.20)
+            for instrument_id in instrument_ids
         },
         direction="longonly",
     )
 
 
-def _id(value: str) -> InstrumentId:
-    return InstrumentId.from_str(value)
-
-
-def test_bundle_payload_round_trips_native_instrument_ids() -> None:
-    contract = _contract()
-    plan = _plan(contract.instrument_ids)
-
-    payload = dump_bundle_payload(
+def _bundle(contract: DataContract | None = None) -> ExecutionBundle:
+    contract = _contract() if contract is None else contract
+    return ExecutionBundle(
         contract=contract,
         manifest=_manifest(contract),
-        plan=plan,
-    )
-    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
-
-    assert payload["schema_version"] == BUNDLE_PAYLOAD_SCHEMA_VERSION
-    assert payload["contract"]["instrument_ids"] == ["AAPL.NASDAQ", "ESZ6.XCME"]
-    assert payload["contract"]["missing_index"] == "drop"
-    assert payload["plan"]["instrument_bands"] == {
-        "AAPL.NASDAQ": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0},
-        "ESZ6.XCME": {"up": 0.10, "down": 0.20, "destination_fraction": 1.0},
-    }
-    assert bundle.contract == contract
-    assert bundle.manifest == _manifest(contract)
-    assert bundle.instrument_bands == plan.instrument_bands
-    assert bundle.direction == plan.direction
-    # Unit gross is the fixed sleeve contract, never a payload field (aegis-rd-ui1m).
-    assert "gross_cap" not in payload["plan"]
-    assert "net_cap" not in payload["plan"]
-
-
-def test_bundle_payload_round_trips_band_destination_fraction() -> None:
-    contract = _contract()
-    plan = _plan(contract.instrument_ids)
-    banded = LockedExecutionPlan(
-        strategy=plan.strategy,
-        indicators=plan.indicators,
-        instrument_bands={
-            instrument_id: DriftBand(up=0.10, down=0.20, destination_fraction=0.5)
-            for instrument_id in contract.instrument_ids
-        },
-        direction=plan.direction,
+        plan=_plan(contract.instrument_ids),
     )
 
-    payload = dump_bundle_payload(contract=contract, manifest=_manifest(contract), plan=banded)
-    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
 
-    assert bundle.instrument_bands == banded.instrument_bands
-
-
-def test_bundle_payload_without_destination_fraction_loads_trade_to_target() -> None:
-    """Pre-destination bundles carry only widths; 1.0 is their exact behaviour."""
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    for band_payload in payload["plan"]["instrument_bands"].values():
-        del band_payload["destination_fraction"]
-
-    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
-
-    for band in bundle.instrument_bands.values():
-        assert band.destination_fraction == 1.0
+def _payload(bundle: ExecutionBundle | None = None) -> Payload:
+    return (bundle or _bundle()).json_primitives()
 
 
 @pytest.mark.parametrize(
@@ -146,149 +93,225 @@ def test_bundle_payload_without_destination_fraction_loads_trade_to_target() -> 
         (ContinuousFutureAdjustmentType.BACKWARD_SPREAD, "backward_spread"),
     ],
 )
-def test_bundle_payload_round_trips_continuous_future_roots(
-    mode: ContinuousFutureAdjustmentType, wire_value: str
+def test_v6_round_trips_native_continuous_future_facts(
+    mode: ContinuousFutureAdjustmentType,
+    wire_value: str,
 ) -> None:
-    """The continuous-root declaration and its recorded adjustment mode must survive
-    the wheel payload, or the roll-sensitivity guard is dead on a loaded bundle."""
-    contract = _futures_contract(mode)
-
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
-
-    assert payload["contract"]["futures"] == ["ES"]
-    assert payload["contract"]["adjustment_mode"] == wire_value
-    assert bundle.contract.futures == ("ES",)
-    assert bundle.contract.adjustment_mode is mode
-
-
-def test_bundle_payload_omits_adjustment_mode_for_etf_only_contracts() -> None:
-    """An ETF-only contract has no re-basing algebra to declare; the key is absent,
-    not null."""
-    contract = _contract()
-
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
-
-    assert "adjustment_mode" not in payload["contract"]
-    assert bundle.contract.adjustment_mode is None
-
-
-@pytest.mark.parametrize(
-    "old_version", ["execution_bundle.v3", "execution_bundle.v4"]
-)
-def test_bundle_payload_rejects_old_schema_versions(old_version: str) -> None:
-    """Forward-First: v3 recorded no adjustment mode, v4 locked caps in the plan
-    (aegis-rd-ui1m) — no old-schema payload is trusted. It fails by version,
-    never by silently discarding or reinterpreting a field."""
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    payload["schema_version"] = old_version
-
-    with pytest.raises(BundlePayloadSchemaError, match="execution_bundle.v5"):
-        load_bundle_payload(payload)
-
-
-@pytest.mark.parametrize("bad_value", [None, 3, ["backward_ratio"]])
-def test_bundle_payload_rejects_non_string_adjustment_mode(bad_value) -> None:
-    contract = _futures_contract(ContinuousFutureAdjustmentType.BACKWARD_RATIO)
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    payload["contract"]["adjustment_mode"] = bad_value
-
-    with pytest.raises(BundlePayloadFieldError, match="adjustment_mode"):
-        load_bundle_payload(payload)
-
-
-@pytest.mark.parametrize("bad_value", ["forward_ratio", "forward_spread", "BACKWARD_RATIO", "nearest"])
-def test_bundle_payload_rejects_unknown_and_forward_adjustment_modes(bad_value: str) -> None:
-    contract = _futures_contract(ContinuousFutureAdjustmentType.BACKWARD_RATIO)
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    payload["contract"]["adjustment_mode"] = bad_value
-
-    with pytest.raises(BundlePayloadFieldError, match="adjustment_mode"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_futures_without_adjustment_mode() -> None:
-    contract = _futures_contract(ContinuousFutureAdjustmentType.BACKWARD_RATIO)
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    del payload["contract"]["adjustment_mode"]
-
-    with pytest.raises(DataContractError, match="no adjustment_mode"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_adjustment_mode_without_futures() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    payload["contract"]["adjustment_mode"] = "backward_ratio"
-
-    with pytest.raises(DataContractError, match="futures declares no"):
-        load_bundle_payload(payload)
-
-
-def _futures_contract(mode: ContinuousFutureAdjustmentType) -> DataContract:
-    return DataContract(
+    contract = DataContract(
         instrument_ids=(_id("ES.XCME"),),
         required_arrays=("Close",),
         base_currency="USD",
         timeframe="1D",
         missing_index=MissingIndexPolicy.DROP,
-        lookback_bars=20,
         futures=("ES",),
         adjustment_mode=mode,
     )
+    bundle = _bundle(contract)
+
+    raw = bundle.json()
+    loaded = load_bundle_payload(raw)
+
+    assert json.loads(raw)["contract"]["adjustment_mode"] == wire_value
+    assert loaded.contract.futures == ("ES",)
+    assert loaded.contract.adjustment_mode is mode
 
 
-def test_bundle_payload_round_trips_exchange_conversion_legs() -> None:
-    """The contract's FX conversion legs (aegis-rd-reyj) survive dump→load."""
+def test_v6_round_trips_exchange_legs_and_recorded_mark_modes() -> None:
     contract = DataContract(
-        instrument_ids=(_id("AAPL.NASDAQ"),),
+        instrument_ids=(_id("UEQC.XETR"), _id("AAPL.NASDAQ")),
         required_arrays=("Close",),
         base_currency="EUR",
         timeframe="1D",
         missing_index=MissingIndexPolicy.DROP,
-        lookback_bars=20,
         exchange=(_id("EUR/USD.IDEALPRO"),),
+        mark_modes={
+            _id("UEQC.XETR"): "QUOTE",
+            _id("AAPL.NASDAQ"): "LAST",
+            _id("EUR/USD.IDEALPRO"): "MID",
+        },
     )
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+
+    loaded = load_bundle_payload(_bundle(contract).json())
+
+    assert loaded.contract.exchange == (_id("EUR/USD.IDEALPRO"),)
+    assert loaded.contract.mark_modes == {
+        _id("UEQC.XETR"): "QUOTE",
+        _id("AAPL.NASDAQ"): "LAST",
+        _id("EUR/USD.IDEALPRO"): "MID",
+    }
+
+
+def test_loader_rejects_v5_before_trusting_its_fields() -> None:
+    payload = _payload()
+    payload["schema_version"] = "execution_bundle.v5"
+
+    with pytest.raises(BundlePayloadSchemaError, match="execution_bundle.v6"):
+        load_bundle_payload(json.dumps(payload))
+
+
+def test_loader_rejects_an_absent_schema_version() -> None:
+    payload = _payload()
+    del payload["schema_version"]
+
+    with pytest.raises(BundlePayloadSchemaError, match="schema_version"):
+        load_bundle_payload(json.dumps(payload))
+
+
+def test_loader_reports_malformed_json_as_a_field_error() -> None:
+    with pytest.raises(BundlePayloadFieldError):
+        load_bundle_payload(b'{"schema_version":')
+
+
+def _add_unknown_root(payload: Payload) -> None:
+    payload["unknown"] = True
+
+
+def _add_unknown_contract(payload: Payload) -> None:
+    payload["contract"]["unknown"] = True
+
+
+def _add_unknown_manifest(payload: Payload) -> None:
+    payload["manifest"]["unknown"] = True
+
+
+def _add_unknown_plan(payload: Payload) -> None:
+    payload["plan"]["unknown"] = True
+
+
+def _add_unknown_component(payload: Payload) -> None:
+    payload["plan"]["strategy"]["unknown"] = True
+
+
+def _add_unknown_drift_band(payload: Payload) -> None:
+    payload["plan"]["instrument_bands"]["AAPL.NASDAQ"]["unknown"] = True
+
+
+@pytest.mark.parametrize(
+    ("add_unknown", "expected_path"),
+    [
+        pytest.param(_add_unknown_root, r"unknown field", id="root"),
+        pytest.param(
+            _add_unknown_contract,
+            r"unknown field.*\$\.contract",
+            id="contract",
+        ),
+        pytest.param(
+            _add_unknown_manifest,
+            r"unknown field.*\$\.manifest",
+            id="manifest",
+        ),
+        pytest.param(_add_unknown_plan, r"unknown field.*\$\.plan", id="plan"),
+        pytest.param(
+            _add_unknown_component,
+            r"unknown field.*\$\.plan\.strategy",
+            id="component",
+        ),
+        pytest.param(
+            _add_unknown_drift_band,
+            r"unknown field.*\$\.plan\.instrument_bands",
+            id="drift-band",
+        ),
+    ],
+)
+def test_loader_rejects_unknown_fields_at_every_struct_layer(
+    add_unknown: Callable[[Payload], None],
+    expected_path: str,
+) -> None:
+    payload = _payload()
+    add_unknown(payload)
+
+    with pytest.raises(BundlePayloadFieldError, match=expected_path):
+        load_bundle_payload(json.dumps(payload))
+
+
+def test_loader_reports_the_path_of_a_missing_required_field() -> None:
+    payload = _payload()
+    del payload["contract"]["missing_index"]
+
+    with pytest.raises(
+        BundlePayloadFieldError,
+        match=r"missing required field `missing_index`.*\$\.contract",
+    ):
+        load_bundle_payload(json.dumps(payload))
+
+
+def test_loader_reports_the_path_of_an_invalid_native_identifier() -> None:
+    payload = _payload()
+    payload["manifest"]["instrument_ids"][1] = ""
+
+    with pytest.raises(
+        BundlePayloadFieldError,
+        match=r"\$\.manifest\.instrument_ids\[1\]",
+    ):
+        load_bundle_payload(json.dumps(payload))
+
+
+def test_loader_preserves_a_named_data_contract_error() -> None:
+    contract = DataContract(
+        instrument_ids=(_id("ES.XCME"),),
+        required_arrays=("Close",),
+        base_currency="USD",
+        timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
+        futures=("ES",),
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
     )
-    bundle = load_bundle_payload(json.loads(json.dumps(payload)))
+    payload = _payload(_bundle(contract))
+    del payload["contract"]["adjustment_mode"]
 
-    assert payload["contract"]["exchange"] == ["EUR/USD.IDEALPRO"]
-    assert bundle.contract.exchange == (_id("EUR/USD.IDEALPRO"),)
+    with pytest.raises(DataContractError, match="no adjustment_mode"):
+        load_bundle_payload(json.dumps(payload))
 
 
-def test_bundle_payload_rejects_contract_without_exchange() -> None:
-    """Pre-v3 wheels omit the conversion legs; they must fail loud, not load
-    as a silently FX-less book (the aegis-rd-reyj tail-only failure mode)."""
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
+def test_loader_preserves_a_named_exposure_validation_error() -> None:
+    payload = _payload()
+    payload["plan"]["direction"] = "sideways"
+
+    with pytest.raises(InvalidExposureLimits, match="direction must be one of"):
+        load_bundle_payload(json.dumps(payload))
+
+
+def test_loader_rejects_a_forward_adjustment_as_a_domain_error() -> None:
+    contract = DataContract(
+        instrument_ids=(_id("ES.XCME"),),
+        required_arrays=("Close",),
+        base_currency="USD",
+        timeframe="1D",
+        missing_index=MissingIndexPolicy.DROP,
+        futures=("ES",),
+        adjustment_mode=ContinuousFutureAdjustmentType.BACKWARD_RATIO,
     )
-    del payload["contract"]["exchange"]
+    payload = _payload(_bundle(contract))
+    payload["contract"]["adjustment_mode"] = "forward_ratio"
 
-    with pytest.raises(BundlePayloadFieldError, match="exchange"):
-        load_bundle_payload(payload)
+    with pytest.raises(DataContractError, match="only backward modes"):
+        load_bundle_payload(json.dumps(payload))
+
+
+def test_loader_rejects_contract_and_plan_instrument_mismatch() -> None:
+    payload = _payload()
+    del payload["plan"]["instrument_bands"]["MSFT.NASDAQ"]
+    payload["plan"]["instrument_bands"]["NVDA.NASDAQ"] = {"up": 0.1, "down": 0.2}
+
+    with pytest.raises(
+        BundlePayloadFieldError,
+        match=r"instrument_bands.*missing=.*MSFT.*extra=.*NVDA",
+    ):
+        load_bundle_payload(json.dumps(payload))
+
+
+def test_direct_contract_construction_requires_a_named_missing_index_policy() -> None:
+    with pytest.raises(InvalidMissingIndexPolicy, match="must be one of"):
+        DataContract(
+            instrument_ids=(_id("AAPL.NASDAQ"),),
+            required_arrays=("Close",),
+            base_currency="USD",
+            timeframe="1D",
+            missing_index="drop",  # type: ignore[arg-type]
+        )
 
 
 def test_data_contract_rejects_exchange_overlapping_tradeables() -> None:
-    """An id cannot be both a compute column and a conversion-only leg."""
     with pytest.raises(ValueError, match="exchange"):
         DataContract(
             instrument_ids=(_id("AAPL.NASDAQ"),),
@@ -298,176 +321,6 @@ def test_data_contract_rejects_exchange_overlapping_tradeables() -> None:
             missing_index=MissingIndexPolicy.DROP,
             exchange=(_id("AAPL.NASDAQ"),),
         )
-
-
-def test_bundle_payload_rejects_pre_v2_payload_without_schema_version() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    del payload["schema_version"]
-
-    with pytest.raises(BundlePayloadSchemaError, match="schema_version"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_contract_without_missing_index_policy() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    del payload["contract"]["missing_index"]
-
-    with pytest.raises(BundlePayloadFieldError, match="missing_index"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_contract_without_futures() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-    del payload["contract"]["futures"]
-
-    with pytest.raises(BundlePayloadFieldError, match="futures"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_future_root_without_matching_continuous_id() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract,
-        manifest=_manifest(contract),
-        plan=_plan(contract.instrument_ids),
-    )
-    payload["contract"]["instrument_ids"] = ["ESZ6.XCME"]
-    payload["contract"]["futures"] = ["ES"]
-    payload["manifest"]["instrument_ids"] = ["ESZ6.XCME"]
-    payload["plan"]["instrument_bands"] = {
-        "ESZ6.XCME": {"up": 0.10, "down": 0.20},
-    }
-
-    with pytest.raises(ValueError, match="no matching instrument_id"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_missing_instrument_ids() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract,
-        manifest=_manifest(contract),
-        plan=_plan(contract.instrument_ids),
-    )
-    del payload["contract"]["instrument_ids"]
-
-    with pytest.raises(ValueError, match="instrument_ids"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_invalid_instrument_id() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract,
-        manifest=_manifest(contract),
-        plan=_plan(contract.instrument_ids),
-    )
-    payload["manifest"]["instrument_ids"][1] = ""
-
-    with pytest.raises(ValueError, match="instrument_ids"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_missing_instrument_bands() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract,
-        manifest=_manifest(contract),
-        plan=_plan(contract.instrument_ids),
-    )
-    del payload["plan"]["instrument_bands"]
-
-    with pytest.raises(ValueError, match="instrument_bands"):
-        load_bundle_payload(payload)
-
-
-def test_bundle_payload_rejects_instrument_band_contract_mismatch() -> None:
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract,
-        manifest=_manifest(contract),
-        plan=_plan(contract.instrument_ids),
-    )
-    del payload["plan"]["instrument_bands"]["ESZ6.XCME"]
-    payload["plan"]["instrument_bands"]["MSFT.NASDAQ"] = {"up": 0.10, "down": 0.20}
-
-    with pytest.raises(ValueError, match="instrument_bands.*missing=.*ESZ6.*extra=.*MSFT"):
-        load_bundle_payload(payload)
-
-
-def test_load_installed_bundle_reads_package_manifest(tmp_path) -> None:
-    package_dir = tmp_path / "aegis_exec_test_bundle"
-    package_dir.mkdir()
-    contract = _contract()
-    (package_dir / "__init__.py").write_text("")
-    (package_dir / "bundle_manifest.json").write_text(
-        json.dumps(
-            dump_bundle_payload(
-                contract=contract,
-                manifest=_manifest(contract),
-                plan=_plan(contract.instrument_ids),
-            )
-        )
-    )
-    sys.path.insert(0, str(tmp_path))
-    try:
-        bundle = load_installed_bundle("aegis_exec_test_bundle")
-    finally:
-        sys.path.remove(str(tmp_path))
-        sys.modules.pop("aegis_exec_test_bundle", None)
-
-    assert bundle.contract == contract
-
-
-def test_bundle_payload_round_trips_recorded_mark_modes() -> None:
-    contract = DataContract(
-        instrument_ids=(_id("UEQC.XETR"), _id("AAPL.NASDAQ")),
-        required_arrays=("Close",),
-        base_currency="EUR",
-        timeframe="1D",
-        missing_index=MissingIndexPolicy.DROP,
-        lookback_bars=20,
-        exchange=(_id("EUR/USD.IDEALPRO"),),
-        mark_modes={
-            _id("UEQC.XETR"): "QUOTE",
-            _id("AAPL.NASDAQ"): "LAST",
-            _id("EUR/USD.IDEALPRO"): "MID",
-        },
-    )
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan(contract.instrument_ids)
-    )
-
-    loaded = load_bundle_payload(json.loads(json.dumps(payload)))
-
-    assert loaded.contract.mark_modes == {
-        _id("UEQC.XETR"): "QUOTE",
-        _id("AAPL.NASDAQ"): "LAST",
-        _id("EUR/USD.IDEALPRO"): "MID",
-    }
-
-
-def test_bundle_payload_without_mark_modes_records_nothing() -> None:
-    # A pre-tggo.3 wheel: nothing recorded — live's recorded-marking resolver
-    # fails closed per instrument rather than defaulting a thin leg to LAST.
-    contract = _contract()
-    payload = dump_bundle_payload(
-        contract=contract, manifest=_manifest(contract), plan=_plan()
-    )
-    del payload["contract"]["mark_modes"]
-
-    loaded = load_bundle_payload(json.loads(json.dumps(payload)))
-
-    assert loaded.contract.mark_modes == {}
 
 
 def test_data_contract_rejects_a_mark_mode_outside_the_closed_set() -> None:
@@ -482,13 +335,17 @@ def test_data_contract_rejects_a_mark_mode_outside_the_closed_set() -> None:
         )
 
 
-def test_data_contract_rejects_a_recorded_mark_for_an_undeclared_id() -> None:
-    with pytest.raises(DataContractError, match="does not load"):
-        DataContract(
-            instrument_ids=(_id("AAPL.NASDAQ"),),
-            required_arrays=("Close",),
-            base_currency="EUR",
-            timeframe="1D",
-            missing_index=MissingIndexPolicy.DROP,
-            mark_modes={_id("UEQC.XETR"): "QUOTE"},
-        )
+def test_load_installed_bundle_reads_native_json_bytes(tmp_path) -> None:
+    package_dir = tmp_path / "aegis_exec_test_bundle"
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text("")
+    (package_dir / "bundle_manifest.json").write_bytes(_bundle().json())
+    sys.path.insert(0, str(tmp_path))
+
+    try:
+        loaded = load_installed_bundle("aegis_exec_test_bundle")
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("aegis_exec_test_bundle", None)
+
+    assert loaded == _bundle()

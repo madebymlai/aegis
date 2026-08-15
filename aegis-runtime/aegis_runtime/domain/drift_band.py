@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+
+import msgspec
+from nautilus_trader.common.config import NautilusConfig
 
 _BOUNDARY_TOLERANCE = 1e-12
 
@@ -35,8 +37,7 @@ def gate(
     return target
 
 
-@dataclass(frozen=True)
-class DriftBand:
+class DriftBand(NautilusConfig, frozen=True, omit_defaults=True):
     """Validated directional no-trade band widths and rebalance destination."""
 
     up: float
@@ -51,11 +52,16 @@ class DriftBand:
             raise ValueError("DriftBand.up must be finite and non-negative")
         if not math.isfinite(down) or down < 0.0:
             raise ValueError("DriftBand.down must be finite and non-negative")
-        if not math.isfinite(destination_fraction) or not 0.0 <= destination_fraction <= 1.0:
+        if (
+            not math.isfinite(destination_fraction)
+            or not 0.0 <= destination_fraction <= 1.0
+        ):
             raise ValueError("DriftBand.destination_fraction must be within [0, 1]")
-        object.__setattr__(self, "up", up)
-        object.__setattr__(self, "down", down)
-        object.__setattr__(self, "destination_fraction", destination_fraction)
+        msgspec.structs.force_setattr(self, "up", up)
+        msgspec.structs.force_setattr(self, "down", down)
+        msgspec.structs.force_setattr(
+            self, "destination_fraction", destination_fraction
+        )
 
     @classmethod
     def symmetric(cls, width: float, destination_fraction: float = 1.0) -> DriftBand:
