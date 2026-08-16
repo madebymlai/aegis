@@ -182,8 +182,8 @@ class CatalogBacktestDataSource:
             end=end,
             timeframe=timeframe,
         )
-        # Data ADR-0012: the whole window — bars, complete definitions, verified
-        # distributions — is ONE coherent port read.  Definition completeness and
+        # Data ADR-0012: the whole window — bars, complete definitions, and
+        # distributions — is one coherent port read. Definition completeness and
         # distribution applicability (a cash FX pair pays no distributions) are
         # the port's guarantees now, not caller-side triage or filtering.
         window = data_port.load_window(request)
@@ -224,7 +224,7 @@ def run_book_backtest(
     There is no Historical Store, symbol map, or provider-specific identity on
     this path.  The catalog must hold instrument definitions keyed by the same
     native ``InstrumentId`` values declared by the Execution Bundles. Raw bars
-    and custom arrays fill catalog gaps through their shared coverage engine, so
+    and custom arrays warm missing Catalog intervals through Nautilus, so
     an unservable window fails before the Nautilus engine starts.
     """
     book = load_book_config(book_path)

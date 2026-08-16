@@ -14,7 +14,7 @@ from aegis_runtime import DataContract, MissingIndexPolicy
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.trader.sleeve_arrays import (
     ArrayNeed,
-    InvalidArrayCoverageWindowError,
+    InvalidArrayIntervalError,
     SleeveArrayGrid,
     SleeveArrays,
 )
@@ -147,7 +147,7 @@ def test_sleeve_arrays_projects_custom_panels_after_ensure(tmp_path: Path) -> No
 
 
 def test_array_need_rejects_an_inverted_coverage_window() -> None:
-    with pytest.raises(InvalidArrayCoverageWindowError):
+    with pytest.raises(InvalidArrayIntervalError):
         ArrayNeed(
             names=("Close",),
             instrument_ids=(_FIRST,),

@@ -495,7 +495,7 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
     engine = result.engine
 
@@ -534,7 +534,7 @@ def test_run_book_backtest_feeds_native_catalog_bars_to_nautilus(tmp_path) -> No
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
 
     try:
@@ -557,7 +557,7 @@ def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> No
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
         custom_data_providers={FixtureRecord: provider},
     )
 
@@ -585,7 +585,7 @@ def test_run_book_backtest_fills_custom_array_coverage_on_cold_catalog(
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
         custom_data_providers={FixtureRecord: provider},
     )
 
@@ -622,7 +622,7 @@ def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> N
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
         custom_data_providers={FixtureRecord: unused},
     )
 
@@ -661,7 +661,7 @@ def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
         starting_cash=100.0,
     )
     try:
@@ -752,7 +752,7 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(
+        data_source=_zero_distribution_source(
             catalog_path,
             (_INSTRUMENT_ID, _SECOND_INSTRUMENT_ID),
         ),
@@ -825,7 +825,7 @@ def _run_margin_interest_fixture(tmp_path):
         end="2020-01-07",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
     zero_rate = run_book_backtest(
         zero_book_path,
@@ -833,7 +833,7 @@ def _run_margin_interest_fixture(tmp_path):
         end="2020-01-07",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
 
     return financed, zero_rate
@@ -852,7 +852,7 @@ def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
 
     try:
@@ -913,7 +913,7 @@ def test_catalog_backtest_data_source_preserves_native_bars(tmp_path) -> None:
         CatalogInterval(ts_event, pd.Timestamp("2020-01-02", tz="UTC").value),
         (bar,),
     )
-    data_source = _verified_zero_distribution_source(
+    data_source = _zero_distribution_source(
         catalog_path,
         (_INSTRUMENT_ID,),
     )
@@ -1090,7 +1090,7 @@ def _adjusted_last_for_distribution(ex_date: str, *, amount: float) -> pd.Series
     return values
 
 
-def _verified_zero_distribution_source(
+def _zero_distribution_source(
     catalog_path,
     instrument_ids: tuple[InstrumentId, ...],
 ) -> CatalogBacktestDataSource:

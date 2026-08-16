@@ -22,7 +22,7 @@ The audit found two high-confidence cleanups and two bounded prototypes:
 3. **Prototype `NautilusConfig` for the Execution Bundle envelope**, but do not
    migrate yet: an exact-runtime experiment exposed wire-contract differences.
 4. **Prototype native streaming only for live observed-event capture.** It is not
-   a substitute for verified-empty Bar coverage.
+   a substitute for an exact empty answered interval.
 
 Everything else examined is Aegis domain policy or an anti-corruption adapter,
 not duplicated framework machinery.
@@ -76,7 +76,7 @@ Three production APIs no longer participate in production flows:
 - [`write_distribution_data`](../../aegis-data/aegis_data/distributions.py#L196)
   implements its own per-instrument frontier and direct Catalog replacement.
   Production distribution derivation now enters through
-  [`_DerivedDistributionProvider`](../../aegis-data/aegis_data/_distribution_verification.py#L68)
+  [`_DerivedDistributionProvider`](../../aegis-data/aegis_data/_distribution_window.py#L68)
   and native `RequestData(update_catalog=True)`. Its remaining callers are test
   setup only.
 - [`custom_data.correct`](../../aegis-data/aegis_data/custom_data.py#L371)
@@ -93,7 +93,7 @@ Recommendation: move any useful fixture seeding into `aegis_data.testing` (or
 test support packages) and delete these three production entry points. This
 shrinks the public persistence vocabulary and prevents new code from bypassing
 the native request lifecycle. `Catalog.replace` itself remains necessary for
-live verified capture and explicit storage administration.
+live answered-interval capture and explicit storage administration.
 
 ### 2. Use the native BarSpecification duration
 
@@ -151,11 +151,11 @@ inside [`custom_data.capture`](../../aegis-data/aegis_data/custom_data.py#L344)
 if a spike proves identifier fidelity, restart behavior, deduplication, timely
 availability to the running strategy, and safe Feather-to-Parquet conversion.
 
-It cannot replace [`RawBars.record_verified`](../../aegis-data/aegis_data/raw_bars.py#L92):
+It cannot replace [`RawBars.record_answered_interval`](../../aegis-data/aegis_data/raw_bars.py#L92):
 streaming records events but has no representation for a completed subscribed
 interval in which no event occurred. Aegis needs that negative fact to avoid
 refetching a genuinely empty interval. Therefore native streaming is a bounded
-custom-event capture experiment, not a Catalog coverage redesign.
+custom-event capture experiment, not a Catalog-extent redesign.
 
 ## Keep Aegis-owned
 
@@ -296,4 +296,4 @@ roll-sensitivity probing, and bundle validation remain Aegis policy.
 3. If further runtime simplification is desired, prototype the exact v5 bundle
    wire on `NautilusConfig`; implement only on a net deletion.
 4. Treat native streaming capture as optional and lower priority. It must not
-   weaken verified-empty coverage or immediate live availability.
+   weaken empty answered-interval semantics or immediate live availability.

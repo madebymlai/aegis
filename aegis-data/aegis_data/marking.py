@@ -1,7 +1,7 @@
 """The single seam that resolves how an instrument is marked (aegis-rd-tggo).
 
 Every raw mark/fill resolution — catalog cold-fetch, catalog warm read,
-distribution coverage, trader backtest wrangling, trader cache read, live
+distribution materialisation, trader backtest wrangling, trader cache read, live
 subscribe/unsubscribe/request — crosses one query-only
 :class:`RawBarTypeResolver` and receives an :class:`InstrumentMarking` value
 object.  The value object (not a single ``BarType``) is the seam's shape
@@ -143,7 +143,9 @@ class InstrumentMarking:
             return _mid_price(latest[0], latest[1])
         return latest[0].close
 
-    def ohlcv_frame(self, bars_by_type: Mapping[BarType, Sequence[Bar]]) -> pd.DataFrame:
+    def ohlcv_frame(
+        self, bars_by_type: Mapping[BarType, Sequence[Bar]]
+    ) -> pd.DataFrame:
         """The Catalog OHLCV frame for this marking from its stored mark bars.
 
         Bar-marked -> the single bar series' own OHLCV.  Quote-marked -> the
@@ -157,7 +159,9 @@ class InstrumentMarking:
             return (bid.loc[index] + ask.loc[index]) / 2.0
         return bars_to_ohlcv(bars_by_type[self.mark_bars[0]])
 
-    def derived_mark(self, latest_by_type: Mapping[BarType, Bar | None]) -> Price | None:
+    def derived_mark(
+        self, latest_by_type: Mapping[BarType, Bar | None]
+    ) -> Price | None:
         """The mark to publish when quote-marked and both sides are current.
 
         ``None`` for a bar-marked instrument (its bar close is the native
@@ -209,8 +213,9 @@ class RawBarTypeResolver(Protocol):
     in behind the same call sites without reshaping them.
     """
 
-    def resolve(self, instrument_id: InstrumentId, timeframe: str) -> InstrumentMarking:
-        ...
+    def resolve(
+        self, instrument_id: InstrumentId, timeframe: str
+    ) -> InstrumentMarking: ...
 
 
 def marking_for_mode(

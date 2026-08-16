@@ -1012,7 +1012,7 @@ def test_catalog_port_verifies_distributions_on_first_read_and_serves_warm(
     )
 
 
-def test_catalog_port_reports_verified_distribution_coverage(
+def test_catalog_port_reports_distribution_extents(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -1047,7 +1047,7 @@ def test_catalog_port_reports_verified_distribution_coverage(
         CatalogWindowRequest((instrument_id,), start="2024-01-01", end="2024-01-04")
     ).distributions
 
-    report = port.distribution_coverage_report(
+    report = port.distribution_extent_report(
         (instrument_id,),
         start="2024-01-01",
         end="2024-01-04",
@@ -1057,8 +1057,8 @@ def test_catalog_port_reports_verified_distribution_coverage(
         {
             "instrument_id": "SPY.ARCA",
             "applicable": True,
-            "verified_start": "2024-01-01T00:00:00+00:00",
-            "verified_end": "2024-01-04T00:00:00+00:00",
+            "extent_start": "2024-01-01T00:00:00+00:00",
+            "extent_end": "2024-01-04T00:00:00+00:00",
             "event_count": 1,
         },
     )
@@ -1198,7 +1198,7 @@ def test_quote_marking_does_not_turn_bid_ask_moves_into_distributions(
     assert provider.bar_requests == [trade_type]
 
 
-def test_catalog_port_skips_distribution_verification_for_futures_and_roots(
+def test_catalog_port_skips_distribution_materialisation_for_futures_and_roots(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -1233,19 +1233,19 @@ def test_catalog_port_skips_distribution_verification_for_futures_and_roots(
         )
     )
     # A continuous root has no raw bars and can never enter a window request;
-    # its verdict comes from the surviving coverage-report diagnostic query.
-    root_report = CatalogBackedDataPort(catalog).distribution_coverage_report(
+    # its extent row comes from the surviving diagnostic query.
+    root_report = CatalogBackedDataPort(catalog).distribution_extent_report(
         (continuous_root,),
         start="2024-01-01",
         end="2024-01-04",
     )
 
     assert window.distributions == ()
-    assert window.distribution_coverage[0]["applicable"] is False
+    assert window.distribution_extents[0]["applicable"] is False
     assert root_report[0]["applicable"] is False
 
 
-def test_catalog_port_reports_continuous_root_distribution_coverage_not_applicable(
+def test_catalog_port_reports_continuous_root_distribution_extents_not_applicable(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -1264,7 +1264,7 @@ def test_catalog_port_reports_continuous_root_distribution_coverage_not_applicab
     # The surviving diagnostic query (ADR-0012): a pure report for an id that
     # can never enter a window request — no provider fetch or materialization is
     # attempted for the root.
-    report = port.distribution_coverage_report(
+    report = port.distribution_extent_report(
         (continuous_root,),
         start="2024-01-01",
         end="2024-01-04",
@@ -1275,12 +1275,12 @@ def test_catalog_port_reports_continuous_root_distribution_coverage_not_applicab
     assert report[0]["event_count"] == 0
 
 
-def test_catalog_port_skips_distribution_verification_for_cash_fx(
+def test_catalog_port_skips_distribution_materialisation_for_cash_fx(
     tmp_path: Path,
 ) -> None:
     # A cash FX conversion leg in the id set is routine, not an error: no
-    # provider is wired, so an applicable-but-unverified id would fail loud —
-    # succeeding proves verification was never attempted for the pair.
+    # provider is wired, so materialising an applicable id would fail loud;
+    # succeeding proves the pair was excluded before materialisation.
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -1302,7 +1302,7 @@ def test_catalog_port_skips_distribution_verification_for_cash_fx(
     assert events == ()
 
 
-def test_catalog_port_reports_cash_fx_distribution_coverage_not_applicable(
+def test_catalog_port_reports_cash_fx_distribution_extents_not_applicable(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -1319,7 +1319,7 @@ def test_catalog_port_reports_cash_fx_distribution_coverage_not_applicable(
         )
     ).distributions
 
-    report = port.distribution_coverage_report(
+    report = port.distribution_extent_report(
         (fx_pair,),
         start="2024-01-01",
         end="2024-01-04",
@@ -1352,7 +1352,7 @@ def test_catalog_port_cash_fx_distribution_reads_are_idempotent(
         resolver=_fx_mid_resolver(fx_pair),
     ).load_window(CatalogWindowRequest((fx_pair,), **window)).distributions
 
-    report = CatalogBackedDataPort(catalog).distribution_coverage_report(
+    report = CatalogBackedDataPort(catalog).distribution_extent_report(
         (fx_pair,), **window
     )
     assert report[0]["applicable"] is False
@@ -1373,7 +1373,7 @@ def test_catalog_port_rejects_distribution_read_for_unresolved_instrument(
     # (through the window read the same typo fails earlier, at the bar gate
     # or the completeness check).
     with pytest.raises(ValueError, match="cannot resolve"):
-        CatalogBackedDataPort(catalog).distribution_coverage_report(
+        CatalogBackedDataPort(catalog).distribution_extent_report(
             (_id("TYPO.ARCA"),),
             start="2024-01-01",
             end="2024-01-04",
@@ -1450,13 +1450,13 @@ def test_catalog_port_accepts_absent_distributions_with_bar_only_provider(
     ).distributions
 
     assert distributions == ()
-    report = port.distribution_coverage_report(
+    report = port.distribution_extent_report(
         (instrument_id,),
         start="2024-01-01",
         end="2024-01-04",
     )
-    assert report[0]["verified_start"] is None
-    assert report[0]["verified_end"] is None
+    assert report[0]["extent_start"] is None
+    assert report[0]["extent_end"] is None
 
 
 def test_catalog_port_backward_extension_persists_early_distribution_events(
@@ -1534,9 +1534,9 @@ def test_catalog_port_forward_request_clamps_to_stored_bar_frontier(
     catalog = Catalog.open(catalog_path)
     instrument_id = _id("SPY.ARCA")
     bar_type = raw_bar_type(instrument_id, "1D")
-    # The span is verified through 01-08 (a walked window can cover bar-less
-    # days), but the bar FRONTIER sits at the last stored bar — verification
-    # must clamp to it rather than chase days no close exists for.
+    # The Catalog extent reaches 01-08 (an answered interval can include
+    # bar-less days), but the bar frontier sits at the last stored bar, so
+    # materialisation must clamp rather than chase days with no close.
     _write_span(
         catalog,
         [
@@ -1628,7 +1628,7 @@ def test_catalog_port_returns_no_distributions_with_too_few_trade_closes(
     assert distributions == ()
 
 
-def test_catalog_port_fetches_only_missing_distribution_gap_between_verified_ranges(
+def test_catalog_port_fetches_only_missing_distribution_gap_between_extents(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -1688,9 +1688,9 @@ def test_catalog_port_load_window_returns_one_coherent_value(
     tmp_path: Path,
 ) -> None:
     # ADR-0012: one call answers the whole window — bars, complete definitions,
-    # verified distributions, and the coverage report. The cash FX leg rides in
-    # the same id set with no caller filtering, and ONE verification pass serves
-    # both the distributions and the report (exactly one adjusted-last request).
+    # distributions, and their Catalog extents. The cash FX leg rides in the same
+    # id set with no caller filtering; one materialisation serves both records
+    # and extents (exactly one adjusted-last request).
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -1749,7 +1749,7 @@ def test_catalog_port_load_window_returns_one_coherent_value(
     assert [(event.ex_date, event.amount) for event in window.distributions] == [
         (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
     ]
-    coverage = {row["instrument_id"]: row for row in window.distribution_coverage}
+    coverage = {row["instrument_id"]: row for row in window.distribution_extents}
     assert coverage["SPY.ARCA"]["applicable"] is True
     assert coverage["SPY.ARCA"]["event_count"] == 1
     assert coverage["EUR/USD.IDEALPRO"]["applicable"] is False
@@ -1806,9 +1806,9 @@ def test_catalog_port_load_window_completeness_passes_via_fill_seeded_definition
 def test_catalog_port_load_window_rejects_missing_definitions_as_authoring(
     tmp_path: Path,
 ) -> None:
-    # Ordering is contract: completeness is judged BEFORE distribution
-    # verification, so a missing definition surfaces as ONE authoring error
-    # naming every missing id — never as the environmental coverage-gap error.
+    # Ordering is contract: completeness is judged before Distribution
+    # materialisation, so a missing definition surfaces as one authoring error
+    # naming every missing id.
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
     catalog = Catalog.open(catalog_path)
@@ -1849,7 +1849,7 @@ def test_distribution_applicability_fails_closed_for_an_unknown_instrument_type(
     catalog = FakeCatalog([UnknownInstrument()], bars={})  # type: ignore[list-item]
 
     with pytest.raises(ValueError, match="UnknownInstrument"):
-        CatalogBackedDataPort(catalog).distribution_coverage_report(
+        CatalogBackedDataPort(catalog).distribution_extent_report(
             (instrument_id,),
             start="2024-01-01",
             end="2024-01-02",
@@ -1945,7 +1945,7 @@ def test_catalog_port_does_not_expose_roll_dialect_bar_readers() -> None:
     assert not hasattr(port, "read_native_bars")
 
 
-def test_verification_daily_absence_on_intraday_window_returns_no_distributions(
+def test_daily_absence_on_intraday_window_returns_no_distributions(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"

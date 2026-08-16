@@ -86,7 +86,7 @@ def test_load_run_data_returns_an_eager_native_bundle_from_one_catalog_window(
     assert run_data.replay_index.equals(run_data.bundle.array("Close").index)
     assert run_data.instrument_count == 2
     identity = to_builtin(run_data.identity)
-    assert identity["schema_version"] == "run_data.v2"
+    assert identity["schema_version"] == "run_data.v3"
     assert identity["requested_instrument_ids"] == [
         "MSFT.XNAS",
         "AAPL.XNAS",
@@ -278,7 +278,7 @@ def test_load_run_data_applies_one_catalog_currency_conversion_to_the_bundle(
     assert not hasattr(run_data, "pnl_open")
 
 
-def test_load_run_data_carries_verified_distributions_and_native_instrument_facts(
+def test_load_run_data_carries_distributions_and_native_instrument_facts(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"

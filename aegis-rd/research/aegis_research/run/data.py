@@ -114,7 +114,7 @@ class RunDataIdentity:
     continuous_root_currencies: dict[InstrumentId, str]
     size_increment_by_instrument: dict[InstrumentId, float]
     multiplier_by_instrument: dict[InstrumentId, float]
-    distribution_coverage: tuple[dict[str, object], ...]
+    distribution_extents: tuple[dict[str, object], ...]
     adjustment_mode: str | None
 
 
@@ -173,8 +173,8 @@ def load_run_data(
             timeframe=config.timeframe,
             adjustment_mode=adjustment_mode,
         )
-        continuous_coverage = (
-            port.distribution_coverage_report(tuple(continuous_frames), start=start, end=end)
+        continuous_extents = (
+            port.distribution_extent_report(tuple(continuous_frames), start=start, end=end)
             if continuous_frames
             else ()
         )
@@ -215,7 +215,7 @@ def load_run_data(
         multiplier_by_instrument=multipliers,
         adjustment_mode=adjustment_mode,
         identity=RunDataIdentity(
-            schema_version="run_data.v2",
+            schema_version="run_data.v3",
             requested_instrument_ids=requested_ids,
             tradeables=resolution.tradeables,
             loaded_arrays=tuple(bundle.arrays),
@@ -232,7 +232,7 @@ def load_run_data(
             continuous_root_currencies=continuous_currencies,
             size_increment_by_instrument=size_increments,
             multiplier_by_instrument=multipliers,
-            distribution_coverage=(*window.distribution_coverage, *continuous_coverage),
+            distribution_extents=(*window.distribution_extents, *continuous_extents),
             adjustment_mode=adjustment_mode.value if adjustment_mode is not None else None,
         ),
     )

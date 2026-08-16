@@ -59,16 +59,16 @@ def _adjusted_last_with_cash_distribution() -> pd.Series:
 @pytest.mark.parametrize(
     ("case_name", "adjusted_last_factory", "expected_total_return"),
     [
-        ("verified-zero", _flat_adjusted_last, 0.0),
+        ("zero-distribution", _flat_adjusted_last, 0.0),
         (
             "distributing",
             _adjusted_last_with_cash_distribution,
             _DISTRIBUTING_RD_TOTAL_RETURN,
         ),
     ],
-    ids=["verified-zero", "distributing"],
+    ids=["zero-distribution", "distributing"],
 )
-def test_rd_pipeline_total_return_reflects_verified_distribution_coverage(
+def test_rd_pipeline_total_return_reflects_distribution_extents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     case_name: str,
@@ -204,7 +204,7 @@ def _seed_flat_catalog(catalog_path: Path, instrument: InstrumentId) -> None:
     store_instrument_fixtures(catalog, [equity_definition(instrument, "USD")])
     index = pd.date_range(_START, periods=_PERIODS, freq="D")
     bar_type = raw_bar_type(instrument, "1D")
-    RawBars(catalog).record_verified(
+    RawBars(catalog).record_answered_interval(
         bar_type,
         CatalogInterval(
             pd.Timestamp(_START, tz="UTC").value,

@@ -148,7 +148,7 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     port = CatalogBackedDataPort(
         catalog,
         provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
-        # The window read verifies distribution coverage too (ADR-0012), so the
+        # The window read materialises distributions too (ADR-0012), so the
         # fill port carries both provider roles — the production composition.
         custom_data_warmer=CustomDataWarmer(
             catalog,

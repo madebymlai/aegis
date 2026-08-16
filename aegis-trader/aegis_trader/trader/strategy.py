@@ -418,11 +418,9 @@ class RebalanceStrategy(Strategy):
             return
 
         if self._bar_capture is not None:
-            # Buffer only. Coverage answers "was this checked", which no session
-            # can claim about an instant its peers can still fill: one stream's
-            # arrival is not proof the others were silent. The clock timer owns
-            # every verdict, and the roll probe asks the Catalog how far it has
-            # been checked rather than requiring a claim to exist for today.
+            # Buffer only. One stream's arrival says nothing about whether its
+            # peers can still deliver. The clock timer records each stream's
+            # answered interval, and the roll probe reads that Catalog extent.
             self._bar_capture.observe(bar)
 
         # Drives today's offset-0 append and any in-process roll before the cadence reads the
@@ -485,7 +483,7 @@ class RebalanceStrategy(Strategy):
 
     def _on_bar_capture_timer(self, event: TimeEvent) -> None:
         if self._bar_capture is not None:
-            self._bar_capture.verify_clock(event.ts_event)
+            self._bar_capture.advance_clock(event.ts_event)
 
     def _record_market_observation(
         self,
@@ -769,7 +767,7 @@ class RebalanceStrategy(Strategy):
         has its own (longer) history requirement and runs first.
         """
         if self._bar_capture is not None:
-            self._bar_capture.verify_clock(self.clock.timestamp_ns())
+            self._bar_capture.advance_clock(self.clock.timestamp_ns())
             if _BAR_CAPTURE_TIMER in self.clock.timer_names:
                 self.clock.cancel_timer(_BAR_CAPTURE_TIMER)
 

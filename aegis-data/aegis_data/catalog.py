@@ -12,8 +12,8 @@ from nautilus_trader.model.data import Bar
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from platformdirs import user_data_dir
 
-from aegis_data._distribution_verification import (
-    distribution_coverage_report,
+from aegis_data._distribution_window import (
+    distribution_extent_report,
     ensure_distribution_window,
     read_distribution_window,
 )
@@ -78,8 +78,8 @@ class CatalogWindow:
     Native Raw Bar windows per requested id are the authoritative market-data
     read. OHLCV and sided quote frames are projections of those same records;
     complete definitions (guaranteed — the read fails loud naming every missing
-    id before verification), native sizing facts, verified distributions, and
-    their coverage report complete the window.
+    id before materialisation), native sizing facts, Distribution records, and
+    their Catalog extents complete the window.
     """
 
     bar_windows: dict[InstrumentId, RawBarWindow]
@@ -87,7 +87,7 @@ class CatalogWindow:
     size_increment_by_instrument: dict[InstrumentId, float]
     multiplier_by_instrument: dict[InstrumentId, float]
     records: tuple[Data, ...]
-    distribution_coverage: tuple[dict[str, Any], ...] = ()
+    distribution_extents: tuple[dict[str, Any], ...] = ()
 
     @property
     def bars(self) -> dict[InstrumentId, tuple[Bar, ...]]:
@@ -171,7 +171,7 @@ class CatalogBackedDataPort:
             custom_data_warmer=self.custom_data_warmer,
             raw_bars=self.raw_bars,
         )
-        verified = read_distribution_window(
+        distribution_window = read_distribution_window(
             self.catalog,
             request.instrument_ids,
             start=request.start,
@@ -189,8 +189,8 @@ class CatalogBackedDataPort:
                 instrument_id: native_multiplier(instrument)
                 for instrument_id, instrument in instruments.items()
             },
-            records=verified.records,
-            distribution_coverage=verified.coverage,
+            records=distribution_window.records,
+            distribution_extents=distribution_window.extents,
         )
 
     def _complete_definitions(
@@ -284,21 +284,21 @@ class CatalogBackedDataPort:
             )
         return next(iter(values))
 
-    def distribution_coverage_report(
+    def distribution_extent_report(
         self,
         instrument_ids: Sequence[InstrumentId],
         *,
         start: str | int | pd.Timestamp | None = None,
         end: str | int | pd.Timestamp | None = None,
     ) -> tuple[dict[str, Any], ...]:
-        """The coverage diagnostic for ids OUTSIDE a window read (ADR-0012).
+        """The Catalog-extent diagnostic for ids outside a window read (ADR-0012).
 
         The window read already carries its own report; this pure query serves
         ids that can never enter a window request — a continuous root has no
         raw bars, yet its not-applicable rows are real Run evidence.  An
         unresolvable id still fails loud.
         """
-        return distribution_coverage_report(
+        return distribution_extent_report(
             self.catalog,
             tuple(instrument_ids),
             start=start,

@@ -260,7 +260,7 @@ def ensure_arrays(
     catalog: Catalog,
     registry: CustomDataRegistry | None = None,
 ) -> None:
-    """Ensure catalog coverage for every kind behind the requested arrays."""
+    """Warm missing Catalog intervals for every requested array kind."""
     instrument_ids_by_record_type: dict[type[Data], dict[InstrumentId, None]] = {}
     for instrument_id, array_names in requirements.items():
         for kind in _kinds_for_array_names(array_names, registry):

@@ -57,9 +57,9 @@ def test_a_window_the_data_engine_stored_reads_back(tmp_path: Path) -> None:
 
     ``request_bars(update_catalog=True)`` — live in the roll, fast-forward and
     strategy paths — has the engine write its response straight into the
-    catalog, naming the file for the window it requested. It writes no coverage
-    claim of ours. A coverage model that consults only claims therefore calls
-    that window a gap and re-fetches bars already sitting in the catalog.
+    catalog, naming the file for the window it requested. Those native file
+    extents are the only interval state, so the window reads without another
+    fetch.
     """
     catalog = Catalog.open(tmp_path)
     instrument_id = InstrumentId.from_str("AAPL.XNAS")
@@ -117,7 +117,7 @@ def test_ensure_is_a_command_and_the_read_is_the_following_query(
     assert provider.requests == [bar_type]
 
 
-def test_record_verified_keeps_explicit_empty_time_covered(
+def test_record_answered_interval_extends_catalog_over_empty_time(
     tmp_path: Path,
 ) -> None:
     catalog = Catalog.open(tmp_path)
@@ -129,17 +129,17 @@ def test_record_verified_keeps_explicit_empty_time_covered(
     friday = pd.Timestamp("2024-01-05", tz="UTC").value
     monday = pd.Timestamp("2024-01-08", tz="UTC").value
 
-    raw_bars.record_verified(
+    raw_bars.record_answered_interval(
         bar_type,
         CatalogInterval(friday, friday),
         (_bar(bar_type, "2024-01-05", 10.0),),
     )
-    raw_bars.record_verified(
+    raw_bars.record_answered_interval(
         bar_type,
         CatalogInterval(friday + 1, monday - 1),
         (),
     )
-    raw_bars.record_verified(
+    raw_bars.record_answered_interval(
         bar_type,
         CatalogInterval(monday, monday),
         (_bar(bar_type, "2024-01-08", 11.0),),
@@ -197,7 +197,7 @@ def test_capture_ticks_consolidate_instead_of_accumulating_a_file_each(
     frontier = opening - 1
     for tick in range(1, 13):
         end = opening + tick * minute - 1
-        raw_bars.record_verified(
+        raw_bars.record_answered_interval(
             bar_type,
             CatalogInterval(frontier + 1, end),
             (_bar_at(bar_type, frontier + 1),),

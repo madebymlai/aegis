@@ -422,7 +422,7 @@ def make_run_data(**overrides: Any) -> RunData:
     identity = overrides.pop(
         "identity",
         RunDataIdentity(
-            schema_version="run_data.v2",
+            schema_version="run_data.v3",
             requested_instrument_ids=resolution.instrument_ids,
             tradeables=resolution.tradeables,
             loaded_arrays=("Close", "Open"),
@@ -439,7 +439,7 @@ def make_run_data(**overrides: Any) -> RunData:
             continuous_root_currencies={},
             size_increment_by_instrument=increments,
             multiplier_by_instrument=multipliers,
-            distribution_coverage=(),
+            distribution_extents=(),
             adjustment_mode=(adjustment_mode.value if adjustment_mode is not None else None),
         ),
     )

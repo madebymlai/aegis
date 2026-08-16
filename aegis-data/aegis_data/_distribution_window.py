@@ -1,4 +1,4 @@
-"""Distribution verification owned by the catalog data port."""
+"""Distribution window materialisation owned by the Catalog data port."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -44,11 +44,11 @@ class MissingDistributionCurrencyError(ValueError):
 
 
 @dataclass(frozen=True)
-class VerifiedDistributions:
-    """Distribution records and coverage rows from one coherent verification."""
+class DistributionWindow:
+    """Distribution records and Catalog-extent rows from one coherent read."""
 
     records: tuple[Distribution, ...]
-    coverage: tuple[dict[str, Any], ...]
+    extents: tuple[dict[str, Any], ...]
 
 
 @dataclass(frozen=True)
@@ -115,7 +115,7 @@ def ensure_distribution_window(
     custom_data_warmer: CustomDataWarmer | None,
     raw_bars: RawBars,
 ) -> None:
-    """Ensure Distribution coverage for one catalog window."""
+    """Materialise missing Distribution intervals for one Catalog window."""
     assessments = _assessments(
         catalog,
         instrument_ids,
@@ -138,8 +138,8 @@ def read_distribution_window(
     start: str | int | pd.Timestamp,
     end: str | int | pd.Timestamp,
     raw_bars: RawBars,
-) -> VerifiedDistributions:
-    """Read Distribution records and coverage after the ensure command."""
+) -> DistributionWindow:
+    """Read Distribution records and Catalog extents after materialisation."""
     return _read_assessments(
         catalog,
         _assessments(
@@ -151,7 +151,7 @@ def read_distribution_window(
     )
 
 
-def distribution_coverage_report(
+def distribution_extent_report(
     catalog: Catalog,
     instrument_ids: Sequence[InstrumentId],
     *,
@@ -159,7 +159,7 @@ def distribution_coverage_report(
     end: str | int | pd.Timestamp | None,
     raw_bars: RawBars,
 ) -> tuple[dict[str, Any], ...]:
-    """Report Distribution coverage without fetching or mutating."""
+    """Report Distribution Catalog extents without fetching or mutating."""
     if start is None or end is None:
         return ()
     assessments = _assessments(
@@ -168,7 +168,7 @@ def distribution_coverage_report(
         CatalogInterval(_timestamp_ns(start), _timestamp_ns(end)),
         raw_bars=raw_bars,
     )
-    return tuple(_coverage_row(catalog, assessment) for assessment in assessments)
+    return tuple(_extent_row(catalog, assessment) for assessment in assessments)
 
 
 def _ensure_assessment(
@@ -245,9 +245,9 @@ def _assessment(
     clamp: bool = True,
 ) -> _Assessment:
     applicability = _applicability(catalog, instrument_id, interval)
-    coverage_end = interval.end_ns
+    extent_end = interval.end_ns
     if clamp and applicability.applicable:
-        coverage_end = _coverage_end(
+        extent_end = _extent_end(
             catalog,
             raw_bars,
             instrument_id,
@@ -256,7 +256,7 @@ def _assessment(
     return _Assessment(
         instrument_id,
         applicability,
-        CatalogInterval(interval.start_ns, coverage_end),
+        CatalogInterval(interval.start_ns, extent_end),
     )
 
 
@@ -272,18 +272,18 @@ def _applicability(
         if isinstance(definition, Equity):
             return _Applicability(True, definition)
         raise UnknownDistributionInstrumentTypeError(
-            "distribution coverage does not classify instrument type "
+            "distribution applicability does not classify instrument type "
             f"{type(definition).__name__} for {instrument_id.value}"
         )
     if continuous_instrument_legs(catalog, instrument_id):
         return _Applicability(False)
     raise MissingDistributionDefinitionError(
-        "distribution coverage cannot resolve catalog definitions for "
+        "distribution applicability cannot resolve Catalog definitions for "
         f"{instrument_id.value}"
     )
 
 
-def _coverage_end(
+def _extent_end(
     catalog: Catalog,
     raw_bars: RawBars,
     instrument_id: InstrumentId,
@@ -302,9 +302,9 @@ def _coverage_end(
 def _read_assessments(
     catalog: Catalog,
     assessments: Sequence[_Assessment],
-) -> VerifiedDistributions:
+) -> DistributionWindow:
     records: list[Distribution] = []
-    coverage: list[dict[str, Any]] = []
+    extents: list[dict[str, Any]] = []
     for assessment in assessments:
         selected: tuple[Distribution, ...] = ()
         if assessment.applicability.applicable:
@@ -315,14 +315,14 @@ def _read_assessments(
                 end=assessment.interval.end_ns,
             )
             records.extend(selected)
-        coverage.append(_coverage_row(catalog, assessment, event_count=len(selected)))
-    return VerifiedDistributions(
+        extents.append(_extent_row(catalog, assessment, event_count=len(selected)))
+    return DistributionWindow(
         records=tuple(records),
-        coverage=tuple(coverage),
+        extents=tuple(extents),
     )
 
 
-def _coverage_row(
+def _extent_row(
     catalog: Catalog,
     assessment: _Assessment,
     *,
@@ -346,10 +346,10 @@ def _coverage_row(
     return {
         "instrument_id": assessment.instrument_id.value,
         "applicable": assessment.applicability.applicable,
-        "verified_start": (
+        "extent_start": (
             _timestamp_text(assessment.interval.start_ns) if fully_stored else None
         ),
-        "verified_end": (
+        "extent_end": (
             _timestamp_text(assessment.interval.end_ns) if fully_stored else None
         ),
         "event_count": event_count,
@@ -366,7 +366,7 @@ def _definition_currency(
         currency = getattr(definition, "quote_currency", None)
     if currency is None:
         raise MissingDistributionCurrencyError(
-            f"distribution coverage needs a currency on {instrument_id.value}"
+            f"distribution materialisation needs a currency on {instrument_id.value}"
         )
     return str(currency).upper()
 
@@ -391,8 +391,8 @@ def _dedupe(instrument_ids: Sequence[InstrumentId]) -> tuple[InstrumentId, ...]:
 
 
 __all__ = [
-    "VerifiedDistributions",
-    "distribution_coverage_report",
+    "DistributionWindow",
+    "distribution_extent_report",
     "ensure_distribution_window",
     "read_distribution_window",
 ]

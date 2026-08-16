@@ -35,10 +35,10 @@ class _Provider:
 class _RecordingRawBars:
     intervals: list[CatalogInterval] = field(default_factory=list)
 
-    def covered_through(self, _bar_type: BarType) -> int | None:
+    def extent_through(self, _bar_type: BarType) -> int | None:
         return None
 
-    def record_verified(
+    def record_answered_interval(
         self,
         _bar_type: BarType,
         interval: CatalogInterval,
@@ -55,7 +55,7 @@ def test_capture_frontier_advances_by_exact_nanosecond_adjacency() -> None:
     capture = BarCapture(raw_bars)  # type: ignore[arg-type]
 
     capture.subscribe(bar_type, at_ns=subscribed_at)
-    capture.verify_clock(subscribed_at + 2 * cadence)
+    capture.advance_clock(subscribed_at + 2 * cadence)
 
     previous_end = subscribed_at - 1
     written = raw_bars.intervals[0]
@@ -65,7 +65,7 @@ def test_capture_frontier_advances_by_exact_nanosecond_adjacency() -> None:
         assert deliberately_gapped.start_ns == previous_end + 1
 
 
-def test_silent_subscribed_weekend_is_verified_empty_and_needs_no_fill(
+def test_silent_subscribed_weekend_extends_catalog_and_needs_no_fill(
     tmp_path: Path,
 ) -> None:
     catalog = Catalog.open(tmp_path)
@@ -79,9 +79,9 @@ def test_silent_subscribed_weekend_is_verified_empty_and_needs_no_fill(
 
     capture.subscribe(bar_type, at_ns=friday)
     capture.observe(_bar(bar_type, "2024-01-05", 10.0))
-    capture.verify_clock(monday)
+    capture.advance_clock(monday)
     capture.observe(_bar(bar_type, "2024-01-08", 11.0))
-    capture.verify_clock(monday + _ONE_DAY_NS)
+    capture.advance_clock(monday + _ONE_DAY_NS)
     marking = raw_bars.marking(instrument_id, "1D")
     raw_bars.ensure(marking, CatalogInterval(friday, monday))
     window = raw_bars.stored(marking, CatalogInterval(friday, monday))
@@ -93,11 +93,11 @@ def test_silent_subscribed_weekend_is_verified_empty_and_needs_no_fill(
 def test_one_streams_arrival_never_declares_another_stream_silent(
     tmp_path: Path,
 ) -> None:
-    """A verdict may only come from the clock, never from a peer's arrival.
+    """Only the clock records an answered interval, never a peer's arrival.
 
     Daily Bars are stamped at their UTC close, so two instruments that traded
     the same session carry the identical ``ts_event``. Whichever is delivered
-    first must not make the other one's day a checked, empty fact.
+    first must not extend the other stream's Catalog extent.
     """
     catalog = Catalog.open(tmp_path)
     raw_bars = RawBars(catalog)
@@ -111,9 +111,9 @@ def test_one_streams_arrival_never_declares_another_stream_silent(
 
     capture.observe(_bar(speaker, "2024-01-05", 10.0))
 
-    assert raw_bars.covered_through(peer) is None
+    assert raw_bars.extent_through(peer) is None
     capture.observe(_bar(peer, "2024-01-05", 20.0))
-    capture.verify_clock(close + _ONE_DAY_NS)
+    capture.advance_clock(close + _ONE_DAY_NS)
     marking = raw_bars.marking(InstrumentId.from_str("MSFT.XNAS"), "1D")
     window = raw_bars.stored(marking, CatalogInterval(thursday, close))
     assert [bar.close.as_double() for bar in window.bars] == [20.0]

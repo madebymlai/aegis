@@ -98,7 +98,7 @@ class UnservableCatalog(FakeCatalog):
     """A cold catalog used to exercise provider-failure translation."""
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**{**kwargs, "coverage_horizon": (0, 0)})
+        super().__init__(**{**kwargs, "extent_horizon": (0, 0)})
 
 
 def seed_catalog_frames(
@@ -113,10 +113,9 @@ def seed_catalog_frames(
 
     Unlike :func:`seed_catalog_ohlcv` the frames are the scenario — calendar
     gaps and custom values survive into the corpus — so port-altitude quality
-    tests can stage real data defects behind the production port. Coverage is
-    claimed over ``[start, end]`` and distribution coverage is verified with a
-    zero-event source, so a warm read through ``CatalogBackedDataPort`` needs
-    no provider.
+    tests can stage real data defects behind the production port. Bar files use
+    the exact answered interval, and a zero-event source materialises the
+    Distribution extent, so a warm read needs no provider.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
     catalog = Catalog.open(catalog_path)
@@ -145,7 +144,7 @@ def seed_catalog_frames(
         )
         interval = CatalogInterval(start_ts.value, end_ts.value)
         catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
-        _verify_zero_distribution_coverage(
+        _materialize_zero_distribution_window(
             catalog,
             current_id,
             panels={"Close": close_panel},
@@ -164,7 +163,7 @@ def seed_catalog_ohlcv(
     currency: str = "EUR",
 ) -> tuple[str, str]:
     # A projection over seed_catalog_frames: deterministic panels become
-    # per-instrument frames; one write-and-verify path serves both seeders.
+    # per-instrument frames; one write-and-materialise path serves both seeders.
     panels = deterministic_ohlcv_panels(
         instrument_id_values,
         periods=periods,
@@ -199,7 +198,7 @@ def seed_catalog_quote(
 
     The thin-ETF corpus shape (aegis-rd-tggo.2): dense quotes and no stored MID
     bar — the mid is derived at read time. LAST is retained only as the reference
-    series needed to verify distributions against ADJUSTED_LAST.
+    series needed to derive distributions against ADJUSTED_LAST.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
     catalog = Catalog.open(catalog_path)
@@ -232,7 +231,7 @@ def seed_catalog_quote(
         )
         interval = CatalogInterval(start_ts.value, end_ts.value)
         catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
-    _verify_zero_distribution_coverage(
+    _materialize_zero_distribution_window(
         catalog,
         current_id,
         panels={"Close": pd.DataFrame({current_id: trade_frame["Close"]})},
@@ -242,7 +241,7 @@ def seed_catalog_quote(
     )
 
 
-def _verify_zero_distribution_coverage(
+def _materialize_zero_distribution_window(
     catalog: Catalog,
     instrument_id: InstrumentId,
     *,
@@ -253,8 +252,7 @@ def _verify_zero_distribution_coverage(
 ) -> None:
     # ADR-0008: seeded synthetic catalogs must be self-describing for distributions
     # too, so RD integration tests stay warm and never query IBKR for fake symbols.
-    # The verified read is the ensure (ADR-0010); the clock is pinned to the window
-    # start so seeded corpora stay byte-deterministic.
+    # Loading the window is the materialisation seam (ADR-0010).
     window = CatalogBackedDataPort(
         catalog,
         custom_data_warmer=CustomDataWarmer(

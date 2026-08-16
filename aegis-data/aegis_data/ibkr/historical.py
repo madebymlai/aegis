@@ -661,8 +661,8 @@ class _HistoricSession:
 
         A bar request asks for an empty list as its default, so a fetch that
         timed out and a window that is genuinely empty come back identical —
-        and recording the first as verified-empty would durably claim history
-        that was never checked.
+        and extending the Catalog through the first would include history
+        the source never answered.
 
         ``raise_on_error`` is the vendor's own answer, added in 1.231.0: it
         re-raises the timeout or connection error instead of returning the

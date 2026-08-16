@@ -32,13 +32,13 @@ class SleeveArrayShapeError(ValueError):
     """A projected panel does not match its declared Sleeve grid."""
 
 
-class InvalidArrayCoverageWindowError(ValueError):
-    """An array coverage interval ends before it starts."""
+class InvalidArrayIntervalError(ValueError):
+    """An array interval ends before it starts."""
 
 
 @dataclass(frozen=True)
 class ArrayNeed:
-    """Required array names and instruments over one closed coverage interval."""
+    """Required array names and instruments over one closed interval."""
 
     names: tuple[str, ...]
     instrument_ids: tuple[InstrumentId, ...]
@@ -47,9 +47,7 @@ class ArrayNeed:
 
     def __post_init__(self) -> None:
         if self.start > self.end:
-            raise InvalidArrayCoverageWindowError(
-                "array coverage start must not be after end"
-            )
+            raise InvalidArrayIntervalError("array start must not be after end")
 
     @classmethod
     def from_contract(
@@ -146,7 +144,7 @@ class SleeveArrays:
         return cls(catalog=_CatalogArrays(catalog, dict(providers), registry))
 
     def ensure(self, need: ArrayNeed) -> None:
-        """Fill or verify catalog coverage for every non-bar array kind."""
+        """Warm missing Catalog intervals for every non-Bar array kind."""
         custom_names = _custom_names(need.names)
         if not custom_names:
             return
@@ -236,7 +234,7 @@ __all__ = [
     "ArrayNeed",
     "CustomArrayCatalogNotConfiguredError",
     "EmptySleeveArrayGridError",
-    "InvalidArrayCoverageWindowError",
+    "InvalidArrayIntervalError",
     "SleeveArrayGrid",
     "SleeveArrayShapeError",
     "SleeveArrays",

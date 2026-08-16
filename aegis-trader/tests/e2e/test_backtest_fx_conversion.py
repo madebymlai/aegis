@@ -148,7 +148,7 @@ def _seed_usd_catalog(catalog_path, closes: list[float]) -> None:
     start_ns = pd.Timestamp("2020-01-01", tz="UTC").value
     end_ns = start_ns + len(closes) * 86_400_000_000_000
     bar_type = raw_bar_type(_USD_INSTRUMENT_ID, "1D")
-    RawBars(catalog).record_verified(
+    RawBars(catalog).record_answered_interval(
         bar_type,
         CatalogInterval(start_ns, end_ns),
         tuple(
@@ -169,7 +169,7 @@ def _seed_fx_catalog(catalog_path, rates: list[float]) -> None:
     start_ns = pd.Timestamp("2020-01-01", tz="UTC").value
     end_ns = start_ns + len(rates) * 86_400_000_000_000
     bar_type = external_bar_type(_EURUSD_ID, "1D", "MID")
-    RawBars(catalog).record_verified(
+    RawBars(catalog).record_answered_interval(
         bar_type,
         CatalogInterval(start_ns, end_ns),
         tuple(
@@ -209,9 +209,9 @@ class _AdjustedLastProvider:
 
 
 def _zero_distribution_source(catalog_path) -> CatalogBacktestDataSource:
-    # Distribution coverage exists only for the tradeable: an FX conversion
+    # Distribution materialisation applies only to the tradeable: an FX conversion
     # pair pays no distributions and must never be part of the distribution
-    # request (the real verified store has no coverage record for it).
+    # request (the real Catalog has no file extent for it).
     dates = pd.date_range("2020-01-01", periods=5, freq="D", tz="UTC")
     adjusted_last = {
         _USD_INSTRUMENT_ID: pd.Series([100.0] * len(dates), index=dates),

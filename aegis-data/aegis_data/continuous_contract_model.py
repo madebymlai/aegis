@@ -108,8 +108,8 @@ class ContinuousContractModel:
     def materialize(self, *, end: str) -> None:
         """(Re)materialize the adjusted frame over ``[start, end]`` off-cache.
 
-        Bounded by ``_readable_end``: the frame reaches as far as the Catalog
-        has been checked, never past it.
+        Bounded by ``_readable_end``: the frame reaches the common Catalog
+        extent of its legs, never past it.
         """
         readable = self._readable_end(pd.Timestamp(end).date())
         future, frame, quote_currency = self._materialize_frame(readable.isoformat())
@@ -180,7 +180,9 @@ class ContinuousContractModel:
             pd.Timestamp(bar.ts_init, tz="UTC").ceil(self._timeframe).tz_localize(None)
         )
 
-    def _materialize_frame(self, end: str) -> tuple[ContinuousFuture, pd.DataFrame, str]:
+    def _materialize_frame(
+        self, end: str
+    ) -> tuple[ContinuousFuture, pd.DataFrame, str]:
         resolved = self._port.resolve_continuous(self._root)
         legs = resolved.legs
         chain = fetch_contract_chain(
@@ -252,20 +254,18 @@ class ContinuousContractModel:
         """The last date this model can answer for.
 
         A model that can fill answers for whatever it was asked — it goes and
-        gets the window. A model that can only read answers for what the
-        Catalog reports as checked, because that is all it has. Liquidity is a
-        comparison *across* legs, so the frontier is the earliest of them: a
-        leg that has not been checked as far as its rivals cannot be ranked
-        against them yet.
+        gets the window. A model that can only read stops at the Catalog extent.
+        Liquidity is a comparison *across* legs, so the frontier is the earliest
+        extent: a leg whose extent trails its rivals cannot be ranked against
+        them yet.
 
-        This is what keeps a live session from needing a coverage verdict about
-        the instant it is living through. It asks the Catalog how far it has
-        been checked instead of asserting an answer.
+        This keeps a live session from extending the instant it is living
+        through before the subscribed source has answered it.
         """
         if self._raw_bars.can_fill:
             return requested
         frontiers = [
-            self._raw_bars.covered_through(bar_type)
+            self._raw_bars.extent_through(bar_type)
             for leg in self._port.resolve_continuous(self._root).legs
             for bar_type in self._raw_bars.marking(
                 InstrumentId.from_str(leg.symbol), self._timeframe

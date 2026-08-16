@@ -152,11 +152,11 @@ class _FakeCatalogBackend:
         self,
         instruments: list[FuturesContract],
         bars: dict[str, list[Bar]],
-        coverage_horizon: tuple[int, int] | None,
+        extent_horizon: tuple[int, int] | None,
     ) -> None:
         self._instruments = instruments
         self._bars = bars
-        self._coverage_horizon = coverage_horizon
+        self._extent_horizon = extent_horizon
 
     def instruments(
         self,
@@ -190,16 +190,16 @@ class _FakeCatalogBackend:
             if lo <= bar.ts_event <= hi
         ]
 
-    def _covered(self, data_cls: type) -> tuple[int, int]:
-        """The window this fixture's Bar files have been checked over.
+    def _extent(self, data_cls: type) -> tuple[int, int]:
+        """The Catalog extent named by this fixture's Bar files.
 
-        The horizon narrows Bar coverage only — that is the seam these
-        scenarios exercise. Every other record type, and every type at all when
-        no horizon is declared, is covered end to end.
+        The horizon narrows Bar extents only — that is the seam these scenarios
+        exercise. Every other record type, and every type at all when no horizon
+        is declared, spans the whole fixture timeline.
         """
-        if self._coverage_horizon is None or data_cls is not Bar:
+        if self._extent_horizon is None or data_cls is not Bar:
             return (0, _UNBOUNDED_NS)
-        return self._coverage_horizon
+        return self._extent_horizon
 
     def get_missing_intervals_for_request(
         self,
@@ -208,18 +208,18 @@ class _FakeCatalogBackend:
         data_cls: type,
         identifier: str | None = None,
     ) -> list:
-        """The fixture's coverage horizon, said the way the Catalog reads it.
+        """The fixture's extent horizon, said the way the Catalog reads it.
 
-        Coverage is the extents naming a dataset's files, so a fixture
-        modelling a warmed window says so by reporting nothing missing inside
-        it, and a fixture modelling an unwarmed one reports the whole request.
+        File extents are the interval state, so a fixture modelling a warm
+        window reports nothing missing inside it, while an unwarmed fixture
+        reports the whole request.
         """
-        covered_start, covered_end = self._covered(data_cls)
+        extent_start, extent_end = self._extent(data_cls)
         gaps = []
-        if start < covered_start:
-            gaps.append((start, min(end, covered_start - 1)))
-        if end > covered_end:
-            gaps.append((max(start, covered_end + 1), end))
+        if start < extent_start:
+            gaps.append((start, min(end, extent_start - 1)))
+        if end > extent_end:
+            gaps.append((max(start, extent_end + 1), end))
         return gaps
 
     def get_intervals(self, *_args: object, **_kwargs: object) -> list:
@@ -273,9 +273,9 @@ class FakeCatalog(Catalog):
         instruments: list[FuturesContract],
         bars: dict[str, list[Bar]],
         *,
-        coverage_horizon: tuple[int, int] | None = None,
+        extent_horizon: tuple[int, int] | None = None,
     ) -> None:
-        super().__init__(_FakeCatalogBackend(instruments, bars, coverage_horizon))
+        super().__init__(_FakeCatalogBackend(instruments, bars, extent_horizon))
 
 
 def es_port(
@@ -372,7 +372,7 @@ def _port(
     catalog = FakeCatalog(
         instruments=instruments,
         bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
-        coverage_horizon=(
+        extent_horizon=(
             pd.Timestamp(
                 min(frame.index.min() for frame in frames.values()), tz="UTC"
             ).value,

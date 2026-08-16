@@ -95,9 +95,9 @@ class CatalogInterval:
 
     @classmethod
     def after(cls, frontier_ns: int, through_ns: int) -> "CatalogInterval":
-        """Advance coverage with exact nanosecond adjacency.
+        """Build the next answered interval with exact nanosecond adjacency.
 
-        Coverage windows must tile: a previous window ends at ``T - 1`` and
+        Answered intervals must tile: a previous interval ends at ``T - 1`` and
         the next begins at ``T``. Nautilus permits gaps, so every frontier
         advance goes through this constructor rather than repeating arithmetic.
         """
@@ -154,6 +154,7 @@ class Catalog:
         interval: CatalogInterval,
         records: tuple[RecordT, ...],
     ) -> None:
+        """Write records over one exact answered interval."""
         identifier = _identifier(key)
         if self.missing(key, interval) != (interval,):
             self.drop(key, interval)
@@ -184,11 +185,10 @@ class Catalog:
     ) -> tuple[CatalogInterval, ...]:
         """The parts of *interval* this dataset holds no file for.
 
-        The extents naming a dataset's files, read as coverage. A write records
-        the window it answered for, so for a dataset that carries records these
-        extents say what was *checked*, not merely what was *stored* — and they
-        are what the Nautilus data engine reads when deciding whether to fetch,
-        so there is no second opinion to keep in step with.
+        A dataset's file extents are its only interval state. A write records
+        the source's answered interval, and the Nautilus data engine reads those
+        same extents when deciding whether to fetch. There is no second opinion
+        to keep in step with.
 
         An empty window is recorded by extending a neighbouring file's name
         over it. If a dataset has never held a record, an empty write records
@@ -203,8 +203,8 @@ class Catalog:
         )
         return tuple(CatalogInterval(start_ns, end_ns) for start_ns, end_ns in unstored)
 
-    def covered_through(self, key: CatalogKey[RecordT]) -> int | None:
-        """The latest point this dataset has an answer for, if it has one.
+    def extent_through(self, key: CatalogKey[RecordT]) -> int | None:
+        """The latest endpoint in this dataset's Catalog extents, if any.
 
         Read from the same extents as :meth:`missing`, over the whole
         representable range, so a caller asking how far a dataset reaches and a
@@ -225,11 +225,11 @@ class Catalog:
         """Merge the requested range, whose writer windows abut by one nanosecond.
 
         The merged file is named for the span of the adjacent files it replaces,
-        preserving the Catalog's coverage answer. Production writers tile every
-        requested missing interval exactly; they must end one window at ``T - 1``
-        and begin the next at ``T``. Nautilus rejects overlap but permits gaps,
-        so that nanosecond-adjacency requirement lives with this arithmetic and
-        cannot be delegated to the vendor.
+        preserving the Catalog extent. Production writers tile every requested
+        missing interval exactly; they must end one window at ``T - 1`` and begin
+        the next at ``T``. Nautilus rejects overlap but permits gaps, so that
+        nanosecond-adjacency requirement lives with this arithmetic and cannot be
+        delegated to the vendor.
         """
         self._store.consolidate_data(
             key.record_type,

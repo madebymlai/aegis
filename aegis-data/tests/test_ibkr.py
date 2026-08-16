@@ -429,7 +429,7 @@ def test_request_bars_returns_short_history_when_ib_clamps_at_listing() -> None:
     single request reaching before the listing simply returns fewer bars — the
     provider never steps into empty pre-listing history.  The oldest returned bar IS
     where history begins: coverage is served from there (far past the requested
-    start), and the pre-listing head stays unclaimed for the coverage gate."""
+    start), and the pre-listing head stays outside the Catalog extent."""
     served = [_StampedBar("2016-06-15"), _StampedBar("2017-03-01")]
     fake = _FakeHistoricClient(bars=served, instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)

@@ -158,11 +158,11 @@ def test_continuous_future_records_run_economics_and_identity(
     assert result.size_increment_by_instrument[es] == 1.0
     assert result.multiplier_by_instrument[es] == 1.0
     assert result.identity.multiplier_by_instrument[es] == 1.0
-    assert len(result.identity.distribution_coverage) == 2
-    assert result.identity.distribution_coverage[0]["instrument_id"] == "AAPL.NASDAQ"
-    assert result.identity.distribution_coverage[0]["applicable"] is True
-    assert result.identity.distribution_coverage[1]["instrument_id"] == "ES.XCME"
-    assert result.identity.distribution_coverage[1]["applicable"] is False
+    assert len(result.identity.distribution_extents) == 2
+    assert result.identity.distribution_extents[0]["instrument_id"] == "AAPL.NASDAQ"
+    assert result.identity.distribution_extents[0]["applicable"] is True
+    assert result.identity.distribution_extents[1]["instrument_id"] == "ES.XCME"
+    assert result.identity.distribution_extents[1]["applicable"] is False
 
 
 def test_converts_non_base_continuous_root_through_exchange_fx(

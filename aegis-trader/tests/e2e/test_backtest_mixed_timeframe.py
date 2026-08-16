@@ -43,7 +43,7 @@ from tests.e2e.test_backtest_catalog_runner import (
     _book_nav,
     _closed_orders,
     _equity,
-    _verified_zero_distribution_source,
+    _zero_distribution_source,
 )
 from tests.support.bundle_double import BundleDouble, make_bundle_registry
 from tests.support.market_data import bar_window_from_frames
@@ -137,7 +137,7 @@ def _seed_hourly(catalog_path, instrument_id: InstrumentId, timestamps) -> None:
         start=int(pd.Timestamp("2020-01-01", tz="UTC").value),
         end=int(pd.Timestamp("2020-01-05", tz="UTC").value),
     )
-    # Distribution verification reads every instrument's raw DAILY closes,
+    # Distribution materialisation reads every instrument's raw DAILY closes,
     # so an hourly-traded instrument still carries its daily series.
     daily_bars = [
         _bar(raw_bar_type(instrument_id, "1D"), ts, 100.0)
@@ -193,7 +193,7 @@ def _run_mixed_book(tmp_path, registry_bundles, instrument_ids) -> Any:
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=make_bundle_registry(registry_bundles),
-        data_source=_verified_zero_distribution_source(catalog_path, instrument_ids),
+        data_source=_zero_distribution_source(catalog_path, instrument_ids),
     )
 
 
@@ -689,7 +689,7 @@ def _seed_weekly(catalog_path, instrument_id: InstrumentId, fridays) -> None:
         for ts, close in zip(fridays, closes, strict=True)
     ]
     catalog.write_data(weekly_bars, start=start, end=end)
-    # Distribution verification reads every instrument's raw DAILY closes,
+    # Distribution materialisation reads every instrument's raw DAILY closes,
     # so a weekly-traded instrument still carries its daily series.
     daily_bars = [
         _bar(raw_bar_type(instrument_id, "1D"), ts, 100.0)
@@ -701,7 +701,7 @@ def _seed_weekly(catalog_path, instrument_id: InstrumentId, fridays) -> None:
 def _weekly_distribution_source(
     catalog_path, ex_date: str, amount: float
 ) -> CatalogBacktestDataSource:
-    """A verified source whose ADJUSTED_LAST steps at *ex_date*: the decode
+    """A source whose ADJUSTED_LAST steps at *ex_date*: the decode
     yields one Distribution of *amount* per share on that date."""
     dates = pd.date_range("2020-01-01", "2020-02-04", freq="B", tz="UTC")
     values = pd.Series([100.0] * len(dates), index=dates)
@@ -727,7 +727,7 @@ def _run_weekly_book(tmp_path, *, distribution_ex_date: str | None = None) -> An
     ) + pd.Timedelta(hours=16, minutes=30)
     _seed_weekly(catalog_path, _WEEKLY_ID, fridays)
     source = (
-        _verified_zero_distribution_source(catalog_path, (_WEEKLY_ID,))
+        _zero_distribution_source(catalog_path, (_WEEKLY_ID,))
         if distribution_ex_date is None
         else _weekly_distribution_source(catalog_path, distribution_ex_date, 1.0)
     )

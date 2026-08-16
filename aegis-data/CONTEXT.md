@@ -29,6 +29,11 @@ Raw bars are the r8b.1 walking skeleton. Currency conversion and split/dividend
 handling are later slices.
 _Avoid_: adjusted series, converted bars, continuous future
 
+**Answered Interval**:
+The exact time window for which a data source has completed an answer. The
+answer may contain no records; absence is ordinary empty data.
+_Avoid_: verified interval, coverage claim, checked window, verdict
+
 **Roll-Transition Table**:
 The explicit list of roll seams — transition instant, the two legs by native
 `InstrumentId`, and each leg's seam Close — that aegis-data derives as a pure

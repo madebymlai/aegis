@@ -29,7 +29,11 @@ def test_replacing_a_window_keeps_the_checked_empty_window_beside_it(
     catalog = Catalog.open(tmp_path / "catalog")
     bar_type = BarType.from_str("SPY.ARCA-1-DAY-LAST-EXTERNAL")
     key = CatalogKey.for_bar(bar_type)
-    friday, saturday, monday = _day("2024-01-05"), _day("2024-01-06"), _day("2024-01-08")
+    friday, saturday, monday = (
+        _day("2024-01-05"),
+        _day("2024-01-06"),
+        _day("2024-01-08"),
+    )
     sunday_end = _day("2024-01-07").end_ns
 
     weekend = CatalogInterval(saturday.start_ns, sunday_end)
@@ -64,10 +68,10 @@ def test_replacing_a_window_with_no_records_still_records_it_as_checked(
     assert catalog.missing(key, saturday) == ()
 
 
-def test_dropping_an_interior_range_leaves_both_sides_covered(
+def test_dropping_an_interior_range_leaves_both_catalog_extents(
     tmp_path: Path,
 ) -> None:
-    """Removing the middle of a checked window must not unclaim its edges.
+    """Removing the middle of a Catalog extent must preserve its outer files.
 
     The vendor splits a partially overlapping file rather than discarding it,
     so the surviving names still describe the days either side. Only the
@@ -124,9 +128,7 @@ def test_replace_window_overwrites_stale_rows_and_is_idempotent(
         pd.Timestamp("2024-01-01", tz="UTC").value,
         pd.Timestamp("2024-01-03", tz="UTC").value,
     )
-    stale = Distribution.from_ex_date(
-        _SPY, "2024-01-02", amount=0.25, currency="USD"
-    )
+    stale = Distribution.from_ex_date(_SPY, "2024-01-02", amount=0.25, currency="USD")
     corrected = Distribution.from_ex_date(
         _SPY, "2024-01-02", amount=0.50, currency="USD"
     )
@@ -213,16 +215,12 @@ def test_replace_window_with_no_records_clears_stale_payload(tmp_path: Path) -> 
         pd.Timestamp("2024-01-01", tz="UTC").value,
         pd.Timestamp("2024-01-03", tz="UTC").value,
     )
-    stale = Distribution.from_ex_date(
-        _SPY, "2024-01-02", amount=0.25, currency="USD"
-    )
+    stale = Distribution.from_ex_date(_SPY, "2024-01-02", amount=0.25, currency="USD")
 
     catalog.replace(key, interval, (stale,))
     catalog.replace(key, interval, ())
 
     assert catalog.read(key, interval) == ()
-
-
 
 
 def test_compaction_preserves_the_coverage_of_the_windows_it_merges(
@@ -237,7 +235,11 @@ def test_compaction_preserves_the_coverage_of_the_windows_it_merges(
     catalog = Catalog.open(tmp_path / "catalog")
     bar_type = BarType.from_str("SPY.ARCA-1-DAY-LAST-EXTERNAL")
     key = CatalogKey.for_bar(bar_type)
-    friday, saturday, monday = _day("2024-01-05"), _day("2024-01-06"), _day("2024-01-08")
+    friday, saturday, monday = (
+        _day("2024-01-05"),
+        _day("2024-01-06"),
+        _day("2024-01-08"),
+    )
     sunday = _day("2024-01-07")
     weekend = CatalogInterval(saturday.start_ns, sunday.end_ns)
     span = CatalogInterval(friday.start_ns, monday.end_ns)
@@ -312,7 +314,12 @@ def test_compaction_holds_its_coverage_even_with_assertions_disabled(
 
     verdicts = {
         flags: subprocess.run(
-            [sys.executable, *flags, str(probe), str(tmp_path / f"catalog{len(flags)}")],
+            [
+                sys.executable,
+                *flags,
+                str(probe),
+                str(tmp_path / f"catalog{len(flags)}"),
+            ],
             capture_output=True,
             text=True,
             check=True,
