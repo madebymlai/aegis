@@ -33,48 +33,6 @@ requires-dist = [
 dev = [{ name = "pytest", specifier = ">=9.1.0" }]
 
 [[package]]
-name = "aegis-exec-aegis-heldhedge-cand-b60"
-version = "1.0.0"
-source = { path = "../bundles/aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl" }
-dependencies = [
-    { name = "aegis-runtime" },
-]
-wheels = [
-    { filename = "aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl", hash = "sha256:8533ba0dbd2a06665b969aab4c0c59268081d3353f4d0a2cf3824450207a2e77" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "aegis-runtime", specifier = ">=0.3.0" }]
-
-[[package]]
-name = "aegis-exec-atalanta-keystone-shortmute-cand-06c"
-version = "1.0.0"
-source = { path = "../bundles/aegis_exec_atalanta_keystone_shortmute_cand_06c-1.0.0-py3-none-any.whl" }
-dependencies = [
-    { name = "aegis-runtime" },
-]
-wheels = [
-    { filename = "aegis_exec_atalanta_keystone_shortmute_cand_06c-1.0.0-py3-none-any.whl", hash = "sha256:fe581e150f0b4d337efa56d470c8ec87288e5de852aac9dcc26d9bab86d31ea5" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "aegis-runtime", specifier = ">=0.3.0" }]
-
-[[package]]
-name = "aegis-exec-demeter-carry-mix-cand-ff2"
-version = "1.1.0"
-source = { path = "../bundles/aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl" }
-dependencies = [
-    { name = "aegis-runtime" },
-]
-wheels = [
-    { filename = "aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl", hash = "sha256:2fd204f7e14ec315e12b6a025b9e16deb28b751163aee481e18ef184aef79cfd" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "aegis-runtime", specifier = ">=0.3.0" }]
-
-[[package]]
 name = "aegis-runtime"
 version = "0.4.0"
 source = { editable = "../aegis-runtime" }
@@ -96,7 +54,11 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.0" }]
+dev = [
+    { name = "import-linter", specifier = ">=2.13" },
+    { name = "mypy", specifier = ">=2.3.0" },
+    { name = "pytest", specifier = ">=9.1.0" },
+]
 
 [[package]]
 name = "aegis-trader"
@@ -104,9 +66,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aegis-data" },
-    { name = "aegis-exec-aegis-heldhedge-cand-b60" },
-    { name = "aegis-exec-atalanta-keystone-shortmute-cand-06c" },
-    { name = "aegis-exec-demeter-carry-mix-cand-ff2" },
     { name = "aegis-runtime" },
     { name = "nautilus-trader" },
     { name = "pydantic" },
@@ -128,9 +87,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aegis-data", editable = "../aegis-data" },
-    { name = "aegis-exec-aegis-heldhedge-cand-b60", path = "../bundles/aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl" },
-    { name = "aegis-exec-atalanta-keystone-shortmute-cand-06c", path = "../bundles/aegis_exec_atalanta_keystone_shortmute_cand_06c-1.0.0-py3-none-any.whl" },
-    { name = "aegis-exec-demeter-carry-mix-cand-ff2", path = "../bundles/aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl" },
     { name = "aegis-runtime", editable = "../aegis-runtime" },
     { name = "nautilus-trader", specifier = ">=1.231.0" },
     { name = "nautilus-trader", extras = ["ib", "docker"], marker = "extra == 'ib'", specifier = ">=1.231.0" },
@@ -278,7 +234,7 @@ dependencies = [
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/88/7f/731ff914b0255d3d065f45fd4e626d4b8c95dbcbaada049f337a6ac16410/docker-7.2.0.tar.gz", hash = "sha256:cebb93773d334f778e023a7ee352a8d6e13ab1bd3b863a4d4a59dec897df43ac", size = 118731, upload-time = "2026-07-09T14:53:46.39Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/23/529140fe1aab80fc6992f93a706deec709140a6397439139a054e1515c45/docker-7.2.0-py3-none-any.whl", hash = "sha256:a3f45fdeb9165e2d25d9a1d02ddf3bc70fb572cf5ebbf9b58558c22caf29b71", size = 148775, upload-time = "2026-07-09T14:53:45.224Z" },
+    { url = "https://files.pythonhosted.org/packages/75/23/529140fe1aab80fc6992f93a706deec709140a6397439139a054e1515c45/docker-7.2.0-py3-none-any.whl", hash = "sha256:a3f45fdeb9165e2d25d9a1d02ddf3bc70fb572cf5ebbf9b58558c22caf29b71f", size = 148775, upload-time = "2026-07-09T14:53:45.224Z" },
 ]
 
 [[package]]
