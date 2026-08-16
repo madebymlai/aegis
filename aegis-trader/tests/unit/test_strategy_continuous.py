@@ -499,7 +499,7 @@ def _seed_roll_catalog(
     raw_bars = RawBars(catalog)
     for instrument_id in leg_ids:
         bar_type = raw_bar_type(instrument_id, "1D")
-        raw_bars.record_answered_interval(
+        raw_bars.replace_interval(
             bar_type,
             CatalogInterval(history_start_ns, startup_ns),
             tuple(bar for bar in native[instrument_id] if bar.ts_event <= startup_ns),

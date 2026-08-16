@@ -16,7 +16,7 @@ class LateCapturedBarError(ValueError):
 
 @dataclass
 class BarCapture:
-    """Batch subscribed Bars and record answered intervals from the session clock."""
+    """Batch subscribed Bars into exact Catalog intervals from the session clock."""
 
     raw_bars: RawBars
     _frontier_by_type: dict[BarType, int] = field(default_factory=dict)
@@ -34,7 +34,7 @@ class BarCapture:
         self._pending_by_type[bar_type] = []
 
     def unsubscribe(self, bar_type: BarType, *, at_ns: int) -> None:
-        """Record the answered interval through unsubscription, then stop."""
+        """Replace the Catalog interval through unsubscription, then stop."""
         if bar_type not in self._frontier_by_type:
             return
         self._record_through(bar_type, self._safe_clock_frontier(bar_type, at_ns))
@@ -56,7 +56,7 @@ class BarCapture:
         """Record batches only through each cadence's completed clock frontier.
 
         Every frontier moves on the session clock with a full cadence of slack,
-        so an answered interval never includes an instant the stream could still
+        so the Catalog extent never includes an instant the stream could still
         deliver.
         """
         for bar_type in tuple(self._frontier_by_type):
@@ -84,7 +84,7 @@ class BarCapture:
         records = tuple(
             bar for bar in pending if frontier < bar.ts_event <= timestamp_ns
         )
-        self.raw_bars.record_answered_interval(
+        self.raw_bars.replace_interval(
             bar_type,
             CatalogInterval.after(frontier, timestamp_ns),
             records,

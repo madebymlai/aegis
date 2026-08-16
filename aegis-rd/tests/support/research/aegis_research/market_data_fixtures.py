@@ -114,7 +114,7 @@ def seed_catalog_frames(
     Unlike :func:`seed_catalog_ohlcv` the frames are the scenario — calendar
     gaps and custom values survive into the corpus — so port-altitude quality
     tests can stage real data defects behind the production port. Bar files use
-    the exact answered interval, and a zero-event source materialises the
+    the exact Catalog interval, and a zero-event source materialises the
     Distribution extent, so a warm read needs no provider.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)

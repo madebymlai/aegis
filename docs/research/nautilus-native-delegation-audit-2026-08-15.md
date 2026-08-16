@@ -116,13 +116,13 @@ Nautilus can issue an instrument download with catalog update enabled; its DataE
 
 The blocker is not orchestration but data compatibility: Aegis recursively removes IB `info` values that are not msgspec-encodable before persistence. A native request-to-catalog flow is only preferable if 1.231.0 can persist the returned IB instruments without that sanitizer and preserve Aegis's MIC identity rules. Test this with representative equity, future, option, and FX instruments. If it fails, keep the Aegis adapter and consider an upstream Nautilus issue rather than bypassing serialization locally in more places.
 
-### 6. Evaluate native streaming for live capture, but preserve answered intervals
+### 6. Evaluate native streaming for live capture, but preserve exact Catalog intervals
 
-[`BarCapture`](../../aegis-trader/aegis_trader/trader/bar_capture.py#L18) buffers observed bars, completes an interval using the session clock, and calls [`RawBars.record_answered_interval`](../../aegis-data/aegis_data/raw_bars.py#L92). Importantly, `record_answered_interval` persists the exact Catalog extent even when the interval contains no bars. [`_CustomDataCaptureActor`](../../aegis-trader/aegis_trader/trader/live_custom_data.py#L40) similarly subscribes to custom data and writes observed records into the canonical catalog.
+[`BarCapture`](../../aegis-trader/aegis_trader/trader/bar_capture.py#L18) buffers observed bars, completes an interval using the session clock, and calls [`RawBars.replace_interval`](../../aegis-data/aegis_data/raw_bars.py#L92). Importantly, `replace_interval` persists the exact Catalog extent even when the interval contains no bars. [`_CustomDataCaptureActor`](../../aegis-trader/aegis_trader/trader/live_custom_data.py#L40) similarly subscribes to custom data and writes observed records into the canonical catalog.
 
 Nautilus's [`StreamingConfig`](https://github.com/nautechsystems/nautilus_trader/blob/v1.231.0/nautilus_trader/persistence/config.py#L28-L77) can attach a streaming writer to live or backtest nodes and persist bus traffic. That may be usable for observed custom-data capture.
 
-It is not currently a drop-in replacement for `BarCapture`. The native writer targets a streaming/Feather layout under environment and instance directories, while Aegis requires immediate canonical catalog availability plus the exact answered interval when a subscription produces no event. A prototype must prove identifier fidelity, deduplication, consolidation into the canonical catalog, restart behavior, and explicit empty-interval semantics. Until then, keep `BarCapture`; it owns an invariant the generic stream writer does not express.
+It is not currently a drop-in replacement for `BarCapture`. The native writer targets a streaming/Feather layout under environment and instance directories, while Aegis requires immediate canonical catalog availability plus an exact Catalog interval when a subscription produces no event. A prototype must prove identifier fidelity, deduplication, consolidation into the canonical catalog, restart behavior, and explicit empty-interval semantics. Until then, keep `BarCapture`; it owns an invariant the generic stream writer does not express.
 
 ### 7. Delegate live continuous output only after Aegis decides the roll
 
@@ -179,7 +179,7 @@ Do not create all investigation tickets as implementation work. The following or
 3. **Implemented: native request lifecycle for deterministic Distribution materialization.** The exact-version spike preserved extent and empty-interval behavior; `Catalog.fill` was deleted.
 4. **Implemented: feed the catalog window's native Bars directly to the backtest engine.** DataFrame projections remain only for validation and domain consumers; `BacktestNode` orchestration was rejected for 1.231.0.
 5. **Validate native IB instrument request-to-catalog persistence.** Compatibility ticket; cover msgspec metadata and MIC identity before deleting the seeding path.
-6. **Spike: native streaming equivalence for observed custom data and bars.** Decision ticket; exact empty answered intervals are a hard acceptance criterion for bars.
+6. **Spike: native streaming equivalence for observed custom data and bars.** Decision ticket; exact empty Catalog intervals are a hard acceptance criterion for bars.
 7. **Spike: native continuous subscription after transition freeze.** Low-priority decision ticket; Aegis remains the owner of roll discovery and execution-front policy.
 
 The first two are strong simplifications. The remaining items should produce evidence and a keep/delete decision, not presume that “more native” is automatically a shallower design.

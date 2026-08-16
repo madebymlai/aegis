@@ -1534,8 +1534,8 @@ def test_catalog_port_forward_request_clamps_to_stored_bar_frontier(
     catalog = Catalog.open(catalog_path)
     instrument_id = _id("SPY.ARCA")
     bar_type = raw_bar_type(instrument_id, "1D")
-    # The Catalog extent reaches 01-08 (an answered interval can include
-    # bar-less days), but the bar frontier sits at the last stored bar, so
+    # The Catalog extent reaches 01-08 (an exact interval can include bar-less
+    # days), but the bar frontier sits at the last stored bar, so
     # materialisation must clamp rather than chase days with no close.
     _write_span(
         catalog,

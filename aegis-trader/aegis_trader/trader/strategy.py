@@ -419,8 +419,8 @@ class RebalanceStrategy(Strategy):
 
         if self._bar_capture is not None:
             # Buffer only. One stream's arrival says nothing about whether its
-            # peers can still deliver. The clock timer records each stream's
-            # answered interval, and the roll probe reads that Catalog extent.
+            # peers can still deliver. The clock timer replaces each stream's
+            # exact Catalog interval, and the roll probe reads that extent.
             self._bar_capture.observe(bar)
 
         # Drives today's offset-0 append and any in-process roll before the cadence reads the

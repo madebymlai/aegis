@@ -204,7 +204,7 @@ def _seed_flat_catalog(catalog_path: Path, instrument: InstrumentId) -> None:
     store_instrument_fixtures(catalog, [equity_definition(instrument, "USD")])
     index = pd.date_range(_START, periods=_PERIODS, freq="D")
     bar_type = raw_bar_type(instrument, "1D")
-    RawBars(catalog).record_answered_interval(
+    RawBars(catalog).replace_interval(
         bar_type,
         CatalogInterval(
             pd.Timestamp(_START, tz="UTC").value,

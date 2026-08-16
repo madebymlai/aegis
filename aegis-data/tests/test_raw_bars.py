@@ -117,7 +117,7 @@ def test_ensure_is_a_command_and_the_read_is_the_following_query(
     assert provider.requests == [bar_type]
 
 
-def test_record_answered_interval_extends_catalog_over_empty_time(
+def test_replace_interval_extends_catalog_over_empty_time(
     tmp_path: Path,
 ) -> None:
     catalog = Catalog.open(tmp_path)
@@ -129,17 +129,17 @@ def test_record_answered_interval_extends_catalog_over_empty_time(
     friday = pd.Timestamp("2024-01-05", tz="UTC").value
     monday = pd.Timestamp("2024-01-08", tz="UTC").value
 
-    raw_bars.record_answered_interval(
+    raw_bars.replace_interval(
         bar_type,
         CatalogInterval(friday, friday),
         (_bar(bar_type, "2024-01-05", 10.0),),
     )
-    raw_bars.record_answered_interval(
+    raw_bars.replace_interval(
         bar_type,
         CatalogInterval(friday + 1, monday - 1),
         (),
     )
-    raw_bars.record_answered_interval(
+    raw_bars.replace_interval(
         bar_type,
         CatalogInterval(monday, monday),
         (_bar(bar_type, "2024-01-08", 11.0),),
@@ -197,7 +197,7 @@ def test_capture_ticks_consolidate_instead_of_accumulating_a_file_each(
     frontier = opening - 1
     for tick in range(1, 13):
         end = opening + tick * minute - 1
-        raw_bars.record_answered_interval(
+        raw_bars.replace_interval(
             bar_type,
             CatalogInterval(frontier + 1, end),
             (_bar_at(bar_type, frontier + 1),),

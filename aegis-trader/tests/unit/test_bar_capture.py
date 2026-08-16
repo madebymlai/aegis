@@ -38,7 +38,7 @@ class _RecordingRawBars:
     def extent_through(self, _bar_type: BarType) -> int | None:
         return None
 
-    def record_answered_interval(
+    def replace_interval(
         self,
         _bar_type: BarType,
         interval: CatalogInterval,
@@ -93,7 +93,7 @@ def test_silent_subscribed_weekend_extends_catalog_and_needs_no_fill(
 def test_one_streams_arrival_never_declares_another_stream_silent(
     tmp_path: Path,
 ) -> None:
-    """Only the clock records an answered interval, never a peer's arrival.
+    """Only the clock advances a Catalog extent, never a peer's arrival.
 
     Daily Bars are stamped at their UTC close, so two instruments that traded
     the same session carry the identical ``ts_event``. Whichever is delivered

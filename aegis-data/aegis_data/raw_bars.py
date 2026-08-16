@@ -89,19 +89,17 @@ class RawBars:
         """Whether a missing window can be obtained rather than only read."""
         return self.provider is not None
 
-    def record_answered_interval(
+    def replace_interval(
         self,
         bar_type: BarType,
         interval: CatalogInterval,
         records: Sequence[Bar],
     ) -> None:
-        """Record Bars over the exact interval the subscribed source answered.
+        """Replace the Bars in one exact Catalog interval.
 
-        This is the same storage command used by provider fills and subscribed
-        capture. Empty ``records`` are an ordinary answer; Nautilus extends an
-        adjacent file's Catalog extent when possible. Captured fragments are
-        consolidated into one daily file instead of accumulating one durable
-        file per arriving Bar.
+        ``records`` may be empty; Nautilus extends an adjacent file's Catalog
+        extent when possible. Captured fragments are consolidated into one
+        daily file instead of accumulating one durable file per arriving Bar.
         """
         selected = tuple(records)
         if any(record.bar_type != bar_type for record in selected):

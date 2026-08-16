@@ -95,9 +95,9 @@ class CatalogInterval:
 
     @classmethod
     def after(cls, frontier_ns: int, through_ns: int) -> "CatalogInterval":
-        """Build the next answered interval with exact nanosecond adjacency.
+        """Build the next Catalog interval with exact nanosecond adjacency.
 
-        Answered intervals must tile: a previous interval ends at ``T - 1`` and
+        Catalog intervals must tile: a previous interval ends at ``T - 1`` and
         the next begins at ``T``. Nautilus permits gaps, so every frontier
         advance goes through this constructor rather than repeating arithmetic.
         """
@@ -154,7 +154,7 @@ class Catalog:
         interval: CatalogInterval,
         records: tuple[RecordT, ...],
     ) -> None:
-        """Write records over one exact answered interval."""
+        """Write records over one exact Catalog interval."""
         identifier = _identifier(key)
         if self.missing(key, interval) != (interval,):
             self.drop(key, interval)
@@ -185,10 +185,10 @@ class Catalog:
     ) -> tuple[CatalogInterval, ...]:
         """The parts of *interval* this dataset holds no file for.
 
-        A dataset's file extents are its only interval state. A write records
-        the source's answered interval, and the Nautilus data engine reads those
-        same extents when deciding whether to fetch. There is no second opinion
-        to keep in step with.
+        A dataset's file extents are its only interval state. A write carries
+        its exact Catalog interval, and the Nautilus data engine reads those same
+        extents when deciding whether to fetch. There is no second opinion to
+        keep in step with.
 
         An empty window is recorded by extending a neighbouring file's name
         over it. If a dataset has never held a record, an empty write records
