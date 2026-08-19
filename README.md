@@ -63,7 +63,7 @@ The handoff crosses the boundary as an **Execution Bundle**: `aerd export`
 resolves a Lock, bakes the Candidate's parameters, and builds a
 versioned wheel carrying the strategy, its wired indicators, and provenance.
 Aegis Trader installs the wheel and runs it through **`aegis-runtime`**, feeding
-it Nautilus **InstrumentId**-keyed market data from Aegis Data and getting a
+it **InstrumentId**-keyed market data from Aegis Data and getting a
 signed target-weight frame back, with no **Candidate Store** access at runtime.
 Because both sides gate through the same kernel, a book validated in research and
 one traded live enforce identical exposure limits.
