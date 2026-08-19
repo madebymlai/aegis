@@ -33,6 +33,8 @@ aegis-rd/research/components/*
 !aegis-rd/research/components/.gitkeep
 aegis-rd/research/configs/*
 !aegis-rd/research/configs/.gitkeep
+aegis-rd/research/vault/*
+!aegis-rd/research/vault/.gitkeep
 
 # Scratch/prototype temp dirs — re-fetchable data, never versioned. Matched as
 # whole directory names at any depth (not the substring *temp*, which would also
