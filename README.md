@@ -2,16 +2,11 @@
 
 Aegis is a systematic strategy lifecycle. It turns market hypotheses into reproducible evidence, carries selected strategies across a locked runtime contract, and combines them into one risk-budgeted portfolio.
 
-## Domain Flow
+## Architecture Overview
 
-```mermaid
-flowchart LR
-    D[Market Data] --> R[Strategy Research]
-    R -->|Execution Bundle| S[Strategy Runtime]
-    D --> S
-    S -->|Sleeve Target| P[Portfolio Execution]
-    D --> P
-```
+<p align="center">
+  <img src="docs/assets/architecture.png" width="900" alt="Aegis strategy lifecycle. Market Data supports Strategy Research, Strategy Runtime, and Portfolio Execution. Research hands an Execution Bundle to Runtime, which hands Target Weights to Portfolio Execution.">
+</p>
 
 The lifecycle preserves three things across every boundary: instrument identity, strategy intent, and exposure limits.
 
