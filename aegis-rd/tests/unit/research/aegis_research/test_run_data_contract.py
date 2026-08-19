@@ -63,7 +63,7 @@ def test_candidate_data_identity_captures_instrument_ids_and_contract(
     contract = build_run_data_array_contract(resolved.config, resolved.component_registry)
     identity = candidate_data_identity(make_run_data(), contract)
 
-    assert identity["schema_version"] == "candidate_data_identity.v4"
+    assert identity["schema_version"] == "candidate_data_identity.v5"
     assert identity["requested_instrument_ids"] == ["SYN.XNAS"]
     assert identity["tradeables"] == [{"instrument_id": "SYN.XNAS"}]
     assert identity["timeframe"] == "1D"

@@ -18,8 +18,8 @@ from aegis_runtime import (
 )
 
 from aegis_trader.bundles.book import AssembledBook, assemble_book
-from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.domain.book_config import BookConfig
+from tests.support.bundle_double import make_bundle_registry
 
 _DEFAULT_INSTRUMENT_ID = InstrumentId.from_str("AAPL.NASDAQ")
 
@@ -49,8 +49,7 @@ def make_bundle(
         dict(instrument_bands)
         if instrument_bands is not None
         else {
-            instrument_id: DriftBand.symmetric(0.0)
-            for instrument_id in instrument_ids
+            instrument_id: DriftBand.symmetric(0.0) for instrument_id in instrument_ids
         }
     )
     contract = DataContract(
@@ -89,7 +88,7 @@ def make_bundle(
 
 def assemble_test_book(
     book: BookConfig,
-    bundles: Mapping[str, ExecutionBundle],
+    bundles: Mapping[str, object],
 ) -> AssembledBook:
     """Assemble a Book Config against in-memory bundles through its real interface."""
-    return assemble_book(book, StubBundleRegistry(dict(bundles)))
+    return assemble_book(book, make_bundle_registry(bundles))

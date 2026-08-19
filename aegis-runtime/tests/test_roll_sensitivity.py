@@ -22,7 +22,7 @@ import pytest
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime.bundle import (
+from aegis_runtime.execution.bundle import (
     BundleManifest,
     ComponentSpec,
     DataContract,
@@ -31,9 +31,9 @@ from aegis_runtime.bundle import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
-from aegis_runtime.drift_band import DriftBand
-from aegis_runtime.roll_sensitivity import (
+from aegis_runtime.domain.currency import CurrencyConversion
+from aegis_runtime.domain.drift_band import DriftBand
+from aegis_runtime.execution.roll_sensitivity import (
     RollSensitivityError,
     compute_roll_checked_weights,
 )

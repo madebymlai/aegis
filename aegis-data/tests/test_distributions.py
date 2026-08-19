@@ -7,19 +7,36 @@ import pandas as pd
 import pytest
 from nautilus_trader.adapters.interactive_brokers.common import IBContract
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.distributions import (
-    Distribution,
-    query_distribution_data,
-    request_distribution_data,
+    adjusted_close_records,
     recover_distributions_from_adjusted_last,
-    write_distribution_data,
 )
 from aegis_data.ibkr import IbkrHistoricalProvider, IbkrRequestError
 from aegis_data.ibkr.historical import _HistoricSession
 
 _SPY = InstrumentId.from_str("SPY.ARCA")
+
+
+def test_adjusted_close_records_keep_one_normalized_record_per_trading_day() -> None:
+    closes = pd.Series(
+        [100.0, 101.0, 102.0],
+        index=pd.DatetimeIndex(
+            [
+                "2024-01-02 09:30:00-05:00",
+                "2024-01-02 16:00:00-05:00",
+                "2024-01-03 16:00:00-05:00",
+            ]
+        ),
+    )
+
+    records = adjusted_close_records(_SPY, closes)
+
+    assert len(records) == 2
+    assert records[0].ts_event == 1_704_153_600_000_000_000
+    assert records[0].close == 101.0
+    assert records[1].ts_event == 1_704_240_000_000_000_000
+    assert records[1].close == 102.0
 
 
 def test_recovery_ignores_sub_half_cent_rounding_noise() -> None:
@@ -87,23 +104,6 @@ def test_recovery_collapses_duplicate_daily_trade_rows() -> None:
     ]
 
 
-def test_distribution_catalog_write_is_append_only_new(tmp_path) -> None:
-    catalog = ParquetDataCatalog(tmp_path / "catalog")
-    first = Distribution.from_ex_date(_SPY, "2024-01-02", amount=0.25, currency="USD")
-    second = Distribution.from_ex_date(_SPY, "2024-03-02", amount=0.30, currency="USD")
-    third = Distribution.from_ex_date(_SPY, "2024-06-02", amount=0.35, currency="USD")
-
-    assert write_distribution_data(catalog, [first, second]) == 2
-    assert write_distribution_data(catalog, [first, second, third]) == 1
-
-    stored = query_distribution_data(catalog, [_SPY])
-    assert [(item.ex_date, item.amount) for item in stored] == [
-        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(0.25)),
-        (pd.Timestamp("2024-03-02", tz="UTC"), pytest.approx(0.30)),
-        (pd.Timestamp("2024-06-02", tz="UTC"), pytest.approx(0.35)),
-    ]
-
-
 class _FakeNautilusRequest:
     def __init__(self, **kwargs: Any) -> None:
         self.__dict__.update(kwargs)
@@ -125,7 +125,7 @@ class _FakeNautilusEClient:
         pass
 
 
-class _FakeNautilusBar:
+class _FakeCatalogBar:
     def __init__(self, timestamp: pd.Timestamp, close: float) -> None:
         self.ts_event = timestamp.value
         self.close = SimpleNamespace(as_double=lambda: close)
@@ -152,7 +152,15 @@ class _FakeNautilusClient:
     def _next_req_id(self) -> int:
         return 1
 
-    async def _await_request(self, request: Any, timeout: int) -> list[Any]:
+    async def _await_request(
+        self,
+        request: Any,
+        timeout: int,
+        default_value: Any | None = None,
+        suppress_timeout_warning: bool = False,
+        raise_on_error: bool = False,
+    ) -> list[Any]:
+        del default_value, suppress_timeout_warning, raise_on_error
         if self.adjusted_error is not None:
             raise self.adjusted_error
         closes = self.adjusted_closes
@@ -161,7 +169,7 @@ class _FakeNautilusClient:
             and self._eclient.contract != self.expected_contract
         ):
             closes = [(pd.Timestamp("2024-01-02", tz="UTC"), -1.0)]
-        return [_FakeNautilusBar(timestamp, close) for timestamp, close in closes]
+        return [_FakeCatalogBar(timestamp, close) for timestamp, close in closes]
 
     async def _stop_async(self) -> None:
         pass
@@ -391,31 +399,6 @@ def test_request_adjusted_last_rejects_a_qualified_currency_mismatch() -> None:
             end=pd.Timestamp("2024-02-01", tz="UTC"),
             currency="USD",
         )
-
-
-def test_request_distribution_data_fetches_adjusted_last_and_decodes_events() -> None:
-    dates = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
-    trades = pd.Series([100.0, 100.0, 100.0], index=dates)
-    adjusted = pd.Series([100.0, 100.0 / (1.0 - 0.01), 100.0], index=dates)
-
-    class _Provider:
-        def request_adjusted_last(self, **kwargs: Any) -> pd.Series:
-            assert kwargs["instrument_id"] == _SPY
-            assert kwargs["currency"] == "USD"
-            return adjusted
-
-    events = request_distribution_data(
-        _Provider(),
-        _SPY,
-        trades=trades,
-        start=dates[0],
-        end=dates[-1],
-        currency="USD",
-    )
-
-    assert [(event.ex_date, event.amount) for event in events] == [
-        (pd.Timestamp("2024-01-02", tz="UTC"), pytest.approx(1.0))
-    ]
 
 
 def test_request_adjusted_last_wraps_session_fault() -> None:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TypeAlias
 
-from aegis_data.rebasing import Rebasing
+from aegis_runtime.domain.rebasing import Rebasing
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_trader.domain.startup import StartupGate
@@ -22,7 +22,7 @@ class RollEvent:
 
 @dataclass(frozen=True)
 class SubscribeBars:
-    """Subscribe to live bars for a front leg."""
+    """Subscribe to a live Bar stream read by the roll model."""
 
     instrument_id: InstrumentId
     timeframe: str
@@ -30,7 +30,7 @@ class SubscribeBars:
 
 @dataclass(frozen=True)
 class UnsubscribeBars:
-    """Unsubscribe from live bars for an old front leg."""
+    """Unsubscribe from a Bar stream no longer read by the roll model."""
 
     instrument_id: InstrumentId
     timeframe: str
@@ -38,14 +38,14 @@ class UnsubscribeBars:
 
 @dataclass(frozen=True)
 class RequestInstrument:
-    """Load a front-leg instrument definition before subscribing."""
+    """Load a candidate-leg instrument definition before subscribing."""
 
     instrument_id: InstrumentId
 
 
 @dataclass(frozen=True)
 class RequestBars:
-    """Warm front-leg bars through Nautilus's native catalog request."""
+    """Warm candidate-leg Bars through Nautilus's native catalog request."""
 
     instrument_id: InstrumentId
     timeframe: str

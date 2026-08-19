@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from aegis_data.distributions import Distribution
 from aegis_runtime import DriftBand, gate
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
 from vectorbtpro.portfolio.enums import OrderStatusInfo

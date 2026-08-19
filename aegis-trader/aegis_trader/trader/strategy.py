@@ -32,6 +32,7 @@ globally on failure.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Any, assert_never
 
 from nautilus_trader.common.component import TimeEvent
@@ -46,8 +47,9 @@ from nautilus_trader.model.objects import Currency
 from nautilus_trader.trading.config import StrategyConfig
 from nautilus_trader.trading.strategy import Strategy
 
-from aegis_data.catalog import CatalogBackedDataPort, catalog_root, parquet_data_catalog
+from aegis_data.catalog import CatalogBackedDataPort
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
+from aegis_data.storage import Catalog
 
 from aegis_trader.bundles.book import AssembledBook
 from aegis_trader.data import (
@@ -89,6 +91,7 @@ from aegis_trader.trader.book_startup import (
     bootstrap,
 )
 from aegis_trader.trader.book_market_clock import BookMarketClock
+from aegis_trader.trader.bar_capture import BarCapture
 from aegis_trader.trader.roll_desk import RollDesk
 from aegis_trader.trader.startup_fast_forward import (
     HistoryRequest,
@@ -99,6 +102,9 @@ from aegis_trader.trader.startup_fast_forward import (
     StartupFastForward,
 )
 
+_BAR_CAPTURE_TIMER = "aegis-bar-capture"
+_BAR_CAPTURE_INTERVAL = timedelta(hours=1)
+
 
 class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call-arg]  # msgspec metaclass not in stubs
     """Configuration for the RebalanceStrategy."""
@@ -106,6 +112,17 @@ class RebalanceStrategyConfig(StrategyConfig, frozen=True):  # type: ignore[call
     book: BookConfig
     bundle_label: str = "synthetic"
     warmup_cache_on_start: bool = False
+    capture_bars: bool = False
+    """Whether arriving Bars are persisted to the Catalog as they are observed.
+
+    A durable write is its own decision, not a corollary of warming the cache.
+    Live captures because the Catalog is where it reads history back from: a
+    Bar it observed and a Bar a provider filled are the same record in the same
+    dataset, with nothing marking which arrived how.  A session that runs on
+    for months is reading its own earlier days back out of the Catalog, and it
+    can only do that if it put them there.  Backtest replays a Catalog it must
+    not write back into."""
+
     fill_time_in_force: TimeInForce | None = None
     """Time-in-force for submitted orders (ADR-0001, next-close execution).
 
@@ -137,12 +154,20 @@ class RebalanceStrategy(Strategy):
         config: RebalanceStrategyConfig,
         *,
         arrays: SleeveArrays,
+        catalog: Catalog,
         bar_type_resolver: RawBarTypeResolver = DeclaredMarkingResolver(),
     ) -> None:
         super().__init__(config)
         # The one raw bar-type resolution seam (aegis-rd-tggo.1): every
         # subscribe/unsubscribe/request and cache read resolves through it.
         self._bar_type_resolver = bar_type_resolver
+        self._catalog_port = CatalogBackedDataPort(
+            catalog,
+            resolver=bar_type_resolver,
+        )
+        self._bar_capture = (
+            BarCapture(self._catalog_port.raw_bars) if config.capture_bars else None
+        )
         self._arrays = arrays
         self._assembled_book: AssembledBook | None = None
         self._timeframe_by_bar_type: dict[BarType, str] = {}
@@ -249,8 +274,8 @@ class RebalanceStrategy(Strategy):
 
     def _continuous_port(self) -> CatalogBackedDataPort:
         """The catalog-backed read port the Roll Desk re-materializes through — the node's shared
-        ParquetDataCatalog (the same corpus warmed via request_bars(update_catalog=True))."""
-        return CatalogBackedDataPort(parquet_data_catalog(catalog_root()))
+        Catalog (the same data warmed through the provider-backed port)."""
+        return self._catalog_port
 
     def _fx_reference_pairs(self) -> tuple[InstrumentId, ...]:
         return tuple(
@@ -272,6 +297,12 @@ class RebalanceStrategy(Strategy):
             return
 
         assembled_book = self._require_assembled_book()
+        if self._bar_capture is not None:
+            self.clock.set_timer(
+                _BAR_CAPTURE_TIMER,
+                _BAR_CAPTURE_INTERVAL,
+                callback=self._on_bar_capture_timer,
+            )
         base_ccy = Currency.from_str(assembled_book.config.base_currency)
         self._book_state = NautilusBookState(
             portfolio=self.portfolio,
@@ -386,12 +417,24 @@ class RebalanceStrategy(Strategy):
         if watermark is not None and bar.ts_event <= watermark:
             return
 
+        if self._bar_capture is not None:
+            # Buffer only. One stream's arrival says nothing about whether its
+            # peers can still deliver. The clock timer replaces each stream's
+            # exact Catalog interval, and the roll probe reads that extent.
+            self._bar_capture.observe(bar)
+
         # Drives today's offset-0 append and any in-process roll before the cadence reads the
         # series, so the rebalance window already sees the live continuous bar.
         continuous_id = self._require_roll_desk().continuous_id(
             bar.bar_type.instrument_id
         )
         if self._apply_roll_intents(self._require_roll_desk().on_bar(bar)):
+            return
+        if continuous_id is None and bar.bar_type not in self._timeframe_by_bar_type:
+            # Candidate legs are subscribed so the roll probe can read and
+            # capture them. Until one becomes the front, they are not Book
+            # observations and must not advance a Sleeve clock or mark.
+            self._stream_watermarks[bar.bar_type] = bar.ts_event
             return
 
         derived_mark = self._resolve_derived_mark(bar)
@@ -437,6 +480,10 @@ class RebalanceStrategy(Strategy):
         if not due or self._is_halted:
             return
         self._rebalance_due_sleeves(due, event.ts_event)
+
+    def _on_bar_capture_timer(self, event: TimeEvent) -> None:
+        if self._bar_capture is not None:
+            self._bar_capture.advance_clock(event.ts_event)
 
     def _record_market_observation(
         self,
@@ -541,9 +588,19 @@ class RebalanceStrategy(Strategy):
         if isinstance(intent, SubscribeBars):
             for bar_type in self._mark_bars(intent.instrument_id, intent.timeframe):
                 self.subscribe_bars(bar_type)
+                if self._bar_capture is not None:
+                    self._bar_capture.subscribe(
+                        bar_type,
+                        at_ns=self.clock.timestamp_ns(),
+                    )
             return False
         if isinstance(intent, UnsubscribeBars):
             for bar_type in self._mark_bars(intent.instrument_id, intent.timeframe):
+                if self._bar_capture is not None:
+                    self._bar_capture.unsubscribe(
+                        bar_type,
+                        at_ns=self.clock.timestamp_ns(),
+                    )
                 self.unsubscribe_bars(bar_type)
             return False
         if isinstance(intent, RequestInstrument):
@@ -709,6 +766,11 @@ class RebalanceStrategy(Strategy):
         least two recorded rebalance periods.  The realized-book-skew recording
         has its own (longer) history requirement and runs first.
         """
+        if self._bar_capture is not None:
+            self._bar_capture.advance_clock(self.clock.timestamp_ns())
+            if _BAR_CAPTURE_TIMER in self.clock.timer_names:
+                self.clock.cancel_timer(_BAR_CAPTURE_TIMER)
+
         pipeline = self._pipeline
         if pipeline is None:
             return

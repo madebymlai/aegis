@@ -24,17 +24,24 @@ from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogWindowRequest,
     bars_to_ohlcv,
-    parquet_data_catalog,
+    open_catalog,
 )
-from aegis_data.distributions import request_distribution_data
-from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
+from aegis_data.custom_data import CustomDataWarmer
+from aegis_data.distributions import recover_distributions_from_adjusted_last
+from aegis_data.ibkr import (
+    IbkrHistoricalProvider,
+    historic_catalog_client_factory,
+    historic_data_client_factory,
+    seed_instrument_definitions,
+)
+from aegis_data.research_bars import CatalogBarWarmer
 
 pytest.importorskip("ibapi")
 
 _GATEWAY_PORT = os.environ.get("AEGIS_IBKR_GATEWAY_PORT")
 # The MIC-pinned venue IB resolves NASDAQ to under convert_exchange_to_mic_venue
 # (r8b.9): request_bars keys returned bars by the deterministic MIC venue, so the
-# corpus id — request, fill, and warm read alike — is AAPL.XNAS, not AAPL.NASDAQ.
+# Catalog id — request, fill, and warm read alike — is AAPL.XNAS, not AAPL.NASDAQ.
 _AAPL = InstrumentId.from_str("AAPL.XNAS")
 _EUR_USD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 _SPY = InstrumentId.from_str("SPY.ARCA")
@@ -62,25 +69,26 @@ def _provider() -> IbkrHistoricalProvider:
 
 
 def test_request_bars_returns_external_daily_bars_from_ibkr() -> None:
-    served = _provider().request_bars(raw_bar_type(_AAPL, "1D"), start=_START, end=_END)
+    served = _provider()._request_bars_for_engine(
+        raw_bar_type(_AAPL, "1D"), start=_START, end=_END
+    )
 
-    assert served.bars
-    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in served.bars)
-    assert served.served_from == _START
+    assert served
+    assert all(bar.bar_type == raw_bar_type(_AAPL, "1D") for bar in served)
 
 
 def test_request_bars_returns_midpoint_daily_bars_for_cash_fx() -> None:
     """Cash FX has no TRADES print on IDEALPRO — a LAST request fails with IB error
     162 — so its raw bars are MID (``…-MID-EXTERNAL``, ADR-0007).  This pins that IB
-    actually serves the MIDPOINT daily series the corpus keys FX under; the bar type
+    actually serves the MIDPOINT daily series the Catalog keys FX under; the bar type
     is derived through ``raw_bar_type`` exactly as the lazy fill builds it."""
     bar_type = raw_bar_type(_EUR_USD, "1D")
     assert bar_type.spec.price_type == PriceType.MID
 
-    served = _provider().request_bars(bar_type, start=_START, end=_END)
+    served = _provider()._request_bars_for_engine(bar_type, start=_START, end=_END)
 
-    assert served.bars
-    assert all(bar.bar_type == bar_type for bar in served.bars)
+    assert served
+    assert all(bar.bar_type == bar_type for bar in served)
 
 
 def test_request_instruments_round_trips_native_identity() -> None:
@@ -136,13 +144,16 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     (warm, no IBKR), and the instrument definition is present (AC1/AC3/AC6)."""
     catalog_path = tmp_path / "catalog"
     provider = _provider()
-    catalog = parquet_data_catalog(catalog_path)
+    catalog = open_catalog(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
-        provider=provider,
-        # The window read verifies distribution coverage too (ADR-0012), so the
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
+        # The window read materialises distributions too (ADR-0012), so the
         # fill port carries both provider roles — the production composition.
-        distribution_provider=provider,
+        custom_data_warmer=CustomDataWarmer(
+            catalog,
+            historic_catalog_client_factory(provider),
+        ),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
@@ -156,17 +167,11 @@ def test_lazy_fill_backfills_persists_and_then_reads_warm(tmp_path) -> None:
     assert (filled[_AAPL]["Close"] > 0).all()
 
     # Provider-less read: must serve entirely from the catalog (no IBKR contact).
-    warm = (
-        CatalogBackedDataPort(parquet_data_catalog(catalog_path))
-        .load_window(request)
-        .ohlcv
-    )
+    warm = CatalogBackedDataPort(open_catalog(catalog_path)).load_window(request).ohlcv
     assert warm[_AAPL]["Close"].tolist() == filled[_AAPL]["Close"].tolist()
 
     # AC6: the served instrument's definition was persisted as a Step-1 write.
-    definitions = parquet_data_catalog(catalog_path).instruments(
-        instrument_ids=[_AAPL.value]
-    )
+    definitions = open_catalog(catalog_path).definitions((_AAPL,))
     assert any(instrument.id == _AAPL for instrument in definitions)
 
 
@@ -179,26 +184,34 @@ def test_adjusted_last_decode_recovers_spy_dividends_and_gld_control() -> None:
     end = pd.Timestamp("2026-06-01", tz="UTC")
 
     spy_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_SPY, "1D"), start=start, end=end).bars
+        provider._request_bars_for_engine(
+            raw_bar_type(_SPY, "1D"), start=start, end=end
+        )
     )["Close"]
     gld_trades = bars_to_ohlcv(
-        provider.request_bars(raw_bar_type(_GLD, "1D"), start=start, end=end).bars
+        provider._request_bars_for_engine(
+            raw_bar_type(_GLD, "1D"), start=start, end=end
+        )
     )["Close"]
-    spy = request_distribution_data(
-        provider,
-        _SPY,
-        trades=spy_trades,
-        start=start,
-        end=end,
-        currency="USD",
+    spy = tuple(
+        recover_distributions_from_adjusted_last(
+            instrument_id=_SPY,
+            trades=spy_trades,
+            adjusted_last=provider.request_adjusted_last(
+                _SPY, start=start, end=end, currency="USD"
+            ),
+            currency="USD",
+        )
     )
-    gld = request_distribution_data(
-        provider,
-        _GLD,
-        trades=gld_trades,
-        start=start,
-        end=end,
-        currency="USD",
+    gld = tuple(
+        recover_distributions_from_adjusted_last(
+            instrument_id=_GLD,
+            trades=gld_trades,
+            adjusted_last=provider.request_adjusted_last(
+                _GLD, start=start, end=end, currency="USD"
+            ),
+            currency="USD",
+        )
     )
 
     assert len(spy) >= 6

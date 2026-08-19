@@ -3,7 +3,7 @@
 Covers the broker-neutral live-node config, the live strategy assembly, the
 instrument-id (``load_ids``) derivation, and the ``trader start``/``stop``
 lifecycle (run loop, pidfile, signal handling) — all without a live IBKR
-connection.  The IBKR client wiring (:func:`attach_live_clients`) needs ``ibapi``
+connection.  The IBKR client wiring (:func:`live_clients`) needs ``ibapi``
 and is exercised separately (``importorskip``); the broker-neutral surface here
 must not pull ``ibapi`` at all (the lazy-import invariant).
 """
@@ -15,7 +15,6 @@ import signal
 import subprocess
 import sys
 
-import msgspec
 import pytest
 from nautilus_trader.common import Environment
 from nautilus_trader.common.messages import ShutdownSystem
@@ -24,6 +23,7 @@ from nautilus_trader.config import (
     CacheConfig,
     LiveDataEngineConfig,
     LiveDataClientConfig,
+    LiveExecClientConfig,
     LiveRiskEngineConfig,
     LoggingConfig,
     TradingNodeConfig,
@@ -32,6 +32,7 @@ from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.identifiers import ComponentId, InstrumentId, TraderId
 
 from aegis_data.catalog import catalog_root
+from aegis_data.storage import Catalog
 
 from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.config import IBConnectionSettings
@@ -158,7 +159,9 @@ def test_importing_the_node_module_does_not_import_ibapi():
 # --------------------------------------------------------------------------- #
 
 
-def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves():
+def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves(
+    tmp_path,
+):
     book = BookConfig(
         sleeves=(
             SleeveConfig(
@@ -186,7 +189,11 @@ def test_build_live_strategy_carries_at_the_close_warmup_and_registered_sleeves(
         },
     )
 
-    strategy = build_live_strategy(assembled, arrays=SleeveArrays.bar_only())
+    strategy = build_live_strategy(
+        assembled,
+        arrays=SleeveArrays.bar_only(),
+        catalog=Catalog.open(tmp_path),
+    )
 
     assert strategy.config.fill_time_in_force == TimeInForce.AT_THE_CLOSE
     assert strategy.config.warmup_cache_on_start is True
@@ -210,10 +217,10 @@ def test_build_live_node_rejects_an_invalid_book_before_broker_attachment(
             "carry.whl": make_bundle(native_instrument_ids=(shared_instrument,)),
         }
     )
-    broker_attachments: list[object] = []
+    broker_configs: list[object] = []
     monkeypatch.setattr(
-        "aegis_trader.trader.node.attach_live_clients",
-        lambda *args: broker_attachments.append(args),
+        "aegis_trader.trader.node.live_clients",
+        lambda *args: broker_configs.append(args),
     )
     connection = IBConnectionSettings(
         port=4002,
@@ -225,13 +232,17 @@ def test_build_live_node_rejects_an_invalid_book_before_broker_attachment(
     with pytest.raises(InstrumentBandError):
         build_live_node(book, connection, registry=registry)
 
-    assert broker_attachments == []
+    assert broker_configs == []
 
 
-def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
+def test_build_live_node_supplies_all_client_configs_at_construction(
     monkeypatch,
 ) -> None:
     events: list[str] = []
+    constructed_configs: list[TradingNodeConfig] = []
+    broker_data_config = LiveDataClientConfig()
+    broker_exec_config = LiveExecClientConfig()
+    custom_config = LiveDataClientConfig()
 
     attached_arrays: list[object] = []
     arrays = object()
@@ -242,32 +253,56 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
 
     class _BuiltNode:
         def __init__(self, *, config: TradingNodeConfig) -> None:
-            self._config = config
+            constructed_configs.append(config)
             self.trader = _Trader()
+            events.append("node")
 
         def build(self) -> None:
             events.append("build")
+
+    class _BrokerClients:
+        data_clients = {"INTERACTIVE_BROKERS": broker_data_config}
+        exec_clients = {"INTERACTIVE_BROKERS": broker_exec_config}
+
+        def register(self, _node: object) -> None:
+            events.append("broker-register")
+
+    class _LiveCustomData:
+        data_clients = {"CUSTOM": custom_config}
+
+        def register(self, _node: object, **_kwargs: object) -> None:
+            events.append("custom-register")
 
     def build_strategy(
         _book: object,
         *,
         arrays: object,
+        catalog: object,
     ) -> object:
         attached_arrays.append(arrays)
+        attached_arrays.append(catalog)
         return object()
 
     def build_arrays(*args, **kwargs) -> object:
         events.append("arrays")
         return arrays
 
+    def build_broker_clients(*args: object) -> _BrokerClients:
+        events.append("broker-config")
+        return _BrokerClients()
+
+    def build_custom_data(*args: object, **kwargs: object) -> _LiveCustomData:
+        events.append("custom-config")
+        return _LiveCustomData()
+
     monkeypatch.setattr("aegis_trader.trader.node.TradingNode", _BuiltNode)
     monkeypatch.setattr(
-        "aegis_trader.trader.node.attach_live_clients",
-        lambda *args: events.append("broker"),
+        "aegis_trader.trader.node.live_clients",
+        build_broker_clients,
     )
     monkeypatch.setattr(
-        "aegis_trader.trader.node.add_live_custom_data",
-        lambda *args, **kwargs: events.append("custom"),
+        "aegis_trader.trader.node.live_custom_data",
+        build_custom_data,
     )
     monkeypatch.setattr(
         "aegis_trader.trader.node.build_live_sleeve_arrays",
@@ -296,18 +331,29 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
         _book(),
         connection,
         registry=registry,
-        custom_data_providers=(object(),),
+        custom_data_providers={},
     )
 
     assert events == [
-        "broker",
-        "custom",
+        "broker-config",
+        "custom-config",
+        "node",
+        "broker-register",
+        "custom-register",
         "arrays",
         "warm",
         "build",
         "strategy",
     ]
-    assert attached_arrays == [arrays]
+    assert constructed_configs[0].data_clients == {
+        "INTERACTIVE_BROKERS": broker_data_config,
+        "CUSTOM": custom_config,
+    }
+    assert constructed_configs[0].exec_clients == {
+        "INTERACTIVE_BROKERS": broker_exec_config
+    }
+    assert attached_arrays[0] is arrays
+    assert isinstance(attached_arrays[1], Catalog)
 
 
 # --------------------------------------------------------------------------- #
@@ -316,11 +362,9 @@ def test_build_live_node_adds_custom_clients_after_broker_and_before_build(
 
 
 class _FakeNode:
-    """Records factory registration and holds a swappable config — stands in for
-    ``TradingNode`` so the wiring is checked without an event loop or IB client."""
+    """Record factory registration without exposing node internals."""
 
-    def __init__(self, config: TradingNodeConfig) -> None:
-        self._config = config
+    def __init__(self) -> None:
         self.data_factories: dict[str, object] = {}
         self.exec_factories: dict[str, object] = {}
 
@@ -331,7 +375,7 @@ class _FakeNode:
         self.exec_factories[name] = factory
 
 
-def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
+def test_live_clients_supply_stock_ibkr_configs_and_register_factories():
     pytest.importorskip("ibapi")
     from nautilus_trader.adapters.interactive_brokers.config import IBMarketDataTypeEnum
     from nautilus_trader.adapters.interactive_brokers.factories import (
@@ -339,9 +383,8 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
         InteractiveBrokersLiveExecClientFactory,
     )
 
-    from aegis_data.ibkr import IB_CLIENT_NAME, attach_live_clients
+    from aegis_data.ibkr import IB_CLIENT_NAME, live_clients
 
-    node = _FakeNode(build_live_node_config(trader_id="BOOK-EU-01"))
     connection = IBConnectionSettings(
         port=4002,
         client_id=9,
@@ -353,10 +396,17 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
         InstrumentId.from_str("EUR/USD.IDEALPRO"),
     )
 
-    attach_live_clients(node, connection, instrument_ids)
+    clients = live_clients(connection, instrument_ids)
+    config = build_live_node_config(
+        trader_id="BOOK-EU-01",
+        data_clients=clients.data_clients,
+        exec_clients=clients.exec_clients,
+    )
+    node = _FakeNode()
+    clients.register(node)
 
-    data = node._config.data_clients[IB_CLIENT_NAME]
-    execution = node._config.exec_clients[IB_CLIENT_NAME]
+    data = config.data_clients[IB_CLIENT_NAME]
+    execution = config.exec_clients[IB_CLIENT_NAME]
     assert data.market_data_type == IBMarketDataTypeEnum.REALTIME
     # Nautilus requires the default localhost host with DockerizedIBGatewayConfig;
     # the gateway-owned port remains unset until the factory starts/reuses it.
@@ -377,20 +427,12 @@ def test_attach_live_clients_wires_stock_ibkr_clients_and_factories():
     )
 
 
-def test_attach_live_clients_preserves_an_existing_data_client():
+def test_live_clients_compose_with_an_existing_data_client():
     pytest.importorskip("ibapi")
-    from aegis_data.ibkr import attach_live_clients
+    from aegis_data.ibkr import live_clients
 
     fixture_config = LiveDataClientConfig()
-    node = _FakeNode(
-        msgspec.structs.replace(
-            build_live_node_config(trader_id="BOOK-EU-01"),
-            data_clients={"FIXTURE": fixture_config},
-        )
-    )
-
-    attach_live_clients(
-        node,
+    clients = live_clients(
         IBConnectionSettings(
             port=4002,
             client_id=9,
@@ -399,11 +441,16 @@ def test_attach_live_clients_preserves_an_existing_data_client():
         ),
         (InstrumentId.from_str("VUSA.XLON"),),
     )
+    config = build_live_node_config(
+        trader_id="BOOK-EU-01",
+        data_clients={"FIXTURE": fixture_config, **clients.data_clients},
+        exec_clients=clients.exec_clients,
+    )
 
-    assert node._config.data_clients["FIXTURE"] is fixture_config
+    assert config.data_clients["FIXTURE"] is fixture_config
 
 
-def test_attach_live_clients_pins_mic_venues():
+def test_live_clients_pin_mic_venues():
     """Slice F(b) — ICE/CME venue-symbology pin.
 
     The continuous-root id is ``{root}.{venue}`` and aegis-data's chain build rejects legs
@@ -413,9 +460,8 @@ def test_attach_live_clients_pins_mic_venues():
     flips it to the MIC form (``XCME`` / ``IFUS``) the catalog + continuous goldens use. Both
     the data and exec instrument providers must carry the pin."""
     pytest.importorskip("ibapi")
-    from aegis_data.ibkr import IB_CLIENT_NAME, attach_live_clients
+    from aegis_data.ibkr import IB_CLIENT_NAME, live_clients
 
-    node = _FakeNode(build_live_node_config(trader_id="BOOK-EU-01"))
     connection = IBConnectionSettings(
         port=4002,
         client_id=9,
@@ -423,10 +469,10 @@ def test_attach_live_clients_pins_mic_venues():
         trader_id="BOOK-EU-01",
     )
 
-    attach_live_clients(node, connection, (InstrumentId.from_str("VUSA.XLON"),))
+    clients = live_clients(connection, (InstrumentId.from_str("VUSA.XLON"),))
 
-    data = node._config.data_clients[IB_CLIENT_NAME]
-    execution = node._config.exec_clients[IB_CLIENT_NAME]
+    data = clients.data_clients[IB_CLIENT_NAME]
+    execution = clients.exec_clients[IB_CLIENT_NAME]
     assert data.instrument_provider.convert_exchange_to_mic_venue is True
     assert execution.instrument_provider.convert_exchange_to_mic_venue is True
 
@@ -463,7 +509,9 @@ class _FakeKernel:
 class _FakeRunNode:
     """Stand-in TradingNode capturing the run/stop/dispose ordering."""
 
-    def __init__(self, *, interrupt: bool = False, self_shutdown: str | None = None) -> None:
+    def __init__(
+        self, *, interrupt: bool = False, self_shutdown: str | None = None
+    ) -> None:
         self.events: list[str] = []
         self._interrupt = interrupt
         self._self_shutdown = self_shutdown
@@ -541,9 +589,7 @@ def test_start_trader_records_its_pid_while_running(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "aegis_trader.trader.node.build_live_node", lambda *a, **k: node
     )
-    monkeypatch.setattr(
-        node, "run", lambda: seen.update(pid=pid_file.read_text())
-    )
+    monkeypatch.setattr(node, "run", lambda: seen.update(pid=pid_file.read_text()))
 
     rc = start_trader("book.toml", object(), pid_file=pid_file)
 
@@ -578,7 +624,9 @@ def test_start_trader_refuses_a_held_pidfile_before_reaching_the_broker(
     assert reached == []
 
 
-def test_stop_trader_sends_sigterm_to_the_pid_holding_the_pidfile(tmp_path, monkeypatch):
+def test_stop_trader_sends_sigterm_to_the_pid_holding_the_pidfile(
+    tmp_path, monkeypatch
+):
     """A held pidfile names a live trader, so its PID is signalled."""
     pid_file = tmp_path / "trader.pid"
     sent: dict[str, int] = {}

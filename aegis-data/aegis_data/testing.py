@@ -1,9 +1,9 @@
 """Shared test fixtures for the catalog port and continuous-futures scenarios.
 
 Importable test support (the ``pandas.testing`` pattern) so aegis-data and the
-packages that consume it drive the same fake corpus instead of copying it:
+packages that consume it drive the same fake Catalog instead of copying it:
 
-- ``FakeCatalog`` — a ``ParquetDataCatalog`` stand-in: instrument definitions
+- ``FakeCatalog`` — a Catalog-backend stand-in: instrument definitions
   plus native bars by identifier, served beneath the real
   ``CatalogBackedDataPort`` (the port itself is never faked — one
   implementation, so the fixtures inherit production behavior).
@@ -18,9 +18,11 @@ ceiling exactly as they do live.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, time, timezone
 
 import pandas as pd
+from nautilus_trader.core.data import Data
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import AssetClass
@@ -30,6 +32,12 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data.storage import (
+    Catalog,
+    CatalogInterval,
+    CatalogKey,
+    _store_instrument_fixtures as store_instrument_fixtures,
+)
 
 ES_START = "2024-01-15"
 ES_END = "2024-05-31"
@@ -38,6 +46,16 @@ _UTC = timezone.utc
 _DAY_NS = 86_400_000_000_000
 _PRECISION = 2
 _CROSSOVER = pd.Timestamp("2024-03-01")
+
+
+def store_custom_data_fixtures(catalog: Catalog, records: Sequence[Data]) -> None:
+    """Persist Custom Data fixtures through the retained storage command."""
+    for record in records:
+        catalog.replace(
+            CatalogKey.for_instrument(type(record), record.instrument_id),
+            CatalogInterval(record.ts_event, record.ts_event),
+            (record,),
+        )
 
 
 def future(
@@ -108,9 +126,7 @@ def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
     bar_type = raw_bar_type(instrument_id, "1D")
     out: list[Bar] = []
     for day, row in ohlcv.iterrows():
-        ts_event = int(
-            datetime.combine(day.date(), time(0, 0), _UTC).timestamp() * 1e9
-        )
+        ts_event = int(datetime.combine(day.date(), time(0, 0), _UTC).timestamp() * 1e9)
         out.append(
             Bar(
                 bar_type,
@@ -126,14 +142,21 @@ def bars(instrument_id: InstrumentId, ohlcv: pd.DataFrame) -> list[Bar]:
     return out
 
 
-class FakeCatalog:
-    """A ParquetDataCatalog stand-in: instrument definitions + native bars by identifier."""
+_UNBOUNDED_NS = 2**63 - 1
+
+
+class _FakeCatalogBackend:
+    """A Catalog-backend stand-in: instrument definitions + native bars by identifier."""
 
     def __init__(
-        self, instruments: list[FuturesContract], bars: dict[str, list[Bar]]
+        self,
+        instruments: list[FuturesContract],
+        bars: dict[str, list[Bar]],
+        extent_horizon: tuple[int, int] | None,
     ) -> None:
         self._instruments = instruments
         self._bars = bars
+        self._extent_horizon = extent_horizon
 
     def instruments(
         self,
@@ -167,14 +190,92 @@ class FakeCatalog:
             if lo <= bar.ts_event <= hi
         ]
 
+    def _extent(self, data_cls: type) -> tuple[int, int]:
+        """The Catalog extent named by this fixture's Bar files.
+
+        The horizon narrows Bar extents only — that is the seam these scenarios
+        exercise. Every other record type, and every type at all when no horizon
+        is declared, spans the whole fixture timeline.
+        """
+        if self._extent_horizon is None or data_cls is not Bar:
+            return (0, _UNBOUNDED_NS)
+        return self._extent_horizon
+
     def get_missing_intervals_for_request(
-        self, *_args: object, **_kwargs: object
+        self,
+        start: int,
+        end: int,
+        data_cls: type,
+        identifier: str | None = None,
     ) -> list:
-        return []
+        """The fixture's extent horizon, said the way the Catalog reads it.
+
+        File extents are the interval state, so a fixture modelling a warm
+        window reports nothing missing inside it, while an unwarmed fixture
+        reports the whole request.
+        """
+        extent_start, extent_end = self._extent(data_cls)
+        gaps = []
+        if start < extent_start:
+            gaps.append((start, min(end, extent_start - 1)))
+        if end > extent_end:
+            gaps.append((max(start, extent_end + 1), end))
+        return gaps
 
     def get_intervals(self, *_args: object, **_kwargs: object) -> list:
-        # No marker intervals stored: coverage reports read checked_at as None.
+        # No marker intervals stored.
         return []
+
+    def write_data(
+        self,
+        data: list[object],
+        start: int | None = None,
+        end: int | None = None,
+        data_cls: type | None = None,
+        identifier: str | None = None,
+        **_kwargs: object,
+    ) -> None:
+        raise NotImplementedError("FakeCatalog is a read-only fixture")
+
+    def delete_data_range(
+        self,
+        data_cls: type,
+        identifier: str | None = None,
+        start: object = None,
+        end: object = None,
+    ) -> None:
+        raise NotImplementedError("FakeCatalog is a read-only fixture")
+
+    def reset_data_file_names(
+        self,
+        data_cls: type,
+        identifier: str | None = None,
+    ) -> None:
+        raise NotImplementedError("FakeCatalog is a read-only fixture")
+
+    def consolidate_data(
+        self,
+        data_cls: type,
+        identifier: str | None = None,
+        start: object = None,
+        end: object = None,
+        ensure_contiguous_files: bool = True,
+        deduplicate: bool = False,
+    ) -> None:
+        raise NotImplementedError("FakeCatalog is a read-only fixture")
+
+
+class FakeCatalog(Catalog):
+    """Typed in-memory Catalog used by deterministic port tests."""
+
+    def __init__(
+        self,
+        instruments: list[FuturesContract],
+        bars: dict[str, list[Bar]],
+        *,
+        extent_horizon: tuple[int, int] | None = None,
+    ) -> None:
+        super().__init__(_FakeCatalogBackend(instruments, bars, extent_horizon))
 
 
 def es_port(
@@ -216,6 +317,7 @@ def es_port(
                 multiplier=multipliers.get("ESM4.XCME", 1.0),
             ),
         ],
+        coverage_end=ES_END,
     )
 
 
@@ -261,12 +363,24 @@ def early_crossover_es_port() -> CatalogBackedDataPort:
 
 
 def _port(
-    frames: dict[InstrumentId, pd.DataFrame], instruments: list[FuturesContract]
+    frames: dict[InstrumentId, pd.DataFrame],
+    instruments: list[FuturesContract],
+    *,
+    coverage_end: str | None = None,
 ) -> tuple[CatalogBackedDataPort, dict[InstrumentId, list[Bar]]]:
     native = {iid: bars(iid, ohlcv) for iid, ohlcv in frames.items()}
     catalog = FakeCatalog(
         instruments=instruments,
         bars={str(raw_bar_type(iid, "1D")): native[iid] for iid in native},
+        extent_horizon=(
+            pd.Timestamp(
+                min(frame.index.min() for frame in frames.values()), tz="UTC"
+            ).value,
+            pd.Timestamp(
+                coverage_end or max(frame.index.max() for frame in frames.values()),
+                tz="UTC",
+            ).value,
+        ),
     )
     return CatalogBackedDataPort(catalog), native
 
@@ -282,4 +396,6 @@ __all__ = [
     "frame",
     "future",
     "lead_frame",
+    "store_custom_data_fixtures",
+    "store_instrument_fixtures",
 ]

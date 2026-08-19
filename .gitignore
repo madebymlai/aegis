@@ -5,6 +5,8 @@ opencode.jsonc
 .env
 .env.*
 !.env.example
+AGENTS.md
+skills-lock.json
 
 # Execution Bundle wheels are regenerable from a Lock (ADR-0001): ignore the
 # artifacts but keep the output dir tracked via .gitkeep.
@@ -23,6 +25,16 @@ vbt.toml
 .venv/
 .venv-sandcastle/
 .agents/
+_prototyping/
+
+# Private research implementations live in the separate aegis-private repo.
+# Keep only a placeholder in each public directory.
+aegis-rd/research/components/*
+!aegis-rd/research/components/.gitkeep
+aegis-rd/research/configs/*
+!aegis-rd/research/configs/.gitkeep
+aegis-rd/research/vault/*
+!aegis-rd/research/vault/.gitkeep
 
 # Scratch/prototype temp dirs — re-fetchable data, never versioned. Matched as
 # whole directory names at any depth (not the substring *temp*, which would also
@@ -31,3 +43,8 @@ tmp/
 temp/
 *.tmp
 *.temp
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

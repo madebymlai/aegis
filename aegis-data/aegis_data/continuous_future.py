@@ -19,13 +19,13 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.bar_type import continuous_bar_type
 from aegis_data.chain import ContractChain
-from aegis_data.rebasing import IDENTITY, Rebasing, ratio_rebasing, spread_rebasing
+from aegis_runtime.domain.rebasing import IDENTITY, Rebasing, ratio_rebasing, spread_rebasing
 
 # Ratio (proportional): each prior segment is scaled by the cumulative post/pre factor, so the
 # adjusted series preserves percentage returns exactly — what the returns-based research metrics
 # (Sharpe/vol from value.pct_change) consume, and what keeps research↔live in the percentage frame.
 # Byte-exact at every trading precision (float drift only beyond 8dp, prototype NOTES.md V4); the live
-# SleeveLedger re-bases multiplicatively in lock-step via aegis_data.rebasing.  This is the mode research
+# SleeveLedger re-bases multiplicatively in lock-step via the runtime domain's re-basing algebra. This is the mode research
 # SELECTS for a new Run (aegis-rd-iwx) and records as Run evidence (root ADR-0009); it is not a silent
 # fallback anywhere on the shared research/live path — live materialises under the locked bundle
 # contract's recorded mode, and BACKWARD_SPREAD is a first-class choice for integer-exact additive offsets.

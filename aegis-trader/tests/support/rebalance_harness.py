@@ -31,7 +31,7 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
@@ -52,6 +52,7 @@ from aegis_trader.trader.pipeline import (
     RebalanceResult,
 )
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
+from tests.support.bundle_double import BundleDouble
 from tests.support.factories import assemble_test_book
 
 NAV = 1_000_000.0
@@ -89,7 +90,7 @@ class SleeveSpec:
         return f"{self.name}.whl"
 
 
-class WeightSleeveBundle(ExecutionBundle):
+class WeightSleeveBundle(BundleDouble):
     """A sleeve bundle that emits the spec's target weights verbatim."""
 
     def __init__(self, spec: SleeveSpec) -> None:
@@ -141,13 +142,10 @@ class WeightSleeveBundle(ExecutionBundle):
         currency_conversion: CurrencyConversion | None = None,
     ) -> pd.DataFrame:
         close = native_prices.array("Close")
-        rows = self._rows[-len(close.index):]
+        rows = self._rows[-len(close.index) :]
         padded = (*(rows[0],) * (len(close.index) - len(rows)), *rows)
         target = pd.DataFrame(
-            [
-                {iid(symbol): weight for symbol, weight in row.items()}
-                for row in padded
-            ],
+            [{iid(symbol): weight for symbol, weight in row.items()} for row in padded],
             index=close.index,
         )
         target.columns.name = "instrument_id"
@@ -228,7 +226,8 @@ class StagedLedger(SleeveLedger):
     def __init__(
         self,
         *,
-        covariances: Sequence[dict[SleeveName, dict[SleeveName, float]] | None] | None = None,
+        covariances: Sequence[dict[SleeveName, dict[SleeveName, float]] | None]
+        | None = None,
         drawdown: float | None = None,
     ) -> None:
         super().__init__(horizon=derive_horizon(("1D",)))
@@ -316,10 +315,14 @@ def build_harness(
         iid(symbol) for spec in sleeves if not spec.stale for symbol in spec.targets
     ) | frozenset(iid(symbol) for symbol in (realized or {}))
     pipeline = RebalancePipeline(
-        book_state=_BookState({iid(symbol): weight for symbol, weight in (realized or {}).items()}),
+        book_state=_BookState(
+            {iid(symbol): weight for symbol, weight in (realized or {}).items()}
+        ),
         market_data=_UnitPriceMarketData(staged_ids),
         book=assemble_test_book(book, bundles),
-        ledger=ledger if ledger is not None else SleeveLedger(horizon=derive_horizon(("1D",))),
+        ledger=ledger
+        if ledger is not None
+        else SleeveLedger(horizon=derive_horizon(("1D",))),
         arrays=SleeveArrays.bar_only(),
     )
     return RebalanceHarness(

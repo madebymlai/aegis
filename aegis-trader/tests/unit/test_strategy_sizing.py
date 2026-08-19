@@ -5,7 +5,6 @@ from aegis_runtime import (
     ComponentSpec,
     DataContract,
     DriftBand,
-    ExecutionBundle,
     LockedExecutionPlan,
     MissingIndexPolicy,
 )
@@ -24,6 +23,7 @@ from aegis_trader.trader.pipeline import (
     RebalanceRequest,
 )
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
+from tests.support.bundle_double import BundleDouble
 from tests.support.factories import assemble_test_book
 
 _INSTRUMENT_ID = InstrumentId.from_str("GBUS.XLON")
@@ -94,7 +94,7 @@ class _BookState:
         return {}
 
 
-class _PenceBundle(ExecutionBundle):
+class _PenceBundle(BundleDouble):
     def __init__(self) -> None:
         contract = DataContract(
             instrument_ids=(_INSTRUMENT_ID,),

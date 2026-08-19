@@ -1,6 +1,12 @@
 # Covered Pull loop boundary
 
-Status: accepted (implemented)
+Status: superseded by GH #96/#97/#101 and aegis-rd-bo4
+
+The historical decision below described Aegis-owned coverage orchestration.
+Research Bars and provider-backed Custom Data now delegate gap calculation,
+request dispatch, and Catalog write-back to Nautilus's DataEngine. Catalog
+absence is an empty answer. Locally derived records retain their own
+materialization algorithms.
 
 ## Context
 

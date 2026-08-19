@@ -17,7 +17,7 @@ from aegis_data.testing import FakeCatalog, es_port_two_rolls
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
-from aegis_trader.domain.roll import Halt, SubscribeBars
+from aegis_trader.domain.roll import Halt, RequestInstrument, SubscribeBars
 from aegis_trader.domain.startup import StartupGate
 from aegis_trader.domain.sizing import InstrumentSizing
 from aegis_trader.domain.sleeve_ledger import SleeveLedger
@@ -39,6 +39,7 @@ from aegis_trader.trader.startup_fast_forward import (
     RecoveryUpdate,
     StartupFastForward,
 )
+from tests.support.bundle_double import BundleDouble
 from tests.support.factories import assemble_test_book, make_bundle
 
 _INSTRUMENT = InstrumentId.from_str("SPY.ARCA")
@@ -118,12 +119,12 @@ class _MarketData:
         return True
 
 
-class _FixedBundle(ExecutionBundle):
+class _FixedBundle(BundleDouble):
     def __init__(self, bundle: ExecutionBundle) -> None:
         super().__init__(
             contract=bundle.contract,
             manifest=bundle.manifest,
-            plan=bundle._plan,  # noqa: SLF001 - clone the test fixture bundle
+            plan=bundle.plan,
         )
 
     def compute_weights(
@@ -359,7 +360,10 @@ def test_fast_forward_reconstructs_rolls_before_releasing_the_live_front() -> No
     assert {request.bar_type.instrument_id for request in loading.requests} == set(
         native
     )
-    assert outcome.intents == (SubscribeBars(_ESU4, "1D"),)
+    assert outcome.intents == (
+        RequestInstrument(_ESM4),
+        SubscribeBars(_ESU4, "1D"),
+    )
     assert roll_desk.front_leg(_ES) == _ESU4
 
 
@@ -804,7 +808,7 @@ def _recover_futures_without(omitted: InstrumentId) -> RecoveryUpdate:
     port, native = es_port_two_rolls()
     filtered_port = CatalogBackedDataPort(
         FakeCatalog(
-            port.catalog.instruments(),
+            list(port.catalog.definitions(tuple(native))),
             {
                 str(bars[0].bar_type): bars
                 for instrument_id, bars in native.items()

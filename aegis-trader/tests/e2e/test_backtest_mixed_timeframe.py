@@ -19,31 +19,34 @@ from aegis_runtime import (
     ComponentSpec,
     DataContract,
     DriftBand,
-    ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_data.bar_type import timeframe_to_ns
+from aegis_data.marking import MarkMode
 from aegis_trader.backtest import (
     CatalogBacktestDataSource,
     book_return_stats,
     run_book_backtest,
 )
 from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data.storage import Catalog
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
-from aegis_trader.bundles.stub import StubBundleRegistry
 
 from tests.e2e.test_backtest_catalog_runner import (
     _AdjustedLastProvider,
+    _adjusted_close_warmer,
     _bar,
     _book_nav,
     _closed_orders,
     _equity,
-    _verified_zero_distribution_source,
+    _zero_distribution_source,
 )
+from tests.support.bundle_double import BundleDouble, make_bundle_registry
+from tests.support.market_data import bar_window_from_frames
 
 _HOURLY_ID = InstrumentId.from_str("FAST.XLON")
 _DAILY_ID = InstrumentId.from_str("SLOW.XLON")
@@ -68,7 +71,7 @@ group = "Floor"
 """
 
 
-class _AlternatingWeightBundle(ExecutionBundle):
+class _AlternatingWeightBundle(BundleDouble):
     """One-instrument sleeve whose target flips every completed period, so
     every due recomputation emits an order through the zero-width band."""
 
@@ -126,9 +129,7 @@ class _AlternatingWeightBundle(ExecutionBundle):
 def _seed_hourly(catalog_path, instrument_id: InstrumentId, timestamps) -> None:
     catalog = ParquetDataCatalog(catalog_path)
     catalog.write_data([_equity(instrument_id)])
-    bars = [
-        _bar(raw_bar_type(instrument_id, "1H"), ts, 100.0) for ts in timestamps
-    ]
+    bars = [_bar(raw_bar_type(instrument_id, "1H"), ts, 100.0) for ts in timestamps]
     # Coverage spans the whole backtest window: hours without bars are the
     # venue's closed session, not missing catalog data.
     catalog.write_data(
@@ -136,7 +137,7 @@ def _seed_hourly(catalog_path, instrument_id: InstrumentId, timestamps) -> None:
         start=int(pd.Timestamp("2020-01-01", tz="UTC").value),
         end=int(pd.Timestamp("2020-01-05", tz="UTC").value),
     )
-    # Distribution verification reads every instrument's raw DAILY closes,
+    # Distribution materialisation reads every instrument's raw DAILY closes,
     # so an hourly-traded instrument still carries its daily series.
     daily_bars = [
         _bar(raw_bar_type(instrument_id, "1D"), ts, 100.0)
@@ -153,9 +154,7 @@ def _seed_daily(catalog_path, instrument_id: InstrumentId, days: int) -> None:
     catalog = ParquetDataCatalog(catalog_path)
     catalog.write_data([_equity(instrument_id)])
     timestamps = pd.date_range("2020-01-01", periods=days, freq="D")
-    bars = [
-        _bar(raw_bar_type(instrument_id, "1D"), ts, 100.0) for ts in timestamps
-    ]
+    bars = [_bar(raw_bar_type(instrument_id, "1D"), ts, 100.0) for ts in timestamps]
     catalog.write_data(
         bars,
         start=int(pd.Timestamp("2020-01-01", tz="UTC").value),
@@ -193,8 +192,8 @@ def _run_mixed_book(tmp_path, registry_bundles, instrument_ids) -> Any:
         start="2020-01-01",
         end="2020-01-05",
         catalog_path=catalog_path,
-        registry=StubBundleRegistry(registry_bundles),
-        data_source=_verified_zero_distribution_source(catalog_path, instrument_ids),
+        registry=make_bundle_registry(registry_bundles),
+        data_source=_zero_distribution_source(catalog_path, instrument_ids),
     )
 
 
@@ -253,7 +252,7 @@ def test_simultaneous_due_transitions_coalesce_into_one_re_net(tmp_path) -> None
         engine.dispose()
 
 
-class _QuoteMarkedHourlyBundle(ExecutionBundle):
+class _QuoteMarkedHourlyBundle(BundleDouble):
     """A fixed-weight hourly sleeve whose leg is quote-marked (BID/ASK bars)."""
 
     def __init__(self, instrument_id: InstrumentId) -> None:
@@ -322,8 +321,11 @@ class _MixedMarkingDataSource:
             ask = _sided_hourly_frame(100.05)
             return BacktestMarketData(
                 instruments={_HOURLY_ID: _equity(_HOURLY_ID)},
-                ohlcv={_HOURLY_ID: (bid + ask) / 2.0},
-                quote_frames={_HOURLY_ID: (bid, ask)},
+                bar_windows={
+                    _HOURLY_ID: bar_window_from_frames(
+                        _HOURLY_ID, "1H", MarkMode.QUOTE, (bid, ask)
+                    )
+                },
             )
         assert timeframe == "1D"
         days = pd.date_range("2020-01-01", periods=4, freq="D")
@@ -339,7 +341,11 @@ class _MixedMarkingDataSource:
         )
         return BacktestMarketData(
             instruments={_DAILY_ID: _equity(_DAILY_ID)},
-            ohlcv={_DAILY_ID: daily},
+            bar_windows={
+                _DAILY_ID: bar_window_from_frames(
+                    _DAILY_ID, "1D", MarkMode.LAST, (daily,)
+                )
+            },
         )
 
 
@@ -368,7 +374,7 @@ def test_quote_marked_hourly_sleeve_fills_from_its_own_bid_ask_streams(
         start="2020-01-01",
         end="2020-01-05",
         catalog_path=tmp_path / "catalog",
-        registry=StubBundleRegistry(
+        registry=make_bundle_registry(
             {
                 "fast.whl": _QuoteMarkedHourlyBundle(_HOURLY_ID),
                 "slow.whl": _AlternatingWeightBundle(_DAILY_ID, "1D"),
@@ -446,7 +452,7 @@ group = "Floor"
 """
 
 
-class _UsdConversionDailyBundle(ExecutionBundle):
+class _UsdConversionDailyBundle(BundleDouble):
     """A daily fixed-weight sleeve over a USD instrument with an FX leg."""
 
     def __init__(self) -> None:
@@ -516,11 +522,20 @@ class _IntegratedDataSource:
                     _HOURLY_ID: _equity(_HOURLY_ID),
                     _SECOND_HOURLY_ID: _equity(_SECOND_HOURLY_ID),
                 },
-                ohlcv={
-                    _HOURLY_ID: _sided_hourly_frame(100.0),
-                    _SECOND_HOURLY_ID: (bid + ask) / 2.0,
+                bar_windows={
+                    _HOURLY_ID: bar_window_from_frames(
+                        _HOURLY_ID,
+                        "1H",
+                        MarkMode.LAST,
+                        (_sided_hourly_frame(100.0),),
+                    ),
+                    _SECOND_HOURLY_ID: bar_window_from_frames(
+                        _SECOND_HOURLY_ID,
+                        "1H",
+                        MarkMode.QUOTE,
+                        (bid, ask),
+                    ),
                 },
-                quote_frames={_SECOND_HOURLY_ID: (bid, ask)},
             )
         assert timeframe == "1D"
         days = pd.date_range("2020-01-01", periods=4, freq="D")
@@ -543,10 +558,23 @@ class _IntegratedDataSource:
                 _EURUSD_ID: build_currency_pair("EUR", "USD", "IDEALPRO"),
                 _ES: _equity(_ES),
             },
-            ohlcv={
-                _USD_DAILY_ID: _daily(100.0),
-                _EURUSD_ID: _daily(1.25),
-                _ES: _ohlcv_frame([100.0, 101.0, 102.0, 103.0]),
+            bar_windows={
+                _USD_DAILY_ID: bar_window_from_frames(
+                    _USD_DAILY_ID, "1D", MarkMode.LAST, (_daily(100.0),)
+                ),
+                _EURUSD_ID: bar_window_from_frames(
+                    _EURUSD_ID,
+                    "1D",
+                    MarkMode.MID,
+                    (_daily(1.25),),
+                    price_precision=5,
+                ),
+                _ES: bar_window_from_frames(
+                    _ES,
+                    "1D",
+                    MarkMode.LAST,
+                    (_ohlcv_frame([100.0, 101.0, 102.0, 103.0]),),
+                ),
             },
         )
 
@@ -590,7 +618,7 @@ def _run_integrated_book(tmp_path, monkeypatch) -> Any:
         start="2020-01-01",
         end="2020-01-05",
         catalog_path=tmp_path / "catalog",
-        registry=StubBundleRegistry(
+        registry=make_bundle_registry(
             {
                 "cash_hourly.whl": _AlternatingWeightBundle(_HOURLY_ID, "1H"),
                 "quote_hourly.whl": _QuoteMarkedHourlyBundle(_SECOND_HOURLY_ID),
@@ -661,7 +689,7 @@ def _seed_weekly(catalog_path, instrument_id: InstrumentId, fridays) -> None:
         for ts, close in zip(fridays, closes, strict=True)
     ]
     catalog.write_data(weekly_bars, start=start, end=end)
-    # Distribution verification reads every instrument's raw DAILY closes,
+    # Distribution materialisation reads every instrument's raw DAILY closes,
     # so a weekly-traded instrument still carries its daily series.
     daily_bars = [
         _bar(raw_bar_type(instrument_id, "1D"), ts, 100.0)
@@ -673,15 +701,19 @@ def _seed_weekly(catalog_path, instrument_id: InstrumentId, fridays) -> None:
 def _weekly_distribution_source(
     catalog_path, ex_date: str, amount: float
 ) -> CatalogBacktestDataSource:
-    """A verified source whose ADJUSTED_LAST steps at *ex_date*: the decode
+    """A source whose ADJUSTED_LAST steps at *ex_date*: the decode
     yields one Distribution of *amount* per share on that date."""
     dates = pd.date_range("2020-01-01", "2020-02-04", freq="B", tz="UTC")
     values = pd.Series([100.0] * len(dates), index=dates)
     values.loc[pd.Timestamp(ex_date, tz="UTC")] = 100.0 / (1.0 - amount / 100.0)
+    catalog = Catalog.open(catalog_path)
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
-            ParquetDataCatalog(catalog_path),
-            distribution_provider=_AdjustedLastProvider({_WEEKLY_ID: values}),
+            catalog,
+            custom_data_warmer=_adjusted_close_warmer(
+                catalog,
+                _AdjustedLastProvider({_WEEKLY_ID: values}),
+            ),
         )
     )
 
@@ -695,7 +727,7 @@ def _run_weekly_book(tmp_path, *, distribution_ex_date: str | None = None) -> An
     ) + pd.Timedelta(hours=16, minutes=30)
     _seed_weekly(catalog_path, _WEEKLY_ID, fridays)
     source = (
-        _verified_zero_distribution_source(catalog_path, (_WEEKLY_ID,))
+        _zero_distribution_source(catalog_path, (_WEEKLY_ID,))
         if distribution_ex_date is None
         else _weekly_distribution_source(catalog_path, distribution_ex_date, 1.0)
     )
@@ -704,7 +736,7 @@ def _run_weekly_book(tmp_path, *, distribution_ex_date: str | None = None) -> An
         start="2020-01-01",
         end="2020-02-05",
         catalog_path=catalog_path,
-        registry=StubBundleRegistry(
+        registry=make_bundle_registry(
             {"glacial.whl": _AlternatingWeightBundle(_WEEKLY_ID, "1W")}
         ),
         data_source=source,
@@ -727,9 +759,7 @@ def test_weekly_book_derives_its_horizon_and_trades_weekly(tmp_path) -> None:
         assert fills != []
         # NEXT-CLOSE at weekly cadence: every fill sits on a weekly bar stamp
         # (Friday 16:30) plus the 1ns re-net alert, across distinct weeks.
-        assert all(
-            (ts.hour, ts.minute, ts.nanosecond) == (16, 30, 1) for ts in fills
-        )
+        assert all((ts.hour, ts.minute, ts.nanosecond) == (16, 30, 1) for ts in fills)
         assert len({ts.date() for ts in fills}) >= 2
         assert fills == _fill_timestamps(second.engine, _WEEKLY_ID)
 

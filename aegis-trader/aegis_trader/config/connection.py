@@ -4,7 +4,7 @@ The broker connection is environment-specific and secret-ish — the account ID
 especially — so it is *never* part of the version-controlled ``book.toml``.
 :meth:`IBConnectionSettings.from_env` reads it from the process environment; the
 resolved value is handed to the single IBKR adapter
-(:func:`aegis_data.ibkr.attach_live_clients`), which translates it into Nautilus's
+(:func:`aegis_data.ibkr.live_clients`), which translates it into Nautilus's
 stock dockerized-gateway client configs for the live ``TradingNode``.
 
 There is **no mode**: paper and live are the same code path pointed at different

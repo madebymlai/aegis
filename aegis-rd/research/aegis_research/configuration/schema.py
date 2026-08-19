@@ -290,7 +290,7 @@ class PortfolioConfig:
     # [costs.margin_interest] - same pin, two homes.
     margin_interest_rate: NonNegativeRate = 0.0367
     # The exposure envelope is NOT configurable: sleeve weights are unit-gross by
-    # contract (aegis_runtime.bundle.SLEEVE_GROSS_LIMIT; aegis-rd-ui1m) — the book
+    # contract (aegis_runtime.execution.bundle.SLEEVE_GROSS_LIMIT; aegis-rd-ui1m) — the book
     # allocator is the only leverager. Only direction is declared per run.
     # Required (validation rejects a config missing it); no silent long-only default.
     direction: Literal["longonly", "shortonly", "both"] = field(kw_only=True)

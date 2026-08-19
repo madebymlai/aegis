@@ -1,6 +1,17 @@
 # The catalog fill is one pure-fetch port with a single writer; definitions are a separate Step-1 write
 
-Status: accepted
+Status: superseded in part by GH #96/#98/#100/#101 and aegis-rd-bo4
+
+The historical decision below kept Aegis-owned gap orchestration and a marker
+ledger. Research Bars, provider-backed Custom Data, and locally derived
+Distributions now run through Nautilus's DataEngine, which owns missing
+intervals and Catalog write-back. Distribution calculation remains deterministic
+Aegis domain logic, while adjusted closes are persisted as provider-backed
+Custom Data. The separate,
+idempotent instrument-definition lifecycle remains current, but its catalog
+lookup and write-back now run through Nautilus `RequestInstrument` with
+`update_catalog=True`; Aegis no longer computes the missing set or calls a
+catalog definition writer itself.
 
 ## Context
 
@@ -8,7 +19,7 @@ ADR-0006 settled that the lazy fill is unconditional and shared. This ADR settle
 its *shape* — the seam between aegis-data and the IBKR adapter — because the
 existing draft conflated several concerns:
 
-- `NautilusDataProviderPort.request_bars(..., update_catalog=True)` told the
+- The former provider port's `request_bars(..., update_catalog=True)` told the
   *provider* to persist, while `CatalogBackedDataPort` *also* wrote the returned
   bars — a double-write with ambiguous ownership.
 - The catalog needs the `Instrument` *definition*, not just bars: the trader
@@ -34,7 +45,7 @@ existing draft conflated several concerns:
   definition is the unavoidable prerequisite to fetching any bar, so the invariant
   **bars for an InstrumentId ⇒ its definition is in the catalog** holds for free —
   and RD's fill must persist definitions even though RD's vbt read never uses them,
-  because the *same corpus* serves the trader backtest, which does.
+  because the *same Catalog* serves the trader backtest, which does.
 
 - **One merge primitive.** The lazy fill and the `aerd backfill` ingester (r8b.3)
   share one write/merge rule: additive `consolidate_data(deduplicate=True)` that
@@ -42,7 +53,7 @@ existing draft conflated several concerns:
   `--force --start --end`. Routine and operator writes cannot drift into two merge
   semantics.
 
-- **Distribution reads are verified catalog-port reads.** The corpus is
+- **Distribution reads are verified catalog-port reads.** The Catalog is
   self-describing for distributions as well as bars: for any distribution-capable
   `InstrumentId`, `CatalogBackedDataPort.distributions(...)` must prove the bounded
   request window has been checked against an adjusted-last source before it returns
@@ -97,11 +108,13 @@ existing draft conflated several concerns:
   a successful backfill (a miss the provider served) triggers an *idempotent*
   definition Step-1 write through a **separate injected seeder**
   (`CatalogBackedDataPort.definition_seeder`), not a port method. The seeder
-  (`seed_instrument_definitions`) writes only the definitions missing from the
-  catalog, so it is free when they are already present — which is why it can fire on
-  the fill yet a *warm* read (a cache hit, no miss) never seeds and never connects.
-  The bar port stays a single pure-fetch method; definitions remain a distinct
-  lifecycle, merely *triggered* at the point a new instrument is first served.
+  (`seed_instrument_definitions`) issues native `RequestInstrument` commands;
+  Nautilus answers existing definitions from the Catalog and sends only misses
+  to the IBKR client, then performs the `update_catalog=True` write-back. It is
+  therefore free when definitions are already present, while a *warm* bar read
+  (a cache hit, no miss) never invokes the seeder at all. The bar port stays a
+  single pure-fetch method; definitions remain a distinct lifecycle, merely
+  *triggered* at the point a new instrument is first served.
 - The catalog partitions one folder per `bar_type`, so a partial-instrument write
   cannot clobber other instruments (a known hazard for bucketed parquet caches). Do
   not consolidate multiple instruments into shared files.

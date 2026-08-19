@@ -17,7 +17,7 @@ from aegis_runtime import (
     gate,
     validate_exposure,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 from numba import njit
 from vectorbtpro import vbt

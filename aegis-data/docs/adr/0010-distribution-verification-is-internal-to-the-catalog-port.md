@@ -1,6 +1,13 @@
 # Distribution verification is internal to the Catalog port; the port owns the clock
 
-Status: accepted
+Status: superseded in part by GH #96/#98/#100
+
+Distribution materialisation remains internal to the Catalog port. Its marker
+ledger and injected marker clock were retired; stored traded and adjusted-close
+inputs now make the materialisation deterministic, while absence reads empty.
+The calculation is exposed as a local Custom Data provider: native
+`RequestData(update_catalog=True)` owns gap discovery and Catalog write-back, so
+the former Aegis-owned `Catalog.fill` algorithm no longer exists.
 
 Reinforces ADR-0008.
 
@@ -33,24 +40,27 @@ package.
   injected clocks as the sanctioned remedy for uncontrolled variation, which
   classifies the field as a dependency made explicit — not a hook added only to
   make tests easier. It is composition of the same species as the port's
-  existing `distribution_provider` and `definition_seeder` fields; the method
+  former distribution-provider dependency and `definition_seeder` field; the method
   surface does not grow.
 
 - **The verified read is the ensure.** Arrangement that needs a verified
   window calls `distributions(...)` — per ADR-0008 the read *is* the
   verification — and may assert its result (the RD zero-distribution fixture
-  asserts the read returns no events, so a synthetic corpus that grows
-  distributions fails loud at arrangement time). `force_reverify_distribution_coverage`
-  remains the explicit operator command. No ensure-only command is added.
+  asserts the read returns no events, so a synthetic Catalog that grows
+  distributions fails loud at arrangement time). No ensure-only or
+  force-reverify command is kept: re-verification is expressed by clearing
+  coverage and performing the verified read again. The former
+  `force_reverify_distribution_coverage` command had no production callers and
+  duplicated the verified-read seam.
 
 - **The coverage module is internal.** `_distribution_coverage.py` keeps the
   file decomposition but stops being public API; `DistributionCoverageService`
   and `DistributionCoverageMarker` are the port's secret. Its only importer is
   `catalog.py` (lazily, inside the port methods).
 
-- **The provider Protocol lives beside the port.** `DistributionDataProviderPort`
-  is interface vocabulary — the type of the port's `distribution_provider`
-  field — so it moved into `catalog.py` next to `NautilusDataProviderPort`; the
+- **The provider Protocol lives beside the port.** The former distribution-provider
+  Protocol was interface vocabulary — the type of the port's corresponding
+  field — so it moved into `catalog.py` next to the Bar provider port; the
   internal module imports it from there.
 
 - **Test controls cross the production seam.** Tests and fixtures build a
@@ -77,8 +87,10 @@ package.
 
 - The coverage implementation (marker ledger, applicability polarity, frontier
   clamping) can change without touching anything outside `aegis_data`.
+- The unused force-reverify operator command is removed; clearing coverage and
+  calling the verified read is the one re-verification workflow.
 - Deterministic `checked_at` is available to any caller through the port, so
   there is no remaining reason to construct the service directly.
 - The marker's parquet layout and serialization key off the class name, not the
   module path, so the rename is invisible to markers already stored in real
-  corpuses; the warm-read tests exercise this.
+  Catalogs; the warm-read tests exercise this.

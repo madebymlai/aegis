@@ -2,7 +2,7 @@
 
 The runner is intentionally forward-only: Execution Bundles declare native
 Nautilus ``InstrumentId`` values, raw bars come from the Nautilus
-``ParquetDataCatalog`` through the Aegis Data catalog port, and the same
+Catalog through the Aegis Data port, and the same
 ``RebalanceStrategy`` used by paper/live is run inside Nautilus'
 ``BacktestEngine``.
 """
@@ -10,18 +10,19 @@ Nautilus ``InstrumentId`` values, raw bars come from the Nautilus
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
 from aegis_data.array_names import OHLCV_ARRAY_NAMES
 from aegis_data.custom_data import (
-    VOCABULARY as CUSTOM_ARRAY_VOCABULARY,
     CustomDataProviderMap,
     ensure_arrays,
     records_for_arrays,
 )
+from aegis_data import custom_kinds
+from aegis_data.custom_kinds import CustomDataRegistry
 from aegis_data.distributions import Distribution, distribution_records
 from nautilus_trader.backtest.config import BacktestEngineConfig
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -35,20 +36,21 @@ from nautilus_trader.model.objects import Currency, Money
 from nautilus_trader.portfolio.config import PortfolioConfig
 
 from aegis_data.marking import DeclaredMarkingResolver, RawBarTypeResolver
+from aegis_data.raw_bars import RawBarWindow
 from aegis_data.catalog import (
+    BarWarmerPort,
     CatalogBackedDataPort,
-    NautilusDataProviderPort,
     CatalogWindowRequest,
-    catalog_root,
-    parquet_data_catalog,
+    open_catalog,
 )
+from aegis_data.storage import Catalog
 
 from aegis_trader.bundles.book import AssembledBook, assemble_book
 from aegis_trader.bundles.marking import recorded_marking_resolver
 from aegis_trader.bundles.port import BundleRegistryPort
 from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import load_book_config
-from aegis_trader.data import wrangle_bars, wrangle_fx_quotes, wrangle_quote_bars
+from aegis_trader.data import wrangle_fx_quotes
 from aegis_trader.domain.analytics_horizon import AnalyticsHorizon
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.domain.streams import MarketStream
@@ -93,18 +95,38 @@ class ContractDataError(ValueError):
 class BacktestMarketData:
     """Catalog material the runner feeds into Nautilus' ``BacktestEngine``.
 
-    ``ohlcv`` is each instrument's mark series (a quote-marked leg's derived
-    mid).  ``quote_frames`` carries the ``(bid, ask)`` sided frames for
-    quote-marked legs only — the research fill projection's feed, derived here
-    and never serialized (aegis-rd-tggo.5).
+    ``bar_windows`` are the one authoritative market-data representation. Their
+    native Bars feed Nautilus directly; OHLCV and sided quote frames are derived
+    projections for validation and vectorized domain consumers.
     """
 
     instruments: Mapping[InstrumentId, Instrument]
-    ohlcv: Mapping[InstrumentId, pd.DataFrame]
+    bar_windows: Mapping[InstrumentId, RawBarWindow]
     records: tuple[Data, ...] = ()
-    quote_frames: Mapping[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = field(
-        default_factory=dict
-    )
+
+    @property
+    def bars(self) -> dict[InstrumentId, tuple[Bar, ...]]:
+        return {
+            instrument_id: window.bars
+            for instrument_id, window in self.bar_windows.items()
+        }
+
+    @property
+    def ohlcv(self) -> dict[InstrumentId, pd.DataFrame]:
+        return {
+            instrument_id: window.ohlcv
+            for instrument_id, window in self.bar_windows.items()
+        }
+
+    @property
+    def quote_frames(
+        self,
+    ) -> dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]]:
+        return {
+            instrument_id: sided
+            for instrument_id, window in self.bar_windows.items()
+            if (sided := window.quote_ohlcv) is not None
+        }
 
     @property
     def distributions(self) -> tuple[Distribution, ...]:
@@ -141,7 +163,7 @@ class CatalogBacktestDataSource:
     """Backtest data source backed by Aegis Data's Nautilus catalog port."""
 
     catalog_path: Path | None = None
-    provider: NautilusDataProviderPort | None = None
+    provider: BarWarmerPort | None = None
     port: CatalogBackedDataPort | None = None
     resolver: RawBarTypeResolver = DeclaredMarkingResolver()
 
@@ -160,22 +182,21 @@ class CatalogBacktestDataSource:
             end=end,
             timeframe=timeframe,
         )
-        # Data ADR-0012: the whole window — bars, complete definitions, verified
-        # distributions — is ONE coherent port read.  Definition completeness and
+        # Data ADR-0012: the whole window — bars, complete definitions, and
+        # distributions — is one coherent port read. Definition completeness and
         # distribution applicability (a cash FX pair pays no distributions) are
         # the port's guarantees now, not caller-side triage or filtering.
         window = data_port.load_window(request)
         return BacktestMarketData(
             instruments=window.instruments,
-            ohlcv=window.ohlcv,
+            bar_windows=window.bar_windows,
             records=window.records,
-            quote_frames=data_port.load_quote_frames(request),
         )
 
     def _data_port(self) -> CatalogBackedDataPort:
         if self.port is not None:
             return self.port
-        catalog = parquet_data_catalog(self.catalog_path)
+        catalog = open_catalog(self.catalog_path)
         return CatalogBackedDataPort(
             catalog,
             provider=self.provider,
@@ -191,8 +212,9 @@ def run_book_backtest(
     catalog_path: Path | None = None,
     registry: BundleRegistryPort | None = None,
     data_source: BacktestDataSource | None = None,
-    provider: NautilusDataProviderPort | None = None,
+    provider: BarWarmerPort | None = None,
     custom_data_providers: CustomDataProviderMap | None = None,
+    custom_data_registry: CustomDataRegistry | None = None,
     starting_cash: float = 1_000_000.0,
     trader_id: str = "BACKTEST-001",
     bar_type_resolver: RawBarTypeResolver | None = None,
@@ -202,12 +224,16 @@ def run_book_backtest(
     There is no Historical Store, symbol map, or provider-specific identity on
     this path.  The catalog must hold instrument definitions keyed by the same
     native ``InstrumentId`` values declared by the Execution Bundles. Raw bars
-    and custom arrays fill catalog gaps through their shared coverage engine, so
+    and custom arrays warm missing Catalog intervals through Nautilus, so
     an unservable window fails before the Nautilus engine starts.
     """
     book = load_book_config(book_path)
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    assembled_book = assemble_book(book, registry)
+    assembled_book = assemble_book(
+        book,
+        registry,
+        custom_data_registry=custom_data_registry,
+    )
     # The one raw bar-type resolution seam (aegis-rd-tggo.1), shared by the data
     # source, the wrangler, the equity recorder, and the strategy so they name
     # identical bars.  The sim/fill projection below is DERIVED from the resolved
@@ -217,10 +243,13 @@ def run_book_backtest(
         if bar_type_resolver is not None
         else _book_resolver(assembled_book)
     )
+    custom_catalog = open_catalog(catalog_path)
     source = data_source or CatalogBacktestDataSource(
-        catalog_path=catalog_path,
-        provider=provider,
-        resolver=resolver,
+        port=CatalogBackedDataPort(
+            custom_catalog,
+            provider=provider,
+            resolver=resolver,
+        )
     )
     loaded = tuple(
         (
@@ -231,20 +260,24 @@ def run_book_backtest(
     )
     market_data = _merged_market_data(loaded)
     _validate_market_data(assembled_book, market_data)
-    custom_catalog_path = catalog_path if catalog_path is not None else catalog_root()
-    custom_array_requirements = _custom_array_requirements(assembled_book)
+    custom_array_requirements = _custom_array_requirements(
+        assembled_book,
+        custom_data_registry,
+    )
     ensure_arrays(
         custom_array_requirements,
         start=pd.Timestamp(start),
         end=pd.Timestamp(end),
         providers=custom_data_providers or {},
-        catalog_path=custom_catalog_path,
+        catalog=custom_catalog,
+        registry=custom_data_registry,
     )
     array_records = records_for_arrays(
         custom_array_requirements,
         start=pd.Timestamp(start),
         end=pd.Timestamp(end),
-        catalog_path=custom_catalog_path,
+        catalog=custom_catalog,
+        registry=custom_data_registry,
     )
 
     engine = BacktestEngine(
@@ -272,12 +305,10 @@ def run_book_backtest(
         quote_marked_ids=frozenset(market_data.quote_frames),
     )
     added_instrument_ids: set[InstrumentId] = set()
-    for timeframe, group_data in loaded:
+    for _timeframe, group_data in loaded:
         _add_instruments_and_bars(
             engine,
             market_data=group_data,
-            timeframe=timeframe,
-            resolver=resolver,
             added_instrument_ids=added_instrument_ids,
         )
     _add_custom_data(engine, (*market_data.records, *array_records))
@@ -294,7 +325,8 @@ def run_book_backtest(
         engine,
         book=assembled_book,
         resolver=resolver,
-        custom_catalog_path=custom_catalog_path,
+        custom_catalog=custom_catalog,
+        custom_data_registry=custom_data_registry,
     )
 
     # ``end`` keeps the engine advancing the clock past the final data event,
@@ -342,19 +374,16 @@ def _merged_market_data(
     if len(loaded) == 1:
         return loaded[0][1]
     instruments: dict[InstrumentId, Instrument] = {}
-    ohlcv: dict[InstrumentId, pd.DataFrame] = {}
+    bar_windows: dict[InstrumentId, RawBarWindow] = {}
     records: list[Data] = []
-    quote_frames: dict[InstrumentId, tuple[pd.DataFrame, pd.DataFrame]] = {}
     for _timeframe, market_data in loaded:
         instruments.update(market_data.instruments)
-        ohlcv.update(market_data.ohlcv)
+        bar_windows.update(market_data.bar_windows)
         records.extend(market_data.records)
-        quote_frames.update(market_data.quote_frames)
     return BacktestMarketData(
         instruments=instruments,
-        ohlcv=ohlcv,
+        bar_windows=bar_windows,
         records=tuple(records),
-        quote_frames=quote_frames,
     )
 
 
@@ -371,13 +400,15 @@ def _book_resolver(book: AssembledBook) -> RawBarTypeResolver:
 
 def _custom_array_requirements(
     book: AssembledBook,
+    registry: CustomDataRegistry | None,
 ) -> dict[InstrumentId, tuple[str, ...]]:
+    kinds = (
+        registry if registry is not None else custom_kinds.declared_custom_data_kinds()
+    )
     names_by_instrument_id: dict[InstrumentId, dict[str, None]] = {}
     for bundle in book.sleeves.values():
         custom_names = tuple(
-            name
-            for name in bundle.contract.required_arrays
-            if name in CUSTOM_ARRAY_VOCABULARY
+            name for name in bundle.contract.required_arrays if name in kinds.vocabulary
         )
         for instrument_id in bundle.contract.instrument_ids:
             names_by_instrument_id.setdefault(instrument_id, {}).update(
@@ -564,8 +595,6 @@ def _add_instruments_and_bars(
     engine: BacktestEngine,
     *,
     market_data: BacktestMarketData,
-    timeframe: str,
-    resolver: RawBarTypeResolver,
     added_instrument_ids: set[InstrumentId],
 ) -> None:
     """Register one timeframe group's instruments and bars.
@@ -579,45 +608,21 @@ def _add_instruments_and_bars(
         if not already_added:
             engine.add_instrument(instrument)
             added_instrument_ids.add(instrument_id)
-        frame = market_data.ohlcv[instrument_id]
-        sided = market_data.quote_frames.get(instrument_id)
-        if sided is not None:
+        engine.add_data(list(market_data.bars[instrument_id]), sort=False)
+        if instrument_id in market_data.quote_frames:
             # Quote-marked (aegis-rd-tggo.5): BID + ASK EXTERNAL bars are the
             # single source — the venue pairs them into L1 quotes (fills at the
             # real touch), and the strategy both signals on and publishes the
             # derived mid mark from the same bars (the one publisher, research
             # and live alike — aegis-rd-tggo.3).  No LAST/MID bar exists.
-            bid_frame, ask_frame = sided
-            engine.add_data(
-                _wrangle_quote_external_bars(
-                    instrument, bid_frame, ask_frame, timeframe, resolver
-                ),
-                sort=False,
-            )
             continue
-        bars = _wrangle_external_bars(instrument, frame, timeframe, resolver)
-        engine.add_data(bars, sort=False)
         if isinstance(instrument, CurrencyPair) and not already_added:
             # An FX conversion leg feeds the cache mark xrate the same way live
             # does: one quote per bar close (strategy.on_quote_tick), so sizing's
             # fx_rate read works from the same series the panel conversion uses.
-            engine.add_data(_fx_quotes(instrument, frame), sort=False)
-
-
-def _wrangle_quote_external_bars(
-    instrument: Instrument,
-    bid_ohlcv: pd.DataFrame,
-    ask_ohlcv: pd.DataFrame,
-    timeframe: str,
-    resolver: RawBarTypeResolver,
-) -> list[Bar]:
-    return wrangle_quote_bars(
-        instrument,
-        _normalize_ohlcv(bid_ohlcv),
-        _normalize_ohlcv(ask_ohlcv),
-        timeframe,
-        resolver=resolver,
-    )
+            engine.add_data(
+                _fx_quotes(instrument, market_data.ohlcv[instrument_id]), sort=False
+            )
 
 
 def _add_custom_data(
@@ -642,16 +647,6 @@ def _fx_quotes(pair: CurrencyPair, ohlcv: pd.DataFrame) -> list[Any]:
     if closes.index.tz is None:
         closes = closes.tz_localize("UTC")
     return wrangle_fx_quotes(pair, closes)
-
-
-def _wrangle_external_bars(
-    instrument: Instrument,
-    ohlcv: pd.DataFrame,
-    timeframe: str,
-    resolver: RawBarTypeResolver,
-) -> list[Bar]:
-    frame = _normalize_ohlcv(ohlcv)
-    return wrangle_bars(instrument, frame, timeframe, resolver=resolver)
 
 
 def _normalize_ohlcv(ohlcv: pd.DataFrame) -> pd.DataFrame:
@@ -693,7 +688,8 @@ def _add_strategy(
     *,
     book: AssembledBook,
     resolver: RawBarTypeResolver,
-    custom_catalog_path: Path,
+    custom_catalog: Catalog,
+    custom_data_registry: CustomDataRegistry | None,
 ) -> None:
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(
@@ -701,7 +697,11 @@ def _add_strategy(
             fill_time_in_force=None,
             warmup_cache_on_start=False,
         ),
-        arrays=SleeveArrays.prepared(catalog_path=custom_catalog_path),
+        arrays=SleeveArrays.prepared(
+            catalog=custom_catalog,
+            registry=custom_data_registry,
+        ),
+        catalog=custom_catalog,
         bar_type_resolver=resolver,
     )
     strategy.register_book(book)

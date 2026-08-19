@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 from aegis_runtime import DriftBand
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 from nautilus_trader.model.identifiers import InstrumentId
 from pandas.testing import assert_series_equal
 

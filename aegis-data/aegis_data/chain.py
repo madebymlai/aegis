@@ -91,17 +91,21 @@ def fetch_contract_chain(
         # first leg begins at ``start``, so the seam intersection cannot use earlier days,
         # and a fetch before the provider's available history aborts the pull (a 422 at the
         # window's left edge).  Symmetric to the expiry clamp on the late edge below.
-        window_start = max(schedule.roll_dates[i - 1] - _OVERLAP_BUFFER, start) if i > 0 else start
+        window_start = (
+            max(schedule.roll_dates[i - 1] - _OVERLAP_BUFFER, start) if i > 0 else start
+        )
         if i < n - 1:
             # The +overlap buffer past the roll is a best-effort seam fetch, not
-            # required coverage: a rolled-off contract has no bars past its last
+            # required seam input: a rolled-off contract has no bars past its last
             # trade, and the buffer reaches past expiry, so demanding those days
             # aborts the pull (aegis-rd-lqz).  Clamp to the contract's last trade.
             # The seam overlap is preserved — last_trade falls after the roll date,
             # so the on/before-roll days where adjacent contracts overlap stay in
             # range.  The final leg keeps the requested ``end`` (it is the front
             # contract through the window edge, not a rolled-off one).
-            window_end = min(schedule.roll_dates[i] + _OVERLAP_BUFFER, schedule.expiries[i])
+            window_end = min(
+                schedule.roll_dates[i] + _OVERLAP_BUFFER, schedule.expiries[i]
+            )
         else:
             window_end = end
         frames.append(fetch(symbol, window_start, window_end))
@@ -138,7 +142,9 @@ def _roll_schedule(
     # would invert (``start`` > ``min(last_trade, end)``).  It can never be the Liquidity
     # Leader, so skip the probe — ``liquid_roll_schedule`` then drops it for having no volume.
     volume_by_symbol = {
-        contract.symbol: probe_volume(contract.symbol, start, min(contract.last_trade, end))
+        contract.symbol: probe_volume(
+            contract.symbol, start, min(contract.last_trade, end)
+        )
         for contract in candidates
         if contract.last_trade >= start
     }

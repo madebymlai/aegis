@@ -8,13 +8,15 @@ import numpy as np
 import pandas as pd
 from aegis_data.bar_type import external_bar_type
 from aegis_data.catalog import CatalogBackedDataPort, CatalogWindowRequest, raw_bar_type
+from aegis_data.custom_data import CustomDataWarmer
+from aegis_data.ibkr import historic_catalog_client_factory
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode, RawBarTypeResolver
-from aegis_data.testing import FakeCatalog
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
+from aegis_data.testing import FakeCatalog, store_instrument_fixtures
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import CurrencyPair, Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 DEFAULT_INSTRUMENT_ID_VALUES = ("SYN.XNAS", "SYN2.XNAS")
 ETF_INSTRUMENT_ID_VALUES = (
@@ -93,19 +95,10 @@ def deterministic_ohlcv_panels(
 
 
 class UnservableCatalog(FakeCatalog):
-    """A catalog that reports every requested window as missing, so the real
-    port's coverage gate judges it unservable (no provider wired: pure gap)."""
+    """A cold catalog used to exercise provider-failure translation."""
 
-    def get_missing_intervals_for_request(
-        self, start: int, end: int, *_args: object, **_kwargs: object
-    ) -> list[tuple[int, int]]:
-        return [(start, end)]
-
-
-def unservable_port() -> CatalogBackedDataPort:
-    """A real port over a catalog that cannot serve any window (no provider):
-    every load ends in the coverage gate's verdict."""
-    return CatalogBackedDataPort(UnservableCatalog(instruments=[], bars={}))
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**{**kwargs, "extent_horizon": (0, 0)})
 
 
 def seed_catalog_frames(
@@ -120,13 +113,12 @@ def seed_catalog_frames(
 
     Unlike :func:`seed_catalog_ohlcv` the frames are the scenario — calendar
     gaps and custom values survive into the corpus — so port-altitude quality
-    tests can stage real data defects behind the production port. Coverage is
-    claimed over ``[start, end]`` and distribution coverage is verified with a
-    zero-event source, so a warm read through ``CatalogBackedDataPort`` needs
-    no provider.
+    tests can stage real data defects behind the production port. Bar files use
+    the exact Catalog interval, and a zero-event source materialises the
+    Distribution extent, so a warm read needs no provider.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = pd.Timestamp(end, tz="UTC")
     close_panel = pd.DataFrame(
@@ -134,9 +126,9 @@ def seed_catalog_frames(
     )
     for value, frame in frames.items():
         current_id = instrument_id(value)
-        catalog.write_data([equity_definition(current_id, currency)])
+        store_instrument_fixtures(catalog, [equity_definition(current_id, currency)])
         bar_type = raw_bar_type(current_id, "1D")
-        catalog.write_data(
+        records = tuple(
             [
                 _bar(
                     bar_type,
@@ -148,11 +140,11 @@ def seed_catalog_frames(
                     volume=row["Volume"],
                 )
                 for timestamp, row in frame.iterrows()
-            ],
-            start=start_ts.value,
-            end=end_ts.value,
+            ]
         )
-        _verify_zero_distribution_coverage(
+        interval = CatalogInterval(start_ts.value, end_ts.value)
+        catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
+        _materialize_zero_distribution_window(
             catalog,
             current_id,
             panels={"Close": close_panel},
@@ -171,7 +163,7 @@ def seed_catalog_ohlcv(
     currency: str = "EUR",
 ) -> tuple[str, str]:
     # A projection over seed_catalog_frames: deterministic panels become
-    # per-instrument frames; one write-and-verify path serves both seeders.
+    # per-instrument frames; one write-and-materialise path serves both seeders.
     panels = deterministic_ohlcv_panels(
         instrument_id_values,
         periods=periods,
@@ -206,16 +198,16 @@ def seed_catalog_quote(
 
     The thin-ETF corpus shape (aegis-rd-tggo.2): dense quotes and no stored MID
     bar — the mid is derived at read time. LAST is retained only as the reference
-    series needed to verify distributions against ADJUSTED_LAST.
+    series needed to derive distributions against ADJUSTED_LAST.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     current_id = instrument_id(value)
     resolver = DeclaredMarkingResolver(declared={current_id: MarkMode.QUOTE})
     bid_type, ask_type = resolver.resolve(current_id, "1D").mark_bars
     trade_type = raw_bar_type(current_id, "1D")
     trade_frame = (bid_frame + ask_frame) / 2.0
-    catalog.write_data([equity_definition(current_id, currency)])
+    store_instrument_fixtures(catalog, [equity_definition(current_id, currency)])
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = pd.Timestamp(end, tz="UTC")
     for bar_type, frame in (
@@ -223,7 +215,7 @@ def seed_catalog_quote(
         (ask_type, ask_frame),
         (trade_type, trade_frame),
     ):
-        catalog.write_data(
+        records = tuple(
             [
                 _bar(
                     bar_type,
@@ -235,11 +227,11 @@ def seed_catalog_quote(
                     volume=row["Volume"],
                 )
                 for timestamp, row in frame.iterrows()
-            ],
-            start=start_ts.value,
-            end=end_ts.value,
+            ]
         )
-    _verify_zero_distribution_coverage(
+        interval = CatalogInterval(start_ts.value, end_ts.value)
+        catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
+    _materialize_zero_distribution_window(
         catalog,
         current_id,
         panels={"Close": pd.DataFrame({current_id: trade_frame["Close"]})},
@@ -249,8 +241,8 @@ def seed_catalog_quote(
     )
 
 
-def _verify_zero_distribution_coverage(
-    catalog: ParquetDataCatalog,
+def _materialize_zero_distribution_window(
+    catalog: Catalog,
     instrument_id: InstrumentId,
     *,
     panels: dict[str, pd.DataFrame],
@@ -260,12 +252,13 @@ def _verify_zero_distribution_coverage(
 ) -> None:
     # ADR-0008: seeded synthetic catalogs must be self-describing for distributions
     # too, so RD integration tests stay warm and never query IBKR for fake symbols.
-    # The verified read is the ensure (ADR-0010); the clock is pinned to the window
-    # start so seeded corpora stay byte-deterministic.
+    # Loading the window is the materialisation seam (ADR-0010).
     window = CatalogBackedDataPort(
         catalog,
-        distribution_provider=_ZeroDistributionProvider(panels),
-        clock_ns=lambda: start.value,
+        custom_data_warmer=CustomDataWarmer(
+            catalog,
+            historic_catalog_client_factory(_ZeroDistributionProvider(panels)),
+        ),
         resolver=resolver if resolver is not None else DeclaredMarkingResolver(),
     ).load_window(
         CatalogWindowRequest(
@@ -305,9 +298,9 @@ def seed_catalog_fx(
     differ from the native book — a flat rate would cancel out of return metrics.
     """
     catalog_path.mkdir(parents=True, exist_ok=True)
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     pair_id = instrument_id(pair_value)
-    catalog.write_data([currency_pair_definition(pair_id)])
+    store_instrument_fixtures(catalog, [currency_pair_definition(pair_id)])
     index = pd.date_range(start, periods=periods, freq="D")
     rates = base_rate * np.exp(np.arange(periods) * drift)
     # MID stated where the leg is seeded — the same declaration production
@@ -315,7 +308,7 @@ def seed_catalog_fx(
     bar_type = external_bar_type(pair_id, "1D", "MID")
     start_ts = pd.Timestamp(start, tz="UTC")
     end_ts = start_ts + pd.Timedelta(days=periods)
-    catalog.write_data(
+    records = tuple(
         [
             _bar(
                 bar_type,
@@ -327,10 +320,10 @@ def seed_catalog_fx(
                 volume=1_000_000.0,
             )
             for timestamp, rate in zip(index, rates, strict=True)
-        ],
-        start=start_ts.value,
-        end=end_ts.value,
+        ]
     )
+    interval = CatalogInterval(start_ts.value, end_ts.value)
+    catalog.replace(CatalogKey.for_bar(bar_type), interval, records)
 
 
 def equity_definition(instrument_id: InstrumentId, currency: str) -> Equity:

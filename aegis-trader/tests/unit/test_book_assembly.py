@@ -8,6 +8,7 @@ from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_runtime import DriftBand
+from aegis_data.testing import FakeCatalog
 
 from aegis_trader.bundles.book import (
     AssembledBook,
@@ -507,6 +508,7 @@ def test_register_book_rejects_a_different_strategy_book_config() -> None:
     strategy = RebalanceStrategy(
         RebalanceStrategyConfig(book=_book(("trend", "other.whl"))),
         arrays=SleeveArrays.bar_only(),
+        catalog=FakeCatalog([], bars={}),
     )
 
     with pytest.raises(BookConfigMismatchError, match="configured Book Config"):

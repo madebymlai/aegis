@@ -148,7 +148,7 @@ def test_declared_mid_resolves_to_the_single_mid_bar():
 
 def test_a_declaration_resolves_under_the_canonical_venue_spelling():
     # Declared under the raw IB exchange, resolved by the MIC id (or vice versa):
-    # both spellings are one instrument in the corpus.
+    # both spellings are one instrument in the Catalog.
     resolver = DeclaredMarkingResolver(
         declared={InstrumentId.from_str("UEQC.IBIS"): MarkMode.QUOTE}
     )
@@ -181,7 +181,7 @@ def test_undeclared_resolution_is_byte_identical_to_raw_bar_type(
     )
 
 
-def test_resolution_canonicalizes_the_venue_like_the_corpus_key():
+def test_resolution_canonicalizes_the_venue_like_the_catalog_key():
     marking = DeclaredMarkingResolver().resolve(
         InstrumentId.from_str("AAPL.NASDAQ"), "1D"
     )

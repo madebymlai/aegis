@@ -34,7 +34,7 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
 
     artifact = assemble_bundle(workspace / "config.yaml")
 
-    assert artifact.manifest.component_source_hashes == {
+    assert artifact.bundle.manifest.component_source_hashes == {
         "indicators/tests.export_indicator": (
             "ad97a38f4264529d2f0c805694c98c4b0a4e26dfc60268b64f5001fc6b54ae1f"
         ),
@@ -42,20 +42,20 @@ def test_locked_fixture_pins_exported_component_hashes_and_specs(
             "efc5b220dd2cbbd00a194146135057ea0d9334863695278054dfbab4ca5ec93d"
         ),
     }
-    assert artifact.plan.indicators == (
+    assert artifact.bundle.plan.indicators == (
         ComponentSpec(
             family="indicators",
             component_id="tests.export_indicator",
-            module="aegis_exec_tests_export_strategy_cand_9ea.indicator_0",
+            module=f"{artifact.package_name}.indicator_0",
             input_names=("Close",),
             output_names=("signal",),
             params={"window": 5},
         ),
     )
-    assert artifact.plan.strategy == ComponentSpec(
+    assert artifact.bundle.plan.strategy == ComponentSpec(
         family="strategies",
         component_id="tests.export_strategy",
-        module="aegis_exec_tests_export_strategy_cand_9ea.strategy",
+        module=f"{artifact.package_name}.strategy",
         input_names=("Close",),
         output_names=(),
         params={"holding_period": 2},

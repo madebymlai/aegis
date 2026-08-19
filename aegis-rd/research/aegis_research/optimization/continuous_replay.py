@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 from aegis_data.distributions import Distribution
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 from vectorbtpro import vbt
 
 from research.aegis_research.portfolio_simulation._simulation import (

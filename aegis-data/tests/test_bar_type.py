@@ -1,4 +1,4 @@
-"""The shared home that turns a contract timeframe into the corpus' Nautilus
+"""The shared home that turns a contract timeframe into the Catalog's Nautilus
 ``BarType`` (LAST + EXTERNAL, ADR-0007) and a rebalance-period width.  An
 unexpressable timeframe fails closed."""
 
@@ -64,9 +64,7 @@ def test_external_bar_type_carries_the_declared_price_type(
         InstrumentId.from_str("EUR/USD.IDEALPRO"), "1D", price_type
     )
 
-    assert bar_type == BarType.from_str(
-        f"EUR/USD.IDEALPRO-1-DAY-{price_type}-EXTERNAL"
-    )
+    assert bar_type == BarType.from_str(f"EUR/USD.IDEALPRO-1-DAY-{price_type}-EXTERNAL")
     assert what_to_show(bar_type) == what_to_show_value
 
 
@@ -86,3 +84,11 @@ def test_raw_bar_type_fails_closed_on_an_unexpressable_timeframe(timeframe):
 )
 def test_timeframe_to_ns_gives_the_rebalance_period_width(timeframe, ns):
     assert timeframe_to_ns(timeframe) == ns
+
+
+def test_timeframe_to_ns_uses_native_bar_step_validation():
+    timeframe = "2D"
+
+    raised = pytest.raises(UnsupportedTimeframeError, timeframe_to_ns, timeframe)
+
+    assert raised.value.timeframe == timeframe

@@ -5,58 +5,39 @@ windows, and a catalog root. Nautilus interval and serialization machinery is
 kept inside this module.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from time import time_ns
-from typing import Any, Callable, Generic, Protocol, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast
 
 import pandas as pd
+from nautilus_trader.cache.cache import Cache
+from nautilus_trader.common.component import MessageBus, TestClock
 from nautilus_trader.config import LiveDataClientConfig
 from nautilus_trader.core.data import Data
+from nautilus_trader.core.uuid import UUID4
+from nautilus_trader.data.client import DataClient
+from nautilus_trader.data.messages import RequestData
 from nautilus_trader.live.factories import LiveDataClientFactory
-from nautilus_trader.model.custom import customdataclass
-from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
+from nautilus_trader.model.data import DataType
+from nautilus_trader.model.identifiers import ClientId, InstrumentId
 
-from aegis_data._coverage_markers import CoverageMarkerLedger
-from aegis_data._ensure_coverage import (
-    CoverageInterval,
-    ServedRecords,
-    ensure_coverage,
+from aegis_data import custom_kinds
+from aegis_data._catalog_request import (
+    CatalogClientBinding,
+    CatalogClientFailure,
+    CatalogClientFailureRecorder,
+    run_catalog_request,
 )
-from aegis_data.catalog import gap_fill_boundary
-
-
-@customdataclass
-class FixtureRecord(Data):
-    """Test-owned typed record used to prove the generic module."""
-
-    instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
-    value: float = 0.0
-    provider: str = "fixture"
-
-
-@customdataclass
-class _DormantFixtureRecord(Data):
-    """Known fixture shape with deliberately absent provider wiring."""
-
-    instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
-    value: float = 0.0
+from aegis_data.custom_kinds import CustomDataKind, CustomDataRegistry
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
+from aegis_data.provider_errors import gap_fill_boundary
 
 
 RecordT = TypeVar("RecordT", bound=Data)
+ProviderRecordT = TypeVar("ProviderRecordT", bound=Data, covariant=True)
 
 
-@dataclass(frozen=True)
-class ServedCustomData(Generic[RecordT]):
-    """A provider answer plus the oldest instant it verified."""
-
-    records: tuple[RecordT, ...]
-    served_from: pd.Timestamp
-
-
-class CustomDataProviderPort(Protocol[RecordT]):
+class CustomDataProviderPort(Protocol[ProviderRecordT]):
     """Pure fetch seam for one typed custom-data need."""
 
     def request_records(
@@ -65,11 +46,24 @@ class CustomDataProviderPort(Protocol[RecordT]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[RecordT]: ...
+    ) -> Sequence[ProviderRecordT]: ...
 
 
 type CustomArrayRequirements = Mapping[InstrumentId, Sequence[str]]
-type CustomDataProviderMap = Mapping[type[Data], Sequence[CustomDataProviderPort[Any]]]
+type CustomDataProviderMap = Mapping[type[Data], CustomDataProviderPort[Any]]
+type CustomDataAdapterMap = Mapping[type[Data], object]
+type CustomDataClientFactory = Callable[
+    [MessageBus, Cache, TestClock],
+    CatalogClientBinding,
+]
+
+_CUSTOM_DATA_CLIENT_ID = ClientId("AEGIS-CUSTOM-HIST")
+
+
+class CustomDataRequestMetadata(Protocol):
+    """Typed record-specific metadata carried by a historical request."""
+
+    def to_params(self) -> dict[str, Any]: ...
 
 
 class InvalidLiveCustomDataCapabilityError(TypeError):
@@ -100,7 +94,6 @@ class LiveCustomDataCapability:
     client_name: LiveDataClientName
     config: LiveDataClientConfig
     factory: type[LiveDataClientFactory]
-    record_types: tuple[type[Data], ...]
 
     def __post_init__(self) -> None:
         valid = (
@@ -108,75 +101,12 @@ class LiveCustomDataCapability:
             and isinstance(self.config, LiveDataClientConfig)
             and isinstance(self.factory, type)
             and issubclass(self.factory, LiveDataClientFactory)
-            and bool(self.record_types)
-            and all(
-                isinstance(record_type, type) and issubclass(record_type, Data)
-                for record_type in self.record_types
-            )
         )
         if not valid:
             raise InvalidLiveCustomDataCapabilityError(
                 "live custom-data capability requires a client name, live client config, "
-                "factory, and at least one Data record type"
+                "and factory"
             )
-
-
-@dataclass(frozen=True)
-class _ArrayProjection:
-    value_array: str
-    availability_array: str
-    age_array: str
-    value_attribute: str
-
-    @property
-    def array_names(self) -> tuple[str, ...]:
-        return (self.value_array, self.availability_array, self.age_array)
-
-
-@dataclass(frozen=True)
-class _ArrayKind:
-    record_type: type[Data]
-    projection: _ArrayProjection
-    provisioned: bool
-
-    @property
-    def array_names(self) -> tuple[str, ...]:
-        return self.projection.array_names
-
-
-_KINDS: tuple[_ArrayKind, ...] = (
-    _ArrayKind(
-        record_type=FixtureRecord,
-        provisioned=True,
-        projection=_ArrayProjection(
-            value_array="FixtureValue",
-            availability_array="FixtureAvailable",
-            age_array="FixtureAgeDays",
-            value_attribute="value",
-        ),
-    ),
-    _ArrayKind(
-        record_type=_DormantFixtureRecord,
-        provisioned=False,
-        projection=_ArrayProjection(
-            value_array="DormantFixtureValue",
-            availability_array="DormantFixtureAvailable",
-            age_array="DormantFixtureAgeDays",
-            value_attribute="value",
-        ),
-    ),
-)
-
-KNOWN_CUSTOM_ARRAY_NAMES = frozenset(
-    array_name for kind in _KINDS for array_name in kind.array_names
-)
-VOCABULARY = frozenset(
-    array_name for kind in _KINDS if kind.provisioned for array_name in kind.array_names
-)
-AVAILABILITY_BY_VALUE = {
-    kind.projection.value_array: kind.projection.availability_array
-    for kind in _KINDS
-}
 
 
 class UnknownCustomDataRecordError(ValueError):
@@ -191,57 +121,134 @@ class UnknownCustomArrayError(ValueError):
         super().__init__(f"unknown custom arrays: {list(self.array_names)}")
 
 
-class CustomDataCoverageError(ValueError):
-    """A requested custom-data window has never been completely ingested."""
+class CustomDataRequestCompletionError(RuntimeError):
+    """Nautilus did not complete a synchronous Custom Data request."""
+
+
+class InvalidCustomDataWarmIntervalError(ValueError):
+    """A Custom Data warm interval has inverted boundaries."""
+
+
+class CustomDataRecordOutsideWindowError(ValueError):
+    """A provider returned a record outside the requested event-time window."""
+
+
+class _ProviderBackedCustomDataClient(DataClient):
+    """Translate Nautilus Custom Data requests through configured provider ports."""
 
     def __init__(
         self,
-        instrument_id: InstrumentId,
-        missing: tuple[CoverageInterval, ...],
+        msgbus: MessageBus,
+        cache: Cache,
+        clock: TestClock,
+        providers: CustomDataProviderMap,
     ) -> None:
-        self.instrument_id = instrument_id
-        self.missing = missing
-        super().__init__(
-            f"custom data coverage is missing for {instrument_id.value}: "
-            f"{[(item.start_ns, item.end_ns) for item in missing]}"
+        super().__init__(_CUSTOM_DATA_CLIENT_ID, msgbus, cache, clock, None)
+        self._providers = providers
+        self._failure = CatalogClientFailureRecorder()
+
+    def _connect(self) -> None:
+        pass
+
+    def _disconnect(self) -> None:
+        pass
+
+    def request(self, request: RequestData) -> None:
+        record_type = cast(type[Data], request.data_type.type)
+        instrument_id = cast(InstrumentId, request.instrument_id)
+        interval = CatalogInterval(request.start.value, request.end.value)
+        try:
+            provider = self._providers[record_type]
+            records = _provider_records(
+                provider,
+                record_type=record_type,
+                instrument_id=instrument_id,
+                interval=interval,
+            )
+        except Exception as error:
+            self._failure.record(error)
+            return
+        self._handle_data_response_py(
+            request.data_type,
+            list(records),
+            request.id,
+            request.start,
+            request.end,
+            request.params,
         )
+
+    def request_failure(self) -> CatalogClientFailure | None:
+        return self._failure.failure
 
 
 @dataclass(frozen=True)
-class CustomDataCoverage:
-    """Coverage provenance for one requested instrument window."""
+class CustomDataWarmer:
+    """Warm provider-backed Custom Data through Nautilus's native request path."""
 
-    instrument_id: InstrumentId
-    checked_at_ns: int | None
+    catalog: Catalog
+    client_factory: CustomDataClientFactory | None
 
+    def warm(
+        self,
+        record_type: type[Data],
+        instrument_ids: Sequence[InstrumentId],
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        metadata: CustomDataRequestMetadata | None = None,
+    ) -> None:
+        start = _utc(start)
+        end = _utc(end)
+        if start > end:
+            raise InvalidCustomDataWarmIntervalError(
+                "custom data warm start must not be after end"
+            )
+        interval = CatalogInterval(start.value, end.value)
+        for instrument_id in instrument_ids:
+            self._warm_instrument(
+                record_type,
+                instrument_id,
+                interval,
+                metadata=metadata,
+            )
 
-def ingest(
-    record_type: type[RecordT],
-    instrument_ids: Sequence[InstrumentId],
-    *,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    providers: Sequence[CustomDataProviderPort[RecordT]],
-    catalog_path: Path,
-    clock_ns: Callable[[], int] = time_ns,
-) -> None:
-    """Fill only catalog-native missing intervals, in provider tuple order."""
-    _kind_for(record_type)
-    start = _utc(start)
-    end = _utc(end)
-    if start > end:
-        raise ValueError("custom data ingest start must not be after end")
-    catalog = ParquetDataCatalog(str(catalog_path))
-    for instrument_id in instrument_ids:
-        _ensure_instrument_coverage(
-            catalog=catalog,
-            record_type=record_type,
-            instrument_id=instrument_id,
-            start=start,
-            end=end,
-            providers=providers,
-            clock_ns=clock_ns,
+    def _warm_instrument(
+        self,
+        record_type: type[Data],
+        instrument_id: InstrumentId,
+        interval: CatalogInterval,
+        *,
+        metadata: CustomDataRequestMetadata | None,
+    ) -> None:
+        outcome = run_catalog_request(
+            self.catalog,
+            end_ns=interval.end_ns,
+            client_factory=self.client_factory,
+            request_factory=lambda clock, callback: RequestData(
+                data_type=DataType(record_type),
+                instrument_id=instrument_id,
+                start=interval.start,
+                end=interval.end,
+                limit=0,
+                client_id=None,
+                venue=instrument_id.venue,
+                callback=callback,
+                request_id=UUID4(),
+                ts_init=clock.timestamp_ns(),
+                params={
+                    **({} if metadata is None else metadata.to_params()),
+                    "update_catalog": True,
+                },
+            ),
         )
+        if outcome.failure is not None:
+            with gap_fill_boundary(f"custom data for {instrument_id.value}"):
+                raise outcome.failure.cause
+        if not outcome.responses:
+            raise CustomDataRequestCompletionError(
+                f"Nautilus did not complete Custom Data request for "
+                f"{record_type.__name__} and {instrument_id.value}"
+            )
 
 
 def ensure_arrays(
@@ -250,167 +257,115 @@ def ensure_arrays(
     start: pd.Timestamp,
     end: pd.Timestamp,
     providers: CustomDataProviderMap,
-    catalog_path: Path,
-    clock_ns: Callable[[], int] = time_ns,
+    catalog: Catalog,
+    registry: CustomDataRegistry | None = None,
 ) -> None:
-    """Ensure catalog coverage for every kind behind the requested arrays."""
+    """Warm missing Catalog intervals for every requested array kind."""
     instrument_ids_by_record_type: dict[type[Data], dict[InstrumentId, None]] = {}
     for instrument_id, array_names in requirements.items():
-        for kind in _kinds_for_array_names(array_names):
+        for kind in _kinds_for_array_names(array_names, registry):
             instrument_ids_by_record_type.setdefault(kind.record_type, {})[
                 instrument_id
             ] = None
     for record_type, instrument_ids in instrument_ids_by_record_type.items():
-        ingest(
+        provider = providers.get(record_type)
+        client_factory = (
+            None
+            if provider is None
+            else provider_backed_custom_data_client_factory({record_type: provider})
+        )
+        warmer = CustomDataWarmer(catalog, client_factory)
+        warmer.warm(
             record_type,
             tuple(instrument_ids),
             start=start,
             end=end,
-            providers=providers.get(record_type, ()),
-            catalog_path=catalog_path,
-            clock_ns=clock_ns,
         )
 
 
-def _ensure_instrument_coverage(
+def provider_backed_custom_data_client_factory(
+    providers: CustomDataProviderMap,
+) -> CustomDataClientFactory:
+    """Adapt configured provider ports to Nautilus's historical client seam."""
+
+    def build(
+        msgbus: MessageBus,
+        cache: Cache,
+        clock: TestClock,
+    ) -> CatalogClientBinding:
+        client = _ProviderBackedCustomDataClient(
+            msgbus,
+            cache,
+            clock,
+            providers,
+        )
+        return CatalogClientBinding(client, client.request_failure)
+
+    return build
+
+
+def _provider_records(
+    provider: CustomDataProviderPort[RecordT],
     *,
-    catalog: ParquetDataCatalog,
     record_type: type[RecordT],
     instrument_id: InstrumentId,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    providers: Sequence[CustomDataProviderPort[RecordT]],
-    clock_ns: Callable[[], int],
-) -> None:
-    requested = CoverageInterval(start.value, end.value)
-    markers = CoverageMarkerLedger(catalog)
-
-    def commit(
-        verified: CoverageInterval,
-        verified_records: tuple[RecordT, ...],
-    ) -> None:
-        if verified_records:
-            catalog.write_data(
-                list(verified_records),
-                data_cls=record_type,
-                identifier=instrument_id.value,
-                start=verified.start_ns,
-                end=verified.end_ns,
-            )
-        markers.mark(
-            record_type,
-            instrument_id,
-            verified,
-            checked_at_ns=clock_ns(),
-            applicable=True,
-        )
-
-    ensure_coverage(
-        subject=f"custom data for {instrument_id.value}",
-        fetchers=tuple(
-            _record_fetcher(provider, instrument_id, record_type)
-            for provider in providers
-        ),
-        missing_intervals=lambda: markers.missing(
-            record_type, instrument_id, requested
-        ),
-        coverage_error=lambda missing: CustomDataCoverageError(
-            instrument_id, tuple(missing)
-        ),
-        provider_boundary=gap_fill_boundary,
-        commit=commit,
-        finalize=lambda: markers.consolidate(
-            record_type, instrument_id, requested
-        ),
-        select_records=_records_within_event_window,
+    interval: CatalogInterval,
+) -> tuple[RecordT, ...]:
+    served = provider.request_records(
+        instrument_id,
+        start=interval.start,
+        end=interval.end,
     )
+    records = tuple(
+        sorted(
+            (
+                _validate_record(
+                    record,
+                    record_type=record_type,
+                    instrument_id=instrument_id,
+                )
+                for record in served
+            ),
+            key=lambda record: record.ts_event,
+        )
+    )
+    outside = tuple(
+        record
+        for record in records
+        if not interval.start_ns <= record.ts_event <= interval.end_ns
+    )
+    if outside:
+        raise CustomDataRecordOutsideWindowError(
+            "provider returned a custom-data record outside the requested window"
+        )
+    return records
 
 
 def capture(
     record: RecordT,
     *,
-    catalog_path: Path,
-    clock_ns: Callable[[], int] = time_ns,
+    catalog: Catalog,
+    registry: CustomDataRegistry | None = None,
 ) -> None:
-    """Persist one live record at its point-in-time catalog coordinate."""
+    """Persist one observed record over the single instant it covers.
+
+    An observation answers for its own timestamp and nothing either side of it,
+    so the window written is the instant itself. Validation happens here, before
+    the write, so the Catalog is only ever handed records that belong to it.
+    """
     record_type = type(record)
-    _kind_for(record_type)
+    _kind_for(record_type, registry)
     instrument_id = cast(InstrumentId, record.instrument_id)
     _validate_record(
         record,
         record_type=record_type,
         instrument_id=instrument_id,
     )
-    catalog = ParquetDataCatalog(str(catalog_path))
-    markers = CoverageMarkerLedger(catalog)
-    catalog.write_data(
-        [record],
-        data_cls=record_type,
-        identifier=instrument_id.value,
-        start=record.ts_event,
-        end=record.ts_event,
+    catalog.replace(
+        CatalogKey.for_instrument(record_type, instrument_id),
+        CatalogInterval(record.ts_event, record.ts_event),
+        (record,),
     )
-    point = CoverageInterval(record.ts_event, record.ts_event)
-    markers.mark(
-        record_type,
-        instrument_id,
-        point,
-        checked_at_ns=clock_ns(),
-        applicable=True,
-    )
-
-
-def correct(
-    record_type: type[RecordT],
-    instrument_id: InstrumentId,
-    replacement: Sequence[RecordT],
-    *,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    catalog_path: Path,
-    clock_ns: Callable[[], int] = time_ns,
-) -> None:
-    """Deliberately replace one bounded window, including verified emptiness."""
-    _kind_for(record_type)
-    start = _utc(start)
-    end = _utc(end)
-    catalog = ParquetDataCatalog(str(catalog_path))
-    markers = CoverageMarkerLedger(catalog)
-    interval = CoverageInterval(start.value, end.value)
-    catalog.delete_data_range(
-        record_type,
-        identifier=instrument_id.value,
-        start=start,
-        end=end,
-    )
-    markers.delete(record_type, instrument_id, interval)
-    selected = tuple(
-        record
-        for record in replacement
-        if _record_belongs_to_interval(
-            record,
-            record_type=record_type,
-            instrument_id=instrument_id,
-            start=start,
-            end=end,
-        )
-    )
-    if selected:
-        catalog.write_data(
-            list(selected),
-            data_cls=record_type,
-            identifier=instrument_id.value,
-            start=start.value,
-            end=end.value,
-        )
-    markers.mark(
-        record_type,
-        instrument_id,
-        interval,
-        checked_at_ns=clock_ns(),
-        applicable=True,
-    )
-    markers.consolidate(record_type, instrument_id, interval)
 
 
 def arrays(
@@ -418,10 +373,11 @@ def arrays(
     instrument_ids: Sequence[InstrumentId],
     *,
     index: pd.DatetimeIndex,
-    catalog_path: Path,
+    catalog: Catalog,
+    registry: CustomDataRegistry | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Project the latest causally known record onto the caller's exact index."""
-    kinds = _kinds_for_array_names(array_names)
+    kinds = _kinds_for_array_names(array_names, registry)
     if len(index) == 0:
         return {
             name: pd.DataFrame(index=index, columns=instrument_ids, dtype=float)
@@ -432,19 +388,12 @@ def arrays(
         for name in array_names
     }
     for kind in kinds:
-        coverage(
-            cast(type[Data], kind.record_type),
-            instrument_ids,
-            start=pd.Timestamp(index[0]),
-            end=pd.Timestamp(index[-1]),
-            catalog_path=catalog_path,
-        )
         stored = _query_records(
             kind.record_type,
             instrument_ids,
             start=None,
             end=pd.Timestamp(index[-1]),
-            catalog_path=catalog_path,
+            catalog=catalog,
         )
         _project_records(kind, stored, instrument_ids, index, panels)
     return panels
@@ -455,25 +404,19 @@ def records_for_arrays(
     *,
     start: pd.Timestamp,
     end: pd.Timestamp,
-    catalog_path: Path,
+    catalog: Catalog,
+    registry: CustomDataRegistry | None = None,
 ) -> tuple[Data, ...]:
     """Return only the catalog records that back requested value arrays."""
     array_names = tuple(
         dict.fromkeys(name for names in required_arrays.values() for name in names)
     )
     selected: list[Data] = []
-    for kind in _kinds_for_array_names(array_names):
+    for kind in _kinds_for_array_names(array_names, registry):
         instrument_ids = tuple(
             instrument_id
             for instrument_id, names in required_arrays.items()
             if set(names).intersection(kind.array_names)
-        )
-        coverage(
-            cast(type[Data], kind.record_type),
-            instrument_ids,
-            start=start,
-            end=end,
-            catalog_path=catalog_path,
         )
         selected.extend(
             records(
@@ -481,44 +424,11 @@ def records_for_arrays(
                 instrument_ids,
                 start=start,
                 end=end,
-                catalog_path=catalog_path,
+                catalog=catalog,
+                registry=registry,
             )
         )
     return tuple(selected)
-
-
-def coverage(
-    record_type: type[RecordT],
-    instrument_ids: Sequence[InstrumentId],
-    *,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    catalog_path: Path,
-) -> tuple[CustomDataCoverage, ...]:
-    """Prove requested coverage and report checked-at marker provenance."""
-    _kind_for(record_type)
-    catalog = ParquetDataCatalog(str(catalog_path))
-    markers = CoverageMarkerLedger(catalog)
-    start = _utc(start)
-    end = _utc(end)
-    reports: list[CustomDataCoverage] = []
-    for instrument_id in instrument_ids:
-        interval = CoverageInterval(start.value, end.value)
-        missing = tuple(markers.missing(record_type, instrument_id, interval))
-        if missing:
-            raise CustomDataCoverageError(instrument_id, missing)
-        checked_at = markers.checked_at_values(
-            record_type,
-            instrument_id,
-            interval,
-        )
-        reports.append(
-            CustomDataCoverage(
-                instrument_id=instrument_id,
-                checked_at_ns=max(checked_at, default=None),
-            )
-        )
-    return tuple(reports)
 
 
 def records(
@@ -527,16 +437,17 @@ def records(
     *,
     start: pd.Timestamp,
     end: pd.Timestamp,
-    catalog_path: Path,
+    catalog: Catalog,
+    registry: CustomDataRegistry | None = None,
 ) -> tuple[RecordT, ...]:
     """Read typed domain records for an instrument window."""
-    _kind_for(record_type)
+    _kind_for(record_type, registry)
     return _query_records(
         record_type,
         instrument_ids,
         start=start,
         end=end,
-        catalog_path=catalog_path,
+        catalog=catalog,
     )
 
 
@@ -546,18 +457,21 @@ def _query_records(
     *,
     start: pd.Timestamp | None,
     end: pd.Timestamp,
-    catalog_path: Path,
+    catalog: Catalog,
 ) -> tuple[RecordT, ...]:
-    catalog = ParquetDataCatalog(str(catalog_path))
     stored: list[RecordT] = []
     for instrument_id in instrument_ids:
-        queried = catalog.query(
-            record_type,
-            identifiers=[instrument_id.value],
-            start=_utc(start) if start is not None else None,
-            end=_utc(end),
+        queried = catalog.read_all(
+            CatalogKey.for_instrument(record_type, instrument_id)
         )
-        stored.extend(_as_record(item, record_type) for item in queried)
+        start_ns = _utc(start).value if start is not None else None
+        end_ns = _utc(end).value
+        stored.extend(
+            item
+            for item in queried
+            if (start_ns is None or item.ts_event >= start_ns)
+            and item.ts_event <= end_ns
+        )
     return tuple(
         sorted(
             stored,
@@ -567,31 +481,6 @@ def _query_records(
             ),
         )
     )
-
-
-def _record_fetcher(
-    provider: CustomDataProviderPort[RecordT],
-    instrument_id: InstrumentId,
-    record_type: type[RecordT],
-) -> Callable[[pd.Timestamp, pd.Timestamp], ServedRecords[RecordT]]:
-    def fetch(start: pd.Timestamp, end: pd.Timestamp) -> ServedRecords[RecordT]:
-        served = provider.request_records(instrument_id, start=start, end=end)
-        selected = tuple(
-            sorted(
-                (
-                    _validate_record(
-                        record,
-                        record_type=record_type,
-                        instrument_id=instrument_id,
-                    )
-                    for record in served.records
-                ),
-                key=lambda record: record.ts_event,
-            )
-        )
-        return ServedRecords(selected, _utc(served.served_from))
-
-    return fetch
 
 
 def _validate_record(
@@ -611,16 +500,6 @@ def _validate_record(
     return record
 
 
-def _records_within_event_window(
-    stored: Sequence[RecordT], interval: CoverageInterval
-) -> tuple[RecordT, ...]:
-    return tuple(
-        record
-        for record in stored
-        if interval.start_ns <= record.ts_event <= interval.end_ns
-    )
-
-
 def _record_belongs_to_interval(
     record: RecordT,
     *,
@@ -637,29 +516,34 @@ def _record_belongs_to_interval(
     return start.value <= record.ts_event <= end.value
 
 
-def _kind_for(record_type: type[Data]) -> _ArrayKind:
-    for kind in _KINDS:
-        if kind.record_type is record_type:
-            return kind
-    raise UnknownCustomDataRecordError(record_type.__name__)
-
-
-def _kinds_for_array_names(array_names: Sequence[str]) -> tuple[_ArrayKind, ...]:
-    requested = set(array_names)
-    kinds = tuple(
-        kind
-        for kind in _KINDS
-        if requested.intersection(kind.array_names)
+def _registry(registry: CustomDataRegistry | None) -> CustomDataRegistry:
+    return (
+        registry if registry is not None else custom_kinds.declared_custom_data_kinds()
     )
-    resolved = {name for kind in kinds for name in kind.array_names}
-    unknown = sorted(requested - resolved)
-    if unknown:
-        raise UnknownCustomArrayError(unknown)
-    return kinds
+
+
+def _kind_for(
+    record_type: type[Data],
+    registry: CustomDataRegistry | None,
+) -> CustomDataKind:
+    try:
+        return _registry(registry).kind_for(record_type)
+    except KeyError:
+        raise UnknownCustomDataRecordError(record_type.__name__) from None
+
+
+def _kinds_for_array_names(
+    array_names: Sequence[str],
+    registry: CustomDataRegistry | None,
+) -> tuple[CustomDataKind, ...]:
+    try:
+        return _registry(registry).kinds_for_arrays(array_names)
+    except KeyError as error:
+        raise UnknownCustomArrayError(cast(tuple[str, ...], error.args[0])) from None
 
 
 def _project_records(
-    kind: _ArrayKind,
+    kind: CustomDataKind,
     stored: Sequence[Data],
     instrument_ids: Sequence[InstrumentId],
     index: pd.DatetimeIndex,
@@ -699,15 +583,6 @@ def _project_records(
                 ) / 86_400_000_000_000
 
 
-def _as_record(item: object, record_type: type[RecordT]) -> RecordT:
-    value = item.data if hasattr(item, "data") else item
-    if not isinstance(value, record_type):
-        raise TypeError(
-            f"catalog returned {type(value).__name__}, expected {record_type.__name__}"
-        )
-    return value
-
-
 def _utc(value: pd.Timestamp) -> pd.Timestamp:
     timestamp = pd.Timestamp(value)
     if timestamp.tz is None:
@@ -717,27 +592,25 @@ def _utc(value: pd.Timestamp) -> pd.Timestamp:
 
 __all__ = [
     "CustomArrayRequirements",
-    "CustomDataCoverage",
-    "CustomDataCoverageError",
+    "CustomDataAdapterMap",
+    "CustomDataClientFactory",
+    "CustomDataRequestMetadata",
     "CustomDataProviderMap",
     "CustomDataProviderPort",
-    "FixtureRecord",
     "InvalidLiveCustomDataCapabilityError",
     "InvalidLiveDataClientNameError",
-    "KNOWN_CUSTOM_ARRAY_NAMES",
     "LiveCustomDataCapability",
     "LiveDataClientName",
-    "ServedCustomData",
     "UnknownCustomArrayError",
     "UnknownCustomDataRecordError",
-    "VOCABULARY",
-    "AVAILABILITY_BY_VALUE",
+    "CustomDataRequestCompletionError",
+    "CustomDataRecordOutsideWindowError",
+    "CustomDataWarmer",
+    "InvalidCustomDataWarmIntervalError",
     "arrays",
     "capture",
-    "correct",
-    "coverage",
     "ensure_arrays",
-    "ingest",
     "records",
     "records_for_arrays",
+    "provider_backed_custom_data_client_factory",
 ]

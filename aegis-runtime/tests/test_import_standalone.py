@@ -8,7 +8,7 @@ successful import already proves the package does not reach back into the
 research package; the explicit check below is the contract itself.
 
 The contract is "no research apparatus", not "no dependencies" — the venv also
-carries nautilus_trader, numba, pyarrow and pydantic. Only the sys.modules sweep
+carries nautilus_trader, numba, pyarrow and msgspec. Only the sys.modules sweep
 below decides whether the boundary holds.
 """
 

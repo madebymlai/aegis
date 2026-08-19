@@ -10,25 +10,20 @@ import pandas as pd
 from aegis_data.array_names import is_bar_derived_array
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    CatalogCoverageGapError,
     CatalogWindow,
     CatalogWindowRequest,
     GapFillProviderError,
-    resolve_catalog_path,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
-from aegis_data.custom_data import (
-    CustomDataCoverageError,
-    CustomDataProviderMap,
-    ensure_arrays,
-)
+from aegis_data.custom_data import CustomDataProviderMap, ensure_arrays
 from aegis_data.custom_data import (
     arrays as custom_arrays,
 )
 from aegis_data.distributions import Distribution
+from aegis_data.storage import Catalog
 from aegis_runtime import MarketDataBundle
-from aegis_runtime.currency import CurrencyConversion, build_currency_conversion_from_codes
+from aegis_runtime.domain.currency import CurrencyConversion, build_currency_conversion_from_codes
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId
 from vectorbtpro import vbt
@@ -119,7 +114,7 @@ class RunDataIdentity:
     continuous_root_currencies: dict[InstrumentId, str]
     size_increment_by_instrument: dict[InstrumentId, float]
     multiplier_by_instrument: dict[InstrumentId, float]
-    distribution_coverage: tuple[dict[str, object], ...]
+    distribution_extents: tuple[dict[str, object], ...]
     adjustment_mode: str | None
 
 
@@ -178,8 +173,8 @@ def load_run_data(
             timeframe=config.timeframe,
             adjustment_mode=adjustment_mode,
         )
-        continuous_coverage = (
-            port.distribution_coverage_report(tuple(continuous_frames), start=start, end=end)
+        continuous_extents = (
+            port.distribution_extent_report(tuple(continuous_frames), start=start, end=end)
             if continuous_frames
             else ()
         )
@@ -195,13 +190,10 @@ def load_run_data(
             required_arrays,
             resolution,
             frames,
+            catalog=port.catalog,
             custom_data_providers=custom_data_providers,
         )
-    except (
-        CatalogCoverageGapError,
-        CustomDataCoverageError,
-        GapFillProviderError,
-    ) as error:
+    except GapFillProviderError as error:
         _raise_unavailable(error, config, requested_ids, start=start, end=end)
     currency_conversion = _catalog_currency_conversion(
         config,
@@ -210,7 +202,7 @@ def load_run_data(
         frames,
         continuous_currencies,
     )
-    bundle = MarketDataBundle(currency_conversion.apply(tradeable_bundle.arrays))
+    bundle = currency_conversion.apply(tradeable_bundle)
     size_increments = _size_increments(resolution, window, port)
     multipliers = _multipliers(resolution, window, port)
     index = next(iter(bundle.arrays.values())).index
@@ -223,7 +215,7 @@ def load_run_data(
         multiplier_by_instrument=multipliers,
         adjustment_mode=adjustment_mode,
         identity=RunDataIdentity(
-            schema_version="run_data.v2",
+            schema_version="run_data.v3",
             requested_instrument_ids=requested_ids,
             tradeables=resolution.tradeables,
             loaded_arrays=tuple(bundle.arrays),
@@ -240,7 +232,7 @@ def load_run_data(
             continuous_root_currencies=continuous_currencies,
             size_increment_by_instrument=size_increments,
             multiplier_by_instrument=multipliers,
-            distribution_coverage=(*window.distribution_coverage, *continuous_coverage),
+            distribution_extents=(*window.distribution_extents, *continuous_extents),
             adjustment_mode=adjustment_mode.value if adjustment_mode is not None else None,
         ),
     )
@@ -350,6 +342,7 @@ def _tradeable_bundle(
     resolution: InstrumentResolution,
     frames: dict[InstrumentId, pd.DataFrame],
     *,
+    catalog: Catalog,
     custom_data_providers: CustomDataProviderMap | None,
 ) -> MarketDataBundle:
     instrument_ids = resolution.instrument_ids
@@ -366,20 +359,19 @@ def _tradeable_bundle(
     )
     if custom_names:
         custom_index = pd.DatetimeIndex(index)
-        catalog_path = resolve_catalog_path(config.path)
         ensure_arrays(
             dict.fromkeys(instrument_ids, custom_names),
             start=pd.Timestamp(custom_index[0]),
             end=pd.Timestamp(custom_index[-1]),
             providers=custom_data_providers or {},
-            catalog_path=catalog_path,
+            catalog=catalog,
         )
         panels.update(
             custom_arrays(
                 custom_names,
                 instrument_ids,
                 index=custom_index,
-                catalog_path=catalog_path,
+                catalog=catalog,
             )
         )
     panels = {array: panels[array] for array in config.effective_arrays}

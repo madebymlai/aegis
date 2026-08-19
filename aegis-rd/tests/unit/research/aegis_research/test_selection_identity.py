@@ -84,7 +84,7 @@ def test_resolved_metrics_preserve_selection_identity_bytes() -> None:
     payload = canonical_json_bytes(identity)
     assert len(payload) == 3773
     assert sha256(payload).hexdigest() == (
-        "f6fc25bf96b78c7f3fb6670af778d9572b84f349f1d2d7a3be83b53f6c14016f"
+        "eade4e110720235d0de55e7ffb9bf6a24e5e0e4fd894799de67aca9329ebddda"
     )
 
 

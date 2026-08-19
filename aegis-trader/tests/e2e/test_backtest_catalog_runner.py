@@ -11,53 +11,50 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from aegis_data.custom_data import (
-    CustomDataCoverageError,
-    CustomDataProviderPort,
-    FixtureRecord,
-    ServedCustomData,
-    ingest,
-)
-from aegis_data.distributions import Distribution, write_distribution_data
+from aegis_data.custom_data import CustomDataProviderPort, ensure_arrays
+from tests.support.custom_data import FixtureRecord
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import ContinuousFutureAdjustmentType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    CatalogCoverageGapError,
     MissingCatalogDefinitionsError,
-    ServedBars,
     raw_bar_type,
 )
-from aegis_data.rebasing import Rebasing, spread_rebasing
+from aegis_data.custom_data import CustomDataWarmer
+from aegis_data.ibkr import historic_catalog_client_factory
+from aegis_data.marking import MarkMode
+from aegis_data.storage import Catalog, CatalogInterval, CatalogKey
+from aegis_data.testing import store_instrument_fixtures
+from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
     DriftBand,
-    ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
     MissingIndexPolicy,
 )
 
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_trader.backtest import (
     BacktestMarketData,
     CatalogBacktestDataSource,
     CatalogInstrumentError,
+    ContractDataError,
     run_book_backtest,
 )
-from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.domain.roll import RollEvent, SubscribeBars, UnsubscribeBars
 from aegis_trader.domain.types import SleeveName
 from aegis_trader.portfolio import NautilusBookState
 from aegis_trader.trader.strategy import RebalanceStrategy
+from tests.support.bundle_double import BundleDouble, make_bundle_registry
+from tests.support.market_data import bar_window_from_frames
 
 _INSTRUMENT_ID = InstrumentId.from_str("VUSA.XLON")
 _SECOND_INSTRUMENT_ID = InstrumentId.from_str("AAPL.XNAS")
@@ -104,7 +101,7 @@ _ZERO_RATE_FINANCING_BOOK_TOML = _FINANCING_BOOK_TOML.replace(
 )
 
 
-class _FixedWeightBundle(ExecutionBundle):
+class _FixedWeightBundle(BundleDouble):
     """Synthetic bundle that returns one fixed target weight."""
 
     def __init__(
@@ -160,7 +157,7 @@ class _FixedWeightBundle(ExecutionBundle):
         return weights
 
 
-class _FixtureArrayBundle(ExecutionBundle):
+class _FixtureArrayBundle(BundleDouble):
     """Synthetic bundle whose target is supplied by a Custom Data panel."""
 
     def __init__(self, instrument_id: InstrumentId) -> None:
@@ -217,20 +214,17 @@ class _FixtureProvider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         self.requests.append((instrument_id, start, end))
         timestamp = pd.Timestamp("2020-01-01", tz="UTC").value
-        return ServedCustomData(
-            (
-                FixtureRecord(
-                    timestamp,
-                    timestamp,
-                    instrument_id=instrument_id,
-                    value=0.5,
-                    provider="fixture",
-                ),
+        return (
+            FixtureRecord(
+                timestamp,
+                timestamp,
+                instrument_id=instrument_id,
+                value=0.5,
+                provider="fixture",
             ),
-            start,
         )
 
 
@@ -242,18 +236,14 @@ class _AdjustedLastProvider:
         return self.adjusted_last[kwargs["instrument_id"]]
 
 
-class _BarOnlyProvider:
-    def request_bars(
-        self,
-        _bar_type: BarType,
-        *,
-        start: pd.Timestamp,
-        end: pd.Timestamp,
-    ) -> ServedBars:
-        return ServedBars((), start)
+def _adjusted_close_warmer(catalog: Catalog, provider: Any) -> CustomDataWarmer:
+    return CustomDataWarmer(
+        catalog,
+        historic_catalog_client_factory(provider),
+    )
 
 
-class _TwoVenueBundle(ExecutionBundle):
+class _TwoVenueBundle(BundleDouble):
     """Synthetic bundle that targets instruments on two native venues."""
 
     def __init__(self) -> None:
@@ -287,7 +277,8 @@ class _TwoVenueBundle(ExecutionBundle):
             ),
             indicators=(),
             instrument_bands={
-                instrument_id: DriftBand.symmetric(0.0) for instrument_id in self._instrument_ids
+                instrument_id: DriftBand.symmetric(0.0)
+                for instrument_id in self._instrument_ids
             },
             direction="longonly",
         )
@@ -311,7 +302,7 @@ class _TwoVenueBundle(ExecutionBundle):
         return weights
 
 
-class _ContinuousRootBundle(ExecutionBundle):
+class _ContinuousRootBundle(BundleDouble):
     """Synthetic bundle that targets the declared continuous-root id."""
 
     def __init__(self) -> None:
@@ -436,6 +427,7 @@ class _RollingContinuousDesk:
     def rolled(self) -> bool:
         return self._rolled
 
+
 class _ContinuousRootDataSource:
     def __init__(self, frame: pd.DataFrame) -> None:
         self._frame = frame
@@ -452,7 +444,9 @@ class _ContinuousRootDataSource:
         assert (timeframe, start, end) == ("1D", "2020-01-01", "2020-01-05")
         return BacktestMarketData(
             instruments={_ES: _equity(_ES)},
-            ohlcv={_ES: self._frame},
+            bar_windows={
+                _ES: bar_window_from_frames(_ES, "1D", MarkMode.LAST, (self._frame,))
+            },
         )
 
 
@@ -476,10 +470,14 @@ class _RollingContinuousRootDataSource:
                 _ES_OLD: _equity(_ES_OLD),
                 _ES_NEW: _equity(_ES_NEW),
             },
-            ohlcv={
-                _ES: self._frame,
-                _ES_OLD: self._frame.iloc[:1],
-                _ES_NEW: self._frame.iloc[1:],
+            bar_windows={
+                _ES: bar_window_from_frames(_ES, "1D", MarkMode.LAST, (self._frame,)),
+                _ES_OLD: bar_window_from_frames(
+                    _ES_OLD, "1D", MarkMode.LAST, (self._frame.iloc[:1],)
+                ),
+                _ES_NEW: bar_window_from_frames(
+                    _ES_NEW, "1D", MarkMode.LAST, (self._frame.iloc[1:],)
+                ),
             },
         )
 
@@ -489,7 +487,7 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -497,7 +495,7 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
     engine = result.engine
 
@@ -507,13 +505,28 @@ def test_run_book_backtest_runs_live_strategy_from_catalog(tmp_path) -> None:
     engine.dispose()
 
 
-def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> None:
+def test_run_book_backtest_feeds_native_catalog_bars_to_nautilus(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    provider = _FixtureProvider()
-    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+    catalog = Catalog.open(catalog_path)
+    store_instrument_fixtures(catalog, [_equity(_INSTRUMENT_ID)])
+    bar_type = raw_bar_type(_INSTRUMENT_ID, "1D")
+    bars = (
+        _bar_with_init_delay(bar_type, "2020-01-01", 100.0),
+        _bar_with_init_delay(bar_type, "2020-01-02", 101.0),
+        _bar_with_init_delay(bar_type, "2020-01-03", 102.0),
+        _bar_with_init_delay(bar_type, "2020-01-04", 103.0),
+    )
+    catalog.replace(
+        CatalogKey.for_bar(bar_type),
+        CatalogInterval(
+            pd.Timestamp("2020-01-01", tz="UTC").value,
+            pd.Timestamp("2020-01-05", tz="UTC").value,
+        ),
+        bars,
+    )
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -521,8 +534,31 @@ def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> No
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
-        custom_data_providers={FixtureRecord: (provider,)},
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+    )
+
+    try:
+        assert result.engine.cache.bar(bar_type) == bars[-1]
+    finally:
+        result.engine.dispose()
+
+
+def test_run_book_backtest_computes_with_a_declared_custom_array(tmp_path) -> None:
+    book_path = tmp_path / "book.toml"
+    book_path.write_text(_BOOK_TOML)
+    catalog_path = tmp_path / "catalog"
+    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
+    provider = _FixtureProvider()
+    registry = make_bundle_registry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+
+    result = run_book_backtest(
+        book_path,
+        start="2020-01-01",
+        end="2020-01-05",
+        catalog_path=catalog_path,
+        registry=registry,
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        custom_data_providers={FixtureRecord: provider},
     )
 
     try:
@@ -541,7 +577,7 @@ def test_run_book_backtest_fills_custom_array_coverage_on_cold_catalog(
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
     provider = _FixtureProvider()
-    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+    registry = make_bundle_registry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
 
     result = run_book_backtest(
         book_path,
@@ -549,10 +585,8 @@ def test_run_book_backtest_fills_custom_array_coverage_on_cold_catalog(
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(
-            catalog_path, (_INSTRUMENT_ID,)
-        ),
-        custom_data_providers={FixtureRecord: (provider,)},
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        custom_data_providers={FixtureRecord: provider},
     )
 
     try:
@@ -572,15 +606,14 @@ def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> N
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    ingest(
-        FixtureRecord,
-        (_INSTRUMENT_ID,),
+    ensure_arrays(
+        {_INSTRUMENT_ID: ("FixtureValue",)},
         start=pd.Timestamp("2020-01-01", tz="UTC"),
         end=pd.Timestamp("2020-01-05", tz="UTC"),
-        providers=(_FixtureProvider(),),
-        catalog_path=catalog_path,
+        providers={FixtureRecord: _FixtureProvider()},
+        catalog=Catalog.open(catalog_path),
     )
-    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
+    registry = make_bundle_registry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
     unused = _FixtureProvider()
 
     result = run_book_backtest(
@@ -589,8 +622,8 @@ def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> N
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
-        custom_data_providers={FixtureRecord: (unused,)},
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        custom_data_providers={FixtureRecord: unused},
     )
 
     try:
@@ -599,32 +632,13 @@ def test_run_book_backtest_does_not_request_covered_custom_arrays(tmp_path) -> N
         result.engine.dispose()
 
 
-def test_run_book_backtest_fails_on_uncovered_custom_arrays(tmp_path) -> None:
-    book_path = tmp_path / "book.toml"
-    book_path.write_text(_BOOK_TOML)
-    catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 101.0, 102.0, 103.0])
-    registry = StubBundleRegistry({_WHEEL: _FixtureArrayBundle(_INSTRUMENT_ID)})
-
-    with pytest.raises(CustomDataCoverageError, match="custom data"):
-        run_book_backtest(
-            book_path,
-            start="2020-01-01",
-            end="2020-01-05",
-            catalog_path=catalog_path,
-            registry=registry,
-            data_source=_verified_zero_distribution_source(
-                catalog_path, (_INSTRUMENT_ID,)
-            ),
-        )
-
-
 def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
-    catalog = ParquetDataCatalog(catalog_path)
-    catalog.write_data(
+    catalog = Catalog.open(catalog_path)
+    store_instrument_fixtures(
+        catalog,
         [
             Equity(
                 instrument_id=_INSTRUMENT_ID,
@@ -636,10 +650,10 @@ def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
                 ts_event=0,
                 ts_init=0,
             )
-        ]
+        ],
     )
     _seed_catalog_bars_only(catalog_path, _INSTRUMENT_ID, [30.0] * 4)
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.4)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.4)})
 
     result = run_book_backtest(
         book_path,
@@ -647,7 +661,7 @@ def test_run_book_backtest_produces_whole_share_equity_orders(tmp_path) -> None:
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
         starting_cash=100.0,
     )
     try:
@@ -671,7 +685,7 @@ def test_run_book_backtest_trades_a_declared_continuous_root(
         return desk
 
     monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_static_desk)
-    registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
+    registry = make_bundle_registry({_WHEEL: _ContinuousRootBundle()})
 
     result = run_book_backtest(
         book_path,
@@ -704,7 +718,7 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
         return desk
 
     monkeypatch.setattr(RebalanceStrategy, "_build_roll_desk", build_rolling_desk)
-    registry = StubBundleRegistry({_WHEEL: _ContinuousRootBundle()})
+    registry = make_bundle_registry({_WHEEL: _ContinuousRootBundle()})
 
     result = run_book_backtest(
         book_path,
@@ -722,13 +736,15 @@ def test_run_book_backtest_preserves_attribution_across_a_roll(
     engine.dispose()
 
 
-def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path) -> None:
+def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(
+    tmp_path,
+) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
     _seed_catalog(catalog_path, _SECOND_INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    registry = StubBundleRegistry({_WHEEL: _TwoVenueBundle()})
+    registry = make_bundle_registry({_WHEEL: _TwoVenueBundle()})
 
     result = run_book_backtest(
         book_path,
@@ -736,7 +752,7 @@ def test_run_book_backtest_does_not_duplicate_cash_across_native_venues(tmp_path
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(
+        data_source=_zero_distribution_source(
             catalog_path,
             (_INSTRUMENT_ID, _SECOND_INSTRUMENT_ID),
         ),
@@ -801,11 +817,7 @@ def _run_margin_interest_fixture(tmp_path):
         _INSTRUMENT_ID,
         [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
     )
-    registry = StubBundleRegistry(
-        {
-            _WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 1.5)
-        }
-    )
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 1.5)})
 
     financed = run_book_backtest(
         book_path,
@@ -813,7 +825,7 @@ def _run_margin_interest_fixture(tmp_path):
         end="2020-01-07",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
     zero_rate = run_book_backtest(
         zero_book_path,
@@ -821,7 +833,7 @@ def _run_margin_interest_fixture(tmp_path):
         end="2020-01-07",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
 
     return financed, zero_rate
@@ -832,11 +844,7 @@ def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -
     book_path.write_text(_FINANCING_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    registry = StubBundleRegistry(
-        {
-            _WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)
-        }
-    )
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -844,7 +852,7 @@ def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -
         end="2020-01-05",
         catalog_path=catalog_path,
         registry=registry,
-        data_source=_verified_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
+        data_source=_zero_distribution_source(catalog_path, (_INSTRUMENT_ID,)),
     )
 
     try:
@@ -856,10 +864,18 @@ def test_run_book_backtest_reports_no_financing_for_cash_funded_book(tmp_path) -
 def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> None:
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
+    catalog = Catalog.open(catalog_path)
     data_port = CatalogBackedDataPort(
-        ParquetDataCatalog(catalog_path),
-        distribution_provider=_AdjustedLastProvider(
-            {_INSTRUMENT_ID: _adjusted_last_for_distribution("2020-01-03", amount=0.75)}
+        catalog,
+        custom_data_warmer=_adjusted_close_warmer(
+            catalog,
+            _AdjustedLastProvider(
+                {
+                    _INSTRUMENT_ID: _adjusted_last_for_distribution(
+                        "2020-01-03", amount=0.75
+                    )
+                }
+            ),
         ),
     )
 
@@ -870,47 +886,46 @@ def test_catalog_backtest_data_source_loads_distribution_events(tmp_path) -> Non
         end="2020-01-05",
     )
 
-    assert [(item.instrument_id, item.ex_date, item.amount) for item in data.distributions] == [
-        (_INSTRUMENT_ID, pd.Timestamp("2020-01-03", tz="UTC"), pytest.approx(0.75))
-    ]
+    assert [
+        (item.instrument_id, item.ex_date, item.amount) for item in data.distributions
+    ] == [(_INSTRUMENT_ID, pd.Timestamp("2020-01-03", tz="UTC"), pytest.approx(0.75))]
 
 
-def test_catalog_backtest_data_source_rejects_unverified_distribution_store(tmp_path) -> None:
+def test_catalog_backtest_data_source_preserves_native_bars(tmp_path) -> None:
     catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    distribution = Distribution.from_ex_date(
-        _INSTRUMENT_ID,
-        "2020-01-03",
-        amount=0.75,
-        currency="EUR",
+    catalog = Catalog.open(catalog_path)
+    store_instrument_fixtures(catalog, [_equity(_INSTRUMENT_ID)])
+    bar_type = raw_bar_type(_INSTRUMENT_ID, "1D")
+    ts_event = pd.Timestamp("2020-01-01", tz="UTC").value
+    price = Price.from_str("100.00")
+    bar = Bar(
+        bar_type,
+        price,
+        price,
+        price,
+        price,
+        Quantity.from_int(1000),
+        ts_event,
+        ts_event + 37,
     )
-    write_distribution_data(ParquetDataCatalog(catalog_path), [distribution])
+    catalog.replace(
+        CatalogKey.for_bar(bar_type),
+        CatalogInterval(ts_event, pd.Timestamp("2020-01-02", tz="UTC").value),
+        (bar,),
+    )
+    data_source = _zero_distribution_source(
+        catalog_path,
+        (_INSTRUMENT_ID,),
+    )
 
-    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
-        CatalogBacktestDataSource(catalog_path=catalog_path).load(
-            (_INSTRUMENT_ID,),
-            timeframe="1D",
-            start="2020-01-01",
-            end="2020-01-05",
-        )
+    data = data_source.load(
+        (_INSTRUMENT_ID,),
+        timeframe="1D",
+        start="2020-01-01",
+        end="2020-01-02",
+    )
 
-
-def test_catalog_backtest_data_source_rejects_unverified_store_with_bar_only_provider(
-    tmp_path,
-) -> None:
-    catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-
-    with pytest.raises(CatalogCoverageGapError, match="distribution coverage is missing"):
-        CatalogBacktestDataSource(
-            catalog_path=catalog_path,
-            provider=_BarOnlyProvider(),
-        ).load(
-            (_INSTRUMENT_ID,),
-            timeframe="1D",
-            start="2020-01-01",
-            end="2020-01-05",
-        )
+    assert data.bars == {_INSTRUMENT_ID: (bar,)}
 
 
 def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
@@ -918,13 +933,21 @@ def test_run_book_backtest_books_distribution_cash(tmp_path) -> None:
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0, 100.0])
+    catalog = Catalog.open(catalog_path)
     data_port = CatalogBackedDataPort(
-        ParquetDataCatalog(catalog_path),
-        distribution_provider=_AdjustedLastProvider(
-            {_INSTRUMENT_ID: _adjusted_last_for_distribution("2020-01-04", amount=1.0)}
+        catalog,
+        custom_data_warmer=_adjusted_close_warmer(
+            catalog,
+            _AdjustedLastProvider(
+                {
+                    _INSTRUMENT_ID: _adjusted_last_for_distribution(
+                        "2020-01-04", amount=1.0
+                    )
+                }
+            ),
         ),
     )
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -953,7 +976,7 @@ def test_run_book_backtest_fails_on_missing_catalog_instrument(tmp_path) -> None
     book_path.write_text(_BOOK_TOML)
     catalog_path = tmp_path / "catalog"
     _seed_catalog_bars_only(catalog_path, _INSTRUMENT_ID, [100.0, 100.0, 100.0, 100.0])
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     with pytest.raises(MissingCatalogDefinitionsError, match="VUSA.XLON"):
         run_book_backtest(
@@ -974,7 +997,22 @@ class _EmptyDataSource:
         start: str,
         end: str,
     ) -> BacktestMarketData:
-        return BacktestMarketData(instruments={}, ohlcv={})
+        return BacktestMarketData(instruments={}, bar_windows={})
+
+
+class _MissingBarWindowDataSource:
+    def load(
+        self,
+        instrument_ids: tuple[InstrumentId, ...],
+        *,
+        timeframe: str,
+        start: str,
+        end: str,
+    ) -> BacktestMarketData:
+        return BacktestMarketData(
+            instruments={_INSTRUMENT_ID: _equity(_INSTRUMENT_ID)},
+            bar_windows={},
+        )
 
 
 def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
@@ -985,7 +1023,7 @@ def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
     # carry still fails with Trader's own error before the engine starts.
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
     with pytest.raises(
         CatalogInstrumentError, match="did not return instrument definition"
@@ -999,20 +1037,18 @@ def test_run_book_backtest_fails_when_data_source_omits_a_contract_instrument(
         )
 
 
-def test_run_book_backtest_fails_on_catalog_coverage_gap(tmp_path) -> None:
+def test_run_book_backtest_fails_preflight_without_native_bars(tmp_path) -> None:
     book_path = tmp_path / "book.toml"
     book_path.write_text(_BOOK_TOML)
-    catalog_path = tmp_path / "catalog"
-    _seed_catalog(catalog_path, _INSTRUMENT_ID, [100.0])
-    registry = StubBundleRegistry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
+    registry = make_bundle_registry({_WHEEL: _FixedWeightBundle(_INSTRUMENT_ID, 0.5)})
 
-    with pytest.raises(CatalogCoverageGapError, match="VUSA.XLON"):
+    with pytest.raises(ContractDataError, match="did not return raw bars"):
         run_book_backtest(
             book_path,
             start="2020-01-01",
             end="2020-01-05",
-            catalog_path=catalog_path,
             registry=registry,
+            data_source=_MissingBarWindowDataSource(),
         )
 
 
@@ -1021,7 +1057,7 @@ def _seed_catalog(
     instrument_id: InstrumentId,
     closes: list[float],
 ) -> None:
-    ParquetDataCatalog(catalog_path).write_data([_equity(instrument_id)])
+    store_instrument_fixtures(Catalog.open(catalog_path), [_equity(instrument_id)])
     _seed_catalog_bars_only(catalog_path, instrument_id, closes)
 
 
@@ -1030,17 +1066,21 @@ def _seed_catalog_bars_only(
     instrument_id: InstrumentId,
     closes: list[float],
 ) -> None:
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     bars = [
         _bar(raw_bar_type(instrument_id, "1D"), day, close)
-        for day, close in zip(pd.date_range("2020-01-01", periods=len(closes), freq="D"), closes, strict=True)
+        for day, close in zip(
+            pd.date_range("2020-01-01", periods=len(closes), freq="D"),
+            closes,
+            strict=True,
+        )
     ]
-    catalog.write_data(
-        bars,
-        start=pd.Timestamp("2020-01-01", tz="UTC").value,
-        end=pd.Timestamp("2020-01-01", tz="UTC").value
-        + len(closes) * 86_400_000_000_000,
+    interval = CatalogInterval(
+        pd.Timestamp("2020-01-01", tz="UTC").value,
+        pd.Timestamp("2020-01-01", tz="UTC").value + len(closes) * 86_400_000_000_000,
     )
+    key = CatalogKey.for_bar(raw_bar_type(instrument_id, "1D"))
+    catalog.replace(key, interval, tuple(bars))
 
 
 def _adjusted_last_for_distribution(ex_date: str, *, amount: float) -> pd.Series:
@@ -1050,7 +1090,7 @@ def _adjusted_last_for_distribution(ex_date: str, *, amount: float) -> pd.Series
     return values
 
 
-def _verified_zero_distribution_source(
+def _zero_distribution_source(
     catalog_path,
     instrument_ids: tuple[InstrumentId, ...],
 ) -> CatalogBacktestDataSource:
@@ -1061,10 +1101,14 @@ def _verified_zero_distribution_source(
         )
         for instrument_id in instrument_ids
     }
+    catalog = Catalog.open(catalog_path)
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
-            ParquetDataCatalog(catalog_path),
-            distribution_provider=_AdjustedLastProvider(adjusted_last),
+            catalog,
+            custom_data_warmer=_adjusted_close_warmer(
+                catalog,
+                _AdjustedLastProvider(adjusted_last),
+            ),
         )
     )
 
@@ -1116,6 +1160,21 @@ def _bar(bar_type: BarType, day: pd.Timestamp, close: float) -> Bar:
         Quantity.from_int(1000),
         ts_event,
         ts_event,
+    )
+
+
+def _bar_with_init_delay(bar_type: BarType, day: str, close: float) -> Bar:
+    ts_event = pd.Timestamp(day, tz="UTC").value
+    price = Price.from_str(f"{close:.2f}")
+    return Bar(
+        bar_type,
+        price,
+        price,
+        price,
+        price,
+        Quantity.from_int(1000),
+        ts_event,
+        ts_event + 37,
     )
 
 

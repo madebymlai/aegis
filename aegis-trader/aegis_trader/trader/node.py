@@ -4,8 +4,8 @@
 This module owns the *live* node: its ``Environment.LIVE`` config (cache, logging,
 shared catalog) and the foreground run/stop daemon.  It is
 **broker-neutral** — no ``ibg_*``/``IDEALPRO`` vocabulary and no IBKR SDK import.
-The one broker touch is a single call, :func:`aegis_data.ibkr.attach_live_clients`,
-which wires Nautilus's stock IBKR clients onto the node; everything IBKR lives
+The one broker touch is a single call, :func:`aegis_data.ibkr.live_clients`,
+which supplies Nautilus's stock IBKR client configs and factories; everything IBKR lives
 behind that seam (and its lazy ``ibapi`` boundary), so importing this module never
 needs ``ibapi``.
 
@@ -27,7 +27,7 @@ import logging
 import os
 import signal
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +38,9 @@ from nautilus_trader.common import Environment
 from nautilus_trader.common.messages import ShutdownSystem
 from nautilus_trader.config import (
     CacheConfig,
+    LiveDataClientConfig,
     LiveDataEngineConfig,
+    LiveExecClientConfig,
     LiveExecEngineConfig,
     LiveRiskEngineConfig,
     LoggingConfig,
@@ -49,8 +51,11 @@ from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.persistence.config import DataCatalogConfig
 from nautilus_trader.portfolio.config import PortfolioConfig
 
-from aegis_data.catalog import catalog_root
-from aegis_data.ibkr import attach_live_clients
+from aegis_data.catalog import catalog_root, open_catalog
+from aegis_data.custom_data import CustomDataAdapterMap
+from aegis_data.custom_kinds import CustomDataRegistry
+from aegis_data.ibkr import live_clients
+from aegis_data.storage import Catalog
 
 from aegis_trader.bundles.book import AssembledBook, assemble_book
 from aegis_trader.bundles.marking import recorded_marking_resolver
@@ -59,8 +64,8 @@ from aegis_trader.bundles.registry import EntryPointBundleRegistry
 from aegis_trader.config import IBConnectionSettings, load_book_config
 from aegis_trader.domain.book_config import BookConfig
 from aegis_trader.trader.live_custom_data import (
-    add_live_custom_data,
     build_live_sleeve_arrays,
+    live_custom_data,
     warm_live_custom_data,
 )
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
@@ -89,7 +94,11 @@ class TraderAlreadyRunningError(RuntimeError):
 
 
 def build_live_node_config(
-    *, trader_id: str | None = None, use_mark_prices: bool = False
+    *,
+    trader_id: str | None = None,
+    use_mark_prices: bool = False,
+    data_clients: Mapping[str, LiveDataClientConfig] | None = None,
+    exec_clients: Mapping[str, LiveExecClientConfig] | None = None,
 ) -> TradingNodeConfig:
     """Build the live ``TradingNodeConfig`` (broker-neutral).
 
@@ -97,8 +106,9 @@ def build_live_node_config(
     shared aegis-data catalog wired in (ADR-0006): a startup
     ``request_bars(update_catalog=True)`` then serves history from the catalog and
     tops up only the missing IBKR tail, so research and live warm from the *same*
-    corpus with no cold-start lookback gap.  The broker's data/exec clients are
-    wired separately by :func:`aegis_data.ibkr.attach_live_clients`.
+    corpus with no cold-start lookback gap.  Broker and Custom Data client configs
+    are supplied through this public config surface before the node is constructed;
+    only their factories are registered afterward.
 
     An unexpected exception in the live RiskEngine's message queue shuts the node
     down gracefully rather than leaving pre-trade risk processing uncertain.
@@ -126,6 +136,8 @@ def build_live_node_config(
         # Quote-marked legs are valued at the strategy-published quote mid
         # (aegis-rd-tggo.3); bar-marked legs fall back to their bar close.
         portfolio=PortfolioConfig(use_mark_prices=use_mark_prices),
+        data_clients=dict(data_clients or {}),
+        exec_clients=dict(exec_clients or {}),
     )
     if trader_id is None:
         return config
@@ -140,7 +152,8 @@ def build_live_node(
     connection: IBConnectionSettings,
     *,
     registry: BundleRegistryPort | None = None,
-    custom_data_providers: Sequence[object] = (),
+    custom_data_providers: CustomDataAdapterMap | None = None,
+    custom_data_registry: CustomDataRegistry | None = None,
 ) -> TradingNode:
     """Assemble a built, runnable live ``TradingNode`` for *book* over *connection*.
 
@@ -150,27 +163,45 @@ def build_live_node(
     is decided entirely by ``connection`` (its port).
     """
     registry = registry if registry is not None else EntryPointBundleRegistry()
-    assembled_book = assemble_book(book, registry)
+    custom_data_providers = custom_data_providers or {}
+    assembled_book = assemble_book(
+        book,
+        registry,
+        custom_data_registry=custom_data_registry,
+    )
 
     # The bundle-recorded markings are the live marking truth (aegis-rd-tggo.3):
     # built once here, they decide both the strategy's subscriptions and whether
     # the Portfolio values quote-marked legs at the published mid.
     marking_resolver = recorded_marking_resolver(assembled_book)
+    broker_clients = live_clients(
+        connection,
+        assembled_book.loadable_instrument_ids,
+    )
+    streaming = live_custom_data(
+        custom_data_providers,
+        registry=custom_data_registry,
+        configured_client_names=broker_clients.data_clients,
+    )
     node = TradingNode(
         config=build_live_node_config(
             trader_id=connection.trader_id,
             use_mark_prices=bool(marking_resolver.quote_marked_ids),
+            data_clients={**broker_clients.data_clients, **streaming.data_clients},
+            exec_clients=broker_clients.exec_clients,
         )
     )
-    attach_live_clients(node, connection, assembled_book.loadable_instrument_ids)
-    add_live_custom_data(
+    catalog = open_catalog(catalog_root())
+    broker_clients.register(node)
+    streaming.register(
         node,
-        custom_data_providers,
-        catalog_path=catalog_root(),
+        catalog=catalog,
+        registry=custom_data_registry,
     )
     arrays = build_live_sleeve_arrays(
         custom_data_providers,
-        catalog_path=catalog_root(),
+        catalog=catalog,
+        registry=custom_data_registry,
     )
     warm_live_custom_data(
         assembled_book,
@@ -182,6 +213,7 @@ def build_live_node(
         build_live_strategy(
             assembled_book,
             arrays=arrays,
+            catalog=catalog,
         )
     )
     return node
@@ -191,6 +223,7 @@ def build_live_strategy(
     book: AssembledBook,
     *,
     arrays: SleeveArrays,
+    catalog: Catalog,
 ) -> RebalanceStrategy:
     """The live ``RebalanceStrategy`` for *book*: next-close ``AT_THE_CLOSE`` and
     cache warmup on start, with the assembled book registered.
@@ -203,8 +236,10 @@ def build_live_strategy(
             book=book.config,
             fill_time_in_force=LIVE_FILL_TIME_IN_FORCE,
             warmup_cache_on_start=True,
+            capture_bars=True,
         ),
         arrays=arrays,
+        catalog=catalog,
         bar_type_resolver=recorded_marking_resolver(book),
     )
     strategy.register_book(book)

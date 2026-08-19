@@ -1,7 +1,7 @@
 """The single home for turning a ``DataContract`` timeframe into the Nautilus
-``BarType`` of the shared corpus, and into a rebalance-period width.
+``BarType`` of the shared Catalog, and into a rebalance-period width.
 
-Daily Raw Bars are ``EXTERNAL`` (ADR-0007): the corpus is vendor-aggregated
+Daily Raw Bars are ``EXTERNAL`` (ADR-0007): the Catalog is vendor-aggregated
 OHLCV (IBKR historical) — finished bars with
 no tick feed to build a multi-year daily series from — and live can only receive
 IBKR's completed daily bar via an ``EXTERNAL`` subscription.  The price type is
@@ -24,24 +24,29 @@ from __future__ import annotations
 
 import re
 
-from nautilus_trader.model.data import BarType
+from nautilus_trader.model.data import BarSpecification, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 
 # pandas offset-alias unit (lowercased) -> Nautilus bar aggregation.  Month is
 # intentionally absent: it is not a fixed duration, so it has no period width.
 _NAUTILUS_UNIT = {
-    "s": "SECOND", "sec": "SECOND", "second": "SECOND", "seconds": "SECOND",
-    "min": "MINUTE", "t": "MINUTE", "minute": "MINUTE", "minutes": "MINUTE",
-    "h": "HOUR", "hour": "HOUR", "hours": "HOUR",
-    "d": "DAY", "day": "DAY", "days": "DAY",
-    "w": "WEEK", "week": "WEEK", "weeks": "WEEK",
-}
-_UNIT_NS = {
-    "SECOND": 1_000_000_000,
-    "MINUTE": 60_000_000_000,
-    "HOUR": 3_600_000_000_000,
-    "DAY": 86_400_000_000_000,
-    "WEEK": 604_800_000_000_000,
+    "s": "SECOND",
+    "sec": "SECOND",
+    "second": "SECOND",
+    "seconds": "SECOND",
+    "min": "MINUTE",
+    "t": "MINUTE",
+    "minute": "MINUTE",
+    "minutes": "MINUTE",
+    "h": "HOUR",
+    "hour": "HOUR",
+    "hours": "HOUR",
+    "d": "DAY",
+    "day": "DAY",
+    "days": "DAY",
+    "w": "WEEK",
+    "week": "WEEK",
+    "weeks": "WEEK",
 }
 _TIMEFRAME = re.compile(r"\s*(\d+)\s*([A-Za-z]+)\s*")
 
@@ -73,7 +78,7 @@ def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
     """The ``LAST-EXTERNAL`` ``BarType`` for *instrument_id* at *timeframe*.
 
     Known IBKR exchange venues are canonicalized to their MIC venue before the
-    corpus key is built, matching the IBKR provider's MIC-pinned definitions and
+    Catalog key is built, matching the IBKR provider's MIC-pinned definitions and
     fetched bars.  LAST only — the undeclared default (ADR-0007 amendment); any
     other price type is a declared marking and keys via
     :func:`external_bar_type` (e.g. a cash-FX conversion leg's ``MID``).
@@ -84,17 +89,15 @@ def raw_bar_type(instrument_id: InstrumentId, timeframe: str) -> BarType:
 def external_bar_type(
     instrument_id: InstrumentId, timeframe: str, price_type: str
 ) -> BarType:
-    """The corpus ``EXTERNAL`` ``BarType`` at an explicit price type.
+    """The Catalog ``EXTERNAL`` ``BarType`` at an explicit price type.
 
     The pure bar-type builder the marking resolver feeds (ADR-0007 amendment):
     the price type is decided by the resolved mark mode — LAST/MID bar-marked,
     BID+ASK for a quote-marked instrument — never re-derived by a consumer.
     """
     step, unit = _parse(timeframe)
-    corpus_id = mic_canonical_instrument_id(instrument_id)
-    return BarType.from_str(
-        f"{corpus_id.value}-{step}-{unit}-{price_type}-EXTERNAL"
-    )
+    catalog_id = mic_canonical_instrument_id(instrument_id)
+    return BarType.from_str(f"{catalog_id.value}-{step}-{unit}-{price_type}-EXTERNAL")
 
 
 def mic_canonical_instrument_id(instrument_id: InstrumentId) -> InstrumentId:
@@ -138,7 +141,11 @@ def continuous_bar_type(root_id: InstrumentId, timeframe: str) -> BarType:
 def timeframe_to_ns(timeframe: str) -> int:
     """The rebalance-period width, in nanoseconds, for *timeframe*."""
     step, unit = _parse(timeframe)
-    return step * _UNIT_NS[unit]
+    try:
+        specification = BarSpecification.from_str(f"{step}-{unit}-LAST")
+    except ValueError as exc:
+        raise UnsupportedTimeframeError(timeframe) from exc
+    return specification.get_interval_ns()
 
 
 __all__ = [

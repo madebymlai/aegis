@@ -32,7 +32,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pytest
-from aegis_data.rebasing import Rebasing, ratio_rebasing, spread_rebasing
+from aegis_runtime.domain.rebasing import Rebasing, ratio_rebasing, spread_rebasing
 from aegis_trader.domain.analytics_horizon import derive_horizon
 from aegis_trader.domain.sleeve_ledger import BookObservation, SleeveLedger
 from aegis_trader.domain.types import SleeveName

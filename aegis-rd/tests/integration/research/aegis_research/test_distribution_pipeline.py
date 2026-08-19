@@ -8,10 +8,14 @@ import pandas as pd
 import pytest
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import CatalogBackedDataPort
+from aegis_data.custom_data import CustomDataWarmer
+from aegis_data.ibkr import historic_catalog_client_factory
+from aegis_data.raw_bars import RawBars
+from aegis_data.storage import Catalog, CatalogInterval
+from aegis_data.testing import store_instrument_fixtures
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from research.aegis_research.component_registry import discover_component_registry
 from research.aegis_research.configuration import (
@@ -55,16 +59,16 @@ def _adjusted_last_with_cash_distribution() -> pd.Series:
 @pytest.mark.parametrize(
     ("case_name", "adjusted_last_factory", "expected_total_return"),
     [
-        ("verified-zero", _flat_adjusted_last, 0.0),
+        ("zero-distribution", _flat_adjusted_last, 0.0),
         (
             "distributing",
             _adjusted_last_with_cash_distribution,
             _DISTRIBUTING_RD_TOTAL_RETURN,
         ),
     ],
-    ids=["verified-zero", "distributing"],
+    ids=["zero-distribution", "distributing"],
 )
-def test_rd_pipeline_total_return_reflects_verified_distribution_coverage(
+def test_rd_pipeline_total_return_reflects_distribution_extents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     case_name: str,
@@ -98,10 +102,13 @@ def _pipeline_total_return(
 ) -> float:
     catalog_path = workspace / "catalog"
     _seed_flat_catalog(catalog_path, instrument)
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     port = CatalogBackedDataPort(
         catalog,
-        distribution_provider=_AdjustedLastProvider(adjusted_last),
+        custom_data_warmer=CustomDataWarmer(
+            catalog,
+            historic_catalog_client_factory(_AdjustedLastProvider(adjusted_last)),
+        ),
     )
     monkeypatch.setattr(
         run_pipeline_module,
@@ -193,14 +200,17 @@ def _write_always_long_strategy(path: Path) -> None:
 
 def _seed_flat_catalog(catalog_path: Path, instrument: InstrumentId) -> None:
     catalog_path.mkdir(parents=True, exist_ok=True)
-    catalog = ParquetDataCatalog(catalog_path)
-    catalog.write_data([equity_definition(instrument, "USD")])
+    catalog = Catalog.open(catalog_path)
+    store_instrument_fixtures(catalog, [equity_definition(instrument, "USD")])
     index = pd.date_range(_START, periods=_PERIODS, freq="D")
     bar_type = raw_bar_type(instrument, "1D")
-    catalog.write_data(
-        [_bar(bar_type, timestamp=timestamp) for timestamp in index],
-        start=pd.Timestamp(_START, tz="UTC").value,
-        end=pd.Timestamp(_END, tz="UTC").value,
+    RawBars(catalog).replace_interval(
+        bar_type,
+        CatalogInterval(
+            pd.Timestamp(_START, tz="UTC").value,
+            pd.Timestamp(_END, tz="UTC").value,
+        ),
+        tuple(_bar(bar_type, timestamp=timestamp) for timestamp in index),
     )
 
 

@@ -31,6 +31,9 @@ from research.aegis_research.component_registry import (
     ComponentFamily,
 )
 from research.aegis_research.configuration import LOCK_ROLES, Lock
+from research.aegis_research.optimization.component_source import (
+    COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION,
+)
 from research.aegis_research.optimization.param_namespace import (
     ComponentRef,
     slice_by_component,
@@ -82,7 +85,9 @@ def resolve_lock_run(lock: Lock, *, store: CandidateStore) -> ResolvedLockRun:
         )
     runtimes = _candidate_component_runtimes(lock, row["provenance"])
     # Lock-run reads the runtime-provenance shape that component_source writes —
-    # the one accepted coupling cost (ADR-0006).
+    # the one accepted coupling cost (ADR-0006). Every field of that shape is read
+    # strictly below, so a shape that moved fails loudly instead of resolving to
+    # different params.
     candidate_slices = slice_by_component(row["params"])
     component_params: ResolvedComponentParams = {}
     for runtime in runtimes:
@@ -147,16 +152,47 @@ def _component_params_for_runtime(
     runtime: Mapping[str, Any],
     candidate_key: str,
 ) -> dict[str, Any]:
-    params = dict(runtime.get("fixed_params", {}))
+    fixed_params = _required_runtime_field(runtime, "fixed_params", candidate_key)
+    param_keys = _required_runtime_field(runtime, "param_keys", candidate_key)
+    params = dict(fixed_params)
     slice_key = ComponentRef(component_family, component_id, component_slot)
     params.update(component_slices.get(slice_key, {}))
-    missing = sorted(set(runtime.get("param_keys", {})) - set(params))
+    missing = sorted(set(param_keys) - set(params))
     if missing:
         raise LockRunResolutionError(
             f"candidate {candidate_key} is missing params for component "
             f"{component_family}/{component_id} slot {component_slot!r}: {missing}"
         )
     return params
+
+
+def _required_runtime_field(
+    runtime: Mapping[str, Any],
+    field: str,
+    candidate_key: str,
+) -> Mapping[str, Any]:
+    """Read one Component-runtime param mapping, refusing to default it away.
+
+    Defaulting a missing ``fixed_params``/``param_keys`` to ``{}`` would drop the
+    Component's fixed params and reproduce a different strategy than the Candidate
+    names, with every other guard green — so an absent field is a resolution failure,
+    not an empty mapping.
+
+    Resolution deliberately does not gate on the recorded contract version: a
+    Candidate whose ``source`` moved in ways these fields don't express reproduces
+    correctly, and one whose fields did move fails here regardless of whether the
+    producer remembered to bump.
+    """
+    value = runtime.get(field)
+    if not isinstance(value, Mapping):
+        raise LockRunResolutionError(
+            f"candidate {candidate_key} records a Component runtime whose {field!r} is "
+            "missing or is not a mapping; this code reads component source contract "
+            f"{COMPONENT_OPTIMIZATION_SOURCE_SCHEMA_VERSION!r}. Its recorded Component "
+            "params cannot be reproduced — re-run the optimization under the current "
+            "research code, then re-lock."
+        )
+    return value
 
 
 def _candidate_key_for_lock(lock: Lock, *, store: CandidateStore) -> str:

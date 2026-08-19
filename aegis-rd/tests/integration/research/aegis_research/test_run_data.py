@@ -6,19 +6,13 @@ import pandas as pd
 import pytest
 from aegis_data.catalog import (
     CatalogBackedDataPort,
-    CatalogCoverageGapError,
     GapFillProviderError,
 )
-from aegis_data.custom_data import (
-    CustomDataCoverageError,
-    FixtureRecord,
-    ServedCustomData,
-)
-from aegis_data.distributions import Distribution, write_distribution_data
-from aegis_data.testing import FakeCatalog
+from aegis_data.distributions import Distribution
+from aegis_data.storage import Catalog
+from aegis_data.testing import FakeCatalog, store_custom_data_fixtures
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from research.aegis_research.canonical_json import to_builtin
 from research.aegis_research.instrument_resolution import TradeableInstrument
@@ -32,6 +26,7 @@ from research.aegis_research.run.data import (
     RunDataUnavailable,
     load_run_data,
 )
+from tests.support.custom_data import FixtureRecord
 from tests.support.research.aegis_research.factories import make_data_config
 from tests.support.research.aegis_research.market_data_fixtures import (
     OHLCV_ARRAY_NAMES,
@@ -41,7 +36,6 @@ from tests.support.research.aegis_research.market_data_fixtures import (
     seed_catalog_frames,
     seed_catalog_fx,
     seed_catalog_ohlcv,
-    unservable_port,
 )
 
 
@@ -66,7 +60,7 @@ def test_load_run_data_returns_an_eager_native_bundle_from_one_catalog_window(
         path=str(catalog_path),
     )
     port = CatalogBackedDataPort(
-        ParquetDataCatalog(catalog_path),
+        Catalog.open(catalog_path),
         resolver=config.marking_resolver(),
     )
 
@@ -92,7 +86,7 @@ def test_load_run_data_returns_an_eager_native_bundle_from_one_catalog_window(
     assert run_data.replay_index.equals(run_data.bundle.array("Close").index)
     assert run_data.instrument_count == 2
     identity = to_builtin(run_data.identity)
-    assert identity["schema_version"] == "run_data.v2"
+    assert identity["schema_version"] == "run_data.v3"
     assert identity["requested_instrument_ids"] == [
         "MSFT.XNAS",
         "AAPL.XNAS",
@@ -133,7 +127,7 @@ def test_load_run_data_drops_calendar_rows_missing_from_any_tradeable(
         end="2024-01-03",
         missing_index="drop",
     )
-    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path))
+    port = CatalogBackedDataPort(Catalog.open(catalog_path))
 
     run_data = load_run_data(
         config,
@@ -170,7 +164,7 @@ def test_load_run_data_rejects_mismatching_tradeable_calendars_under_raise(
         end="2024-01-03",
         missing_index="raise",
     )
-    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path))
+    port = CatalogBackedDataPort(Catalog.open(catalog_path))
 
     with pytest.raises(RunDataIndexMismatchError, match="mismatching indexes"):
         load_run_data(
@@ -179,31 +173,6 @@ def test_load_run_data_rejects_mismatching_tradeable_calendars_under_raise(
             port=port,
             custom_data_providers=None,
         )
-
-
-def test_load_run_data_carries_compact_failure_context_for_catalog_gaps() -> None:
-    config = make_data_config(
-        arrays=["Open", "Close"],
-        base_currency="USD",
-        instruments=["MSFT.XNAS"],
-        start="2024-01-01",
-        end="2024-01-03",
-    )
-
-    with pytest.raises(RunDataUnavailable) as excinfo:
-        load_run_data(
-            config,
-            required_arrays=("Open", "Close"),
-            port=unservable_port(),
-            custom_data_providers=None,
-        )
-
-    assert isinstance(excinfo.value.__cause__, CatalogCoverageGapError)
-    context = to_builtin(excinfo.value.context)
-    assert context["schema_version"] == "run_data_failure.v1"
-    assert context["requested_instrument_ids"] == ["MSFT.XNAS"]
-    assert context["error_type"] == "CatalogCoverageGapError"
-    assert "quality" not in context
 
 
 def test_load_run_data_chains_gap_fill_provider_failures() -> None:
@@ -281,7 +250,7 @@ def test_load_run_data_applies_one_catalog_currency_conversion_to_the_bundle(
         end="2024-01-02",
     )
     port = CatalogBackedDataPort(
-        ParquetDataCatalog(catalog_path),
+        Catalog.open(catalog_path),
         resolver=config.marking_resolver(),
     )
 
@@ -309,7 +278,7 @@ def test_load_run_data_applies_one_catalog_currency_conversion_to_the_bundle(
     assert not hasattr(run_data, "pnl_open")
 
 
-def test_load_run_data_carries_verified_distributions_and_native_instrument_facts(
+def test_load_run_data_carries_distributions_and_native_instrument_facts(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "catalog"
@@ -326,7 +295,7 @@ def test_load_run_data_carries_verified_distributions_and_native_instrument_fact
         amount=0.42,
         currency="USD",
     )
-    write_distribution_data(ParquetDataCatalog(catalog_path), [distribution])
+    store_custom_data_fixtures(Catalog.open(catalog_path), [distribution])
     config = make_data_config(
         arrays=["OHLCV"],
         base_currency="USD",
@@ -334,7 +303,7 @@ def test_load_run_data_carries_verified_distributions_and_native_instrument_fact
         start="2024-01-01",
         end="2024-01-03",
     )
-    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path))
+    port = CatalogBackedDataPort(Catalog.open(catalog_path))
 
     run_data = load_run_data(
         config,
@@ -371,19 +340,19 @@ def test_load_run_data_persists_and_warm_reads_custom_arrays_without_provider_id
         path=str(catalog_path),
     )
     provider = _FixtureProvider(secret="credential-must-not-persist")
-    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path))
+    port = CatalogBackedDataPort(Catalog.open(catalog_path))
 
     cold = load_run_data(
         config,
         required_arrays=("Open", "Close", "FixtureValue", "FixtureAvailable"),
         port=port,
-        custom_data_providers={FixtureRecord: (provider,)},
+        custom_data_providers={FixtureRecord: provider},
     )
     warm = load_run_data(
         config,
         required_arrays=("Open", "Close", "FixtureValue", "FixtureAvailable"),
         port=port,
-        custom_data_providers={FixtureRecord: (provider,)},
+        custom_data_providers={FixtureRecord: provider},
     )
 
     aapl = InstrumentId.from_str("AAPL.XNAS")
@@ -395,23 +364,6 @@ def test_load_run_data_persists_and_warm_reads_custom_arrays_without_provider_id
     assert "credential-must-not-persist" not in str(to_builtin(cold.identity))
 
 
-def test_load_run_data_reports_missing_custom_coverage_as_unavailable(
-    tmp_path: Path,
-) -> None:
-    config, port = _custom_config_and_port(tmp_path)
-
-    with pytest.raises(RunDataUnavailable) as excinfo:
-        load_run_data(
-            config,
-            required_arrays=("Open", "Close", "FixtureValue"),
-            port=port,
-            custom_data_providers=None,
-        )
-
-    assert isinstance(excinfo.value.__cause__, CustomDataCoverageError)
-    assert excinfo.value.context.error_type == "CustomDataCoverageError"
-
-
 def test_load_run_data_chains_custom_provider_failures(tmp_path: Path) -> None:
     config, port = _custom_config_and_port(tmp_path)
 
@@ -420,7 +372,7 @@ def test_load_run_data_chains_custom_provider_failures(tmp_path: Path) -> None:
             config,
             required_arrays=("Open", "Close", "FixtureValue"),
             port=port,
-            custom_data_providers={FixtureRecord: (_FailingFixtureProvider(),)},
+            custom_data_providers={FixtureRecord: _FailingFixtureProvider()},
         )
 
     assert isinstance(excinfo.value.__cause__, GapFillProviderError)
@@ -436,7 +388,7 @@ def test_load_run_data_keeps_incompatible_custom_values_direct(tmp_path: Path) -
             config,
             required_arrays=("Open", "Close", "FixtureValue"),
             port=port,
-            custom_data_providers={FixtureRecord: (_NonFiniteFixtureProvider(),)},
+            custom_data_providers={FixtureRecord: _NonFiniteFixtureProvider()},
         )
 
     assert not isinstance(excinfo.value, RunDataUnavailable)
@@ -535,11 +487,11 @@ def _custom_config_and_port(tmp_path: Path):
         end="2024-01-03",
         path=str(catalog_path),
     )
-    return config, CatalogBackedDataPort(ParquetDataCatalog(catalog_path))
+    return config, CatalogBackedDataPort(Catalog.open(catalog_path))
 
 
 class _BrokenProvider:
-    def request_bars(self, bar_type: BarType, **_kwargs: object) -> object:
+    def warm_bars(self, bar_type: BarType, _interval: object) -> bool:
         raise RuntimeError(f"gateway dropped while fetching {bar_type}")
 
 
@@ -554,7 +506,7 @@ class _FixtureProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         self.requests.append((instrument_id, start, end))
         record = FixtureRecord(
             end.value,
@@ -563,7 +515,7 @@ class _FixtureProvider:
             value=7.0,
             provider="fixture",
         )
-        return ServedCustomData(records=(record,), served_from=start)
+        return (record,)
 
 
 class _FailingFixtureProvider:
@@ -573,7 +525,7 @@ class _FailingFixtureProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         raise RuntimeError("custom provider offline")
 
 
@@ -584,7 +536,7 @@ class _NonFiniteFixtureProvider:
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
+    ) -> tuple[FixtureRecord, ...]:
         record = FixtureRecord(
             end.value,
             end.value,
@@ -592,4 +544,4 @@ class _NonFiniteFixtureProvider:
             value=float("nan"),
             provider="fixture",
         )
-        return ServedCustomData(records=(record,), served_from=start)
+        return (record,)

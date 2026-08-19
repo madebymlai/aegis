@@ -24,7 +24,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cached_property
 
-from aegis_data.bar_type import timeframe_to_ns
+from aegis_data.bar_type import UnsupportedTimeframeError, timeframe_to_ns
 
 _NS_PER_DAY = timeframe_to_ns("1D")
 
@@ -100,7 +100,12 @@ def derive_horizon(sleeve_timeframes: Iterable[str]) -> AnalyticsHorizon:
     The count comes from the internal weekday-convention table; a width
     without a validated convention fails closed.
     """
-    widths = [timeframe_to_ns(timeframe) for timeframe in sleeve_timeframes]
+    try:
+        widths = [timeframe_to_ns(timeframe) for timeframe in sleeve_timeframes]
+    except UnsupportedTimeframeError as exc:
+        raise UnsupportedAnalyticsWidthError(
+            f"invalid Sleeve cadence for analytics: {exc}"
+        ) from exc
     if not widths:
         raise UnsupportedAnalyticsWidthError(
             "deriving an analytics horizon needs at least one Sleeve cadence"

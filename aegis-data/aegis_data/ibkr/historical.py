@@ -1,9 +1,12 @@
-"""IBKR historic fetch — the DataProvider adapter for research and backfill.
+"""IBKR historic fetch for research and backfill.
 
-:class:`IbkrHistoricalProvider` is pure fetch behind the Nautilus DataProvider
-port (``request_bars`` *returns* bars; :class:`CatalogBackedDataPort` is the
-single writer of record, ADR-0008), hides ``asyncio`` behind a synchronous
-surface, and resolves identity through IB simplified symbology (ADR-0005).
+:class:`IbkrHistoricalProvider` hides the standalone vendor session's
+``asyncio`` surface. :class:`HistoricDataClient` presents Instrument, Bar, and
+provider-backed Custom Data requests to a bare Nautilus DataEngine, which owns
+catalog-first lookup, missing intervals, and Catalog write-back.
+The provider retains the instrument-definition and ``ADJUSTED_LAST`` extensions
+the stock Bar API cannot express, and resolves identity through IB simplified
+symbology (ADR-0005).
 The ``ADJUSTED_LAST`` extension and process-singleton connection live here with
 it; :func:`seed_instrument_definitions` is the separate Step-1 definition write.
 Every ``ibapi``/Nautilus-adapter import is lazy — importing this module never
@@ -25,11 +28,26 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 import pandas as pd
 from nautilus_trader.common.config import msgspec_encoding_hook
-from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.core.uuid import UUID4
+from nautilus_trader.data.client import MarketDataClient
+from nautilus_trader.data.messages import RequestInstrument
+from nautilus_trader.model.identifiers import ClientId, InstrumentId
 
+from aegis_data._catalog_request import (
+    CatalogClientBinding,
+    CatalogClientBindingFactory,
+    CatalogClientFailure,
+    CatalogClientFailureRecorder,
+    run_catalog_request,
+)
 from aegis_data.bar_type import raw_bar_type
-from aegis_data.catalog import ServedBars
+from aegis_data.distributions import (
+    AdjustedClose,
+    AdjustedCloseRequestMetadata,
+    adjusted_close_records,
+)
 from aegis_data.ibkr.symbology import mic_instrument_provider_config
+from aegis_data.storage import Catalog
 
 if TYPE_CHECKING:
     from nautilus_trader.adapters.interactive_brokers.common import IBContract
@@ -104,15 +122,14 @@ class _AdjustedLastCompletionError(RuntimeError):
     """A registered Nautilus adjusted-history request did not complete."""
 
 
-class _HistoricalRequestCompletionError(RuntimeError):
-    """A registered IBKR historical-bars request did not complete."""
+class UnsupportedHistoricCustomDataError(ValueError):
+    """The historic IBKR client cannot serve the requested Custom Data type."""
 
 
 _PRESERVE_HISTORICAL_FAILURE: ContextVar[bool] = ContextVar(
     "preserve_historical_failure",
     default=False,
 )
-_HISTORICAL_REQUEST_FAILED = object()
 
 
 @dataclass(frozen=True)
@@ -148,13 +165,13 @@ class IbkrHistoricalProvider:
                 f"expected one of {sorted(_IB_MARKET_DATA_TYPES)}"
             )
 
-    def request_bars(
+    def _request_bars_for_engine(
         self,
         bar_type: BarType,
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedBars:
+    ) -> Sequence[Bar]:
         """The vendor bars for *bar_type* over ``[start, end]`` in one native request.
 
         The whole window is asked for as a single IB ``duration`` ending at *end*.
@@ -162,12 +179,8 @@ class IbkrHistoricalProvider:
         does not re-implement that walk; and IB clamps the answer at the instrument's
         earliest available data, so no request ever steps past the listing into empty
         pre-history — the job the old backward walk did with a no-data wall (#75),
-        now done by IB itself in one request.  ``served_from`` reports how far back
-        the answer reached: the requested *start* when history covers it (so a
-        follow-on write abuts the prior file), or the oldest bar returned when IB
-        clamped at a later listing (so the pre-history head stays unclaimed for the
-        coverage gate).  A whole-unit duration overshoots below *start*; those extra
-        bars are trimmed back to the requested window.
+        now done by IB itself in one request. A whole-unit duration overshoots below
+        *start*; those extra bars are trimmed back to the requested window.
         """
         contract = self._expired_future_contract(bar_type.instrument_id)
         instrument_kwargs = (
@@ -194,7 +207,7 @@ class IbkrHistoricalProvider:
         start: pd.Timestamp,
         end: pd.Timestamp,
         instrument_kwargs: Mapping[str, Any],
-    ) -> ServedBars:
+    ) -> Sequence[Bar]:
         # The session turns its own timeout into an empty response. Keep that fallback
         # strictly later so Aegis can preserve the provider failure as an exception.
         request_deadline = min(float(self.timeout), self.call_deadline)
@@ -212,13 +225,7 @@ class IbkrHistoricalProvider:
             timeout=request_deadline,
         )
         # The whole-unit duration can reach before `start`; keep only the window.
-        bars = [bar for bar in (pulled or []) if bar.ts_event >= start.value]
-        # Coverage is served from `start` when history reaches it (contiguous with any
-        # prior file), else from the oldest bar IB clamped at (#75, the unclaimed head).
-        served_from = (
-            start if _history_reached(bars, start) else _first_bar_instant(bars, end)
-        )
-        return ServedBars(tuple(bars), served_from)
+        return tuple(bar for bar in (pulled or []) if bar.ts_event >= start.value)
 
     def request_instruments(
         self, instrument_ids: Sequence[InstrumentId]
@@ -354,29 +361,158 @@ class IbkrHistoricalProvider:
         return _expired_future_contract(instrument_id)
 
 
-# The oldest returned bar within this of the requested start reads as history
-# reaching the start across a market closure; a wider gap reads as IB clamping at a
-# later listing date (#75).  Wider than any weekend/holiday and far narrower than a
-# real listing gap — the only blur is a start authored within this margin of an
-# unknown listing, a bounded (<= margin) over-claim the coverage gate tolerates.
-_WALL_PROBE_MARGIN = pd.Timedelta(days=14)
+class HistoricDataClient(MarketDataClient):
+    """Present Nautilus's standalone IBKR historic session to ``DataEngine``."""
+
+    def __init__(
+        self,
+        client_id: ClientId,
+        msgbus: Any,
+        cache: Any,
+        clock: Any,
+        provider: IbkrHistoricalProvider,
+    ) -> None:
+        super().__init__(client_id, msgbus, cache, clock, None, None)
+        self._provider = provider
+        self._request_failure = CatalogClientFailureRecorder()
+
+    def _connect(self) -> None:
+        pass
+
+    def _disconnect(self) -> None:
+        pass
+
+    def request_bars(self, request: Any) -> None:
+        bars = self._provider._request_bars_for_engine(
+            request.bar_type,
+            start=pd.Timestamp(request.start),
+            end=pd.Timestamp(request.end),
+        )
+        self._handle_bars_py(
+            request.bar_type,
+            list(bars),
+            request.id,
+            request.start,
+            request.end,
+            request.params,
+        )
+
+    def request_instrument(self, request: Any) -> None:
+        """Answer a native instrument request from the vendor provider."""
+        try:
+            instruments = self._provider.request_instruments((request.instrument_id,))
+        except Exception as error:  # noqa: BLE001 - surfaced by the seeding command
+            self._request_failure.record(error)
+            return
+        instrument = next(
+            (
+                instrument
+                for instrument in instruments
+                if instrument.id == request.instrument_id
+            ),
+            None,
+        )
+        if instrument is None:
+            self._handle_instruments_py(
+                request.instrument_id.venue,
+                [],
+                request.id,
+                request.start,
+                request.end,
+                request.params,
+            )
+            return
+        self._handle_instrument_py(
+            _catalog_safe_instrument(instrument),
+            request.id,
+            request.start,
+            request.end,
+            request.params,
+        )
+
+    def request(self, request: Any) -> None:
+        if request.data_type.type is not AdjustedClose:
+            error = UnsupportedHistoricCustomDataError(
+                "IBKR historical client does not support Custom Data type "
+                f"{request.data_type.type.__name__}"
+            )
+            self._respond_to_custom_data_request(request, (), error=error)
+            return
+        try:
+            closes = self._provider.request_adjusted_last(
+                instrument_id=request.instrument_id,
+                start=pd.Timestamp(request.start),
+                end=pd.Timestamp(request.end),
+                currency=AdjustedCloseRequestMetadata.from_params(
+                    request.params
+                ).currency,
+            )
+            records = adjusted_close_records(request.instrument_id, closes)
+        except Exception as error:  # noqa: BLE001 - surfaced by the warming command
+            self._respond_to_custom_data_request(request, (), error=error)
+            return
+        self._respond_to_custom_data_request(request, records)
+
+    def _respond_to_custom_data_request(
+        self,
+        request: Any,
+        records: Sequence[AdjustedClose],
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        if error is not None:
+            self._request_failure.record(error)
+            return
+        self._handle_data_response_py(
+            request.data_type,
+            list(records),
+            request.id,
+            request.start,
+            request.end,
+            request.params,
+        )
+
+    def request_failure(self) -> CatalogClientFailure | None:
+        return self._request_failure.failure
 
 
-def _history_reached(bars: Sequence[Bar], start: pd.Timestamp) -> bool:
-    """Whether the answer's oldest bar is close enough to *start* that history covers
-    it — only a market closure lies between.  A wider gap is IB clamping at a later
-    listing date (#75): the oldest bar is where history begins, not *start*."""
-    if not bars:
-        return False
-    return bars[0].ts_event - start.value <= _WALL_PROBE_MARGIN.value
+def historic_data_client_factory(
+    provider: IbkrHistoricalProvider,
+) -> Callable[[Any, Any, Any], MarketDataClient]:
+    """Build the thin historic-session client used by a bare research engine."""
+
+    def build(msgbus: Any, cache: Any, clock: Any) -> MarketDataClient:
+        return HistoricDataClient(
+            ClientId("AEGIS-IBKR-HIST"),
+            msgbus,
+            cache,
+            clock,
+            provider,
+        )
+
+    return build
 
 
-def _first_bar_instant(bars: Sequence[Bar], fallback: pd.Timestamp) -> pd.Timestamp:
-    """Where served history begins: the oldest pulled bar's event time, or
-    *fallback* when nothing was pulled at all (nothing is claimed either way)."""
-    if not bars:
-        return fallback
-    return pd.Timestamp(bars[0].ts_event, tz="UTC")
+def historic_catalog_client_factory(
+    provider: IbkrHistoricalProvider,
+) -> CatalogClientBindingFactory:
+    """Build the IBKR client with a visible catalog-request failure sink."""
+
+    def build(
+        msgbus: Any,
+        cache: Any,
+        clock: Any,
+    ) -> CatalogClientBinding:
+        client = HistoricDataClient(
+            ClientId("AEGIS-IBKR-HIST"),
+            msgbus,
+            cache,
+            clock,
+            provider,
+        )
+        return CatalogClientBinding(client, client.request_failure)
+
+    return build
 
 
 async def _request_instrument_parts(
@@ -519,38 +655,35 @@ class _HistoricSession:
         timeout: int,
         default_value: Any | None = None,
         suppress_timeout_warning: bool = False,
+        raise_on_error: bool = False,
     ) -> Any:
+        """Tell a failed historical request apart from a genuinely empty one.
+
+        A bar request asks for an empty list as its default, so a fetch that
+        timed out and a window that is genuinely empty come back identical —
+        and extending the Catalog through the first would include history
+        the source never answered.
+
+        ``raise_on_error`` is the vendor's own answer, added in 1.231.0: it
+        re-raises the timeout or connection error instead of returning the
+        default. Those are the only two paths that return it, so forcing the
+        flag inside a historical scope is exactly the distinction needed. This
+        override exists solely to inject it, because ``request_bars`` offers no
+        way to pass it down; when the vendor wires it into the bar path itself,
+        the whole session collaborator can go.
+        """
         preserve_failure = (
             _PRESERVE_HISTORICAL_FAILURE.get()
             and isinstance(default_value, list)
             and not default_value
         )
-        if not preserve_failure:
-            if default_value is None and not suppress_timeout_warning:
-                return await self._await_vendor_request(request, timeout)
-            return await self._await_vendor_request(
-                request,
-                timeout,
-                default_value=default_value,
-                suppress_timeout_warning=suppress_timeout_warning,
-            )
-
-        result = await self._await_vendor_request(
+        return await self._await_vendor_request(
             request,
             timeout,
-            default_value=_HISTORICAL_REQUEST_FAILED,
+            default_value=default_value,
             suppress_timeout_warning=suppress_timeout_warning,
+            raise_on_error=raise_on_error or preserve_failure,
         )
-        if result is not _HISTORICAL_REQUEST_FAILED:
-            return result
-
-        error = _HistoricalRequestCompletionError(
-            f"IBKR historical request {request.req_id} did not complete"
-        )
-        cause = _completed_request_failure(request)
-        if cause is not None:
-            raise error from cause
-        raise error
 
     async def request_instruments(self, **kwargs: Any) -> Sequence[Instrument]:
         return await self._client.request_instruments(**kwargs)
@@ -586,13 +719,6 @@ class _HistoricSession:
         # The historic client has no public teardown; stopping the inner client
         # drains its background tasks cleanly (so closing the loop is quiet).
         await self._native_client._stop_async()
-
-
-def _completed_request_failure(request: Any) -> BaseException | None:
-    future = request.future
-    if future.cancelled():
-        return None
-    return future.exception()
 
 
 async def _request_native_adjusted_last(
@@ -726,43 +852,48 @@ def _naive_utc(timestamp: pd.Timestamp) -> datetime:
 
 
 def seed_instrument_definitions(
-    catalog: Any,
+    catalog: Catalog,
     provider: IbkrHistoricalProvider,
     instrument_ids: Sequence[InstrumentId],
 ) -> None:
-    """Persist instrument definitions to *catalog* (the Step-1 write, ADR-0008).
+    """Ensure definitions through Nautilus's catalog-first request path.
 
-    Definitions are a **separate lifecycle** from the per-window bar fill — static
-    setup, not windowed data (ADR-0008, ISP: the bar port is not widened). It is
-    **idempotent**: only the definitions missing from *catalog* are fetched and
-    written, so calling it is free when they are already present — which is what
-    lets the lazy fill trigger it on a backfill without making a warm read connect
-    to IBKR. The provider *fetches* definitions, aegis-data *writes* them.
+    ``DataEngine`` answers a warm request from the Catalog and dispatches a cold
+    request to the vendor client. With ``update_catalog=True`` it owns the
+    idempotent write-back as well; this adapter only normalizes IBKR's auxiliary
+    ``info`` payload before returning the definition to the engine.
     """
-    missing = _missing_definitions(catalog, instrument_ids)
-    if not missing:
-        return
-    instruments = provider.request_instruments(missing)
-    if instruments:
-        catalog.write_data(
-            [_catalog_safe_instrument(instrument) for instrument in instruments]
+    client_factory = historic_catalog_client_factory(provider)
+    for instrument_id in instrument_ids:
+        outcome = run_catalog_request(
+            catalog,
+            end_ns=pd.Timestamp.max.value - 1,
+            client_factory=client_factory,
+            request_factory=functools.partial(
+                _catalog_instrument_request,
+                instrument_id,
+            ),
         )
+        if outcome.failure is not None:
+            raise outcome.failure.cause
 
 
-def _missing_definitions(
-    catalog: Any, instrument_ids: Sequence[InstrumentId]
-) -> list[InstrumentId]:
-    present = {
-        instrument.id
-        for instrument in catalog.instruments(
-            instrument_ids=[instrument_id.value for instrument_id in instrument_ids]
-        )
-    }
-    return [
-        instrument_id
-        for instrument_id in instrument_ids
-        if instrument_id not in present
-    ]
+def _catalog_instrument_request(
+    instrument_id: InstrumentId,
+    clock: Any,
+    callback: Callable[[object], None],
+) -> RequestInstrument:
+    return RequestInstrument(
+        instrument_id=instrument_id,
+        start=None,
+        end=None,
+        client_id=None,
+        venue=instrument_id.venue,
+        callback=callback,
+        request_id=UUID4(),
+        ts_init=clock.timestamp_ns(),
+        params={"update_catalog": True},
+    )
 
 
 _DROP_INFO_VALUE = object()

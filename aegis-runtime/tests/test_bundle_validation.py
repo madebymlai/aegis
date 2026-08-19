@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 
-from aegis_runtime.bundle import (
+from aegis_runtime.execution.bundle import (
     SLEEVE_GROSS_LIMIT,
     ComponentSpec,
     DataContract,
@@ -14,8 +14,8 @@ from aegis_runtime.bundle import (
     _assert_latest_row_not_nan,
     _validate_market_data,
 )
-from aegis_runtime.drift_band import DriftBand
-from aegis_runtime.exposure_validation import InvalidExposureLimits
+from aegis_runtime.domain.drift_band import DriftBand
+from aegis_runtime.domain.exposure_validation import InvalidExposureLimits
 
 
 def _index(n: int) -> pd.DatetimeIndex:

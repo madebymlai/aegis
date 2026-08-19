@@ -5,7 +5,7 @@ tested.  What *is* unit testable — and what these tests pin — is the adapter
 own logic: translating a ``BarType`` + window into the historic client's request
 shape (naive UTC datetimes), hiding ``asyncio`` behind a synchronous port, and
 connecting/closing around every call.  A fake session stands in for IBKR.  The
-live client wiring (:func:`attach_live_clients`) needs ``ibapi`` and is covered
+    live client wiring (:func:`live_clients`) needs ``ibapi`` and is covered
 from the Trader's node tests (where ``ibapi`` is installed); here we pin only that
 importing the adapter never pulls ``ibapi`` (the lazy boundary).
 """
@@ -17,31 +17,56 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import pytest
 from nautilus_trader.model.currencies import USD
-from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.bar_type import raw_bar_type
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogWindowRequest,
     GapFillProviderError,
-    NautilusDataProviderPort,
-    ServedBars,
 )
+from aegis_data.custom_data import CustomDataWarmer
+from aegis_data.distributions import Distribution
 from aegis_data.ibkr import (
     IbkrHistoricalProvider,
     IbkrRequestError,
+    historic_catalog_client_factory,
+    historic_data_client_factory,
     seed_instrument_definitions,
 )
-from aegis_data.ibkr.historical import _HistoricSession
+from aegis_data.ibkr.historical import (
+    UnsupportedHistoricCustomDataError,
+    _HistoricSession,
+)
+from aegis_data.research_bars import CatalogBarWarmer
+from aegis_data.storage import Catalog
+from aegis_data.testing import store_instrument_fixtures
+
+
+def test_historic_client_rejects_unsupported_custom_data_before_vendor_fetch(
+    tmp_path: Path,
+) -> None:
+    warmer = CustomDataWarmer(
+        Catalog.open(tmp_path),
+        historic_catalog_client_factory(cast(Any, object())),
+    )
+
+    with pytest.raises(GapFillProviderError) as excinfo:
+        warmer.warm(
+            Distribution,
+            (InstrumentId.from_str("SPY.ARCA"),),
+            start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-01-03", tz="UTC"),
+        )
+
+    assert isinstance(excinfo.value.__cause__, UnsupportedHistoricCustomDataError)
 
 
 class _FakeHistoricClient:
@@ -86,11 +111,16 @@ class _FailureSwallowingNativeClient:
         timeout: int,
         default_value: Any | None = None,
         suppress_timeout_warning: bool = False,
+        raise_on_error: bool = False,
     ) -> Any:
         del timeout, suppress_timeout_warning
         try:
             return await request.future
         except ConnectionError:
+            # Mirrors the vendor: the fault is swallowed into the caller's
+            # default unless the caller asked to have it re-raised.
+            if raise_on_error:
+                raise
             return default_value
 
     async def _stop_async(self) -> None:
@@ -137,16 +167,13 @@ def test_request_bars_maps_bar_type_and_window_then_returns_bars() -> None:
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
-    out = provider.request_bars(
+    out = provider._request_bars_for_engine(
         bar_type,
         start=pd.Timestamp("2024-01-01", tz="UTC"),
         end=pd.Timestamp("2024-03-01", tz="UTC"),
     )
 
-    assert list(out.bars) == served
-    # The oldest bar is one closure past the requested start, so history covers it:
-    # coverage is served from the requested start (contiguous with any prior file).
-    assert out.served_from == pd.Timestamp("2024-01-01", tz="UTC")
+    assert list(out) == served
     assert len(fake.bar_calls) == 1
     call = fake.bar_calls[0]
     assert call["bar_specifications"] == ["1-DAY-LAST"]
@@ -169,7 +196,7 @@ def test_request_bars_asks_one_native_duration_for_a_wide_window() -> None:
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
-    out = provider.request_bars(
+    out = provider._request_bars_for_engine(
         bar_type,
         start=pd.Timestamp("2016-06-01", tz="UTC"),
         end=pd.Timestamp("2018-01-01", tz="UTC"),
@@ -179,8 +206,7 @@ def test_request_bars_asks_one_native_duration_for_a_wide_window() -> None:
     assert fake.bar_calls[0]["duration"] == "2 Y"
     assert fake.bar_calls[0]["end_date_time"] == datetime(2018, 1, 1)
     assert "start_date_time" not in fake.bar_calls[0]
-    assert list(out.bars) == served
-    assert out.served_from == pd.Timestamp("2016-06-01", tz="UTC")
+    assert list(out) == served
     # One session serves the request — connect/close wrap it once.
     assert fake.events == ["connect", "aclose"]
 
@@ -190,21 +216,18 @@ class _StampedBar:
         self.ts_event = pd.Timestamp(day, tz="UTC").value
 
 
-def test_request_bars_claims_nothing_when_no_bars_are_returned() -> None:
-    """An empty answer claims no coverage: ``served_from`` falls back to the window
-    end, so the coverage gate sees the whole window as unserved (nothing to write)."""
+def test_request_bars_preserves_an_empty_vendor_answer() -> None:
     fake = _FakeHistoricClient(bars=[], instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
-    out = provider.request_bars(
+    out = provider._request_bars_for_engine(
         bar_type,
         start=pd.Timestamp("2024-01-01", tz="UTC"),
         end=pd.Timestamp("2024-03-01", tz="UTC"),
     )
 
-    assert list(out.bars) == []
-    assert out.served_from == pd.Timestamp("2024-03-01", tz="UTC")
+    assert list(out) == []
 
 
 def test_request_bars_preempts_session_empty_fallback() -> None:
@@ -218,7 +241,7 @@ def test_request_bars_preempts_session_empty_fallback() -> None:
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
     with pytest.raises(IbkrRequestError) as excinfo:
-        provider.request_bars(
+        provider._request_bars_for_engine(
             bar_type,
             start=pd.Timestamp("2024-01-01", tz="UTC"),
             end=pd.Timestamp("2024-02-01", tz="UTC"),
@@ -235,15 +258,15 @@ def test_request_bars_preserves_vendor_connection_failure() -> None:
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
     with pytest.raises(IbkrRequestError) as excinfo:
-        provider.request_bars(
+        provider._request_bars_for_engine(
             bar_type,
             start=pd.Timestamp("2024-01-01", tz="UTC"),
             end=pd.Timestamp("2024-02-01", tz="UTC"),
         )
 
-    completion_error = excinfo.value.__cause__
-    assert isinstance(completion_error, RuntimeError)
-    assert isinstance(completion_error.__cause__, ConnectionError)
+    # The vendor's fault is chained directly: a dropped connection must never
+    # arrive as the empty list that means "checked, and there was nothing".
+    assert isinstance(excinfo.value.__cause__, ConnectionError)
 
 
 def test_request_bars_preserves_genuine_empty_vendor_history() -> None:
@@ -253,24 +276,24 @@ def test_request_bars_preserves_genuine_empty_vendor_history() -> None:
     )
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
-    result = provider.request_bars(
+    result = provider._request_bars_for_engine(
         bar_type,
         start=pd.Timestamp("2024-01-01", tz="UTC"),
         end=pd.Timestamp("2024-02-01", tz="UTC"),
     )
 
-    assert result == ServedBars((), pd.Timestamp("2024-02-01", tz="UTC"))
+    assert result == ()
 
 
 def test_historical_failure_scope_resets_before_unrelated_requests() -> None:
     vendor = _ConnectionFailingVendorClient()
     session = _HistoricSession(vendor)
 
-    async def exercise_session() -> tuple[RuntimeError | None, list[Any]]:
-        failure: RuntimeError | None = None
+    async def exercise_session() -> tuple[Exception | None, list[Any]]:
+        failure: Exception | None = None
         try:
             await session.request_bars()
-        except RuntimeError as exc:
+        except ConnectionError as exc:
             failure = exc
 
         future = asyncio.get_running_loop().create_future()
@@ -284,7 +307,9 @@ def test_historical_failure_scope_resets_before_unrelated_requests() -> None:
 
     failure, unrelated_result = asyncio.run(exercise_session())
 
-    assert isinstance(failure, RuntimeError)
+    # The vendor's own fault surfaces, rather than a wrapper of ours; the
+    # unrelated request still swallows, proving the scope did not leak.
+    assert isinstance(failure, ConnectionError)
     assert unrelated_result == []
 
 
@@ -306,6 +331,7 @@ expected_names = (
     "timeout",
     "default_value",
     "suppress_timeout_warning",
+    "raise_on_error",
 )
 assert tuple(vendor) == expected_names
 assert vendor["self"].kind is Parameter.POSITIONAL_OR_KEYWORD
@@ -318,6 +344,8 @@ assert vendor["request"].default is Parameter.empty
 assert vendor["timeout"].default is Parameter.empty
 assert vendor["default_value"].default is None
 assert vendor["suppress_timeout_warning"].default is False
+assert vendor["raise_on_error"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert vendor["raise_on_error"].default is False
 assert tuple(adapter) == expected_names
 assert adapter["self"].kind is Parameter.POSITIONAL_OR_KEYWORD
 assert adapter["request"].kind is Parameter.POSITIONAL_OR_KEYWORD
@@ -329,6 +357,8 @@ assert adapter["request"].default is Parameter.empty
 assert adapter["timeout"].default is Parameter.empty
 assert adapter["default_value"].default is None
 assert adapter["suppress_timeout_warning"].default is False
+assert adapter["raise_on_error"].kind is Parameter.POSITIONAL_OR_KEYWORD
+assert adapter["raise_on_error"].default is False
 """
 
     subprocess.run(
@@ -346,7 +376,11 @@ def test_catalog_port_preserves_vendor_connection_failure(tmp_path: Path) -> Non
     )
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
-    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path), provider=provider)
+    catalog = Catalog.open(catalog_path)
+    port = CatalogBackedDataPort(
+        catalog,
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
+    )
     request = CatalogWindowRequest(
         instrument_ids=(InstrumentId.from_str("AAPL.NASDAQ"),),
         start="2024-01-01",
@@ -358,9 +392,7 @@ def test_catalog_port_preserves_vendor_connection_failure(tmp_path: Path) -> Non
 
     provider_error = excinfo.value.__cause__
     assert isinstance(provider_error, IbkrRequestError)
-    completion_error = provider_error.__cause__
-    assert isinstance(completion_error, RuntimeError)
-    assert isinstance(completion_error.__cause__, ConnectionError)
+    assert isinstance(provider_error.__cause__, ConnectionError)
 
 
 def test_catalog_port_translates_request_deadline_to_provider_failure(
@@ -374,7 +406,11 @@ def test_catalog_port_translates_request_deadline_to_provider_failure(
     )
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
-    port = CatalogBackedDataPort(ParquetDataCatalog(catalog_path), provider=provider)
+    catalog = Catalog.open(catalog_path)
+    port = CatalogBackedDataPort(
+        catalog,
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
+    )
     request = CatalogWindowRequest(
         instrument_ids=(InstrumentId.from_str("AAPL.NASDAQ"),),
         start="2024-01-01",
@@ -388,19 +424,18 @@ def test_catalog_port_translates_request_deadline_to_provider_failure(
     assert isinstance(excinfo.value.__cause__.__cause__, TimeoutError)
 
 
-def test_request_bars_serves_from_the_listing_when_history_clamps_short() -> None:
+def test_request_bars_returns_short_history_when_ib_clamps_at_listing() -> None:
     """GH #75: IB clamps its answer at the instrument's earliest available data, so a
     single request reaching before the listing simply returns fewer bars — the
     provider never steps into empty pre-listing history.  The oldest returned bar IS
     where history begins: coverage is served from there (far past the requested
-    start), and the pre-listing head stays unclaimed for the coverage gate."""
-    listing_date = pd.Timestamp("2016-06-15", tz="UTC")
+    start), and the pre-listing head stays outside the Catalog extent."""
     served = [_StampedBar("2016-06-15"), _StampedBar("2017-03-01")]
     fake = _FakeHistoricClient(bars=served, instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("TLT.XNAS"), "1D")
 
-    out = provider.request_bars(
+    out = provider._request_bars_for_engine(
         bar_type,
         start=pd.Timestamp("2013-01-01", tz="UTC"),
         end=pd.Timestamp("2018-01-01", tz="UTC"),
@@ -408,11 +443,7 @@ def test_request_bars_serves_from_the_listing_when_history_clamps_short() -> Non
 
     # One request; IB returned only from the listing.
     assert len(fake.bar_calls) == 1
-    assert list(out.bars) == served
-    # The gap from 2013 to the first bar is far wider than a market closure, so it
-    # reads as IB clamping at the listing: coverage begins at that first bar, not the
-    # requested 2013 start, leaving the pre-listing head for the coverage gate.
-    assert out.served_from == listing_date
+    assert list(out) == served
 
 
 def test_request_bars_can_pass_expired_future_contracts() -> None:
@@ -424,13 +455,13 @@ def test_request_bars_can_pass_expired_future_contracts() -> None:
     )
     bar_type = raw_bar_type(InstrumentId.from_str("ESM6.XCME"), "1D")
 
-    out = provider.request_bars(
+    out = provider._request_bars_for_engine(
         bar_type,
         start=pd.Timestamp("2026-03-01", tz="UTC"),
         end=pd.Timestamp("2026-06-23", tz="UTC"),
     )
 
-    assert list(out.bars) == served
+    assert list(out) == served
     call = fake.bar_calls[0]
     assert "instrument_ids" not in call
     contract = call["contracts"][0]
@@ -450,7 +481,7 @@ def test_request_bars_keeps_non_futures_on_instrument_ids_when_expired_enabled()
     )
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.XNAS"), "1D")
 
-    provider.request_bars(
+    provider._request_bars_for_engine(
         bar_type,
         start=pd.Timestamp("2024-01-01", tz="UTC"),
         end=pd.Timestamp("2024-02-01", tz="UTC"),
@@ -466,7 +497,7 @@ def test_request_bars_connects_and_closes_around_the_call() -> None:
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
-    provider.request_bars(
+    provider._request_bars_for_engine(
         bar_type,
         start=pd.Timestamp("2024-01-01", tz="UTC"),
         end=pd.Timestamp("2024-02-01", tz="UTC"),
@@ -489,7 +520,7 @@ def test_request_bars_wraps_a_fault_in_a_named_error_and_still_closes() -> None:
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
     with pytest.raises(IbkrRequestError) as excinfo:
-        provider.request_bars(
+        provider._request_bars_for_engine(
             bar_type,
             start=pd.Timestamp("2024-01-01", tz="UTC"),
             end=pd.Timestamp("2024-02-01", tz="UTC"),
@@ -517,7 +548,7 @@ def test_request_bars_converts_a_dead_vendor_call_into_a_named_error() -> None:
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
     with pytest.raises(IbkrRequestError) as excinfo:
-        provider.request_bars(
+        provider._request_bars_for_engine(
             bar_type,
             start=pd.Timestamp("2024-01-01", tz="UTC"),
             end=pd.Timestamp("2024-02-01", tz="UTC"),
@@ -538,7 +569,7 @@ def test_request_bars_converts_a_dead_connect_into_a_named_error() -> None:
     bar_type = raw_bar_type(InstrumentId.from_str("AAPL.NASDAQ"), "1D")
 
     with pytest.raises(IbkrRequestError):
-        provider.request_bars(
+        provider._request_bars_for_engine(
             bar_type,
             start=pd.Timestamp("2024-01-01", tz="UTC"),
             end=pd.Timestamp("2024-02-01", tz="UTC"),
@@ -591,11 +622,14 @@ def test_unknown_market_data_type_fails_at_construction() -> None:
         IbkrHistoricalProvider(market_data_type="BOGUS")
 
 
-def test_provider_satisfies_the_pure_fetch_port() -> None:
-    port: NautilusDataProviderPort = IbkrHistoricalProvider(
+def test_historic_provider_public_surface_retains_only_adjusted_last_fetch() -> None:
+    provider = IbkrHistoricalProvider(
         client_factory=lambda: _FakeHistoricClient(bars=[], instruments=[])
     )
-    assert callable(port.request_bars)
+
+    assert callable(provider.request_adjusted_last)
+    assert not hasattr(provider, "request_bars")
+    assert callable(historic_data_client_factory(provider))
 
 
 def test_importing_the_adapter_does_not_import_ibapi() -> None:
@@ -646,33 +680,33 @@ class _IneligibilityReasonLike:
     pass
 
 
-class _FakeCatalog:
-    def __init__(self, present: list[_Instr] | None = None) -> None:
-        self._present = present or []
-        self.writes: list[list[Any]] = []
-
-    def instruments(self, *, instrument_ids: list[str]) -> list[_Instr]:
-        wanted = set(instrument_ids)
-        return [
-            instrument for instrument in self._present if instrument.id.value in wanted
-        ]
-
-    def write_data(self, data: list[Any]) -> None:
-        self.writes.append(data)
+def _definition(instrument_id: InstrumentId, *, ts_init: int = 0) -> Equity:
+    return Equity(
+        instrument_id=instrument_id,
+        raw_symbol=instrument_id.symbol,
+        currency=USD,
+        price_precision=2,
+        price_increment=Price.from_str("0.01"),
+        lot_size=Quantity.from_int(100),
+        ts_event=0,
+        ts_init=ts_init,
+    )
 
 
-def test_seed_writes_all_definitions_when_none_present() -> None:
-    aapl = InstrumentId.from_str("AAPL.NASDAQ")
-    vusa = InstrumentId.from_str("VUSA.XLON")
-    fetched = [_Instr(aapl), _Instr(vusa)]
+def test_seed_persists_a_definition_through_native_request_write_back(
+    tmp_path: Path,
+) -> None:
+    aapl = InstrumentId.from_str("AAPL.XNAS")
+    fetched = [_definition(aapl)]
     fake = _FakeHistoricClient(bars=[], instruments=fetched)
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
-    catalog = _FakeCatalog()
+    catalog = Catalog.open(tmp_path)
 
-    seed_instrument_definitions(catalog, provider, (aapl, vusa))
+    seed_instrument_definitions(catalog, provider, (aapl,))
 
-    assert fake.instrument_calls[0]["instrument_ids"] == ["AAPL.NASDAQ", "VUSA.XLON"]
-    assert catalog.writes == [fetched]
+    loaded = catalog.definitions((aapl,))
+    assert len(loaded) == 1
+    assert loaded[0].id == aapl
 
 
 def test_request_instruments_can_pass_expired_future_contracts() -> None:
@@ -723,31 +757,46 @@ def test_request_instruments_splits_expired_futures_from_plain_ids() -> None:
     assert contract.includeExpired is True
 
 
-def test_seed_fetches_only_the_missing_definitions() -> None:
-    aapl = InstrumentId.from_str("AAPL.NASDAQ")
+def test_seed_fetches_only_the_missing_definitions(tmp_path: Path) -> None:
+    aapl = InstrumentId.from_str("AAPL.XNAS")
     vusa = InstrumentId.from_str("VUSA.XLON")
-    fetched = [_Instr(vusa)]
+    fetched = [_definition(vusa)]
     fake = _FakeHistoricClient(bars=[], instruments=fetched)
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
-    catalog = _FakeCatalog(present=[_Instr(aapl)])
+    catalog = Catalog.open(tmp_path)
+    store_instrument_fixtures(catalog, [_definition(aapl)])
 
     seed_instrument_definitions(catalog, provider, (aapl, vusa))
 
-    assert fake.instrument_calls[0]["instrument_ids"] == ["VUSA.XLON"]
-    assert catalog.writes == [fetched]
+    loaded = catalog.definitions((aapl, vusa))
+    assert len(loaded) == 2
+    assert loaded[0].id == aapl
+    assert loaded[1].id == vusa
 
 
-def test_seed_is_a_noop_and_never_connects_when_all_present() -> None:
-    aapl = InstrumentId.from_str("AAPL.NASDAQ")
+def test_seed_is_a_noop_and_never_connects_when_all_present(tmp_path: Path) -> None:
+    aapl = InstrumentId.from_str("AAPL.XNAS")
+    catalog = Catalog.open(tmp_path)
+    store_instrument_fixtures(
+        catalog, [_definition(aapl, ts_init=1_700_000_000_000_000_000)]
+    )
+
+    seed_instrument_definitions(catalog, cast(Any, object()), (aapl,))
+
+    loaded = catalog.definitions((aapl,))
+    assert len(loaded) == 1
+    assert loaded[0].id == aapl
+
+
+def test_seed_treats_an_absent_vendor_definition_as_a_noop(tmp_path: Path) -> None:
+    aapl = InstrumentId.from_str("AAPL.XNAS")
     fake = _FakeHistoricClient(bars=[], instruments=[])
     provider = IbkrHistoricalProvider(client_factory=lambda: fake)
-    catalog = _FakeCatalog(present=[_Instr(aapl)])
+    catalog = Catalog.open(tmp_path)
 
     seed_instrument_definitions(catalog, provider, (aapl,))
 
-    assert fake.events == []
-    assert fake.instrument_calls == []
-    assert catalog.writes == []
+    assert catalog.definitions((aapl,)) == ()
 
 
 def test_seed_strips_ibkr_ineligibility_reasons_before_catalog_write(
@@ -755,7 +804,7 @@ def test_seed_strips_ibkr_ineligibility_reasons_before_catalog_write(
 ) -> None:
     catalog_path = tmp_path / "catalog"
     catalog_path.mkdir()
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     gld = InstrumentId.from_str("GLD.ARCX")
     fetched = [
         Equity(
@@ -778,6 +827,6 @@ def test_seed_strips_ibkr_ineligibility_reasons_before_catalog_write(
 
     seed_instrument_definitions(catalog, provider, (gld,))
 
-    loaded = catalog.instruments(instrument_ids=[gld.value])
+    loaded = catalog.definitions((gld,))
     assert [instrument.id for instrument in loaded] == [gld]
     assert loaded[0].info == {"serializable": "kept"}

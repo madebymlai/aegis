@@ -10,7 +10,7 @@ from aegis_data.catalog import catalog_root
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="aegis-data",
-        description="Inspect the shared Nautilus ParquetDataCatalog path",
+        description="Inspect the shared Catalog path",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("path", help="print the catalog directory")

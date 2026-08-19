@@ -67,7 +67,7 @@ def candidate_data_identity(
     identity = run_data.identity
     return to_builtin(
         {
-            "schema_version": "candidate_data_identity.v4",
+            "schema_version": "candidate_data_identity.v5",
             "requested_instrument_ids": identity.requested_instrument_ids,
             "tradeables": [
                 {
@@ -92,7 +92,7 @@ def candidate_data_identity(
             "catalog_path": identity.catalog_path,
             "currency_by_instrument_id": identity.currency_by_instrument_id,
             "size_increment_by_instrument": identity.size_increment_by_instrument,
-            "distribution_coverage": identity.distribution_coverage,
+            "distribution_extents": identity.distribution_extents,
             "adjustment_mode": identity.adjustment_mode,
             "array_contract": array_contract.metadata(),
         }

@@ -14,13 +14,19 @@ from nautilus_trader.model.identifiers import InstrumentId
 from aegis_data.catalog import (
     CatalogBackedDataPort,
     CatalogWindowRequest,
-    parquet_data_catalog,
+    open_catalog,
 )
 from aegis_data.continuous_contract_model import ContinuousContractModel
 from aegis_data.continuous_future import DEFAULT_ADJUSTMENT_MODE
-from aegis_data.ibkr import IbkrHistoricalProvider, seed_instrument_definitions
+from aegis_data.ibkr import (
+    IbkrHistoricalProvider,
+    historic_data_client_factory,
+    seed_instrument_definitions,
+)
+from aegis_data.research_bars import CatalogBarWarmer
 from aegis_data.roll import front_contract as calendar_front
 from aegis_data.roll import roll_lead_days_for_cadence
+from aegis_data.storage import CatalogInterval
 
 _GATEWAY_PORT = os.environ.get("AEGIS_IBKR_GATEWAY_PORT")
 _ESM6 = InstrumentId.from_str("ESM6.XCME")
@@ -53,10 +59,10 @@ def _warm_catalog(
         include_expired_futures=True,
     )
     path = tmp_path / "catalog"
-    catalog = parquet_data_catalog(path)
+    catalog = open_catalog(path)
     fill_port = CatalogBackedDataPort(
         catalog,
-        provider=provider,
+        provider=CatalogBarWarmer(catalog, historic_data_client_factory(provider)),
         definition_seeder=lambda instrument_id: seed_instrument_definitions(
             catalog, provider, (instrument_id,)
         ),
@@ -64,15 +70,18 @@ def _warm_catalog(
     fill_port.load_window(
         CatalogWindowRequest(instrument_ids=tuple(legs), start=start, end=end)
     )
-    return CatalogBackedDataPort(parquet_data_catalog(path))
+    return CatalogBackedDataPort(open_catalog(path))
 
 
 def _front_leg_bars(
     warm: CatalogBackedDataPort, leg: InstrumentId, start: str, end: str
 ) -> list[Bar]:
-    return warm.read_native_bars(
-        CatalogWindowRequest(instrument_ids=(leg,), start=start, end=end, timeframe="1D")
-    )[leg]
+    marking = warm.raw_bars.marking(leg, "1D")
+    interval = CatalogInterval(
+        pd.Timestamp(start, tz="UTC").value,
+        pd.Timestamp(end, tz="UTC").value,
+    )
+    return list(warm.raw_bars.stored(marking, interval).bars)
 
 
 def _bar_bucket_close(bar: Bar) -> pd.Timestamp:
@@ -119,7 +128,11 @@ def test_model_front_authority_matches_the_series_front_on_a_real_roll(
 ) -> None:
     warm = _warm_catalog(tmp_path, (_ESM6, _ESU6), _START, _END)
     model = ContinuousContractModel(
-        warm, "ES", start=_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+        warm,
+        "ES",
+        start=_START,
+        timeframe="1D",
+        adjustment_mode=DEFAULT_ADJUSTMENT_MODE,
     )
     model.materialize(end=_END)
 
@@ -134,14 +147,22 @@ def test_model_front_authority_matches_the_series_front_on_a_real_roll(
 def test_model_offset_zero_append_recovers_research_on_real_data(tmp_path) -> None:
     warm = _warm_catalog(tmp_path, (_ESM6, _ESU6), _START, _END)
     oracle_model = ContinuousContractModel(
-        warm, "ES", start=_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+        warm,
+        "ES",
+        start=_START,
+        timeframe="1D",
+        adjustment_mode=DEFAULT_ADJUSTMENT_MODE,
     )
     oracle_model.materialize(end=_END)
     oracle = oracle_model.frame
     last = oracle.index[-1]
     append_bar = _front_bar_at_bucket(warm, _ESU6, _START, _END, last)
     model = ContinuousContractModel(
-        warm, "ES", start=_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+        warm,
+        "ES",
+        start=_START,
+        timeframe="1D",
+        adjustment_mode=DEFAULT_ADJUSTMENT_MODE,
     )
     model.materialize(end="2026-06-19")
 
@@ -156,7 +177,11 @@ def test_incremental_replay_across_the_roll_holds_additive_invariance(
 ) -> None:
     warm = _warm_catalog(tmp_path, (_ESM6, _ESU6), _START, _END)
     oracle = ContinuousContractModel(
-        warm, "ES", start=_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+        warm,
+        "ES",
+        start=_START,
+        timeframe="1D",
+        adjustment_mode=DEFAULT_ADJUSTMENT_MODE,
     )
     oracle.materialize(end=_END)
     oracle_last = oracle.frame.index[-1]
@@ -164,7 +189,11 @@ def test_incremental_replay_across_the_roll_holds_additive_invariance(
     # Start pre-roll (front ESM6, empty frame) and fold every front-leg bar in
     # the one-shot span through on_bar, crossing the ESM6->ESU6 roll.
     model = ContinuousContractModel(
-        warm, "ES", start=_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+        warm,
+        "ES",
+        start=_START,
+        timeframe="1D",
+        adjustment_mode=DEFAULT_ADJUSTMENT_MODE,
     )
     model.materialize(end=_PRE_ROLL)
     assert model.front_leg == _ESM6
@@ -205,7 +234,11 @@ def test_incremental_replay_across_the_roll_holds_additive_invariance(
 def test_thin_root_extends_the_model_onto_the_early_liquidity_leader(tmp_path) -> None:
     warm = _warm_catalog(tmp_path, (_PAM6, _PAU6), _PA_START, _PA_FILL_END)
     model = ContinuousContractModel(
-        warm, "PA", start=_PA_START, timeframe="1D", adjustment_mode=DEFAULT_ADJUSTMENT_MODE
+        warm,
+        "PA",
+        start=_PA_START,
+        timeframe="1D",
+        adjustment_mode=DEFAULT_ADJUSTMENT_MODE,
     )
     model.materialize(end=_PA_END)
     last = model.frame.index[-1]

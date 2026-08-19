@@ -11,21 +11,24 @@ requires-python = ">=3.12"
 # shared locked-execution kernel, nautilus_trader owns the venue/OMS/event loop, pydantic
 # types the Book Config. VBT PRO is only a *transitive* dep, arriving with an installed
 # Execution Bundle wheel — never declared here.
+#
+# The Execution Bundles themselves are not declared here either. The book names its
+# sleeves' packages and they are resolved by import at run time, so which bundles a
+# deployment carries is a property of that environment, not of this package. Pinning
+# named candidate wheels would make the Trader installable only where those exact
+# research artefacts exist. Install them alongside it instead: uv pip install ../bundles/*.whl
 dependencies = [
   "aegis-runtime",
   "aegis-data",
-  "nautilus_trader",
+  "nautilus_trader>=1.231.0",
   "pydantic>=2.0",
-  "aegis-exec-aegis-heldhedge-cand-b60",
-  "aegis-exec-atalanta-keystone-shortmute-cand-06c",
-  "aegis-exec-demeter-carry-mix-cand-ff2",
   "requests>=2.34.2",
 ]
 
 # IBKR adapter (ibapi) — required only for paper/live runs and the IBKR
 # verification script (scripts/verify_paper_ibkr.py); backtests don't need it.
 [project.optional-dependencies]
-ib = ["nautilus_trader[ib,docker]"]
+ib = ["nautilus_trader[ib,docker]>=1.231.0"]
 
 [project.scripts]
 # Operator entrypoint: `aegis-trader backtest --start --end` (offline) and
@@ -62,9 +65,6 @@ ignore_missing_imports = true
 [tool.uv.sources]
 aegis-runtime = { path = "../aegis-runtime", editable = true }
 aegis-data = { path = "../aegis-data", editable = true }
-aegis-exec-aegis-heldhedge-cand-b60 = { path = "../bundles/aegis_exec_aegis_heldhedge_cand_b60-1.0.0-py3-none-any.whl" }
-aegis-exec-atalanta-keystone-shortmute-cand-06c = { path = "../bundles/aegis_exec_atalanta_keystone_shortmute_cand_06c-1.0.0-py3-none-any.whl" }
-aegis-exec-demeter-carry-mix-cand-ff2 = { path = "../bundles/aegis_exec_demeter_carry_mix_cand_ff2-1.1.0-py3-none-any.whl" }
 
 [dependency-groups]
 dev = [

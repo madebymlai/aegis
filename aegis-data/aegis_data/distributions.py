@@ -1,15 +1,16 @@
-from collections.abc import Sequence
-from itertools import groupby
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
-
 import pandas as pd
 from nautilus_trader.core.data import Data
 from nautilus_trader.model.custom import customdataclass
 from nautilus_trader.model.identifiers import InstrumentId
 
+from aegis_data.storage import Catalog, CatalogKey
+
 
 _DEFAULT_MIN_CASH_AMOUNT = 0.005
-_NANOS_PER_DAY = 86_400_000_000_000
+_ADJUSTED_CLOSE_CURRENCY_PARAM = "currency"
 
 
 @customdataclass
@@ -47,9 +48,88 @@ class Distribution(Data):
     def ex_date(self) -> pd.Timestamp:
         return pd.Timestamp(self.ts_event, tz="UTC").normalize()
 
+
+@customdataclass
+class AdjustedClose(Data):
+    """One instrument's daily IBKR ``ADJUSTED_LAST`` close."""
+
+    instrument_id: InstrumentId = InstrumentId.from_str("SPY.ARCA")
+    close: float = 0.0
+
+    @classmethod
+    def from_value(
+        cls,
+        instrument_id: InstrumentId,
+        timestamp: pd.Timestamp,
+        close: float,
+    ) -> "AdjustedClose":
+        ts_event = _ex_date_ns(timestamp)
+        return cls(
+            ts_event,
+            ts_event,
+            instrument_id=instrument_id,
+            close=float(close),
+        )
+
+
+class InvalidAdjustedCloseCurrencyError(ValueError):
+    """Adjusted-close request metadata contains no usable currency."""
+
+
+@dataclass(frozen=True)
+class AdjustedCloseRequestMetadata:
+    """Currency qualification carried by an AdjustedClose request."""
+
+    currency: str
+
+    def __post_init__(self) -> None:
+        normalized = self.currency.strip().upper()
+        if not normalized:
+            raise InvalidAdjustedCloseCurrencyError(
+                "adjusted-close request currency must not be empty"
+            )
+        object.__setattr__(self, "currency", normalized)
+
+    def to_params(self) -> dict[str, Any]:
+        return {_ADJUSTED_CLOSE_CURRENCY_PARAM: self.currency}
+
+    @classmethod
+    def from_params(cls, params: Mapping[str, Any]) -> "AdjustedCloseRequestMetadata":
+        return cls(str(params.get(_ADJUSTED_CLOSE_CURRENCY_PARAM, "USD")))
+
+
 def distribution_records(records: Sequence[Data]) -> tuple[Distribution, ...]:
     """Select the Distribution consumer view from generic typed records."""
     return tuple(record for record in records if isinstance(record, Distribution))
+
+
+def adjusted_close_records(
+    instrument_id: InstrumentId,
+    closes: pd.Series,
+) -> tuple[AdjustedClose, ...]:
+    """Convert a vendor close series to one typed Catalog record per day."""
+    values = _positive_series(closes)
+    if isinstance(values.index, pd.DatetimeIndex):
+        values = values.copy()
+        values.index = values.index.normalize()
+        values = values[~values.index.duplicated(keep="last")]
+    return tuple(
+        AdjustedClose.from_value(instrument_id, pd.Timestamp(timestamp), float(close))
+        for timestamp, close in values.items()
+    )
+
+
+def adjusted_close_series(records: Sequence[AdjustedClose]) -> pd.Series:
+    """Project stored adjusted-close records back to the decode series."""
+    if not records:
+        return pd.Series(dtype=float)
+    return pd.Series(
+        [record.close for record in records],
+        index=pd.DatetimeIndex(
+            [pd.Timestamp(record.ts_event, tz="UTC") for record in records]
+        ),
+        dtype=float,
+    ).sort_index()
 
 
 def recover_distributions_from_adjusted_last(
@@ -90,38 +170,8 @@ def recover_distributions_from_adjusted_last(
     return events
 
 
-def request_distribution_data(
-    provider: Any,
-    instrument_id: InstrumentId,
-    *,
-    trades: pd.Series,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    currency: str,
-) -> tuple[Distribution, ...]:
-    """Fetch ``ADJUSTED_LAST`` and decode listed-ETF distributions.
-
-    The traded ``TRADES`` close series is supplied by the caller from the normal
-    catalog/bar path; only the adjusted-last fetch crosses the raw-IBKR seam.
-    """
-    adjusted_last = provider.request_adjusted_last(
-        instrument_id=instrument_id,
-        start=start,
-        end=end,
-        currency=currency,
-    )
-    return tuple(
-        recover_distributions_from_adjusted_last(
-            instrument_id=instrument_id,
-            trades=trades,
-            adjusted_last=adjusted_last,
-            currency=currency,
-        )
-    )
-
-
 def query_distribution_data(
-    catalog: Any,
+    catalog: Catalog,
     instrument_ids: Sequence[InstrumentId],
     *,
     start: str | int | pd.Timestamp | None = None,
@@ -130,86 +180,15 @@ def query_distribution_data(
     """Read stored distributions for the requested instruments and window."""
     events: list[Distribution] = []
     for instrument_id in instrument_ids:
-        queried = catalog.query(
-            Distribution,
-            identifiers=[instrument_id.value],
-            start=start,
-            end=end,
+        queried = _force_window_items(
+            catalog.read_all(CatalogKey.for_instrument(Distribution, instrument_id)),
+            force_start=start,
+            force_end=end,
         )
-        events.extend(_as_distribution(item) for item in queried)
-    return tuple(sorted(events, key=lambda item: (item.instrument_id.value, item.ts_event)))
-
-
-def write_distribution_data(
-    catalog: Any,
-    distributions: Sequence[Distribution],
-) -> int:
-    """Write only distributions beyond each instrument's stored ex-date frontier.
-
-    Repeating a decode over the same historical window is idempotent without relying
-    on byte-dedup; bounded replacement lives in ``replace_distribution_data``.
-    """
-    grouped = sorted(distributions, key=lambda item: (item.instrument_id.value, item.ts_event))
-    written = 0
-    for instrument_value, group in groupby(grouped, key=lambda item: item.instrument_id.value):
-        items = list(group)
-        frontier = _stored_frontier(catalog, instrument_value)
-        selected = [item for item in items if item.ts_event > frontier]
-        if not selected:
-            continue
-        catalog.write_data(
-            selected,
-            data_cls=Distribution,
-            identifier=instrument_value,
-            start=min(item.ts_event for item in selected),
-            end=max(item.ts_event for item in selected) + _NANOS_PER_DAY,
-        )
-        written += len(selected)
-    return written
-
-
-def replace_distribution_data(
-    catalog: Any,
-    instrument_id: InstrumentId,
-    distributions: Sequence[Distribution],
-    *,
-    start: str | int | pd.Timestamp,
-    end: str | int | pd.Timestamp,
-) -> int:
-    """Replace one instrument's bounded distribution window, even when empty."""
-    start_ns = _optional_ns(start)
-    end_ns = _optional_ns(end)
-    selected = _force_window_items(distributions, force_start=start, force_end=end)
-    catalog.delete_data_range(
-        Distribution,
-        identifier=instrument_id.value,
-        start=start_ns,
-        end=end_ns,
+        events.extend(queried)
+    return tuple(
+        sorted(events, key=lambda item: (item.instrument_id.value, item.ts_event))
     )
-    if not selected:
-        return 0
-    catalog.write_data(
-        selected,
-        data_cls=Distribution,
-        identifier=instrument_id.value,
-        start=start_ns,
-        end=end_ns,
-    )
-    return len(selected)
-
-
-def _stored_frontier(catalog: Any, instrument_value: str) -> int:
-    stored = [
-        _as_distribution(item)
-        for item in catalog.query(Distribution, identifiers=[instrument_value])
-    ]
-    if not stored:
-        return -1
-    return max(item.ts_event for item in stored)
-
-
-def _as_distribution(item: Any) -> Distribution:
-    return item.data if hasattr(item, "data") else item
 
 
 def _force_window_items(
@@ -262,10 +241,13 @@ def _optional_ns(value: str | int | pd.Timestamp | None) -> int | None:
 
 
 __all__ = [
+    "AdjustedClose",
+    "AdjustedCloseRequestMetadata",
     "Distribution",
+    "InvalidAdjustedCloseCurrencyError",
+    "adjusted_close_records",
+    "adjusted_close_series",
     "distribution_records",
     "query_distribution_data",
     "recover_distributions_from_adjusted_last",
-    "request_distribution_data",
-    "write_distribution_data",
 ]

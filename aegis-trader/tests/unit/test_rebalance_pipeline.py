@@ -12,10 +12,9 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 from aegis_data.custom_data import (
     CustomDataProviderPort,
-    FixtureRecord,
-    ServedCustomData,
 )
-from aegis_data.rebasing import ratio_rebasing, spread_rebasing
+from aegis_data.storage import Catalog
+from aegis_runtime.domain.rebasing import ratio_rebasing, spread_rebasing
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
@@ -26,7 +25,7 @@ from aegis_runtime import (
     MarketDataBundle,
     MissingIndexPolicy,
 )
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_trader.data.market_data import MarketBar
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
@@ -44,6 +43,8 @@ from aegis_trader.trader.pipeline import (
     RebalanceRequest,
 )
 from aegis_trader.trader.sleeve_arrays import SleeveArrays
+from tests.support.bundle_double import BundleDouble
+from tests.support.custom_data import FixtureRecord
 from tests.support.factories import assemble_test_book
 
 _INSTRUMENT_ID = InstrumentId.from_str("PIPE.XNYS")
@@ -54,7 +55,7 @@ _SLEEVE = SleeveName("trend")
 _DAY_NS = 86_400_000_000_000
 
 
-class _FixedWeightBundle(ExecutionBundle):
+class _FixedWeightBundle(BundleDouble):
     def __init__(self, weight: float, *, band: DriftBand | None = None) -> None:
         self._weight = weight
         instrument_band = band or DriftBand.symmetric(0.0)
@@ -110,11 +111,11 @@ class _EmptyCustomProvider(CustomDataProviderPort[FixtureRecord]):
         *,
         start: pd.Timestamp,
         end: pd.Timestamp,
-    ) -> ServedCustomData[FixtureRecord]:
-        return ServedCustomData((), start)
+    ) -> tuple[FixtureRecord, ...]:
+        return ()
 
 
-class _ContinuousWeightBundle(ExecutionBundle):
+class _ContinuousWeightBundle(BundleDouble):
     """A futures-only sleeve: it declares a bare root and signals on the continuous-root id."""
 
     def __init__(self, weight: float) -> None:
@@ -163,7 +164,7 @@ class _ContinuousWeightBundle(ExecutionBundle):
         return target
 
 
-class _CalendarParityBundle(ExecutionBundle):
+class _CalendarParityBundle(BundleDouble):
     def __init__(
         self,
         *,
@@ -225,7 +226,7 @@ class _CalendarParityBundle(ExecutionBundle):
         return weights
 
 
-class _PoisonBundle(ExecutionBundle):
+class _PoisonBundle(BundleDouble):
     """A sleeve whose compute blows up — the blast-radius probe for per-sleeve isolation."""
 
     def __init__(self) -> None:
@@ -583,8 +584,8 @@ def test_custom_arrays_use_the_union_index_for_nan_policy(tmp_path: Path) -> Non
         ),
         bundle=bundle,
         arrays=SleeveArrays.live(
-            catalog_path=tmp_path,
-            providers={FixtureRecord: (_EmptyCustomProvider(),)},
+            catalog=Catalog.open(tmp_path),
+            providers={FixtureRecord: _EmptyCustomProvider()},
         ),
     )
 
@@ -864,7 +865,7 @@ def test_rebalance_pipeline_surfaces_failures_when_every_sleeve_fails() -> None:
 _EURUSD = InstrumentId.from_str("EUR/USD.IDEALPRO")
 
 
-class _SpyConversionBundle(ExecutionBundle):
+class _SpyConversionBundle(BundleDouble):
     """Fixed-weight bundle over a USD-quoted instrument that records the native
     Close panel and the conversion its compute received, so a test can pin the
     native-price boundary: the trader hands over native arrays plus the resolved
@@ -958,12 +959,14 @@ def test_sleeve_compute_receives_native_prices_and_the_resolved_conversion() -> 
     # The resolved conversion is the one typed transformation: applying it yields
     # the EUR view research validated on (USD 100 at EUR/USD 1.25 -> EUR 80).
     assert bundle.seen_conversion is not None
-    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    converted = bundle.seen_conversion.apply(
+        MarketDataBundle({"Close": bundle.seen_close})
+    ).array("Close")
     assert converted[_INSTRUMENT_ID].tolist() == pytest.approx([80.0, 80.0])
     assert [order.instrument_id for order in result.orders] == [_INSTRUMENT_ID]
 
 
-class _SpyContinuousConversionBundle(ExecutionBundle):
+class _SpyContinuousConversionBundle(BundleDouble):
     """Records the native panel + conversion for a USD-quoted continuous root in a
     EUR-base book — the research/trader continuous-root parity double."""
 
@@ -1048,7 +1051,9 @@ def test_continuous_root_conversion_matches_the_research_view_under_moving_fx() 
     assert bundle.seen_close is not None
     assert bundle.seen_close[_ES].tolist() == pytest.approx([5000.0, 5010.0])
     assert bundle.seen_conversion is not None
-    converted = bundle.seen_conversion.apply({"Close": bundle.seen_close})["Close"]
+    converted = bundle.seen_conversion.apply(
+        MarketDataBundle({"Close": bundle.seen_close})
+    ).array("Close")
     # The exact base-currency panel research's catalog adapter derives for the same
     # native prices and FX series (see test_catalog_adapter_converts_a_non_base_
     # continuous_root_through_exchange_fx in aegis-rd).
@@ -1199,7 +1204,7 @@ class _StreamRecordingMarketData(_MarketData):
         )
 
 
-class _ConversionSleeveBundle(ExecutionBundle):
+class _ConversionSleeveBundle(BundleDouble):
     """A fixed-weight sleeve over one USD instrument with an FX conversion leg,
     at a caller-chosen timeframe."""
 

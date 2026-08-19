@@ -1,0 +1,18 @@
+[importlinter]
+root_package = aegis_runtime
+include_external_packages = True
+
+[importlinter:contract:runtime-layers]
+name = Execution may depend on domain, never the reverse
+type = layers
+layers =
+    aegis_runtime.execution
+    aegis_runtime.domain
+
+[importlinter:contract:domain-without-pydantic]
+name = Domain does not cross the pydantic serialization boundary
+type = forbidden
+source_modules =
+    aegis_runtime.domain
+forbidden_modules =
+    pydantic

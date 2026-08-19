@@ -14,10 +14,10 @@ records what the contexts are and how they relate.
   **Commingled Book** of **Sleeves**, sized by a risk-budgeting **Allocator**,
   both offline through Nautilus' `BacktestEngine` and live against Interactive
   Brokers — the same rebalance path for backtest, paper, and live (ADR-0001).
-- [Aegis Data](./aegis-data/CONTEXT.md) — shared historical market-data context
-  that stores Nautilus-native bars by **InstrumentId** in one
-  `ParquetDataCatalog`, and serves both research sourcing and live warmup
-  through the same DataProvider port.
+- [Aegis Data](./aegis-data/CONTEXT.md) — shared market-data context that owns
+  one durable **Catalog**, stores Nautilus-native bars by **InstrumentId**, and
+  serves both research sourcing and live warmup through the same DataProvider
+  port.
 - **`aegis-runtime`** — shared runtime (shared kernel) that executes one Locked
   **Candidate**: component loading, the single-candidate (`force_locked`,
   `n_candidates=1`) orchestration, and **Exposure Validation** over native
@@ -45,8 +45,10 @@ records what the contexts are and how they relate.
   gates — with no **Candidate Store** access at runtime.
 
 - **Aegis RD → Aegis Data**: Aegis RD declares native Nautilus
-  **InstrumentIds** in its **Run Config**. Aegis Data serves raw bars from the
-  catalog, lazily filling misses through the DataProvider port.
+  **InstrumentIds** in its **Run Config**. Aegis Data serves Raw Bars from the
+  Catalog, warming missing intervals through Nautilus's DataEngine when a
+  DataProvider client is configured. Research follows **Warm Then Sweep**;
+  absence itself is ordinary empty data.
 
 - **Aegis Trader → Aegis Data**: Aegis Trader backtests read historical bars for
   the **InstrumentId** values baked into each **Execution Bundle**. Trader does

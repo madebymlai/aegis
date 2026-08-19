@@ -126,10 +126,12 @@ _Avoid_: spec, recipe, template
 
 **Data Source Mode**:
 How market data enters a **Run**: the shared **Historical Store** path, which
-may **Ensure Coverage** by filling gaps through a configured **Gap-Fill
+is prepared under **Warm Then Sweep** through a configured **Gap-Fill
 Provider** and requires each symbol to declare its canonical **InstrumentId**.
-It is the only sourcing — there is no source selection in a **Run Config** —
-and it is not the identity under which historical data is stored or traded.
+Catalog absence reads as empty; warming before the sweep, followed by RD's own
+array-quality checks, protects the Run from an unusable series. It is the only
+sourcing — there is no source selection in a **Run Config** — and it is not the
+identity under which historical data is stored or traded.
 _Avoid_: InstrumentId, store key, execution source, Trader source mode
 
 **RD Symbol Name**:

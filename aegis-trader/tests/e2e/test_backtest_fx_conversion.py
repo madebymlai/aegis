@@ -14,28 +14,31 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId, Symbol
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Currency, Price, Quantity
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 from aegis_data.catalog import CatalogBackedDataPort, raw_bar_type
+from aegis_data.raw_bars import RawBars
+from aegis_data.storage import Catalog, CatalogInterval
+from aegis_data.testing import store_instrument_fixtures
 from aegis_runtime import (
     BundleManifest,
     ComponentSpec,
     DataContract,
     DriftBand,
-    ExecutionBundle,
     LockedExecutionPlan,
     MarketDataBundle,
     MissingIndexPolicy,
 )
 
-from aegis_runtime.currency import CurrencyConversion
+from aegis_runtime.domain.currency import CurrencyConversion
 
 from aegis_data.bar_type import external_bar_type
 from aegis_data.marking import DeclaredMarkingResolver, MarkMode
+from aegis_data.ibkr import historic_catalog_client_factory
+from aegis_data.custom_data import CustomDataWarmer
 from aegis_trader.backtest import CatalogBacktestDataSource, run_book_backtest
-from aegis_trader.bundles.stub import StubBundleRegistry
 from aegis_trader.data import build_currency_pair
 from nautilus_trader.model.data import Bar
+from tests.support.bundle_double import BundleDouble, make_bundle_registry
 
 _USD_INSTRUMENT_ID = InstrumentId.from_str("AAPL.XNAS")
 _EURUSD_ID = InstrumentId.from_str("EUR/USD.IDEALPRO")
@@ -52,7 +55,7 @@ group = "Floor"
 """
 
 
-class _UsdFixedWeightBundle(ExecutionBundle):
+class _UsdFixedWeightBundle(BundleDouble):
     """Synthetic bundle holding one USD-quoted instrument at a fixed weight."""
 
     def __init__(self, weight: float) -> None:
@@ -112,7 +115,7 @@ def test_usd_quoted_sleeve_trades_in_eur_base_book(tmp_path) -> None:
     catalog_path = tmp_path / "catalog"
     _seed_usd_catalog(catalog_path, closes=[100.0, 101.0, 102.0, 103.0])
     _seed_fx_catalog(catalog_path, rates=[1.10, 1.10, 1.10, 1.10])
-    registry = StubBundleRegistry({_WHEEL: _UsdFixedWeightBundle(0.5)})
+    registry = make_bundle_registry({_WHEEL: _UsdFixedWeightBundle(0.5)})
 
     result = run_book_backtest(
         book_path,
@@ -130,7 +133,7 @@ def test_usd_quoted_sleeve_trades_in_eur_base_book(tmp_path) -> None:
 
 
 def _seed_usd_catalog(catalog_path, closes: list[float]) -> None:
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     instrument = Equity(
         instrument_id=_USD_INSTRUMENT_ID,
         raw_symbol=Symbol(_USD_INSTRUMENT_ID.symbol.value),
@@ -141,40 +144,48 @@ def _seed_usd_catalog(catalog_path, closes: list[float]) -> None:
         ts_event=0,
         ts_init=0,
     )
-    catalog.write_data([instrument])
-    catalog.write_data(
-        [
+    store_instrument_fixtures(catalog, [instrument])
+    start_ns = pd.Timestamp("2020-01-01", tz="UTC").value
+    end_ns = start_ns + len(closes) * 86_400_000_000_000
+    bar_type = raw_bar_type(_USD_INSTRUMENT_ID, "1D")
+    RawBars(catalog).replace_interval(
+        bar_type,
+        CatalogInterval(start_ns, end_ns),
+        tuple(
             _bar(raw_bar_type(_USD_INSTRUMENT_ID, "1D"), day, close)
             for day, close in zip(
                 pd.date_range("2020-01-01", periods=len(closes), freq="D"),
                 closes,
                 strict=True,
             )
-        ],
-        start=pd.Timestamp("2020-01-01", tz="UTC").value,
-        end=pd.Timestamp("2020-01-01", tz="UTC").value + len(closes) * 86_400_000_000_000,
+        ),
     )
 
 
 def _seed_fx_catalog(catalog_path, rates: list[float]) -> None:
-    catalog = ParquetDataCatalog(catalog_path)
+    catalog = Catalog.open(catalog_path)
     pair = build_currency_pair("EUR", "USD", "IDEALPRO")
-    catalog.write_data([pair])
-    catalog.write_data(
-        [
-            _bar(external_bar_type(_EURUSD_ID, "1D", "MID"), day, rate, precision=5)
+    store_instrument_fixtures(catalog, [pair])
+    start_ns = pd.Timestamp("2020-01-01", tz="UTC").value
+    end_ns = start_ns + len(rates) * 86_400_000_000_000
+    bar_type = external_bar_type(_EURUSD_ID, "1D", "MID")
+    RawBars(catalog).replace_interval(
+        bar_type,
+        CatalogInterval(start_ns, end_ns),
+        tuple(
+            _bar(bar_type, day, rate, precision=5)
             for day, rate in zip(
                 pd.date_range("2020-01-01", periods=len(rates), freq="D"),
                 rates,
                 strict=True,
             )
-        ],
-        start=pd.Timestamp("2020-01-01", tz="UTC").value,
-        end=pd.Timestamp("2020-01-01", tz="UTC").value + len(rates) * 86_400_000_000_000,
+        ),
     )
 
 
-def _bar(bar_type: BarType, day: pd.Timestamp, close: float, *, precision: int = 2) -> Bar:
+def _bar(
+    bar_type: BarType, day: pd.Timestamp, close: float, *, precision: int = 2
+) -> Bar:
     ts_event = pd.Timestamp(day, tz="UTC").value
     price = Price(close, precision)
     return Bar(
@@ -198,17 +209,21 @@ class _AdjustedLastProvider:
 
 
 def _zero_distribution_source(catalog_path) -> CatalogBacktestDataSource:
-    # Distribution coverage exists only for the tradeable: an FX conversion
+    # Distribution materialisation applies only to the tradeable: an FX conversion
     # pair pays no distributions and must never be part of the distribution
-    # request (the real verified store has no coverage record for it).
+    # request (the real Catalog has no file extent for it).
     dates = pd.date_range("2020-01-01", periods=5, freq="D", tz="UTC")
     adjusted_last = {
         _USD_INSTRUMENT_ID: pd.Series([100.0] * len(dates), index=dates),
     }
+    catalog = Catalog.open(catalog_path)
     return CatalogBacktestDataSource(
         port=CatalogBackedDataPort(
-            ParquetDataCatalog(catalog_path),
-            distribution_provider=_AdjustedLastProvider(adjusted_last),
+            catalog,
+            custom_data_warmer=CustomDataWarmer(
+                catalog,
+                historic_catalog_client_factory(_AdjustedLastProvider(adjusted_last)),
+            ),
             # The port reads what the bundle records: the FX conversion leg is
             # bar-marked MID by declaration, never by symbol shape.
             resolver=DeclaredMarkingResolver(declared={_EURUSD_ID: MarkMode.MID}),

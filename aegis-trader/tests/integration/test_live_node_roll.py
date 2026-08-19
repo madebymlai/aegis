@@ -21,6 +21,7 @@ fixture's desk simply advances its front on the next bar so the strategy's roll 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -34,8 +35,9 @@ from nautilus_trader.test_kit.functions import eventually
 from nautilus_trader.test_kit.mocks.data import MockMarketDataClient
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
-from aegis_data.rebasing import Rebasing, spread_rebasing
+from aegis_runtime.domain.rebasing import Rebasing, spread_rebasing
 from aegis_data.bar_type import raw_bar_type
+from aegis_data.storage import Catalog
 from aegis_trader.domain.book_config import BookConfig, SleeveConfig
 from aegis_trader.domain.roll import (
     RequestInstrument,
@@ -151,7 +153,9 @@ def _front_leg_bar(instrument_id: InstrumentId) -> object:
 
 
 @pytest.mark.asyncio
-async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_the_live_engine() -> None:
+async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_the_live_engine(
+    tmp_path: Path,
+) -> None:
     clock = LiveClock()
     trader_id = TraderId("ROLL-TESTER-001")
     msgbus = MessageBus(trader_id=trader_id, clock=clock)
@@ -170,6 +174,7 @@ async def test_forced_roll_drives_request_instrument_on_instrument_subscribe_on_
     strategy = _RollHarnessStrategy(
         RebalanceStrategyConfig(book=book, warmup_cache_on_start=False),
         arrays=SleeveArrays.bar_only(),
+        catalog=Catalog.open(tmp_path / "catalog"),
     )
     portfolio = Portfolio(msgbus, cache, clock)
     strategy.register(trader_id, portfolio, msgbus, cache, clock)

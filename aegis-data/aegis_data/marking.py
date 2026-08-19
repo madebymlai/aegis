@@ -1,7 +1,7 @@
 """The single seam that resolves how an instrument is marked (aegis-rd-tggo).
 
 Every raw mark/fill resolution — catalog cold-fetch, catalog warm read,
-distribution coverage, trader backtest wrangling, trader cache read, live
+distribution materialisation, trader backtest wrangling, trader cache read, live
 subscribe/unsubscribe/request — crosses one query-only
 :class:`RawBarTypeResolver` and receives an :class:`InstrumentMarking` value
 object.  The value object (not a single ``BarType``) is the seam's shape
@@ -143,8 +143,10 @@ class InstrumentMarking:
             return _mid_price(latest[0], latest[1])
         return latest[0].close
 
-    def ohlcv_frame(self, bars_by_type: Mapping[BarType, Sequence[Bar]]) -> pd.DataFrame:
-        """The corpus OHLCV frame for this marking from its stored mark bars.
+    def ohlcv_frame(
+        self, bars_by_type: Mapping[BarType, Sequence[Bar]]
+    ) -> pd.DataFrame:
+        """The Catalog OHLCV frame for this marking from its stored mark bars.
 
         Bar-marked -> the single bar series' own OHLCV.  Quote-marked -> the
         *derived* mid frame, elementwise ``(bid + ask) / 2`` on days quoted on
@@ -157,7 +159,9 @@ class InstrumentMarking:
             return (bid.loc[index] + ask.loc[index]) / 2.0
         return bars_to_ohlcv(bars_by_type[self.mark_bars[0]])
 
-    def derived_mark(self, latest_by_type: Mapping[BarType, Bar | None]) -> Price | None:
+    def derived_mark(
+        self, latest_by_type: Mapping[BarType, Bar | None]
+    ) -> Price | None:
         """The mark to publish when quote-marked and both sides are current.
 
         ``None`` for a bar-marked instrument (its bar close is the native
@@ -209,8 +213,9 @@ class RawBarTypeResolver(Protocol):
     in behind the same call sites without reshaping them.
     """
 
-    def resolve(self, instrument_id: InstrumentId, timeframe: str) -> InstrumentMarking:
-        ...
+    def resolve(
+        self, instrument_id: InstrumentId, timeframe: str
+    ) -> InstrumentMarking: ...
 
 
 def marking_for_mode(
@@ -219,11 +224,11 @@ def marking_for_mode(
     """The :class:`InstrumentMarking` a known mode resolves to — the one public
     builder shared by every resolver (declared research-side, recorded
     bundle-backed live-side), so mark bars can never be constructed two ways."""
-    corpus_id = mic_canonical_instrument_id(instrument_id)
+    catalog_id = mic_canonical_instrument_id(instrument_id)
     return InstrumentMarking(
-        instrument_id=corpus_id,
+        instrument_id=catalog_id,
         mode=mode,
-        mark_bars=_mark_bars(corpus_id, timeframe, mode),
+        mark_bars=_mark_bars(catalog_id, timeframe, mode),
     )
 
 
@@ -235,7 +240,7 @@ class DeclaredMarkingResolver:
     There is no heuristic — the config layer supplies every non-LAST mode as a
     declaration (the id token; ``exchange:`` conversion legs as MID by section
     membership).  Stateless and query-only.  Declarations are keyed by the
-    canonical corpus id, so the raw-IB-exchange and MIC spellings name one
+    canonical Catalog id, so the raw-IB-exchange and MIC spellings name one
     instrument.
     """
 
@@ -252,23 +257,23 @@ class DeclaredMarkingResolver:
         )
 
     def resolve(self, instrument_id: InstrumentId, timeframe: str) -> InstrumentMarking:
-        corpus_id = mic_canonical_instrument_id(instrument_id)
+        catalog_id = mic_canonical_instrument_id(instrument_id)
         return marking_for_mode(
-            corpus_id, timeframe, self.declared.get(corpus_id, MarkMode.LAST)
+            catalog_id, timeframe, self.declared.get(catalog_id, MarkMode.LAST)
         )
 
 
 def _mark_bars(
-    corpus_id: InstrumentId, timeframe: str, mode: MarkMode
+    catalog_id: InstrumentId, timeframe: str, mode: MarkMode
 ) -> tuple[BarType, ...]:
     # The single builder of mark_bars: QUOTE emits BID + ASK and can never emit
     # a MID-EXTERNAL bar (the ADR-0007 EXTERNAL-drives-book constraint).
     if mode is MarkMode.QUOTE:
         return (
-            external_bar_type(corpus_id, timeframe, "BID"),
-            external_bar_type(corpus_id, timeframe, "ASK"),
+            external_bar_type(catalog_id, timeframe, "BID"),
+            external_bar_type(catalog_id, timeframe, "ASK"),
         )
-    return (external_bar_type(corpus_id, timeframe, mode.value),)
+    return (external_bar_type(catalog_id, timeframe, mode.value),)
 
 
 __all__ = [
