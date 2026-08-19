@@ -1,55 +1,25 @@
 # Aegis Context Map
 
-Aegis is a monorepo of bounded contexts for systematic trading. Each context
-owns its own glossary (`CONTEXT.md`) and decision log (`docs/adr/`); this map
-records what the contexts are and how they relate.
+Aegis carries systematic strategies from market evidence to portfolio decisions. Each context owns a distinct part of that lifecycle and exchanges a small set of stable domain contracts.
 
 ## Contexts
 
-- [Aegis RD](./aegis-rd/CONTEXT.md) — research operating system that turns
-  market hypotheses into reproducible, scored evidence and promotes validated
-  strategies.
-- [Aegis Trader](./aegis-trader/CONTEXT.md) — live execution context that
-  trades strategies promoted by Aegis RD against real venues. It runs a
-  **Commingled Book** of **Sleeves**, sized by a risk-budgeting **Allocator**,
-  both offline through Nautilus' `BacktestEngine` and live against Interactive
-  Brokers — the same rebalance path for backtest, paper, and live (ADR-0001).
-- [Aegis Data](./aegis-data/CONTEXT.md) — shared market-data context that owns
-  one durable **Catalog**, stores Nautilus-native bars by **InstrumentId**, and
-  serves both research sourcing and live warmup through the same DataProvider
-  port.
-- **`aegis-runtime`** — shared runtime (shared kernel) that executes one Locked
-  **Candidate**: component loading, the single-candidate (`force_locked`,
-  `n_candidates=1`) orchestration, and **Exposure Validation** over native
-  **InstrumentId** columns. Depended on by both Aegis RD and every
-  **Execution Bundle**, so the research apparatus (optimizer, Candidate Store,
-  preflight, ranking) never crosses into execution. _(top-level package
-  `aegis-runtime/`; Aegis RD depends on it today, Aegis Trader will once it
-  exists)_
+- [Strategy Research](./aegis-rd/CONTEXT.md): tests hypotheses, compares strategy candidates, and locks reproducible evidence.
+- [Market Data](./aegis-data/CONTEXT.md): owns instrument identity, market observations, historical coverage, and continuous futures.
+- [Strategy Runtime](./aegis-runtime/CONTEXT.md): evaluates a locked strategy against a declared market-data contract and produces a target book.
+- [Portfolio Execution](./aegis-trader/CONTEXT.md): combines strategy sleeves into one risk-budgeted book and turns target changes into orders.
 
 ## Relationships
 
-- **Aegis RD → Aegis Trader**: Aegis RD is the system of record for *which*
-  strategies are worth trading and *with what parameters*. It promotes a
-  validated strategy as a **Lock** — a `run_id[:role]` reference that
-  reproduces one scored **Candidate** with its exact parameters and
-  **Provenance**, resolved against Aegis RD's **Candidate Store**. Aegis Trader
-  is the downstream consumer: it installs a promoted strategy and executes it
-  (live or in backtest) rather than re-deriving parameters.
+- **Market Data to Strategy Research**: Strategy Research requests market-data windows for identified instruments and records the data identity with each Candidate.
+- **Strategy Research to Strategy Runtime**: A Lock selects a Candidate. An Execution Bundle carries that Candidate's strategy definition, parameters, data contract, and exposure limits.
+- **Market Data to Strategy Runtime**: Market Data supplies the observations and instrument definitions required by an Execution Bundle.
+- **Strategy Runtime to Portfolio Execution**: Strategy Runtime produces signed target weights for one Sleeve. Portfolio Execution scales and combines those targets.
+- **Market Data to Portfolio Execution**: Portfolio Execution uses current observations and instrument definitions to value the Book, manage continuous futures, and prepare orders.
 
-  The handoff crosses the boundary as an **Execution Bundle** (ADR-0001):
-  `aerd export` resolves a Lock, bakes the Candidate's parameters, and builds a
-  versioned uv wheel carrying the strategy + wired indicators + **Provenance**.
-  Aegis Trader installs the wheel and runs it through **`aegis-runtime`**,
-  supplying Nautilus **InstrumentId**-keyed market data; the bundle computes and
-  gates — with no **Candidate Store** access at runtime.
+## Shared Language
 
-- **Aegis RD → Aegis Data**: Aegis RD declares native Nautilus
-  **InstrumentIds** in its **Run Config**. Aegis Data serves Raw Bars from the
-  Catalog, warming missing intervals through Nautilus's DataEngine when a
-  DataProvider client is configured. Research follows **Warm Then Sweep**;
-  absence itself is ordinary empty data.
-
-- **Aegis Trader → Aegis Data**: Aegis Trader backtests read historical bars for
-  the **InstrumentId** values baked into each **Execution Bundle**. Trader does
-  not select a universe by provider ticker.
+- **Instrument ID** is the common identity for market data, strategy targets, positions, and orders.
+- **Execution Bundle** is the contract between Strategy Research and the downstream runtime.
+- **Target Weight** is the contract between Strategy Runtime and Portfolio Execution.
+- **Exposure Limits** constrain both an individual strategy and the combined Book.

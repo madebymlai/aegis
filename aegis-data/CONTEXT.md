@@ -1,74 +1,71 @@
-# Aegis Data
+# Market Data
 
-Shared market-data context for Aegis RD and Aegis Trader. It owns the durable
-Catalog and the port-backed read/fill behavior used by both research and live.
+Market Data provides durable, identified market observations for research and portfolio execution.
 
 ## Language
 
+### Identity and Observations
+
+**Instrument**:
+A tradable or reference market object with an economic identity and venue-specific definition.
+_Avoid_: ticker, asset string, security row
+
+**Instrument ID**:
+The stable cross-context identity of an Instrument, including the venue needed to distinguish its market definition.
+_Avoid_: ticker, symbol, FIGI, provider code
+
+**Instrument Definition**:
+The terms required to interpret and trade an Instrument, including its currency, venue, contract size, and lifecycle facts.
+_Avoid_: instrument table, broker contract, symbol metadata
+
+**Market Stream**:
+One kind of market observation for an Instrument at a declared cadence.
+_Avoid_: feed, subscription, timeframe string
+
+**Bar**:
+An open, high, low, close, and volume observation for one Market Stream interval.
+_Avoid_: candle, row, OHLCV tuple
+
+**Data Window**:
+A bounded time interval requested for one or more Market Streams.
+_Avoid_: slice, date filter, query range
+
+### History and Coverage
+
 **Catalog**:
-The durable home of every record this context owns, rooted under the `aegis-data`
-OS data directory (`AEGIS_DATA_DIR` override, then `catalog/`). Records keep
-`ParquetDataCatalog`'s own layout — no bespoke format, nothing to translate on
-read — for example `data/bar/{instrument_id}/{start}_{end}.parquet`.
-_Avoid_: corpus, Nautilus Catalog, Historical Store, bespoke store, ticker cache, provider cache
+The durable collection of identified market observations and Instrument Definitions available to Aegis.
+_Avoid_: cache, corpus, archive
 
-**InstrumentId**:
-The native Nautilus instrument identity. It is the identity used in the catalog,
-RD configs, Execution Bundles, candidate evidence, and live cache warmup.
-_Avoid_: ticker, symbol, FIGI, InstrumentRef, provider locator
+**Coverage**:
+The portion of a Data Window represented in the Catalog for a specific Market Stream.
+_Avoid_: completeness flag, availability marker, coverage ledger
 
-**DataProvider Port**:
-The generic Nautilus market-data boundary that can satisfy missing catalog
-windows and persist them. IBKR is one adapter behind this port, not the
-architecture.
-_Avoid_: IBKR dependency, provider-specific core API, custom fetch seam
+**Data Provider**:
+An external source capable of supplying Instrument Definitions or market observations for missing Catalog coverage.
+_Avoid_: broker dependency, vendor core, fetch script
 
-**Raw Bars**:
-OHLCV bars stored exactly as Nautilus `Bar` data for one native `InstrumentId`.
-Raw bars are the r8b.1 walking skeleton. Currency conversion and split/dividend
-handling are later slices.
-_Avoid_: adjusted series, converted bars, continuous future
+### Continuous Futures
 
-**Roll-Transition Table**:
-The explicit list of roll seams — transition instant, the two legs by native
-`InstrumentId`, and each leg's seam Close — that aegis-data derives as a pure
-function over catalog legs (`continuous_future.py`). Handed to Nautilus via
-`request_bars` `params`; the engine materialises the back-adjusted continuous
-series on demand (Path A) under an explicitly supplied adjustment mode
-(`BACKWARD_RATIO` or `BACKWARD_SPREAD`). A `subscribe_bars` handoff is valid only
-when its next transition is known before the boundary. Aegis learns a
-volume-led live roll from the boundary bars themselves, so the live tail remains
-in the shared `ContinuousContractModel`. Research supplies the mode it records
-as Run evidence, live supplies the locked bundle contract's mode, and the series
-is never persisted. Golden tests pin the engine's output byte-for-byte for both
-backward modes (root ADR-0009).
-_Avoid_: implicit mode defaults on the shared path, bespoke back-adjust, persisted continuous series
+**Continuous Future**:
+A historical market series that represents successive Dated Contracts for one futures root on a consistent price basis.
+_Avoid_: perpetual contract, generic ticker, futures ETF
 
-**ContinuousContractModel**:
-The stateful owner of one bare continuous-futures root's adjusted frame, front
-leg, offset-0 append, roll re-materialisation, and last re-basing. Research and
-live both drive this aegis-data object; live validates its synthetic continuous
-`InstrumentId` against the declaration and never resolves a competing identity.
-_Avoid_: trader-owned continuous feed, live identity resolver, duplicate front picker
+**Dated Contract**:
+A futures Instrument with a specific expiry and delivery cycle.
+_Avoid_: leg, month code, front
 
-**Coverage Gap** (retired):
-Absence in a requested Catalog interval is ordinary empty data, not an error.
-Nautilus derives missing intervals from data-file extents and asks a configured
-client when one is available; an un-warmed window with no client simply reads
-empty. Every record kind uses those same extents. A sparse dataset that has
-never held a record may therefore be requested again, which is cheaper and
-simpler than maintaining a second dataset about the first.
+**Front Contract**:
+The Dated Contract currently representing a Continuous Future under its agreed roll sequence.
+_Avoid_: nearest expiry, active ticker, generic future
 
-Completeness is an operating discipline, not a read-time exception: **Warm Then
-Sweep** warms the Catalog before a research run and keeps it immutable while
-readers sweep it. Consumers that require a non-empty or sufficiently long
-series judge that requirement in their own domain.
-_Avoid_: coverage ledger, verified-empty marker, fail-loud absence
+**Roll**:
+The transition of a Continuous Future from one Front Contract to the next.
+_Avoid_: rollover job, expiry switch, contract replacement
 
-**Warm Then Sweep**:
-The concurrency rule for research. A single writer populates the Catalog first
-(live capture-forward, lazy fill, or backfill), then many reader processes run
-against it once warm and immutable. A live session capturing forward is the
-single writer for its whole lifetime, so research sweeps must not run against
-that Catalog until the live session stops writing.
-_Avoid_: shared catalog object across threads, concurrent writer swarm
+**Roll Agreement**:
+The agreed sequence of Dated Contracts and roll dates for one futures root across research and portfolio execution.
+_Avoid_: roll calendar file, chain cache, front picker
+
+**Rebasing**:
+The price transformation that carries a Continuous Future across a Roll on one consistent historical basis.
+_Avoid_: price patch, splice, adjusted close

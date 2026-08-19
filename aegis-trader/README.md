@@ -1,109 +1,62 @@
 # Aegis Trader
 
-Live and backtest execution for Aegis. It takes strategies promoted by
-[Aegis RD](../aegis-rd) and trades them against real venues as one **Commingled
-Book**.
+Aegis Trader is the Portfolio Execution context. It combines locked strategy Sleeves into one Commingled Book and turns portfolio decisions into orders.
 
-Each strategy arrives as an **Execution Bundle** (a baked wheel from
-`aerd export`). Aegis Trader installs it as a **Sleeve**, sizes every sleeve with
-a risk-budgeting **Allocator**, nets them into one target vector, and executes
-the deltas. The same `RebalanceStrategy` drives backtest, paper, and live, so a
-book validated in research and one traded live take the identical path.
+## Portfolio Model
 
-## How a rebalance flows
+Each Sleeve binds a name and Risk Group to one Execution Bundle. Risk Shares express the intended volatility budget. The Allocator scales Sleeve targets, and the Book combines overlapping instrument exposures into one portfolio target.
 
+The three Risk Groups describe each Sleeve's role:
+
+- **Floor** supplies the persistent return-seeking base.
+- **Target** supplies deliberately budgeted convexity or protection.
+- **Expansion** holds capacity for approved extensions to the Book.
+
+## Rebalance Flow
+
+```text
+Execution Bundles
+       |
+       v
+Sleeve Target Books
+       |
+       v
+Allocator and Book Controls
+       |
+       v
+Combined Book Target
+       |
+       v
+Rebalance Plan
+       |
+       v
+Order Intents
 ```
-  Execution Bundles (sleeves)                       Commingled Book
-  ┌─────────────────────────┐
-  │ Floor    trend    ──►    │  signed target weights
-  │ Target   tail     ──►    │       │
-  │ Expansion m-neutral ──►  │       ▼
-  └─────────────────────────┘   ┌──────────┐   net    ┌───────────┐  size   ┌──────┐
-                                │ Allocator│ ───────► │ Rebalancer│ ──────► │ IBKR │
-   risk shares + vol target ──► │ (risk-   │  one     │ drift     │ order   │ or   │
-   Ledoit-Wolf sleeve cov   ──► │  budget) │  vector  │ bands     │ intents │ back-│
-                                └──────────┘          └───────────┘         │ test │
-                                                                            └──────┘
 
-  Every sleeve gates through aegis-runtime's Exposure Validation before its
-  weights leave the bundle; the Roll Desk keeps continuous futures continuous.
-```
+A Rebalance observes current Book state, refreshes due Sleeve targets, applies risk allocation and drawdown controls, checks exposure and drift, and prepares the weight changes required by the approved Book target.
+
+## Book Controls
+
+- Book Volatility Target
+- Gross, net, and per-Instrument exposure limits
+- Sleeve and Instrument Drift Bands
+- Drawdown Delever Curve
+- Tail Convexity Budget
+- financing, distributions, and transaction costs
+
+The Sleeve Ledger records Book Observations for realized risk, attribution, drawdown, and portfolio analytics.
 
 ## Commands
 
-The operator surface is one entrypoint, `aegis-trader`, with two commands. There
-is **no** `--mode`: paper versus live is decided only by the gateway port.
+- `aegis-trader backtest --start <date> --end <date>` evaluates the configured Book over historical market data.
+- `aegis-trader trader start` starts portfolio execution for the configured Book.
+- `aegis-trader trader stop` requests an orderly stop.
 
-- **`aegis-trader backtest --start <YYYY-MM-DD> --end <YYYY-MM-DD>`** runs the
-  book offline, end to end, inside Nautilus' `BacktestEngine` against the shared
-  catalog. Optional `--book <path>` and `--catalog-path <dir>`.
-- **`aegis-trader trader start`** builds the live `TradingNode` and runs it in the
-  **foreground** (supervise it with systemd or tmux). Optional `--book <path>`
-  and `--pid-file <file>`.
-- **`aegis-trader trader stop`** signals a running trader to shut down gracefully
-  (SIGTERM to its pidfile).
+Book composition lives in the Book Config. Account credentials and venue connectivity belong to the deployment environment.
 
-## The book spec
+## Documentation
 
-The book is declared in a version-controlled `book.toml`: the operator statement
-of **what** to run. It selects trusted artifacts and parameters only. It is the
-live counterpart of Aegis RD's run config, and it never holds secrets.
-
-```toml
-base_currency  = "EUR"
-book_vol_target = 0.09    # annualized volatility target for risk-budget scaling
-
-gross_cap    = 1.0        # max sum |w_i|
-net_cap      = 0.5        # max |sum w_i|
-per_name_cap = 0.1        # max |w_i| per instrument
-
-[[sleeves]]
-name           = "trend_lse"
-wheel_filename = "trend_lse-abc123.whl"   # content-addressed Execution Bundle
-risk_share     = 0.6
-group          = "Floor"                  # Floor | Target | Expansion
-```
-
-Each **Sleeve** binds a name and a **Risk Group** (Floor, Target, or Expansion)
-to one content-addressed bundle wheel, with a **Risk Share** of the book's
-volatility budget. Instruments carry their own venue as a Nautilus
-`InstrumentId` (`{symbol}.{venue}`), so the book never names a single venue. Caps
-are checked at load against each bundle's provenance: the book may only tighten
-what research validated, never loosen it. See `book.example.toml` for the full
-field reference, including drawdown de-lever, drift bands, the tail-convexity
-budget, and backtest cost models.
-
-Each sleeve runs at its own bundle-declared bar timeframe: an hourly and a
-daily sleeve trade side by side, each recomputing only on its own completed
-period while the book is re-netted centrally. Missing required data fails or
-holds explicitly — never an implicit resample.
-
-## Broker connection
-
-Paper and live are the same code path pointed at different IBKR gateway ports.
-The connection is environment-specific and account-sensitive, so it is read from
-the process environment, never from `book.toml`:
-
-| Variable | Required | Default | Meaning |
-|---|---|---|---|
-| `IB_PORT` | yes | n/a | Gateway port; **this is the paper/live switch** |
-| `IB_ACCOUNT_ID` | yes | n/a | IBKR account (e.g. `DU…` paper, `U…` live) |
-| `IB_CLIENT_ID` | no | `1` | Nautilus client id |
-| `TRADER_ID` | no | `TRADER-001` | Trader identity for the node |
-
-Both required variables fail closed: the trader refuses to guess a gateway or use
-a placeholder account. Live and paper are **IBKR-only**.
-
-## Rolls
-
-Continuous futures stay continuous through the **Roll Desk**, the single
-authority for the book's live continuous-future exposure. It detects a roll
-causally at bar time, when a newer contract overtakes the current front on
-observed volume, and re-bases the back-adjusted series across the seam. There is
-no roll calendar, so live and research always pick the same front leg.
-
-## See also
-
-- [`CONTEXT.md`](./CONTEXT.md): the glossary for this context
-- [Context Map](../CONTEXT-MAP.md): how Aegis Trader relates to RD, Data, and the runtime
-- [`aegis-runtime`](../aegis-runtime): the shared execution kernel and Exposure Validation gate
+- [Portfolio Execution glossary](./CONTEXT.md)
+- [Aegis Context Map](../CONTEXT-MAP.md)
+- [Market Data](../aegis-data)
+- [Strategy Runtime](../aegis-runtime)

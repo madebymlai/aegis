@@ -1,9 +1,5 @@
-# Manual scripts
+# Manual Runtime Checks
 
-This directory is a scratchpad for scripts run manually during development or
-investigation. Its contents are disposable and may be changed or deleted at any
-time.
+This directory contains disposable scripts for manual Strategy Runtime diagnostics and investigations.
 
-Production code, tests, packaging, and automation must never import from or depend
-on anything in this directory. Durable behavior belongs in the package; durable test
-support belongs under `tests/`.
+Durable runtime behavior belongs in `aegis_runtime/`. Durable test support belongs in `tests/`.
