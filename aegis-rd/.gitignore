@@ -38,6 +38,7 @@ research/playbooks/strategies/*
 .env.*
 !.env.example
 .claude/
+CLAUDE.md
 .codex/
 .opencode/
 .mcp.json
