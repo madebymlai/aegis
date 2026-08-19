@@ -1,115 +1,51 @@
+# Aegis RD
+
 <p align="center">
   <img src="docs/assets/hero.png" alt="Aegis RD" width="830">
 </p>
 
----
+Aegis RD is the Strategy Research context. It gives every hypothesis the same evidence lifecycle and preserves the identity of every Candidate that survives it.
 
-Aegis RD is a research operating system for turning market hypotheses into
-reproducible Candidates.
+## Research Lifecycle
 
-It gives every idea the same execution contract: source data, indicator construction,
-strategy allocations, continuous replay, execution assumptions, costs, Metrics, and
-reproducible Candidate identity.
+1. Declare a Research Hypothesis as reviewed Components and a Run Config.
+2. Load one coherent market-data window for the declared Instrument IDs.
+3. Materialize complete Candidate parameterizations.
+4. Replay every Candidate over one shared Development Period.
+5. Compare Metrics across Observation Blocks and the complete period.
+6. Commit the best, median, and worst representatives as one Candidate Set.
+7. Lock a Candidate when it is ready for exact reuse or export.
 
-Optimization replays each Candidate once, observes fixed chronological blocks without
-resetting portfolio state, and atomically commits the best, median, and worst roles to
-the shared Candidate Store. Failed Runs leave no durable Run or Candidate record.
-
-## What it does
-
-Each research loop follows one clear contract:
-
-- **Load** one coherent `RunData` value from the shared Nautilus catalog by native
-  `InstrumentId`, with explicit Arrays, timeframe, and missing-index policy.
-- **Build** indicator outputs with preserved parameter metadata.
-- **Generate** strategy signals from reviewed components.
-- **Replay** each fixed Candidate continuously after a common derived warmup.
-- **Observe** fixed chronological blocks on the unchanged full Portfolio and
-  rank Candidates by their mean within-block rank.
-- **Simulate** shared-cash portfolios with explicit entry budgets, costs,
-  direction, metric scope, and benchmark assumptions. Fill timing is
-  configurable (`portfolio.fill_timing`: `next_open`, `next_close`, or
-  `same_close`; default `next_close`). Only `next_open` reads the Open array.
-- **Rank** complete composed strategy candidates on a leaderboard, not isolated
-  indicators.
+The unit of evidence is the complete Candidate. Indicator quality, Strategy behavior, portfolio assumptions, costs, and data identity travel together.
 
 ## Commands
 
-- **`aerd run <config>`** scores a strategy or research sweep over direct
-  component references, then commits a Candidate Set and returns Lock handles. A component's
-  `param_space_callable` produces a native VBT parameter grid, while
-  `optimization.observation_block_bars` fixes the observational regime length.
-  A later run can reuse a result by
-  `lock_id`, or by `candidate_id` plus its source `run_id`.
-- **`aerd show <topic>`** renders the authoring contracts and catalogs
-  (`config-schema`, `components`, `indicator-schema`,
-  `strategy-schema`) from the validating models, so the docs never drift from the
-  code.
-- **`aerd export <config>`** bakes a locked config into an **Execution Bundle**
-  wheel for Aegis Trader.
+- `aerd run <config>` evaluates a Run Config and returns its Candidate Set and Lock handles.
+- `aerd show <topic>` displays the current authoring vocabulary and available Components.
+- `aerd export <config>` prepares an Execution Bundle from a locked Candidate.
 
-Configs stay inert: YAML selects trusted IDs and parameters only. It cannot
-import Python, execute formulas, point at arbitrary notebooks or scripts, or
-reference generated Run files as reproducible inputs. Stale `lane`, `train`,
-`model`, `label`, `labeler`, or `signals` fields are rejected before a run
-is attempted.
+## Research Contract
 
-## Code layout
+A Run Config declares:
 
-The `research/aegis_research` package follows domain ownership:
+- Instrument IDs and required Market Arrays
+- Indicator and Strategy Components
+- Candidate parameter spaces
+- portfolio assumptions and Exposure Limits
+- ranking Metrics and Observation Blocks
 
-- `run/` owns typed Run orchestration and the RunData contract. `run.pipeline`
-  is the public orchestration seam.
-- `candidates/` owns atomic Candidate commit, Candidate Store identity,
-  and Lock resolution across Runs.
-- `optimization/` owns Candidate search and evaluation: precompute, Preflight,
-  continuous replay, Observation Blocks, ranking, and the optimizer runner.
-- `portfolio_simulation/` owns `ResolvedBook` and the internal VectorBT
-  simulation engine used by replay.
-- `configuration/`, `component_registry/`, and `metrics/` own their matching
-  authoring and registry domains.
+A successful Run leaves durable Candidate evidence. A failed Run reports its failure against the same declared research question.
 
-## Market data contract
+## Handoff
 
-Runs call one deep `load_run_data` operation over Aegis Data's Nautilus
-`ParquetDataCatalog` port. It resolves tradeables, materialises continuous
-futures, loads custom Arrays, applies base-currency conversion, validates the
-result, and returns one coherent `RunData` value. A run config declares native
-Nautilus `InstrumentId` strings:
+A Lock names one Candidate. Export turns that locked evidence into an Execution Bundle containing the strategy contract required by Strategy Runtime and Portfolio Execution.
 
-```yaml
-data:
-  base_currency: USD
-  instruments: [AAPL.NASDAQ, ESZ6.XCME]
-  exchange: [EUR/USD.IDEALPRO]
-  start: "2024-01-02"
-  end: "2024-03-01"
-  timeframe: 1D
-  arrays: [Close]
-```
+## Documentation
 
-`instruments` are tradeable columns. `exchange` IDs are data-only: requested from
-the same catalog and port, but never exposed as tradeable columns. The forward
-data schema has no `source`, `symbols`, or `provider` field.
-
-`RunData` carries the kernel `MarketDataBundle` consumed by Components, the one
-`InstrumentResolution` used by simulation and export, currency and distribution
-facts, catalog size increments, and structural load Evidence. Successful values
-are valid by construction. Environmental failures carry Evidence that is
-persisted before the Run is marked failed; there is no configurable degradation
-or partially usable success state.
-
-## Why it exists
-
-Most strategy research fails for one of three reasons: the idea is weak, the
-evidence is incomplete, or the experiment cannot be repeated. Aegis RD makes
-those failures cheap and obvious.
-
-The goal is not to make every idea look promising. The goal is to make the
-research process strict enough that weak ideas are rejected early, and surviving
-ideas carry an audit trail.
-
----
+- [Strategy Research glossary](./CONTEXT.md)
+- [Aegis Context Map](../CONTEXT-MAP.md)
+- [Market Data](../aegis-data)
+- [Strategy Runtime](../aegis-runtime)
 
 <p align="center">
   <a href="https://vectorbt.pro/">
