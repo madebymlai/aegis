@@ -28,7 +28,7 @@ Lock into an **Execution Bundle** wheel for execution. See
 [`aegis-rd/CONTEXT.md`](./aegis-rd/CONTEXT.md).
 
 ### [`aegis-data/`](./aegis-data): Market data
-The shared historical corpus: Nautilus-native bars keyed by **InstrumentId** in
+The shared catalog of data bars keyed by **InstrumentId** in
 one `ParquetDataCatalog`. It serves both research sourcing and live warmup
 through the same `DataProvider` port, lazily filling missing windows through an
 adapter (IBKR is one adapter behind the port, not the architecture), and derives
