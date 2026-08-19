@@ -2,6 +2,7 @@
 name = "aegis-data"
 version = "0.1.0"
 description = "Shared market-data package: the Catalog, the DataProvider port (IBKR adapter) that fills it, and the roll-transition table for Path-A continuous futures. Used by Aegis RD and Aegis Trader."
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.12"
 dependencies = [
   "aegis-runtime",

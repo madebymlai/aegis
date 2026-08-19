@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "aegis-trader"
 version = "0.1.0"
 description = "Live execution context for Aegis: runs the commingled book of Execution Bundles as a NautilusTrader overlay."
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.12"
 # Per ADR-0001 (Trader is a NautilusTrader commingling overlay): aegis-runtime is the
 # shared locked-execution kernel, nautilus_trader owns the venue/OMS/event loop, pydantic

@@ -54,3 +54,9 @@ aegis/
 - [Market Data glossary](./aegis-data/CONTEXT.md)
 - [Strategy Runtime glossary](./aegis-runtime/CONTEXT.md)
 - [Portfolio Execution glossary](./aegis-trader/CONTEXT.md)
+
+## License
+
+Copyright © 2026 Mikhail Lai.
+
+Aegis is licensed under the [GNU Affero General Public License version 3 or later](./LICENSE) (`AGPL-3.0-or-later`). The license covers the original code in this repository. Third-party software and dependencies remain subject to their respective licenses.
