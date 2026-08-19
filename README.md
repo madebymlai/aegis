@@ -5,7 +5,7 @@ Aegis is a systematic strategy lifecycle. It turns market hypotheses into reprod
 ## Architecture Overview
 
 <p align="center">
-  <img src="docs/assets/architecture.png" width="900" alt="Aegis strategy lifecycle. Market Data supports Strategy Research, Strategy Runtime, and Portfolio Execution. Research hands an Execution Bundle to Runtime, which hands Target Weights to Portfolio Execution.">
+  <img src="docs/assets/architecture.png" width="900" alt="Aegis architecture across evidence, decisions, and portfolio control. Market Data supplies every plane. Strategy Research locks evidence into an Execution Bundle. Strategy Runtime produces a Sleeve Target. Portfolio Execution combines sleeve targets with Book State to prepare orders, while fills and reconciliation update the Book.">
 </p>
 
 The lifecycle preserves three things across every boundary: instrument identity, strategy intent, and exposure limits.
